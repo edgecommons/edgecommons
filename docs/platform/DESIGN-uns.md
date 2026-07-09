@@ -556,11 +556,16 @@ Python/Rust/TS mirrors replicate ALL of the following:
 - **Delegated verbs** — `set-config` is owned by the `CONFIG_COMPONENT` source's own subscription
   on the same inbox path (§4.3); the inbox always ignores it (DEBUG), so the two subscribers never
   double-handle and a `set-config` on a non-CONFIG_COMPONENT component is a silent no-op.
-- **The three built-in verbs** (auto-registered; request body `{}`, args ignored):
+- **The four built-in verbs** (auto-registered; request body `{}`, args ignored):
   - **`ping`** → `{"status": "RUNNING", "uptimeSecs": n}` — the state keepalive's RUNNING body
     shape, same uptime source as the heartbeat (Java: `Heartbeat.getUptimeSecs()`). Proves the
     component is not just alive (the keepalive shows that) but **responsive to addressed
     commands**. Always answered, even when `heartbeat.enabled` is false.
+  - **`describe`** → descriptor discovery for consoles and tools:
+    `{"schemaVersion":"edgecommons.component.describe.v1","component":<identity>,"commands":[...],"panels":{...},"digest":"sha256:..."}`.
+    `commands[]` is the current command capability list, and `panels.views[]` carries component
+    detail panel descriptors registered through the language's command facade. `defaultView` is
+    present only when at least one panel view exists.
   - **`reload-config`** → re-fetch from the **active config source** and re-apply (Java:
     `ConfigManager.reloadFromProvider()` — provider re-read/re-request, schema validation,
     `applyConfig`; listeners fire, so a successful reload also re-announces the `cfg` push).

@@ -9,8 +9,8 @@ ComponentConfiguration:
     ComponentConfig:
       logging:
         level: "INFO"
-        # Per-language log format (token template): {timestamp} {level} {target} {message}.
-        rust_format: "{timestamp} [{level}] {target} - {message}"
+        # Per-language log format (token template): {timestamp} {level} {component} {target} {message}.
+        rust_format: "{timestamp} [{level}] [{component}] {target} - {message}"
       # UNS identity (optional): the topic hierarchy defaults to a single "device"
       # level whose value is the resolved thing name, so topics mint as
       # ecv1/{thing}/{component}/{instance}/{class}/... out of the box. To place the

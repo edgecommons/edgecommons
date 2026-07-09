@@ -57,6 +57,86 @@
       }
     },
     {
+      "name": "describe",
+      "verb": "describe",
+      "topic": "ecv1/gw-01/opcua-adapter/main/cmd/describe",
+      "request": {
+        "header": {
+          "name": "describe",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "timestamp_ms": 1782907200000,
+          "uuid": "00000000-0000-4000-8000-00000000c401",
+          "correlation_id": "00000000-0000-4000-8000-00000000c402",
+          "reply_to": "edgecommons/reply-00000000-0000-4000-8000-00000000c403"
+        },
+        "body": {}
+      },
+      "reply": {
+        "header": {
+          "name": "describe",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "timestamp_ms": 1782907200000,
+          "uuid": "00000000-0000-4000-8000-00000000c404",
+          "correlation_id": "00000000-0000-4000-8000-00000000c402"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "ok": true,
+          "result": {
+            "schemaVersion": "edgecommons.component.describe.v1",
+            "component": {
+              "hier": [
+                {
+                  "level": "device",
+                  "value": "gw-01"
+                }
+              ],
+              "path": "gw-01",
+              "component": "opcua-adapter",
+              "instance": "main"
+            },
+            "commands": [
+              {
+                "verb": "describe",
+                "builtIn": true
+              },
+              {
+                "verb": "get-configuration",
+                "builtIn": true
+              },
+              {
+                "verb": "ping",
+                "builtIn": true
+              },
+              {
+                "verb": "reload-config",
+                "builtIn": true
+              }
+            ],
+            "panels": {
+              "schemaVersion": "edgecommons.panels.v2",
+              "provider": "opcua-adapter",
+              "renderer": "descriptor",
+              "views": []
+            },
+            "digest": "sha256:f144f03e7875b48743db4cd6ab38262a4cf9bb412428757f8a7d0c5f4599af46"
+          }
+        }
+      }
+    },
+    {
       "name": "reload-config",
       "verb": "reload-config",
       "topic": "ecv1/gw-01/opcua-adapter/main/cmd/reload-config",
@@ -208,6 +288,7 @@
     "malformedIgnoredWithoutReply": true,
     "builtInVerbs": [
       "ping",
+      "describe",
       "reload-config",
       "get-configuration"
     ],

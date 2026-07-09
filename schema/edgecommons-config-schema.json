@@ -25,7 +25,7 @@
         },
         "rust_format": {
           "type": "string",
-          "description": "Rust log format using tokens {timestamp} {level} {target} {message}, e.g. \"{timestamp} {level} {target}: {message}\". Applied only by the Rust library; other libraries ignore it."
+          "description": "Rust log format using tokens {timestamp} {level} {component} {componentName} {target} {message}, e.g. \"{timestamp} {level} [{component}] {target}: {message}\". Applied only by the Rust library; other libraries ignore it."
         },
         "ts_format": {
           "type": "string",

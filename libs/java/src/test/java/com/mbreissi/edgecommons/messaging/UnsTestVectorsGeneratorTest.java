@@ -880,7 +880,7 @@ class UnsTestVectorsGeneratorTest {
 
     /**
      * The command-inbox contract (DESIGN-uns §7.3/§9.5, the minimal {@code commands()} facade —
-     * edge-console slice S2): the own-inbox wildcard, the three built-in verbs' golden
+     * edge-console slice S2): the own-inbox wildcard, the four built-in verbs' golden
      * request/reply envelope pairs, the unknown-verb error reply, and the normative behavior
      * flags/sets every language's inbox implements. Topics and the inbox filter are produced by
      * the REAL topic builder; envelopes by the REAL {@link MessageBuilder} (the request's
@@ -916,6 +916,21 @@ class UnsTestVectorsGeneratorTest {
                 com.mbreissi.edgecommons.commands.CommandInbox.PING, 1,
                 body("{}"),
                 body("{\"ok\":true,\"result\":{\"status\":\"RUNNING\",\"uptimeSecs\":42}}")));
+        verbs.add(commandCase(com.mbreissi.edgecommons.commands.CommandInbox.DESCRIBE,
+                com.mbreissi.edgecommons.commands.CommandInbox.DESCRIBE, 4,
+                body("{}"),
+                body("{\"ok\":true,\"result\":{\"schemaVersion\":\"edgecommons.component.describe.v1\","
+                        + "\"component\":{\"hier\":[{\"level\":\"device\",\"value\":\"gw-01\"}],"
+                        + "\"path\":\"gw-01\",\"component\":\"opcua-adapter\",\"instance\":\"main\"},"
+                        + "\"commands\":["
+                        + "{\"verb\":\"describe\",\"builtIn\":true},"
+                        + "{\"verb\":\"get-configuration\",\"builtIn\":true},"
+                        + "{\"verb\":\"ping\",\"builtIn\":true},"
+                        + "{\"verb\":\"reload-config\",\"builtIn\":true}],"
+                        + "\"panels\":{\"schemaVersion\":\"edgecommons.panels.v2\","
+                        + "\"provider\":\"opcua-adapter\",\"renderer\":\"descriptor\","
+                        + "\"views\":[]},"
+                        + "\"digest\":\"sha256:f144f03e7875b48743db4cd6ab38262a4cf9bb412428757f8a7d0c5f4599af46\"}}")));
         verbs.add(commandCase(com.mbreissi.edgecommons.commands.CommandInbox.RELOAD_CONFIG,
                 com.mbreissi.edgecommons.commands.CommandInbox.RELOAD_CONFIG, 2,
                 body("{}"),
@@ -942,6 +957,7 @@ class UnsTestVectorsGeneratorTest {
         behavior.addProperty("malformedIgnoredWithoutReply", true);
         JsonArray builtInVerbs = new JsonArray();
         builtInVerbs.add(com.mbreissi.edgecommons.commands.CommandInbox.PING);
+        builtInVerbs.add(com.mbreissi.edgecommons.commands.CommandInbox.DESCRIBE);
         builtInVerbs.add(com.mbreissi.edgecommons.commands.CommandInbox.RELOAD_CONFIG);
         builtInVerbs.add(com.mbreissi.edgecommons.commands.CommandInbox.GET_CONFIGURATION);
         behavior.add("builtInVerbs", builtInVerbs);
@@ -1150,7 +1166,7 @@ class UnsTestVectorsGeneratorTest {
             | `topics.json` | `build` / `validate` / `filter` / `guard` case groups (inputs + expected outputs or error codes). |
             | `envelopes.json` | One golden **full canonical JSON** envelope per UNS class, with pinned `uuid`/`correlation_id`/`timestamp`. |
             | `bcast.json` | The `_bcast` **republish** (reconnect-rehydration) contract: the two broadcast command topics, the golden notification envelopes, and the normative listener behavior constants. |
-            | `commands.json` | The **command-inbox** contract (the minimal `commands()` facade): the own-inbox wildcard, the three built-in verbs' golden request/reply pairs, the unknown-verb error reply, and the normative dispatch behavior. |
+            | `commands.json` | The **command-inbox** contract (the minimal `commands()` facade): the own-inbox wildcard, the four built-in verbs' golden request/reply pairs, the unknown-verb error reply, and the normative dispatch behavior. |
             | `data.json` | The **`data()`** publish-facade contract (DESIGN-class-facades §2.1): the constructed `SouthboundSignalUpdate` body + defaulting (quality → `GOOD` + `qualityRaw:"unspecified"`, `serverTs` → now, samples wrapper), channel sanitization, the missing-`signal.id` reject, and channel routing. |
             | `evt.json` | The **`events()`** publish-facade contract (DESIGN-class-facades §2.2): the `evt/{severity}/{type}` channel **derived from the body**, the four severity tokens, `timestamp` → now, and `raiseAlarm`/`clearAlarm` `alarm`/`active`. |
             | `app.json` | The **`app()`** publish-facade contract (DESIGN-class-facades §2.3): body verbatim, header `name` = the caller's name, topic = `app/{channel}` (sanitized). |
@@ -1252,22 +1268,24 @@ class UnsTestVectorsGeneratorTest {
               through the language's filter builder with every scope token pinned:
               `ecv1/{device}/{component}/main/cmd/#`. Unsubscribed on shutdown, before
               messaging closes. Only the `main`-instance inbox exists in this slice.
-            - **verbs** — the three built-in verbs, in order `ping`, `reload-config`,
+            - **verbs** — the four built-in verbs, in order `ping`, `describe`, `reload-config`,
               `get-configuration`. Each is `{name, verb, topic, request, reply}`:
               - `topic` is rebuilt byte-for-byte (the **verb is the `cmd` channel**;
                 `/`-namespaced verbs are legal for custom registrations).
               - `request` is the golden request envelope: header
                 `{name: <verb>, version: "1.0", timestamp, uuid, correlation_id, reply_to}`
                 (`header.name` **must equal the topic's verb**; `reply_to` set via the
-                language's request path), body = the verb's arguments object (`{}` for all
-                three built-ins). The requester's `identity`/`tags` are not part of the
+              language's request path), body = the verb's arguments object (`{}` for all
+              four built-ins). The requester's `identity`/`tags` are not part of the
                 dispatch contract (a request may carry them; they are ignored).
               - `reply` is the golden reply envelope, published to the request's `reply_to`:
                 header `{name: <verb>, version: "1.0", …, correlation_id: <the REQUEST's
                 correlation_id>}` (never a `reply_to`), the **responder's** `identity`, and the
                 body `{"ok": true, "result": <verb-specific>}` — `ping` →
                 `{"status": "RUNNING", "uptimeSecs": n}` (the state keepalive's RUNNING body
-                shape; the vector pins 42), `reload-config` → `{"reloaded": true}`,
+                shape; the vector pins 42), `describe` → the descriptor-discovery
+                manifest (`schemaVersion`, component identity, command capabilities,
+                panel descriptor manifest, and digest), `reload-config` → `{"reloaded": true}`,
                 `get-configuration` → `{"config": <redacted effective config>}` (**Flow B** —
                 the same redacted snapshot the `cfg` push publishes, as a reply). Envelopes
                 compare **structurally** (D-U22); a live reply may additionally carry the

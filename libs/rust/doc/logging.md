@@ -32,8 +32,8 @@ default**. It selects one of three sinks:
 
 | Effective format | Sink |
 |------------------|------|
-| `json` (case-insensitive) | **stdout-JSON** (FR-LOG-1): one JSON object per line on stdout — `timestamp`, `level`, `logger`, `message`, any structured event fields (e.g. `exception`), plus best-effort correlation fields `pod`/`namespace`/`node`/`thing` (FR-LOG-3). **stdout-only — no file rotation** (FR-LOG-2), so a read-only root FS never breaks logging. The KUBERNETES default. |
-| any other token | the `{timestamp}`/`{level}`/`{target}`/`{message}` token layer (console + optional rotating file). |
+| `json` (case-insensitive) | **stdout-JSON** (FR-LOG-1): one JSON object per line on stdout — `timestamp`, `level`, `logger`, `message`, any structured event fields (e.g. `exception`), plus best-effort correlation fields `pod`/`namespace`/`node`/`thing`/`component` (FR-LOG-3). **stdout-only — no file rotation** (FR-LOG-2), so a read-only root FS never breaks logging. The KUBERNETES default. |
+| any other token | the `{timestamp}`/`{level}`/`{component}`/`{componentName}`/`{target}`/`{message}` token layer (console + optional rotating file). |
 | (unset, no profile default) | the default `fmt` console layer (+ optional rotating file). The GREENGRASS/HOST default — unchanged. |
 
 Correlation fields come from the Downward-API env vars `POD_NAME` / `POD_NAMESPACE` / `NODE_NAME`
@@ -55,7 +55,7 @@ logging.level: "INFO"  ->  (edit config)  ->  logging.level: "DEBUG"  // takes e
 | Key | Status |
 |-----|--------|
 | `level` | Implemented (maps to `EnvFilter`; supports per-target directives). |
-| `rust_format` | Implemented. `json` selects the stdout-JSON sink (see Sinks above); any other value is a `{timestamp}`/`{level}`/`{target}`/`{message}` token template. |
+| `rust_format` | Implemented. `json` selects the stdout-JSON sink (see Sinks above); any other value is a `{timestamp}`/`{level}`/`{component}`/`{componentName}`/`{target}`/`{message}` token template. |
 | `fileLogging` | Implemented (size-rotated file output) — **not installed under the `json` sink** (FR-LOG-2). |
 | `loggers` (per-logger levels) | Reserved — map to `EnvFilter` directives. |
 | `globalControl` | Reserved. |

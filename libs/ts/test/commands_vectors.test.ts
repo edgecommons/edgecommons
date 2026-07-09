@@ -110,10 +110,11 @@ function rebuildEnvelope(env: VectorEnvelope): Record<string, unknown> {
 }
 
 describe.skipIf(!present)("uns-test-vectors/commands.json — CommandInbox conformance", () => {
-  it("pins exactly the three built-in verbs, in order, plus one unknown-verb error case", () => {
+  it("pins the built-in verb goldens, in order, plus one unknown-verb error case", () => {
     const doc = load();
     expect(doc.verbs.map((v) => v.name)).toEqual([
       CommandInbox.PING,
+      CommandInbox.DESCRIBE,
       CommandInbox.RELOAD_CONFIG,
       CommandInbox.GET_CONFIGURATION,
     ]);
@@ -167,7 +168,7 @@ describe.skipIf(!present)("uns-test-vectors/commands.json — CommandInbox confo
     }
   });
 
-  it("the three verb goldens, replayed through a LIVE inbox, produce the golden reply bodies", async () => {
+  it("the verb goldens, replayed through a LIVE inbox, produce the golden reply bodies", async () => {
     const doc = load();
     const getConfigVerb = doc.verbs.find((v) => v.name === CommandInbox.GET_CONFIGURATION);
     expect(getConfigVerb, "get-configuration golden must be present").toBeDefined();
@@ -239,12 +240,13 @@ describe.skipIf(!present)("uns-test-vectors/commands.json — CommandInbox confo
     expect(doc.behavior.headerNameMustEqualVerb).toBe(true);
     expect(doc.behavior.fireAndForgetWithoutReplyTo).toBe(true);
     expect(doc.behavior.malformedIgnoredWithoutReply).toBe(true);
-    expect(new Set(doc.behavior.builtInVerbs)).toEqual(CommandInbox.BUILT_IN_VERBS);
-    expect(doc.behavior.builtInVerbs, "builtInVerbs order pins ping, reload-config, get-configuration").toEqual([
+    expect(doc.behavior.builtInVerbs, "builtInVerbs pins the canonical built-in set").toEqual([
       CommandInbox.PING,
+      CommandInbox.DESCRIBE,
       CommandInbox.RELOAD_CONFIG,
       CommandInbox.GET_CONFIGURATION,
     ]);
+    expect(new Set(doc.behavior.builtInVerbs)).toEqual(CommandInbox.BUILT_IN_VERBS);
     expect(new Set(doc.behavior.delegatedVerbs)).toEqual(CommandInbox.DELEGATED_VERBS);
     expect(new Set(doc.behavior.errorCodes)).toEqual(
       new Set([

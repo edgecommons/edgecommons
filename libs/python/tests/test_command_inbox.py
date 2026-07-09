@@ -20,10 +20,11 @@ Covers:
   ``set-config`` verb are ignored - never replied to, never a crash;
 - ``close()`` unsubscribes the inbox and stops dispatch; lifecycle is idempotent; a
   missing resolved identity disables the inbox;
-- the ``commands.json`` conformance vectors: the inbox filter, the three built-in
+- the ``commands.json`` conformance vectors: the inbox filter, the built-in
   verb request/reply goldens replayed through a live inbox, the ``UNKNOWN_VERB``
   case, and the behavior/builtInVerbs/errorCodes constants.
 """
+import hashlib
 import json
 from pathlib import Path
 
@@ -289,6 +290,55 @@ def test_get_configuration_replies_no_config_when_unavailable(h):
     assert body["error"]["code"] == CommandInbox.ERR_NO_CONFIG
 
 
+def test_describe_includes_built_ins_custom_verbs_and_panels(h):
+    h.inbox.register("sb/browse", lambda request: {"nodes": []})
+    panel = {
+        "id": "address-space",
+        "title": "Address Space",
+        "order": 20,
+        "widgets": [{"kind": "treeBrowser", "browseVerb": "sb/browse"}],
+    }
+    h.inbox.register_panel(panel)
+    panel["title"] = "mutated after registration"
+
+    h.inbox.start()
+    h.messaging.simulate_message(
+        _topic(CommandInbox.DESCRIBE), _request(CommandInbox.DESCRIBE)
+    )
+    body = h.only_reply_body()
+
+    assert body["ok"] is True
+    result = body["result"]
+    assert result["schemaVersion"] == "edgecommons.component.describe.v1"
+    assert result["component"]["component"] == "TestComponent"
+    assert result["component"]["instance"] == "main"
+    assert result["component"]["path"] == "test-thing"
+    verbs = {entry["verb"]: entry["builtIn"] for entry in result["commands"]}
+    assert verbs[CommandInbox.PING] is True
+    assert verbs[CommandInbox.DESCRIBE] is True
+    assert verbs[CommandInbox.GET_CONFIGURATION] is True
+    assert verbs[CommandInbox.RELOAD_CONFIG] is True
+    assert verbs["sb/browse"] is False
+    assert result["panels"]["schemaVersion"] == "edgecommons.panels.v2"
+    assert result["panels"]["provider"] == "TestComponent"
+    assert result["panels"]["renderer"] == "descriptor"
+    assert result["panels"]["defaultView"] == "address-space"
+    assert result["panels"]["views"] == [
+        {
+            "id": "address-space",
+            "title": "Address Space",
+            "order": 20,
+            "widgets": [{"kind": "treeBrowser", "browseVerb": "sb/browse"}],
+        }
+    ]
+    digest_payload = json.dumps(
+        {"commands": result["commands"], "panels": result["panels"]},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert result["digest"] == "sha256:" + hashlib.sha256(digest_payload).hexdigest()
+
+
 # ===================== custom verbs (the registration seam) =====================
 
 
@@ -343,6 +393,8 @@ def test_register_rejects_shadowing_and_invalid_verbs(h):
     with pytest.raises(ValueError):
         h.inbox.register(CommandInbox.PING, lambda request: None)
     with pytest.raises(ValueError):
+        h.inbox.register(CommandInbox.DESCRIBE, lambda request: None)
+    with pytest.raises(ValueError):
         h.inbox.register(CommandInbox.SET_CONFIG_VERB, lambda request: None)
     h.inbox.register("mine", lambda request: None)
     with pytest.raises(ValueError):
@@ -383,10 +435,55 @@ def test_verbs_snapshot_contains_built_ins_and_customs(h):
     h.inbox.register("mine", lambda request: None)
     assert h.inbox.verbs() == {
         CommandInbox.PING,
+        CommandInbox.DESCRIBE,
         CommandInbox.RELOAD_CONFIG,
         CommandInbox.GET_CONFIGURATION,
         "mine",
     }
+
+
+# ===================== descriptor panels =====================
+
+
+def test_panel_registration_snapshot_contains_registered_panels(h):
+    panel = {"id": "overview", "title": "Overview", "widgets": [{"kind": "summary"}]}
+    h.inbox.register_panel(panel)
+
+    snapshot = h.inbox.panels()
+    assert snapshot == [
+        {"id": "overview", "title": "Overview", "widgets": [{"kind": "summary"}]}
+    ]
+
+    panel["title"] = "changed"
+    snapshot[0]["title"] = "also changed"
+    assert h.inbox.panels() == [
+        {"id": "overview", "title": "Overview", "widgets": [{"kind": "summary"}]}
+    ]
+
+
+@pytest.mark.parametrize(
+    "panel",
+    [
+        None,
+        [],
+        "overview",
+        {},
+        {"id": "", "title": "Overview"},
+        {"id": 1, "title": "Overview"},
+        {"id": "overview"},
+        {"id": "overview", "title": ""},
+        {"id": "overview", "title": 1},
+    ],
+)
+def test_register_panel_rejects_invalid_panels(h, panel):
+    with pytest.raises(ValueError):
+        h.inbox.register_panel(panel)
+
+
+def test_register_panel_rejects_duplicate_ids(h):
+    h.inbox.register_panel({"id": "overview", "title": "Overview"})
+    with pytest.raises(ValueError):
+        h.inbox.register_panel({"id": "overview", "title": "Duplicate"})
 
 
 # ===================== unknown / fire-and-forget / malformed =====================
@@ -561,7 +658,7 @@ def _load_commands_vectors():
 @pytest.mark.skipif(not _COMMANDS_JSON.exists(), reason="uns-test-vectors not present")
 class TestCommandsJsonConformance:
     """Replays ``uns-test-vectors/commands.json`` through a live CommandInbox: the
-    inbox filter byte-for-byte, the three built-in verb request/reply goldens (reply
+    inbox filter byte-for-byte, the built-in verb request/reply goldens (reply
     bodies must equal the live dispatch's output, D-U22 - the envelope's uuid/
     timestamp are inherently non-reproducible via a live dispatch and are not
     compared), the UNKNOWN_VERB case, and the behavior/builtInVerbs/errorCodes
@@ -623,6 +720,15 @@ class TestCommandsJsonConformance:
         vectors = self._vectors()
         case = next(c for c in vectors["verbs"] if c["name"] == "get-configuration")
         golden_config = case["reply"]["body"]["result"]["config"]
+        reply = self._dispatch_case(case, vectors, redacted=golden_config)
+        self._assert_reply_matches_golden(reply, case)
+
+    def test_describe_golden_replayed_through_a_live_inbox(self):
+        vectors = self._vectors()
+        case = next(c for c in vectors["verbs"] if c["name"] == "describe")
+        golden_config = next(
+            c for c in vectors["verbs"] if c["name"] == "get-configuration"
+        )["reply"]["body"]["result"]["config"]
         reply = self._dispatch_case(case, vectors, redacted=golden_config)
         self._assert_reply_matches_golden(reply, case)
 

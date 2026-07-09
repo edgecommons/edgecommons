@@ -28,7 +28,8 @@
 //!   **responder's** `identity` (and `tags`, when configured — metadata, not normative).
 //! - **Built-in verbs** (registered by the library, cannot be shadowed or unregistered):
 //!   [`PING`] → `{"status": "RUNNING", "uptimeSecs": n}` (liveness/echo, the state keepalive's
-//!   RUNNING body shape); [`RELOAD_CONFIG`] → re-fetch/re-apply the configuration from the
+//!   RUNNING body shape); [`DESCRIBE`] → component command/panel discovery for edge-console;
+//!   [`RELOAD_CONFIG`] → re-fetch/re-apply the configuration from the
 //!   active config source (`{"reloaded": true}` or [`ERR_RELOAD_FAILED`]); [`GET_CONFIGURATION`]
 //!   → return the current **redacted effective config** as `{"config": <redacted config>}` — the
 //!   same redacted snapshot the `cfg` push class publishes, as a reply (**Flow B**: the console
@@ -64,6 +65,7 @@
 //! - [`crate::config::effective`] — the redaction shared with the `cfg` push.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -80,6 +82,8 @@ use crate::uns::{Uns, UnsClass, UnsScope};
 
 /// The liveness/echo built-in verb.
 pub const PING: &str = "ping";
+/// The component command/panel discovery built-in verb.
+pub const DESCRIBE: &str = "describe";
 /// The re-fetch/re-apply-configuration built-in verb.
 pub const RELOAD_CONFIG: &str = "reload-config";
 /// The return-my-redacted-effective-config built-in verb (Flow B).
@@ -102,7 +106,7 @@ pub const ERR_NO_CONFIG: &str = "NO_CONFIG";
 pub const SET_CONFIG_VERB: &str = "set-config";
 
 /// The built-in verbs (registered at construction; shadowing/unregistering is rejected).
-pub const BUILT_IN_VERBS: [&str; 3] = [PING, RELOAD_CONFIG, GET_CONFIGURATION];
+pub const BUILT_IN_VERBS: [&str; 4] = [PING, DESCRIBE, RELOAD_CONFIG, GET_CONFIGURATION];
 /// Verbs owned by other library subscriptions on the same inbox path — always ignored.
 pub const DELEGATED_VERBS: [&str; 1] = [SET_CONFIG_VERB];
 
@@ -229,11 +233,13 @@ pub struct CommandInbox {
     config: Arc<ArcSwap<Config>>,
     /// verb → handler; built-ins seeded at construction, custom verbs via [`Self::register`].
     handlers: Mutex<HashMap<String, Arc<dyn CommandHandler>>>,
+    /// Component-provided edge-console panel descriptors, registered via [`Self::register_panel`].
+    panels: Mutex<Vec<Value>>,
     inner: Mutex<Inner>,
 }
 
 impl CommandInbox {
-    /// Creates the inbox and registers the three built-in verbs. The verb *actions* are injected
+    /// Creates the inbox and registers the built-in verbs. The verb *actions* are injected
     /// seams so the built-ins unit-test deterministically; `EdgeCommonsBuilder::build` wires the
     /// real ones.
     ///
@@ -306,12 +312,29 @@ impl CommandInbox {
             }),
         );
 
-        Arc::new(CommandInbox {
+        let inbox = Arc::new(CommandInbox {
             messaging,
             config,
             handlers: Mutex::new(handlers),
+            panels: Mutex::new(Vec::new()),
             inner: Mutex::new(Inner::default()),
-        })
+        });
+
+        let weak = Arc::downgrade(&inbox);
+        inbox.handlers.lock().unwrap().insert(
+            DESCRIBE.to_string(),
+            command_handler(move |_request| {
+                let weak = weak.clone();
+                async move {
+                    Ok(Some(match weak.upgrade() {
+                        Some(inbox) => inbox.describe(),
+                        None => describe_payload(Vec::new(), Vec::new(), None),
+                    }))
+                }
+            }),
+        );
+
+        inbox
     }
 
     /// Registers a custom verb handler — the minimal `commands()` registration seam. The verb is
@@ -371,6 +394,82 @@ impl CommandInbox {
     /// The currently registered verbs (built-ins + custom) — a snapshot copy.
     pub fn verbs(&self) -> std::collections::HashSet<String> {
         self.handlers.lock().unwrap().keys().cloned().collect()
+    }
+
+    /// Registers a component-provided edge-console panel descriptor for [`DESCRIBE`].
+    ///
+    /// The core library validates only the portable discovery contract: `panel` must be a JSON
+    /// object with non-empty string `id` and `title` fields, and `id` must be unique. All other
+    /// descriptor fields are carried through unchanged for the console-owned renderer.
+    ///
+    /// # Errors
+    /// [`EdgeCommonsError::Command`] when the panel is not an object, `id`/`title` is missing or
+    /// empty, or another registered panel already uses the same `id`.
+    pub fn register_panel(&self, panel: Value) -> Result<()> {
+        let object = panel.as_object().ok_or_else(|| {
+            EdgeCommonsError::Command("panel descriptor must be a JSON object".to_string())
+        })?;
+        let id = object
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                EdgeCommonsError::Command(
+                    "panel descriptor field 'id' must be a non-empty string".to_string(),
+                )
+            })?
+            .to_string();
+        object
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                EdgeCommonsError::Command(
+                    "panel descriptor field 'title' must be a non-empty string".to_string(),
+                )
+            })?;
+
+        let mut panels = self.panels.lock().unwrap();
+        if panels
+            .iter()
+            .any(|p| p.get("id").and_then(Value::as_str) == Some(id.as_str()))
+        {
+            return Err(EdgeCommonsError::Command(format!(
+                "panel id '{id}' is already registered"
+            )));
+        }
+        panels.push(panel);
+        Ok(())
+    }
+
+    /// The currently registered panel descriptors — a snapshot copy.
+    pub fn panels(&self) -> Vec<Value> {
+        self.panels.lock().unwrap().clone()
+    }
+
+    fn describe(&self) -> Value {
+        let handler_keys: std::collections::HashSet<String> =
+            self.handlers.lock().unwrap().keys().cloned().collect();
+        let mut verbs: Vec<String> = handler_keys.into_iter().collect();
+        verbs.sort();
+        let commands = verbs
+            .into_iter()
+            .map(|verb| {
+                let built_in = BUILT_IN_VERBS.contains(&verb.as_str());
+                json!({ "verb": verb, "builtIn": built_in })
+            })
+            .collect();
+        let snapshot = self.config.load_full();
+        let identity = snapshot.identity();
+        let component = json!({
+            "hier": identity.hier().iter().map(|entry| {
+                json!({ "level": entry.level, "value": entry.value })
+            }).collect::<Vec<_>>(),
+            "path": identity.path(),
+            "component": identity.component(),
+            "instance": identity.instance(),
+        });
+        describe_payload(commands, self.panels(), Some(component))
     }
 
     /// Builds the own-inbox wildcard (`ecv1/{device}/{component}/main/cmd/#`, through the topic
@@ -627,6 +726,190 @@ fn error_body(code: &str, message: impl Into<String>) -> Value {
     json!({ "ok": false, "error": { "code": code, "message": message.into() } })
 }
 
+fn describe_payload(commands: Vec<Value>, views: Vec<Value>, component: Option<Value>) -> Value {
+    let provider = component
+        .as_ref()
+        .and_then(|component| component.get("component"))
+        .and_then(Value::as_str)
+        .unwrap_or("component")
+        .to_string();
+    let default_view = views
+        .first()
+        .and_then(|view| view.get("id"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let mut panels_map = serde_json::Map::new();
+    panels_map.insert(
+        "schemaVersion".to_string(),
+        Value::String("edgecommons.panels.v2".to_string()),
+    );
+    panels_map.insert("provider".to_string(), Value::String(provider));
+    panels_map.insert(
+        "renderer".to_string(),
+        Value::String("descriptor".to_string()),
+    );
+    if let Some(default_view) = default_view {
+        panels_map.insert("defaultView".to_string(), Value::String(default_view));
+    }
+    panels_map.insert("views".to_string(), Value::Array(views));
+    let panels = Value::Object(panels_map);
+    let digest = descriptor_digest(&commands, &panels);
+    let mut result = serde_json::Map::new();
+    result.insert(
+        "schemaVersion".to_string(),
+        Value::String("edgecommons.component.describe.v1".to_string()),
+    );
+    if let Some(component) = component {
+        result.insert("component".to_string(), component);
+    }
+    result.insert("digest".to_string(), Value::String(digest));
+    result.insert("commands".to_string(), Value::Array(commands));
+    result.insert("panels".to_string(), panels);
+    Value::Object(result)
+}
+
+fn descriptor_digest(commands: &[Value], panels: &Value) -> String {
+    let source = json!({ "commands": commands, "panels": panels });
+    format!(
+        "sha256:{}",
+        sha256_hex(deterministic_json(&source).as_bytes())
+    )
+}
+
+fn deterministic_json(value: &Value) -> String {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+            serde_json::to_string(value).expect("serializing a scalar JSON value cannot fail")
+        }
+        Value::Array(values) => {
+            let mut out = String::from("[");
+            for (idx, item) in values.iter().enumerate() {
+                if idx > 0 {
+                    out.push(',');
+                }
+                out.push_str(&deterministic_json(item));
+            }
+            out.push(']');
+            out
+        }
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut out = String::from("{");
+            for (idx, key) in keys.iter().enumerate() {
+                if idx > 0 {
+                    out.push(',');
+                }
+                out.push_str(
+                    &serde_json::to_string(key).expect("serializing a JSON object key cannot fail"),
+                );
+                out.push(':');
+                out.push_str(&deterministic_json(&map[*key]));
+            }
+            out.push('}');
+            out
+        }
+    }
+}
+
+fn sha256_hex(input: &[u8]) -> String {
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+    let bit_len = (input.len() as u64) * 8;
+    let mut bytes = input.to_vec();
+    bytes.push(0x80);
+    while bytes.len() % 64 != 56 {
+        bytes.push(0);
+    }
+    bytes.extend_from_slice(&bit_len.to_be_bytes());
+
+    let mut h = [
+        0x6a09e667u32,
+        0xbb67ae85,
+        0x3c6ef372,
+        0xa54ff53a,
+        0x510e527f,
+        0x9b05688c,
+        0x1f83d9ab,
+        0x5be0cd19,
+    ];
+    let mut w = [0u32; 64];
+    for chunk in bytes.chunks_exact(64) {
+        for (idx, word) in w.iter_mut().take(16).enumerate() {
+            let offset = idx * 4;
+            *word = u32::from_be_bytes([
+                chunk[offset],
+                chunk[offset + 1],
+                chunk[offset + 2],
+                chunk[offset + 3],
+            ]);
+        }
+        for idx in 16..64 {
+            let s0 =
+                w[idx - 15].rotate_right(7) ^ w[idx - 15].rotate_right(18) ^ (w[idx - 15] >> 3);
+            let s1 = w[idx - 2].rotate_right(17) ^ w[idx - 2].rotate_right(19) ^ (w[idx - 2] >> 10);
+            w[idx] = w[idx - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[idx - 7])
+                .wrapping_add(s1);
+        }
+
+        let mut a = h[0];
+        let mut b = h[1];
+        let mut c = h[2];
+        let mut d = h[3];
+        let mut e = h[4];
+        let mut f = h[5];
+        let mut g = h[6];
+        let mut hh = h[7];
+        for idx in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = hh
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[idx])
+                .wrapping_add(w[idx]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+            hh = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+        h[5] = h[5].wrapping_add(f);
+        h[6] = h[6].wrapping_add(g);
+        h[7] = h[7].wrapping_add(hh);
+    }
+
+    let mut out = String::with_capacity(64);
+    for word in h {
+        write!(&mut out, "{word:08x}").expect("writing to a String cannot fail");
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -866,6 +1149,70 @@ mod tests {
         assert_eq!(body["error"]["code"], ERR_NO_CONFIG);
     }
 
+    #[tokio::test]
+    async fn describe_includes_built_ins_custom_verbs_panels_and_digest() {
+        let f = fixture();
+        f.inbox
+            .register("sb/browse", command_handler(|_r| async move { Ok(None) }))
+            .unwrap();
+        let panel = json!({
+            "id": "address-space",
+            "title": "Address Space",
+            "order": 20,
+            "widgets": [{ "kind": "treeBrowser", "browseVerb": "sb/browse" }]
+        });
+        f.inbox.register_panel(panel.clone()).unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(&topic(DESCRIBE), request(DESCRIBE))
+            .await;
+        let body = only_reply_body(&f.messaging);
+        assert!(body["ok"].as_bool().unwrap());
+        let result = &body["result"];
+        assert_eq!(result["schemaVersion"], "edgecommons.component.describe.v1");
+        assert_eq!(result["component"]["path"], "test-thing");
+        assert_eq!(result["component"]["hier"][0]["value"], "test-thing");
+        assert_eq!(result["component"]["component"], "TestComponent");
+        assert_eq!(result["component"]["instance"], "main");
+
+        let commands = result["commands"].as_array().unwrap();
+        for verb in BUILT_IN_VERBS {
+            assert!(
+                commands
+                    .iter()
+                    .any(|capability| capability["verb"] == verb && capability["builtIn"] == true),
+                "describe must include built-in verb {verb}"
+            );
+        }
+        assert!(
+            commands
+                .iter()
+                .any(|capability| capability["verb"] == "sb/browse"
+                    && capability["builtIn"] == false),
+            "describe must include registered custom verbs"
+        );
+        assert_eq!(result["panels"]["schemaVersion"], "edgecommons.panels.v2");
+        assert_eq!(result["panels"]["provider"], "TestComponent");
+        assert_eq!(result["panels"]["renderer"], "descriptor");
+        assert_eq!(result["panels"]["defaultView"], "address-space");
+        assert_eq!(result["panels"]["views"], json!([panel]));
+
+        let digest = result["digest"].as_str().unwrap();
+        assert!(digest.starts_with("sha256:"));
+        assert_eq!(digest.len(), "sha256:".len() + 64);
+        assert!(
+            digest["sha256:".len()..]
+                .chars()
+                .all(|c| c.is_ascii_hexdigit())
+        );
+        assert_eq!(
+            digest,
+            descriptor_digest(commands, &result["panels"]),
+            "digest must be computed from deterministic commands+panels JSON"
+        );
+    }
+
     // ===================== custom verbs (the registration seam) =====================
 
     #[tokio::test]
@@ -979,6 +1326,42 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn register_panel_validates_required_fields_and_duplicate_ids() {
+        let f = fixture();
+        assert!(matches!(
+            f.inbox.register_panel(json!("not-object")),
+            Err(EdgeCommonsError::Command(_))
+        ));
+        assert!(matches!(
+            f.inbox.register_panel(json!({ "title": "Missing id" })),
+            Err(EdgeCommonsError::Command(_))
+        ));
+        assert!(matches!(
+            f.inbox
+                .register_panel(json!({ "id": "", "title": "Empty id" })),
+            Err(EdgeCommonsError::Command(_))
+        ));
+        assert!(matches!(
+            f.inbox.register_panel(json!({ "id": "missing-title" })),
+            Err(EdgeCommonsError::Command(_))
+        ));
+        assert!(matches!(
+            f.inbox
+                .register_panel(json!({ "id": "empty-title", "title": "" })),
+            Err(EdgeCommonsError::Command(_))
+        ));
+
+        let panel = json!({ "id": "overview", "title": "Overview" });
+        f.inbox.register_panel(panel.clone()).unwrap();
+        assert_eq!(f.inbox.panels(), vec![panel]);
+        assert!(matches!(
+            f.inbox
+                .register_panel(json!({ "id": "overview", "title": "Duplicate" })),
+            Err(EdgeCommonsError::Command(_))
+        ));
+    }
+
     #[tokio::test]
     async fn unregister_removes_custom_verbs_but_never_built_ins() {
         let f = fixture();
@@ -1015,6 +1398,7 @@ mod tests {
             f.inbox.verbs(),
             std::collections::HashSet::from([
                 PING.to_string(),
+                DESCRIBE.to_string(),
                 RELOAD_CONFIG.to_string(),
                 GET_CONFIGURATION.to_string(),
                 "mine".to_string(),
@@ -1149,7 +1533,7 @@ mod tests {
 }
 
 /// Cross-language conformance against `uns-test-vectors/commands.json` (DESIGN-uns §9.5, the
-/// edge-console slice S2): the inbox filter byte-for-byte, the 3 built-in verb goldens replayed
+/// edge-console slice S2): the inbox filter byte-for-byte, the built-in verb goldens replayed
 /// through a live inbox (reply bodies compared structurally — D-U22 — against the vector), the
 /// `UNKNOWN_VERB` case (including the library-composed message text, which the vectors pin), and
 /// the behavior flags/sets. Existence-guarded: skipped when the vectors directory is absent.
@@ -1250,9 +1634,13 @@ mod vector_tests {
             "start() must subscribe exactly the vector's inbox filter"
         );
 
-        // ---- the 3 built-in verb goldens, replayed through the live inbox ----
+        // ---- the built-in verb goldens, replayed through the live inbox ----
         let verbs = doc["verbs"].as_array().expect("verbs group");
-        assert_eq!(verbs.len(), 3, "ping, reload-config, get-configuration");
+        assert_eq!(
+            verbs.len(),
+            BUILT_IN_VERBS.len(),
+            "built-in command goldens"
+        );
         for case in verbs {
             let verb = str_field(case, "verb");
             let topic = str_field(case, "topic");

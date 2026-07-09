@@ -369,7 +369,7 @@ is meaningless to the others. Setting the value to the literal `json` (case-inse
 | --- | --- | --- | --- |
 | Java | `java_format` | Log4j2 `PatternLayout` | `%d{yyyy-MM-dd HH:mm:ss} [%-5p] %-25.25c{1}(%4L): %m%n` |
 | Python | `python_format` | `logging.Formatter` string | `%(asctime)s [%(levelname)s] %(name)s: %(message)s` |
-| Rust | `rust_format` | token template | none — the `tracing-subscriber` `fmt` layer (the `{timestamp} {level} {target} {message}` tokens apply only when `rust_format` is set explicitly) |
+| Rust | `rust_format` | token template | none — the `tracing-subscriber` `fmt` layer (the `{timestamp} {level} {component}/{componentName} {target} {message}` tokens apply only when `rust_format` is set explicitly) |
 | TypeScript | `ts_format` | token template | `{timestamp} [{level}] {message}` |
 
 Token-template placeholders differ between Rust and TypeScript: Rust supports `{timestamp}`,

@@ -145,7 +145,7 @@ Console logging plus optional size-rotated file logging. Object, strict.
 | `level` | string | `INFO` | `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL` | Root logger level. |
 | `java_format` | string | (none) | — | Log4j2 PatternLayout. Applied **only by Java**; other SDKs ignore it. |
 | `python_format` | string | (none) | — | `logging.Formatter` string. Applied **only by Python**. |
-| `rust_format` | string | (none) | — | Token format (`{timestamp}` `{level}` `{target}` `{message}`). Applied **only by Rust**. |
+| `rust_format` | string | (none) | — | Token format (`{timestamp}` `{level}` `{component}`/`{componentName}` `{target}` `{message}`). Applied **only by Rust**. |
 | `ts_format` | string | (none) | — | Token format (`{timestamp}` `{level}` `{logger}` `{message}`). Applied **only by TypeScript**. |
 | `fileLogging` | object (strict) | — | — | Rotated file logging (below); requires `enabled`. |
 | `fileLogging.enabled` | boolean | `false` | — | Enable file logging. |
@@ -582,7 +582,7 @@ A multi-section component config document (this validates clean against the sche
 
 ```json
 {
-  "logging": { "level": "DEBUG", "rust_format": "{timestamp} [{level}] {target} - {message}" },
+  "logging": { "level": "DEBUG", "rust_format": "{timestamp} [{level}] [{component}] {target} - {message}" },
   "heartbeat": {
     "enabled": true,
     "intervalSecs": 5,

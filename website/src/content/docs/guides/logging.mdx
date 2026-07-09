@@ -62,7 +62,7 @@ A minimal `logging` section looks like this (the format token is the one line th
 {
   "logging": {
     "level": "INFO",
-    "rust_format": "{timestamp} {level} {target}: {message}"
+    "rust_format": "{timestamp} {level} [{component}] {target}: {message}"
   }
 }
 ```
@@ -181,14 +181,14 @@ Common fields: `%(asctime)s` timestamp, `%(levelname)s` level, `%(name)s` logger
 `{message}`.
 
 ```json
-{ "logging": { "rust_format": "{timestamp} {level} {target}: {message}" } }
+{ "logging": { "rust_format": "{timestamp} {level} [{component}] {target}: {message}" } }
 ```
 
 Note Rust uses `{target}` (not `{logger}`). Unlike the other SDKs, Rust has **no built-in
 token-template default**: when `rust_format` is omitted (and the active platform supplies no `json`
 default), Rust falls back to the `tracing-subscriber` built-in `fmt` layer (e.g.
 `2024-06-27T12:00:00.123456Z  INFO target: message` — note the colon after the target), not a token
-template. The `{timestamp}`, `{level}`, `{target}`, and `{message}` tokens apply **only** when
+template. The `{timestamp}`, `{level}`, `{component}`/`{componentName}`, `{target}`, and `{message}` tokens apply **only** when
 `rust_format` is explicitly set to a non-`json` template.
 
 </TabItem>

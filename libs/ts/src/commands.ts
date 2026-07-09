@@ -25,7 +25,8 @@
  *   normative).
  * - **Built-in verbs** (registered by the library, cannot be shadowed or unregistered):
  *   {@link CommandInbox.PING} → `{"status": "RUNNING", "uptimeSecs": n}` (liveness/echo, the
- *   state keepalive's RUNNING body shape); {@link CommandInbox.RELOAD_CONFIG} → re-fetch/
+ *   state keepalive's RUNNING body shape); {@link CommandInbox.DESCRIBE} → return the
+ *   component's command/panel discovery manifest; {@link CommandInbox.RELOAD_CONFIG} → re-fetch/
  *   re-apply the configuration from the active config source (`{"reloaded": true}` or
  *   {@link CommandInbox.ERR_RELOAD_FAILED}); {@link CommandInbox.GET_CONFIGURATION} → return
  *   the current **redacted effective config** as `{"config": <redacted config>}` — the same
@@ -61,6 +62,8 @@
  * synchronous only); the built-in `reload-config` action is necessarily async (the TS config
  * sources are Promise-based), unlike Java's synchronous `ConfigManager.reloadFromProvider()`.
  */
+import { createHash } from "crypto";
+
 import type { Config } from "./config/model";
 import { logger } from "./logging";
 import type { Message } from "./message";
@@ -130,9 +133,35 @@ function errorBody(code: string, message: string): Record<string, unknown> {
   return { ok: false, error: { code, message: message ?? "" } };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item === undefined ? null : item)).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .join(",")}}`;
+}
+
+function digestDescribePayload(commands: Record<string, unknown>[], panels: Record<string, unknown>): string {
+  const input = stableJson({ commands, panels });
+  return `sha256:${createHash("sha256").update(input).digest("hex")}`;
+}
+
 export class CommandInbox {
   /** The liveness/echo built-in verb. */
   static readonly PING = "ping";
+  /** The component command/panel discovery built-in verb. */
+  static readonly DESCRIBE = "describe";
   /** The re-fetch/re-apply-configuration built-in verb. */
   static readonly RELOAD_CONFIG = "reload-config";
   /** The return-my-redacted-effective-config built-in verb (Flow B). */
@@ -156,6 +185,7 @@ export class CommandInbox {
   /** The built-in verbs (registered at construction; shadowing/unregistering is rejected). */
   static readonly BUILT_IN_VERBS: ReadonlySet<string> = new Set([
     CommandInbox.PING,
+    CommandInbox.DESCRIBE,
     CommandInbox.RELOAD_CONFIG,
     CommandInbox.GET_CONFIGURATION,
   ]);
@@ -164,6 +194,8 @@ export class CommandInbox {
 
   /** verb -> handler; built-ins seeded at construction, custom verbs via {@link register}. */
   private readonly handlers = new Map<string, CommandHandler>();
+  /** panel id -> descriptor; panel descriptors are carried verbatim for `describe`. */
+  private readonly panelViews = new Map<string, Record<string, unknown>>();
   /** The subscribed inbox filter (`…/cmd/#`); undefined until {@link start} builds it. */
   private inboxFilter?: string;
   /** The filter minus the trailing `#` — the verb-extraction prefix (`…/cmd/`). */
@@ -172,7 +204,7 @@ export class CommandInbox {
   private closed = false;
 
   /**
-   * Creates the inbox and registers the three built-in verbs. The verb **actions** are injected
+   * Creates the inbox and registers the built-in verbs. The verb **actions** are injected
    * seams so the built-ins unit-test deterministically; `EdgeCommonsBuilder` wires the real ones.
    *
    * @param configProvider  a getter for the current config snapshot (own identity resolution;
@@ -202,6 +234,16 @@ export class CommandInbox {
       status: "RUNNING",
       uptimeSecs: uptimeSecs(),
     }));
+    // describe -> command/panel discovery manifest for descriptor-driven console panels.
+    this.handlers.set(CommandInbox.DESCRIBE, () => this.describe());
+    // get-configuration (Flow B) -> the cfg class's body shape, as a reply.
+    this.handlers.set(CommandInbox.GET_CONFIGURATION, () => {
+      const config = redactedConfig();
+      if (config === undefined) {
+        throw new CommandException(CommandInbox.ERR_NO_CONFIG, "no effective configuration is available");
+      }
+      return { config };
+    });
     // reload-config -> re-fetch from the active config source and re-apply (listeners fire, so
     // a successful reload also re-announces the cfg push as a side effect).
     this.handlers.set(CommandInbox.RELOAD_CONFIG, async () => {
@@ -214,14 +256,6 @@ export class CommandInbox {
         );
       }
       return { reloaded: true };
-    });
-    // get-configuration (Flow B) -> the cfg class's body shape, as a reply.
-    this.handlers.set(CommandInbox.GET_CONFIGURATION, () => {
-      const config = redactedConfig();
-      if (config === undefined) {
-        throw new CommandException(CommandInbox.ERR_NO_CONFIG, "no effective configuration is available");
-      }
-      return { config };
     });
   }
 
@@ -276,6 +310,62 @@ export class CommandInbox {
   /** The currently registered verbs (built-ins + custom) — a snapshot copy. */
   verbs(): Set<string> {
     return new Set(this.handlers.keys());
+  }
+
+  /**
+   * Registers a descriptor-driven component-detail panel view. The core library validates only
+   * the portable discovery contract (`id`, `title`, duplicate `id`) and carries the remaining
+   * descriptor fields verbatim for the console-owned renderer.
+   *
+   * @param panel a JSON-object panel descriptor with non-empty string `id` and `title`
+   * @throws Error when the panel is not an object, `id`/`title` is invalid, or the id is duplicate
+   */
+  registerPanel(panel: Record<string, unknown>): void {
+    if (!isRecord(panel)) {
+      throw new Error("panel must be a JSON object");
+    }
+    const id = panel.id;
+    if (typeof id !== "string" || id.length === 0) {
+      throw new Error("panel id must be a non-empty string");
+    }
+    const title = panel.title;
+    if (typeof title !== "string" || title.length === 0) {
+      throw new Error("panel title must be a non-empty string");
+    }
+    if (this.panelViews.has(id)) {
+      throw new Error(`panel id '${id}' is already registered`);
+    }
+    this.panelViews.set(id, { ...panel });
+  }
+
+  /** The currently registered panel descriptors — a snapshot copy. */
+  panels(): Record<string, unknown>[] {
+    return [...this.panelViews.values()].map((panel) => ({ ...panel }));
+  }
+
+  private describe(): Record<string, unknown> {
+    const config = this.configProvider();
+    const identity = config.componentIdentity;
+    const commands = [...this.handlers.keys()].sort().map((verb) => ({
+      verb,
+      builtIn: CommandInbox.BUILT_IN_VERBS.has(verb),
+    }));
+    const views = this.panels();
+    const defaultView = (views.find((view) => view.default === true) ?? views[0])?.id;
+    const panels = {
+      schemaVersion: "edgecommons.panels.v2",
+      provider: identity.component,
+      renderer: "descriptor",
+      ...(defaultView !== undefined ? { defaultView } : {}),
+      views,
+    };
+    return {
+      schemaVersion: "edgecommons.component.describe.v1",
+      component: identity.toObject(),
+      digest: digestDescribePayload(commands, panels),
+      commands,
+      panels,
+    };
   }
 
   /**

@@ -225,6 +225,60 @@ async fn request_reply_roundtrip() {
 }
 
 #[tokio::test]
+async fn publish_subscribe_delivers_large_payload_above_rumqttc_default() {
+    if skipped() {
+        return;
+    }
+    init_logs();
+    info!("=== TEST publish_subscribe_delivers_large_payload_above_rumqttc_default ===");
+    let svc = connect_service(&format!("it-large-{}", Uuid::new_v4())).await;
+    let topic = format!("itest/large/{}", Uuid::new_v4());
+
+    let received: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
+    let count = Arc::new(AtomicUsize::new(0));
+    let (received_h, count_h) = (received.clone(), count.clone());
+
+    svc.subscribe(
+        &topic,
+        message_handler(move |_topic, msg| {
+            let (received_h, count_h) = (received_h.clone(), count_h.clone());
+            async move {
+                let size = msg.body["blob"].as_str().map(str::len).unwrap_or(0);
+                *received_h.lock().unwrap() = Some(size);
+                count_h.fetch_add(1, Ordering::SeqCst);
+            }
+        }),
+        MAX_MESSAGES,
+        1,
+    )
+    .await
+    .expect("subscribe");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let blob = "x".repeat(64 * 1024);
+    let msg = MessageBuilder::new("LargeEvt", "1.0")
+        .payload(json!({ "blob": blob }))
+        .tag("origin", json!("test-thing"))
+        .build();
+    svc.publish(&topic, &msg)
+        .await
+        .expect("publish payload larger than rumqttc default");
+
+    for _ in 0..50 {
+        if count.load(Ordering::SeqCst) >= 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        Some(64 * 1024),
+        *received.lock().unwrap(),
+        "large MQTT payload should survive the Rust client transport"
+    );
+    info!("=== PASS publish_subscribe_delivers_large_payload_above_rumqttc_default ===");
+}
+
+#[tokio::test]
 async fn serial_subscription_preserves_order() {
     if skipped() {
         return;

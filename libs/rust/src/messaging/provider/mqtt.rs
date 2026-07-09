@@ -65,6 +65,10 @@ use crate::messaging::{Destination, MessagingProvider, Qos, Subscription, topic_
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Event-loop request channel capacity.
 const EVENTLOOP_CAP: usize = 32;
+/// Minimum MQTT packet budget for EdgeCommons payloads. `rumqttc` defaults to
+/// 10 KiB for both directions, which is far below EMQX's 1 MiB default and too
+/// small for legitimate command replies such as OPC UA address-space pages.
+const MQTT_MAX_PACKET_BYTES: usize = 1024 * 1024;
 
 /// One subscription's routing entry.
 struct SubEntry {
@@ -303,6 +307,7 @@ async fn connect_broker(
     let mut options = MqttOptions::new(broker.client_id.clone(), host.clone(), broker.port);
     options.set_keep_alive(Duration::from_secs(30));
     options.set_clean_session(true);
+    options.set_max_packet_size(MQTT_MAX_PACKET_BYTES, MQTT_MAX_PACKET_BYTES);
     if let Some(last_will) = last_will {
         options.set_last_will(build_last_will(last_will)?);
     }
@@ -320,6 +325,13 @@ async fn connect_broker(
             }
         }
     }
+
+    tracing::info!(
+        host = %host,
+        port = broker.port,
+        max_packet_bytes = MQTT_MAX_PACKET_BYTES,
+        "connecting to broker"
+    );
 
     let (client, mut eventloop) = AsyncClient::new(options, EVENTLOOP_CAP);
     let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
@@ -601,6 +613,15 @@ mod tests {
         assert!(
             build_tls(Some(&c), BrokerRole::Local).is_err(),
             "an unreadable CA must error, never silently connect"
+        );
+    }
+
+    #[test]
+    fn mqtt_packet_limit_is_at_least_emqx_default() {
+        assert_eq!(
+            1024 * 1024,
+            MQTT_MAX_PACKET_BYTES,
+            "EdgeCommons must not inherit rumqttc's 10 KiB packet default"
         );
     }
 

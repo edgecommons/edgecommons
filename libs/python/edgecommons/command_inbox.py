@@ -60,9 +60,13 @@ effective-config publisher and the republish listener. Only the ``main``-instanc
 inbox is subscribed in this slice; per-instance inboxes ride the full ``commands()``
 facade (Phase 5).
 """
+import hashlib
+import json
 import logging
 import threading
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Set
+from collections.abc import Mapping
+from copy import deepcopy
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Set
 
 from edgecommons.uns import Uns, UnsClass, UnsScope
 
@@ -76,6 +80,9 @@ PING = "ping"
 
 #: The re-fetch/re-apply-configuration built-in verb.
 RELOAD_CONFIG = "reload-config"
+
+#: The descriptor discovery built-in verb.
+DESCRIBE = "describe"
 
 #: The return-my-redacted-effective-config built-in verb (Flow B).
 GET_CONFIGURATION = "get-configuration"
@@ -101,7 +108,7 @@ ERR_NO_CONFIG = "NO_CONFIG"
 SET_CONFIG_VERB = "set-config"
 
 #: The built-in verbs (registered at construction; shadowing/unregistering is rejected).
-BUILT_IN_VERBS = frozenset({PING, RELOAD_CONFIG, GET_CONFIGURATION})
+BUILT_IN_VERBS = frozenset({PING, DESCRIBE, RELOAD_CONFIG, GET_CONFIGURATION})
 
 #: Verbs owned by other library subscriptions on the same inbox path - always ignored.
 DELEGATED_VERBS = frozenset({SET_CONFIG_VERB})
@@ -145,6 +152,7 @@ class CommandInbox:
     # Re-exported as class attributes for parity with the Java constants
     # (``CommandInbox.PING`` etc.) and for conformance tests.
     PING = PING
+    DESCRIBE = DESCRIBE
     RELOAD_CONFIG = RELOAD_CONFIG
     GET_CONFIGURATION = GET_CONFIGURATION
     CMD_MESSAGE_VERSION = CMD_MESSAGE_VERSION
@@ -164,7 +172,7 @@ class CommandInbox:
         config_reload: Callable[[], bool],
         redacted_config: Callable[[], Optional[dict]],
     ):
-        """Creates the inbox and registers the three built-in verbs. The verb
+        """Creates the inbox and registers the built-in verbs. The verb
         *actions* are injected seams so the built-ins unit-test deterministically;
         the ``EdgeCommons`` runtime wires the real ones.
 
@@ -198,6 +206,7 @@ class CommandInbox:
 
         # verb -> handler; built-ins seeded here, custom verbs via register().
         self._handlers: Dict[str, CommandHandler] = {}
+        self._panels: Dict[str, dict] = {}
 
         # ping -> the state keepalive's RUNNING body shape: proves the component is
         # not just alive (the keepalive does that) but RESPONSIVE to addressed
@@ -218,6 +227,23 @@ class CommandInbox:
                 )
             return {"reloaded": True}
 
+        def _describe(request):
+            commands = [
+                {"verb": verb, "builtIn": verb in BUILT_IN_VERBS}
+                for verb in sorted(self._handlers.keys())
+            ]
+            panels = self._panel_descriptor()
+            manifest = {
+                "schemaVersion": "edgecommons.component.describe.v1",
+                "commands": commands,
+                "panels": panels,
+            }
+            component = self._component_descriptor()
+            if component is not None:
+                manifest["component"] = component
+            manifest["digest"] = _describe_digest(commands, panels)
+            return manifest
+
         # get-configuration (Flow B) -> the cfg class's body shape, as a reply.
         def _get_configuration(request):
             config = redacted_config()
@@ -228,6 +254,7 @@ class CommandInbox:
             return {"config": config}
 
         self._handlers[PING] = _ping
+        self._handlers[DESCRIBE] = _describe
         self._handlers[RELOAD_CONFIG] = _reload_config
         self._handlers[GET_CONFIGURATION] = _get_configuration
 
@@ -300,6 +327,55 @@ class CommandInbox:
     def verbs(self) -> Set[str]:
         """The currently registered verbs (built-ins + custom) - a snapshot copy."""
         return set(self._handlers.keys())
+
+    def register_panel(self, panel: Mapping[str, Any]) -> None:
+        """Registers a descriptor panel view for the built-in ``describe`` verb.
+
+        The core library validates only the cross-language contract: the panel must
+        be a JSON object with non-empty string ``id`` and ``title`` fields, and ids
+        cannot be duplicated. All other descriptor fields are console-interpreted.
+        """
+        if not isinstance(panel, Mapping):
+            raise ValueError("panel must be a JSON object")
+        panel_id = panel.get("id")
+        if not isinstance(panel_id, str) or not panel_id:
+            raise ValueError("panel id must be a non-empty string")
+        title = panel.get("title")
+        if not isinstance(title, str) or not title:
+            raise ValueError("panel title must be a non-empty string")
+        if panel_id in self._panels:
+            raise ValueError(f"panel id '{panel_id}' is already registered")
+        self._panels[panel_id] = deepcopy(dict(panel))
+        logger.debug("Command panel '%s' registered", panel_id)
+
+    def panels(self) -> list:
+        """The registered descriptor panel views - a snapshot copy."""
+        return [deepcopy(panel) for panel in self._panels.values()]
+
+    def _panel_descriptor(self) -> dict:
+        views = self.panels()
+        identity = self._safe_component_identity()
+        panels = {
+            "schemaVersion": "edgecommons.panels.v2",
+            "provider": identity.component if identity is not None else "component",
+            "renderer": "descriptor",
+            "views": views,
+        }
+        if views:
+            panels["defaultView"] = views[0]["id"]
+        return panels
+
+    def _component_descriptor(self) -> Optional[dict]:
+        identity = self._safe_component_identity()
+        if identity is None:
+            return None
+        return identity.to_dict()
+
+    def _safe_component_identity(self):
+        try:
+            return self._config_manager.get_component_identity()
+        except Exception:  # noqa: BLE001 - describe is best-effort discovery metadata
+            return None
 
     def start(self) -> None:
         """Builds the own-inbox wildcard (``ecv1/{device}/{component}/main/cmd/#``,
@@ -462,3 +538,12 @@ class CommandInbox:
 def _error_body(code: str, message: Optional[str]) -> dict:
     """The error reply body ``{"ok": false, "error": {"code", "message"}}``."""
     return {"ok": False, "error": {"code": code, "message": message if message is not None else ""}}
+
+
+def _describe_digest(commands: list, panels: dict) -> str:
+    payload = json.dumps(
+        {"commands": commands, "panels": panels},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()

@@ -297,7 +297,7 @@ with correct units (fixes Java H4 unit/precision bug).
 
 ### 9.5 Logging
 
-`tracing` + `tracing-subscriber` with an `EnvFilter` behind a `reload::Handle` for runtime level changes, and `tracing-appender` (non-blocking, rolling) for file output. Maps the config `logging` section: `level`, `format`, `fileLogging`, per-logger levels (`loggers`), and `globalControl`. Runtime reconfiguration applied in exactly one place driven by the config watch channel (fixes Java M4 double-reconfigure).
+`tracing` + `tracing-subscriber` with an `EnvFilter` behind a `reload::Handle` for runtime level changes, and size-rotated file output. Maps the config `logging` section: `level`, `rust_format`, `fileLogging`, per-logger levels (`loggers`), and `globalControl`. Token formats support `{timestamp}`, `{level}`, `{component}`/`{componentName}`, `{target}`, and `{message}`. Runtime reconfiguration applied in exactly one place driven by the config watch channel (fixes Java M4 double-reconfigure).
 
 > This is the subsystem with the largest semantic gap from Java's Log4j2 model (see §17). Per-logger dynamic levels map to `EnvFilter` directives; full appender swap at runtime is more constrained but achievable.
 

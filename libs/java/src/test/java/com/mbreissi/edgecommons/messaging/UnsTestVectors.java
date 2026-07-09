@@ -254,10 +254,10 @@ final class UnsTestVectors {
 
         // ---- a LIVE inbox with the pinned action seams the vectors document ----
         JsonArray verbs = doc.getAsJsonArray("verbs");
-        assertEquals(3, verbs.size(), "commands.json must pin exactly the three built-in verbs");
-        String[] expectedVerbs = {CommandInbox.PING, CommandInbox.RELOAD_CONFIG,
+        assertEquals(4, verbs.size(), "commands.json must pin exactly the four built-in verbs");
+        String[] expectedVerbs = {CommandInbox.PING, CommandInbox.DESCRIBE, CommandInbox.RELOAD_CONFIG,
                 CommandInbox.GET_CONFIGURATION};
-        JsonObject pinnedConfig = verbs.get(2).getAsJsonObject()
+        JsonObject pinnedConfig = findCommandCase(verbs, CommandInbox.GET_CONFIGURATION)
                 .getAsJsonObject("reply").getAsJsonObject("body")
                 .getAsJsonObject("result").getAsJsonObject("config");
         MockConfigurationService config = new MockConfigurationService();
@@ -297,6 +297,16 @@ final class UnsTestVectors {
                         CommandInbox.ERR_RELOAD_FAILED, CommandInbox.ERR_NO_CONFIG),
                 stringSet(behavior, "errorCodes"),
                 "errorCodes must equal the implementation's pinned base codes");
+    }
+
+    private static JsonObject findCommandCase(JsonArray verbs, String name) {
+        for (JsonElement el : verbs) {
+            JsonObject c = el.getAsJsonObject();
+            if (name.equals(c.get("name").getAsString())) {
+                return c;
+            }
+        }
+        throw new AssertionError("commands.json missing command case " + name);
     }
 
     /**

@@ -1,5 +1,5 @@
 {
-  "logging": { "level": "DEBUG", "rust_format": "{timestamp} [{level}] {target} - {message}" },
+  "logging": { "level": "DEBUG", "rust_format": "{timestamp} [{level}] [{component}] {target} - {message}" },
   "hierarchy": { "levels": ["site", "device"] },
   "identity": { "site": "factory-1" },
   "heartbeat": {

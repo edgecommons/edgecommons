@@ -217,7 +217,7 @@ ComponentConfiguration:
     ComponentConfig:
       logging:
         level: "INFO"
-        rust_format: "{timestamp} [{level}] {target} - {message}"
+        rust_format: "{timestamp} [{level}] [{component}] {target} - {message}"
       heartbeat:
         enabled: true
         intervalSecs: 5

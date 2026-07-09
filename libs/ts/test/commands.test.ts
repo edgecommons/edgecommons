@@ -146,6 +146,51 @@ describe("CommandInbox", () => {
     expect(result.uptimeSecs).toBe(1234);
   });
 
+  it("describe includes component identity, built-ins, custom verbs, panels, and a stable digest", async () => {
+    inbox.register("sb/browse", () => ({ nodes: [] }));
+    const overview = {
+      id: "overview",
+      title: "Overview",
+      order: 10,
+      scope: "component",
+      widgets: [{ kind: "summary", id: "summary", title: "Summary", rows: [{ label: "Endpoint", value: "opc.tcp" }] }],
+    };
+    inbox.registerPanel(overview);
+
+    await inbox.start();
+    await deliver(messaging, topic(CommandInbox.DESCRIBE), request(CommandInbox.DESCRIBE));
+    const body = onlyReplyBody(messaging);
+    expect(body.ok).toBe(true);
+    const result = body.result as Record<string, unknown>;
+    expect(result.schemaVersion).toBe("edgecommons.component.describe.v1");
+    expect(result.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(result.component).toEqual({
+      hier: [{ level: "device", value: "test-thing" }],
+      path: "test-thing",
+      component: "TestComponent",
+      instance: "main",
+    });
+    expect(result.commands).toEqual([
+      { verb: CommandInbox.DESCRIBE, builtIn: true },
+      { verb: CommandInbox.GET_CONFIGURATION, builtIn: true },
+      { verb: CommandInbox.PING, builtIn: true },
+      { verb: CommandInbox.RELOAD_CONFIG, builtIn: true },
+      { verb: "sb/browse", builtIn: false },
+    ]);
+    expect(result.panels).toEqual({
+      schemaVersion: "edgecommons.panels.v2",
+      provider: "TestComponent",
+      renderer: "descriptor",
+      defaultView: "overview",
+      views: [overview],
+    });
+
+    messaging.published.length = 0;
+    await deliver(messaging, topic(CommandInbox.DESCRIBE), request(CommandInbox.DESCRIBE));
+    const secondBody = onlyReplyBody(messaging);
+    expect((secondBody.result as Record<string, unknown>).digest).toBe(result.digest);
+  });
+
   it("reply carries the request's correlation_id, verb name, and responder identity", async () => {
     await inbox.start();
     const ping = request(CommandInbox.PING);
@@ -265,6 +310,9 @@ describe("CommandInbox", () => {
     expect(() => inbox.register(CommandInbox.PING, () => null), "a built-in verb cannot be shadowed").toThrow(
       /built-in/,
     );
+    expect(() => inbox.register(CommandInbox.DESCRIBE, () => null), "describe cannot be shadowed").toThrow(
+      /built-in/,
+    );
     expect(
       () => inbox.register(CommandInbox.SET_CONFIG_VERB, () => null),
       "a delegated verb cannot be registered",
@@ -288,6 +336,7 @@ describe("CommandInbox", () => {
     expect(inbox.verbs().has("mine")).toBe(false);
     expect(() => inbox.unregister("mine")).not.toThrow(); // unknown -> no-op
     expect(() => inbox.unregister(CommandInbox.RELOAD_CONFIG)).toThrow(/built-in/);
+    expect(() => inbox.unregister(CommandInbox.DESCRIBE)).toThrow(/built-in/);
     // The unregistered verb now gets the unknown-verb error.
     await inbox.start();
     await deliver(messaging, topic("mine"), request("mine"));
@@ -297,8 +346,27 @@ describe("CommandInbox", () => {
   it("verbs() snapshot contains built-ins and customs", () => {
     inbox.register("mine", () => null);
     expect(inbox.verbs()).toEqual(
-      new Set([CommandInbox.PING, CommandInbox.RELOAD_CONFIG, CommandInbox.GET_CONFIGURATION, "mine"]),
+      new Set([
+        CommandInbox.PING,
+        CommandInbox.DESCRIBE,
+        CommandInbox.GET_CONFIGURATION,
+        CommandInbox.RELOAD_CONFIG,
+        "mine",
+      ]),
     );
+  });
+
+  it("registerPanel rejects invalid panels and duplicate ids", () => {
+    expect(() => inbox.registerPanel(null as unknown as Record<string, unknown>)).toThrow(/JSON object/);
+    expect(() => inbox.registerPanel([] as unknown as Record<string, unknown>)).toThrow(/JSON object/);
+    expect(() => inbox.registerPanel({ title: "Overview" })).toThrow(/id/);
+    expect(() => inbox.registerPanel({ id: "", title: "Overview" })).toThrow(/id/);
+    expect(() => inbox.registerPanel({ id: "overview" })).toThrow(/title/);
+    expect(() => inbox.registerPanel({ id: "overview", title: "" })).toThrow(/title/);
+
+    inbox.registerPanel({ id: "overview", title: "Overview" });
+    expect(inbox.panels()).toEqual([{ id: "overview", title: "Overview" }]);
+    expect(() => inbox.registerPanel({ id: "overview", title: "Other" })).toThrow(/already registered/);
   });
 
   // ===================== unknown / fire-and-forget / malformed =====================

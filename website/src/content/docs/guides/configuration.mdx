@@ -229,7 +229,7 @@ multi-instance components.
 
 ```json
 {
-  "logging": { "level": "DEBUG", "rust_format": "{timestamp} [{level}] {target} - {message}" },
+  "logging": { "level": "DEBUG", "rust_format": "{timestamp} [{level}] [{component}] {target} - {message}" },
   "heartbeat": { "enabled": true, "intervalSecs": 5, "measures": { "cpu": true, "memory": true }, "destination": "local" },
   "metricEmission": { "target": "log", "namespace": "edgecommons" },
   "hierarchy": { "levels": ["site", "device"] },

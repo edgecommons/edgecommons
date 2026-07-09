@@ -9,11 +9,13 @@ import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.test.MockConfigurationService;
 import com.mbreissi.edgecommons.test.MockMessagingService;
 import com.mbreissi.edgecommons.uns.UnsValidationException;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -96,6 +98,18 @@ class CommandInboxTest {
         MockMessagingService.PublishedMessage published = messaging.getPublishedMessages().get(0);
         assertEquals(REPLY_TO, published.topic, "the reply must go to the request's reply_to");
         return published.message.toDict().getAsJsonObject("body");
+    }
+
+    private static void assertVerb(JsonArray verbs, String verb, boolean builtIn) {
+        for (int i = 0; i < verbs.size(); i++) {
+            JsonObject entry = verbs.get(i).getAsJsonObject();
+            if (verb.equals(entry.get("verb").getAsString())) {
+                assertEquals(builtIn, entry.get("builtIn").getAsBoolean(),
+                        "builtIn flag for " + verb);
+                return;
+            }
+        }
+        throw new AssertionError("verb not present in describe output: " + verb);
     }
 
     // ===================== subscription lifecycle =====================
@@ -220,6 +234,54 @@ class CommandInboxTest {
                 body.getAsJsonObject("error").get("code").getAsString());
     }
 
+    @Test
+    void describeIncludesBuiltInsCustomVerbsAndPanels() {
+        JsonObject panel = JsonParser.parseString("""
+                {
+                  "id": "address-space",
+                  "title": "Address Space",
+                  "order": 20,
+                  "widgets": [
+                    {
+                      "kind": "treeBrowser",
+                      "id": "address-space-tree",
+                      "browseVerb": "sb/browse"
+                    }
+                  ]
+                }
+                """).getAsJsonObject();
+        inbox.register("sb/browse", req -> new JsonObject());
+        inbox.registerPanel(panel);
+
+        inbox.start();
+        messaging.simulateMessage(topic(CommandInbox.DESCRIBE), request(CommandInbox.DESCRIBE));
+
+        JsonObject body = onlyReplyBody();
+        assertTrue(body.get("ok").getAsBoolean());
+        JsonObject result = body.getAsJsonObject("result");
+        assertEquals(CommandInbox.DESCRIBE_SCHEMA_VERSION,
+                result.get("schemaVersion").getAsString());
+        assertTrue(result.get("digest").getAsString().matches("sha256:[0-9a-f]{64}"));
+        assertNotNull(result.getAsJsonObject("component"));
+
+        JsonArray verbs = result.getAsJsonArray("commands");
+        assertVerb(verbs, CommandInbox.PING, true);
+        assertVerb(verbs, CommandInbox.DESCRIBE, true);
+        assertVerb(verbs, CommandInbox.GET_CONFIGURATION, true);
+        assertVerb(verbs, CommandInbox.RELOAD_CONFIG, true);
+        assertVerb(verbs, "sb/browse", false);
+
+        JsonObject panels = result.getAsJsonObject("panels");
+        assertEquals(CommandInbox.PANELS_SCHEMA_VERSION,
+                panels.get("schemaVersion").getAsString());
+        assertEquals("TestComponent", panels.get("provider").getAsString());
+        assertEquals("descriptor", panels.get("renderer").getAsString());
+        assertEquals("address-space", panels.get("defaultView").getAsString());
+        JsonArray views = panels.getAsJsonArray("views");
+        assertEquals(1, views.size());
+        assertEquals(panel, views.get(0).getAsJsonObject());
+    }
+
     // ===================== custom verbs (the registration seam) =====================
 
     @Test
@@ -311,7 +373,61 @@ class CommandInboxTest {
     void verbsSnapshotContainsBuiltInsAndCustoms() {
         inbox.register("mine", req -> null);
         assertEquals(Set.of(CommandInbox.PING, CommandInbox.RELOAD_CONFIG,
-                CommandInbox.GET_CONFIGURATION, "mine"), inbox.verbs());
+                CommandInbox.GET_CONFIGURATION, CommandInbox.DESCRIBE, "mine"), inbox.verbs());
+    }
+
+    @Test
+    void panelsSnapshotContainsRegisteredViews() {
+        JsonObject panel = JsonParser.parseString("""
+                {"id":"overview","title":"Overview","scope":"component"}
+                """).getAsJsonObject();
+        inbox.registerPanel(panel);
+        List<JsonObject> snapshot = inbox.panels();
+        assertEquals(List.of(panel), snapshot);
+
+        snapshot.get(0).addProperty("title", "Mutated");
+        assertEquals("Overview", inbox.panels().get(0).get("title").getAsString(),
+                "panels() must return a snapshot copy");
+    }
+
+    @Test
+    void registerPanelRejectsInvalidPanelsAndDuplicateIds() {
+        assertThrows(NullPointerException.class, () -> inbox.registerPanel(null),
+                "panel must be a JSON object");
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.registerPanel(JsonParser.parseString("""
+                        {"title":"Overview"}
+                        """).getAsJsonObject()),
+                "id is required");
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.registerPanel(JsonParser.parseString("""
+                        {"id":"","title":"Overview"}
+                        """).getAsJsonObject()),
+                "id must be non-empty");
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.registerPanel(JsonParser.parseString("""
+                        {"id":7,"title":"Overview"}
+                        """).getAsJsonObject()),
+                "id must be a string");
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.registerPanel(JsonParser.parseString("""
+                        {"id":"overview"}
+                        """).getAsJsonObject()),
+                "title is required");
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.registerPanel(JsonParser.parseString("""
+                        {"id":"overview","title":""}
+                        """).getAsJsonObject()),
+                "title must be non-empty");
+
+        inbox.registerPanel(JsonParser.parseString("""
+                {"id":"overview","title":"Overview"}
+                """).getAsJsonObject());
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.registerPanel(JsonParser.parseString("""
+                        {"id":"overview","title":"Different"}
+                        """).getAsJsonObject()),
+                "duplicate ids are rejected");
     }
 
     // ===================== unknown / fire-and-forget / malformed =====================

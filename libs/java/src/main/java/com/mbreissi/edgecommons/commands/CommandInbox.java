@@ -12,10 +12,21 @@ import com.mbreissi.edgecommons.messaging.MessagingClient;
 import com.mbreissi.edgecommons.uns.Uns;
 import com.mbreissi.edgecommons.uns.UnsClass;
 import com.mbreissi.edgecommons.uns.UnsScope;
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -85,6 +96,7 @@ import java.util.function.Supplier;
 public final class CommandInbox implements AutoCloseable {
 
     private static final Logger LOGGER = LogManager.getLogger(CommandInbox.class);
+    private static final Gson GSON = new Gson();
 
     /** The liveness/echo built-in verb. */
     public static final String PING = "ping";
@@ -94,6 +106,15 @@ public final class CommandInbox implements AutoCloseable {
 
     /** The return-my-redacted-effective-config built-in verb (Flow B). */
     public static final String GET_CONFIGURATION = "get-configuration";
+
+    /** The descriptor-discovery built-in verb. */
+    public static final String DESCRIBE = "describe";
+
+    /** The descriptor command schema version. */
+    public static final String DESCRIBE_SCHEMA_VERSION = "edgecommons.component.describe.v1";
+
+    /** The panel descriptor schema version. */
+    public static final String PANELS_SCHEMA_VERSION = "edgecommons.panels.v2";
 
     /** The command request/reply envelope version. */
     public static final String CMD_MESSAGE_VERSION = "1.0";
@@ -118,7 +139,8 @@ public final class CommandInbox implements AutoCloseable {
     public static final String SET_CONFIG_VERB = "set-config";
 
     /** The built-in verbs (registered at construction; shadowing/unregistering is rejected). */
-    public static final Set<String> BUILT_IN_VERBS = Set.of(PING, RELOAD_CONFIG, GET_CONFIGURATION);
+    public static final Set<String> BUILT_IN_VERBS = Set.of(PING, RELOAD_CONFIG,
+            GET_CONFIGURATION, DESCRIBE);
 
     /** Verbs owned by other library subscriptions on the same inbox path — always ignored. */
     public static final Set<String> DELEGATED_VERBS = Set.of(SET_CONFIG_VERB);
@@ -127,6 +149,8 @@ public final class CommandInbox implements AutoCloseable {
     private final MessagingClient messagingClient;
     /** verb → handler; built-ins seeded at construction, custom verbs via {@link #register}. */
     private final Map<String, CommandHandler> handlers = new ConcurrentHashMap<>();
+    /** panel id → descriptor; custom panels via {@link #registerPanel(JsonObject)}. */
+    private final Map<String, JsonObject> panels = Collections.synchronizedMap(new LinkedHashMap<>());
 
     /** The subscribed inbox filter ({@code …/cmd/#}); null until {@link #start()} builds it. */
     private String inboxFilter;
@@ -137,7 +161,7 @@ public final class CommandInbox implements AutoCloseable {
     private boolean closed = false;
 
     /**
-     * Creates the inbox and registers the three built-in verbs. The verb <em>actions</em> are
+     * Creates the inbox and registers the built-in verbs. The verb <em>actions</em> are
      * injected seams so the built-ins unit-test deterministically; the {@code EdgeCommons} runtime
      * wires the real ones.
      *
@@ -193,6 +217,8 @@ public final class CommandInbox implements AutoCloseable {
             result.add("config", config);
             return result;
         });
+        // describe -> descriptor-discovery manifest for console component-detail panels.
+        handlers.put(DESCRIBE, request -> describe());
     }
 
     /**
@@ -254,6 +280,129 @@ public final class CommandInbox implements AutoCloseable {
     /** The currently registered verbs (built-ins + custom) — a snapshot copy. */
     public Set<String> verbs() {
         return Set.copyOf(handlers.keySet());
+    }
+
+    /**
+     * Registers a component-detail panel descriptor for {@value #DESCRIBE}. The core library
+     * validates only the stable discovery contract: a panel is a JSON object with non-empty string
+     * {@code id} and {@code title}, and {@code id} is unique. All other descriptor fields are
+     * carried through for the console-owned renderer.
+     *
+     * @param panel the panel descriptor to register
+     * @throws NullPointerException     when {@code panel} is null
+     * @throws IllegalArgumentException when {@code id}/{@code title} is missing, non-string, empty,
+     *                                  or {@code id} is already registered
+     */
+    public synchronized void registerPanel(JsonObject panel) {
+        Objects.requireNonNull(panel, "panel must not be null");
+        String id = requiredPanelString(panel, "id");
+        requiredPanelString(panel, "title");
+        if (panels.containsKey(id)) {
+            throw new IllegalArgumentException("panel id '" + id + "' is already registered");
+        }
+        panels.put(id, panel.deepCopy());
+    }
+
+    /** The currently registered panel descriptors — a snapshot copy. */
+    public synchronized List<JsonObject> panels() {
+        List<JsonObject> snapshot = new ArrayList<>();
+        for (JsonObject panel : panels.values()) {
+            snapshot.add(panel.deepCopy());
+        }
+        return List.copyOf(snapshot);
+    }
+
+    private static String requiredPanelString(JsonObject panel, String field) {
+        if (!panel.has(field) || !panel.get(field).isJsonPrimitive()
+                || !panel.get(field).getAsJsonPrimitive().isString()) {
+            throw new IllegalArgumentException("panel." + field
+                    + " must be a non-empty string");
+        }
+        String value = panel.get(field).getAsString();
+        if (value.isEmpty()) {
+            throw new IllegalArgumentException("panel." + field
+                    + " must be a non-empty string");
+        }
+        return value;
+    }
+
+    private JsonObject describe() {
+        JsonObject result = new JsonObject();
+        result.addProperty("schemaVersion", DESCRIBE_SCHEMA_VERSION);
+
+        MessageIdentity identity = configManager.getComponentIdentity();
+        if (identity != null) {
+            result.add("component", identity.toDict());
+        }
+
+        JsonArray commands = new JsonArray();
+        handlers.keySet().stream().sorted().forEach(verb -> {
+            JsonObject entry = new JsonObject();
+            entry.addProperty("verb", verb);
+            entry.addProperty("builtIn", BUILT_IN_VERBS.contains(verb));
+            commands.add(entry);
+        });
+        result.add("commands", commands);
+
+        JsonArray views = new JsonArray();
+        for (JsonObject panel : panels()) {
+            views.add(panel);
+        }
+        JsonObject panelSet = new JsonObject();
+        panelSet.addProperty("schemaVersion", PANELS_SCHEMA_VERSION);
+        panelSet.addProperty("provider", identity == null ? "component" : identity.getComponent());
+        panelSet.addProperty("renderer", "descriptor");
+        if (views.size() > 0) {
+            panelSet.addProperty("defaultView",
+                    views.get(0).getAsJsonObject().get("id").getAsString());
+        }
+        panelSet.add("views", views);
+        result.add("panels", panelSet);
+
+        JsonObject digestSource = new JsonObject();
+        digestSource.add("commands", commands.deepCopy());
+        digestSource.add("panels", panelSet.deepCopy());
+        result.addProperty("digest", sha256Digest(digestSource));
+
+        return result;
+    }
+
+    private static String sha256Digest(JsonObject source) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(stableJson(source).getBytes(StandardCharsets.UTF_8));
+            return "sha256:" + HexFormat.of().formatHex(bytes);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 digest algorithm is unavailable", e);
+        }
+    }
+
+    private static String stableJson(JsonElement element) {
+        if (element == null || element.isJsonNull() || element.isJsonPrimitive()) {
+            return element == null ? "null" : element.toString();
+        }
+        if (element.isJsonArray()) {
+            StringBuilder out = new StringBuilder("[");
+            JsonArray array = element.getAsJsonArray();
+            for (int i = 0; i < array.size(); i++) {
+                if (i > 0) {
+                    out.append(',');
+                }
+                out.append(stableJson(array.get(i)));
+            }
+            return out.append(']').toString();
+        }
+        StringBuilder out = new StringBuilder("{");
+        boolean first = true;
+        for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey()).toList()) {
+            if (!first) {
+                out.append(',');
+            }
+            out.append(GSON.toJson(entry.getKey())).append(':').append(stableJson(entry.getValue()));
+            first = false;
+        }
+        return out.append('}').toString();
     }
 
     /**

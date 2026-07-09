@@ -27,9 +27,10 @@
 //!   - `"json"` (case-insensitive) → the structured **stdout-JSON** sink ([`JsonLayer`],
 //!     FR-LOG-1): one JSON object per line on stdout, **stdout-only** — no in-process file
 //!     rotation is installed (FR-LOG-2), so a read-only root FS never breaks logging. Best-effort
-//!     correlation fields (`pod`/`namespace`/`node`/`thing`) are added when present (FR-LOG-3).
-//!   - any other token (`{timestamp}` `{level}` `{target}` `{message}`) → the custom
-//!     [`TokenLayer`] (console + optional rotating file).
+//!     correlation fields (`pod`/`namespace`/`node`/`thing`/`component`) are added when present
+//!     (FR-LOG-3).
+//!   - any other token (`{timestamp}` `{level}` `{component}`/`{componentName}` `{target}`
+//!     `{message}`) → the custom [`TokenLayer`] (console + optional rotating file).
 //!   - `None` → the default `fmt` layers (console + optional rotating file).
 //! - The KUBERNETES profile default is threaded into [`init`] as `profile_format_default` (the
 //!   resolved platform is known before the component config loads); precedence FR-RT-3.
@@ -114,7 +115,7 @@ pub fn init(config: &Config, profile_format_default: Option<&str>) {
         // fields are captured once here from the env + the resolved identity (FR-LOG-3).
         Some(ref fmt) if selects_json(fmt) => {
             let env: HashMap<String, String> = std::env::vars().collect();
-            let correlation = correlation_fields(&env, &config.thing_name);
+            let correlation = correlation_fields(&env, &config.thing_name, &config.component_name);
             tracing_subscriber::registry()
                 .with(filter_layer)
                 .with(JsonLayer { correlation })
@@ -126,6 +127,7 @@ pub fn init(config: &Config, profile_format_default: Option<&str>) {
             .with(filter_layer)
             .with(TokenLayer {
                 template,
+                component: config.component_name.clone(),
                 file: file_writer,
             })
             .try_init()
@@ -184,11 +186,13 @@ fn installs_file_appender(config: &Config, effective: Option<&str>) -> bool {
 }
 
 /// A `tracing` layer that renders each event from a `rust_format` token template
-/// (`{timestamp}` `{level}` `{target}` `{message}`) to stdout and, optionally, a
-/// rotating file. Installed only when `logging.rust_format` is configured; the
-/// format is fixed at [`init`] (tracing layers cannot be swapped at runtime).
+/// (`{timestamp}` `{level}` `{component}`/`{componentName}` `{target}` `{message}`)
+/// to stdout and, optionally, a rotating file. Installed only when `logging.rust_format`
+/// is configured; the format is fixed at [`init`] (tracing layers cannot be swapped at
+/// runtime).
 struct TokenLayer {
     template: String,
+    component: String,
     file: Option<RotatingFileMakeWriter>,
 }
 
@@ -197,12 +201,15 @@ fn render_template(
     template: &str,
     timestamp: &str,
     level: &str,
+    component: &str,
     target: &str,
     message: &str,
 ) -> String {
     template
         .replace("{timestamp}", timestamp)
         .replace("{level}", level)
+        .replace("{component}", component)
+        .replace("{componentName}", component)
         .replace("{target}", target)
         .replace("{message}", message)
 }
@@ -235,6 +242,7 @@ where
             &self.template,
             timestamp.trim(),
             meta.level().as_str(),
+            &self.component,
             meta.target(),
             &message,
         );
@@ -251,12 +259,14 @@ where
 /// sink on the KUBERNETES platform. Each line carries at least `timestamp`, `level`, `logger`
 /// (the event target/name), and `message`, plus every other structured event field (so a logged
 /// `error`/`exception` field is preserved verbatim — "thrown when present"), plus the best-effort
-/// correlation fields captured at install (FR-LOG-3). The sink is **stdout-only**: no file rotation
-/// is installed (FR-LOG-2). Installed only when the effective format is the `json` token; the
-/// format is fixed at [`init`] (tracing layers cannot be swapped at runtime).
+/// correlation fields captured at install (FR-LOG-3), including the component name. The sink is
+/// **stdout-only**: no file rotation is installed (FR-LOG-2). Installed only when the effective
+/// format is the `json` token; the format is fixed at [`init`] (tracing layers cannot be swapped at
+/// runtime).
 struct JsonLayer {
-    /// `(json key, value)` for the present correlation fields (`pod`/`namespace`/`node`/`thing`).
-    /// Absent fields are omitted entirely, so no empty/null noise is emitted.
+    /// `(json key, value)` for the present correlation fields
+    /// (`pod`/`namespace`/`node`/`thing`/`component`). Absent fields are omitted entirely, so no
+    /// empty/null noise is emitted.
     correlation: Vec<(&'static str, String)>,
 }
 
@@ -342,9 +352,14 @@ where
 /// resolved identity. Includes `pod`/`namespace`/`node` only when the matching Downward-API env var
 /// ([`crate::platform::ENV_K8S_POD_NAME`] / [`crate::platform::ENV_K8S_POD_NAMESPACE`] /
 /// [`crate::platform::ENV_K8S_NODE_NAME`] — the same vars wired in Phase 1b) is present and
-/// non-empty, and `thing` when the resolved identity is non-empty. Absent values are omitted (no
-/// empty/null noise). Pure (the env is injected) so it is unit-testable.
-fn correlation_fields(env: &HashMap<String, String>, thing: &str) -> Vec<(&'static str, String)> {
+/// non-empty, `thing` when the resolved identity is non-empty, and `component` when the component
+/// name is known. Absent values are omitted (no empty/null noise). Pure (the env is injected) so it
+/// is unit-testable.
+fn correlation_fields(
+    env: &HashMap<String, String>,
+    thing: &str,
+    component: &str,
+) -> Vec<(&'static str, String)> {
     let mut fields = Vec::new();
     for (key, var) in [
         ("pod", crate::platform::ENV_K8S_POD_NAME),
@@ -359,6 +374,9 @@ fn correlation_fields(env: &HashMap<String, String>, thing: &str) -> Vec<(&'stat
     }
     if !thing.is_empty() {
         fields.push(("thing", thing.to_string()));
+    }
+    if !component.is_empty() {
+        fields.push(("component", component.to_string()));
     }
     fields
 }
@@ -614,19 +632,31 @@ mod tests {
     #[test]
     fn render_template_substitutes_tokens() {
         let line = render_template(
-            "{timestamp} {level} {target}: {message}",
+            "{timestamp} {level} [{component}] {target}: {message}",
             "2026-01-01T00:00:00Z",
             "INFO",
+            "com.example.C",
             "edgecommons::x",
             "hello world",
         );
         assert_eq!(
             line,
-            "2026-01-01T00:00:00Z INFO edgecommons::x: hello world"
+            "2026-01-01T00:00:00Z INFO [com.example.C] edgecommons::x: hello world"
+        );
+        assert_eq!(
+            render_template("{componentName}", "t", "WARN", "com.example.C", "tgt", "m"),
+            "com.example.C"
         );
         // Unknown tokens are left as-is; a different layout is honored.
         assert_eq!(
-            render_template("[{level}] {message} {nope}", "t", "WARN", "tgt", "m"),
+            render_template(
+                "[{level}] {message} {nope}",
+                "t",
+                "WARN",
+                "com.example.C",
+                "tgt",
+                "m"
+            ),
             "[WARN] m {nope}"
         );
     }
@@ -971,7 +1001,7 @@ mod tests {
         );
     }
 
-    // ---------- FR-LOG-3: correlation_fields from the Downward API ----------
+    // ---------- FR-LOG-3: correlation_fields from identity + the Downward API ----------
 
     #[test]
     fn correlation_fields_from_full_downward_api_env() {
@@ -980,13 +1010,14 @@ mod tests {
             (crate::platform::ENV_K8S_POD_NAMESPACE, "team-a"),
             (crate::platform::ENV_K8S_NODE_NAME, "node-1"),
         ]);
-        let fields = correlation_fields(&e, "thing-1");
+        let fields = correlation_fields(&e, "thing-1", "com.example.C");
         assert_eq!(
             vec![
                 ("pod", "pod-7".to_string()),
                 ("namespace", "team-a".to_string()),
                 ("node", "node-1".to_string()),
                 ("thing", "thing-1".to_string()),
+                ("component", "com.example.C".to_string()),
             ],
             fields
         );
@@ -999,22 +1030,23 @@ mod tests {
             (crate::platform::ENV_K8S_POD_NAME, ""),
             (crate::platform::ENV_K8S_NODE_NAME, "node-1"),
         ]);
-        let fields = correlation_fields(&e, "thing-1");
+        let fields = correlation_fields(&e, "thing-1", "com.example.C");
         assert_eq!(
             vec![
                 ("node", "node-1".to_string()),
-                ("thing", "thing-1".to_string())
+                ("thing", "thing-1".to_string()),
+                ("component", "com.example.C".to_string())
             ],
             fields
         );
     }
 
     #[test]
-    fn correlation_fields_omits_thing_when_identity_empty() {
-        let fields = correlation_fields(&env(&[]), "");
+    fn correlation_fields_omits_empty_identity_values() {
+        let fields = correlation_fields(&env(&[]), "", "");
         assert!(
             fields.is_empty(),
-            "no env and empty identity → no correlation noise"
+            "no env and empty identity fields -> no correlation noise"
         );
     }
 
@@ -1098,7 +1130,8 @@ mod tests {
             RotatingFileWriter::open(base.clone(), 0, 1).unwrap(),
         )));
         let layer = TokenLayer {
-            template: "{level}|{target}|{message}".to_string(),
+            template: "{level}|{component}|{target}|{message}".to_string(),
+            component: "com.example.C".to_string(),
             file: Some(mw),
         };
         let subscriber = tracing_subscriber::registry()
@@ -1112,6 +1145,10 @@ mod tests {
         assert!(
             contents.contains("INFO|"),
             "level token rendered, got {contents:?}"
+        );
+        assert!(
+            contents.contains("INFO|com.example.C|"),
+            "component token rendered, got {contents:?}"
         );
         assert!(
             contents.contains("|hello token"),
