@@ -100,16 +100,11 @@ pub struct LoggingConfig {
 }
 
 /// `logging.publish.destination`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LoggingPublishDestination {
+    #[default]
     Local,
     Northbound,
-}
-
-impl Default for LoggingPublishDestination {
-    fn default() -> Self {
-        Self::Local
-    }
 }
 
 impl<'de> Deserialize<'de> for LoggingPublishDestination {
@@ -131,10 +126,11 @@ impl<'de> Deserialize<'de> for LoggingPublishDestination {
 }
 
 /// `logging.publish.minLevel`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LoggingPublishLevel {
     Trace,
     Debug,
+    #[default]
     Info,
     Warn,
     Error,
@@ -167,12 +163,6 @@ impl LoggingPublishLevel {
     }
 }
 
-impl Default for LoggingPublishLevel {
-    fn default() -> Self {
-        Self::Info
-    }
-}
-
 impl<'de> Deserialize<'de> for LoggingPublishLevel {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -196,15 +186,10 @@ impl<'de> Deserialize<'de> for LoggingPublishLevel {
 }
 
 /// `logging.publish.queue.onFull`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LoggingPublishQueueOnFull {
+    #[default]
     DropOldest,
-}
-
-impl Default for LoggingPublishQueueOnFull {
-    fn default() -> Self {
-        Self::DropOldest
-    }
 }
 
 impl<'de> Deserialize<'de> for LoggingPublishQueueOnFull {
