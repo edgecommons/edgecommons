@@ -451,7 +451,7 @@ design becomes closed:
 | `state` | `Heartbeat` | reserved, **automatic** | *(none — free)* / `getStatus()`* | `Heartbeat` → `ReservedPublisher` | **shipped** |
 | `metric` | `MetricEmitter` | reserved | `getMetrics()` / `gg.metrics()` | `MetricEmitter` → `ReservedPublisher` | **shipped** |
 | `cfg` | `EffectiveConfigPublisher` | reserved, **automatic** | *(none — free)* | that publisher → `ReservedPublisher` | **shipped** |
-| `log` | *(log-tail publisher)* | reserved | *(none — free)* | deferred | **deferred** |
+| `log` | `LogService` / structured log publisher | reserved | `getLogs()` / `logs()` | publisher → reserved seam | **shipped** |
 | `cmd` (inbound) | `CommandInbox` | request/reply | `getCommands()` / `gg.commands()` | inbox + `register(verb,handler)` | **shipped (all four languages)** |
 | **`data`** | **`DataFacade`** | **app-usable** | **`getData()` / `data()`** | **the facade (this doc)** | **shipped (all four languages)** |
 | **`evt`** | **`EventsFacade`** | **app-usable** | **`getEvents()` / `events()`** | **the facade (this doc)** | **shipped (all four languages)** |

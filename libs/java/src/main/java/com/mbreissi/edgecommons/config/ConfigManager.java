@@ -8,6 +8,7 @@ import com.mbreissi.edgecommons.ParsedCommandLine;
 import com.mbreissi.edgecommons.config.provider.ConfigProvider;
 import com.mbreissi.edgecommons.config.provider.ConfigProviderBuilder;
 import com.mbreissi.edgecommons.messaging.MessageIdentity;
+import com.mbreissi.edgecommons.logging.LogBusAppender;
 import com.mbreissi.edgecommons.platform.Platform;
 import com.mbreissi.edgecommons.platform.PlatformResolver;
 
@@ -912,6 +913,9 @@ public class ConfigManager
         
         if (globalControl) {
             new GlobalLoggingManager(this, true).configureGlobalLogging();
+            LoggerContext context = (LoggerContext) LogManager.getContext(false);
+            LoggingConfiguration.LogPublishConfiguration publishConfig = getLoggingConfig().getPublishConfig();
+            LogBusAppender.install(context, publishConfig.isEnabled() && publishConfig.isCaptureNative());
             return;
         }
         
@@ -980,6 +984,7 @@ public class ConfigManager
 
             AppenderComponentBuilder consoleAppender = builder.newAppender("Console", "Console")
                 .addAttribute("target", ConsoleAppender.Target.SYSTEM_OUT)
+                .addAttribute("follow", true)
                 .add(layoutBuilder);
 
             builder.add(consoleAppender);
@@ -1043,10 +1048,13 @@ public class ConfigManager
             
             // Build the new configuration
             Configuration newConfig = builder.build();
+            LoggingConfiguration.LogPublishConfiguration publishConfig = getLoggingConfig().getPublishConfig();
+            boolean enableNativeCapture = publishConfig.isEnabled() && publishConfig.isCaptureNative();
+            LogBusAppender.configure(newConfig, enableNativeCapture);
             
             // Apply the new configuration
-            context.start(newConfig);
-            context.updateLoggers();
+            context.reconfigure(newConfig);
+            LogBusAppender.install(context, enableNativeCapture);
             
             LOGGER.info("Logging reconfigured with root level: {} and format: {} (sink: {})",
                       rootLevel,

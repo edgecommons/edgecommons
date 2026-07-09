@@ -53,6 +53,68 @@ export class FileLoggingConfig {
   }
 }
 
+export type LoggingPublishDestination = "local" | "northbound";
+export type LoggingPublishLevel = "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR" | "FATAL";
+export type LoggingPublishOnFull = "dropOldest";
+
+export interface LoggingPublishQueueConfig {
+  maxRecords: number;
+  onFull: LoggingPublishOnFull;
+}
+
+export interface LoggingPublishRedactionConfig {
+  enabled: boolean;
+  replacement: string;
+  extraPatterns: string[];
+}
+
+/** `logging.publish` section. */
+export class LoggingPublishConfig {
+  enabled: boolean;
+  destination: LoggingPublishDestination;
+  minLevel: LoggingPublishLevel;
+  captureNative: boolean;
+  captureConsole: boolean;
+  maxRecordBytes: number;
+  queue: LoggingPublishQueueConfig;
+  redaction: LoggingPublishRedactionConfig;
+
+  constructor(raw: Record<string, unknown>) {
+    this.enabled = raw.enabled === true;
+    this.destination = raw.destination === "northbound" ? "northbound" : "local";
+    this.minLevel = parseLogPublishLevel(raw.minLevel);
+    this.captureNative = raw.captureNative === undefined ? true : raw.captureNative === true;
+    this.captureConsole = raw.captureConsole === true;
+    const maxRecordBytes = asInt(raw.maxRecordBytes);
+    this.maxRecordBytes = maxRecordBytes !== undefined && maxRecordBytes > 0 ? maxRecordBytes : 8192;
+
+    const queue = obj(raw.queue);
+    const maxRecords = asInt(queue.maxRecords);
+    this.queue = {
+      maxRecords: maxRecords !== undefined && maxRecords > 0 ? maxRecords : 1000,
+      onFull: "dropOldest",
+    };
+
+    const redaction = obj(raw.redaction);
+    this.redaction = {
+      enabled: redaction.enabled === undefined ? true : redaction.enabled === true,
+      replacement: typeof redaction.replacement === "string" ? redaction.replacement : "***",
+      extraPatterns: Array.isArray(redaction.extraPatterns)
+        ? redaction.extraPatterns.filter((v): v is string => typeof v === "string")
+        : [],
+    };
+  }
+}
+
+function parseLogPublishLevel(value: unknown): LoggingPublishLevel {
+  if (typeof value !== "string") return "INFO";
+  const upper = value.toUpperCase();
+  if (upper === "WARNING") return "WARN";
+  return ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"].includes(upper)
+    ? (upper as LoggingPublishLevel)
+    : "INFO";
+}
+
 /** `logging` section. */
 export class LoggingConfig {
   level?: string;
@@ -61,6 +123,7 @@ export class LoggingConfig {
   fileLogging?: FileLoggingConfig;
   loggers: Record<string, string>;
   globalControl: boolean;
+  publish: LoggingPublishConfig;
 
   constructor(raw: Record<string, unknown>) {
     this.level = typeof raw.level === "string" ? raw.level : undefined;
@@ -71,6 +134,7 @@ export class LoggingConfig {
       if (typeof v === "string") this.loggers[k] = v;
     }
     this.globalControl = raw.globalControl === true;
+    this.publish = new LoggingPublishConfig(obj(raw.publish));
   }
 }
 

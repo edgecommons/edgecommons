@@ -12,8 +12,20 @@ export type {
   RawConfig,
   Measures,
   ComponentConfig,
+  LoggingPublishDestination,
+  LoggingPublishLevel,
+  LoggingPublishOnFull,
+  LoggingPublishQueueConfig,
+  LoggingPublishRedactionConfig,
 } from "./model";
-export { LoggingConfig, FileLoggingConfig, HeartbeatConfig, MetricConfig, HealthConfig } from "./model";
+export {
+  LoggingConfig,
+  FileLoggingConfig,
+  LoggingPublishConfig,
+  HeartbeatConfig,
+  MetricConfig,
+  HealthConfig,
+} from "./model";
 export { resolve, sanitize } from "./template";
 export { validate } from "./validation";
 export type { ConfigSource } from "./source";

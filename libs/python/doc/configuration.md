@@ -103,6 +103,11 @@ These sections are managed by edgecommons and configure framework behavior:
 - **`metricEmission`**: Metrics collection and emission configuration
 - **`tags`**: Component tagging for organization and templating
 
+`logging.publish` is the optional structured log-bus publisher. When enabled, Python publishes
+`edgecommons.log.v1` records to `ecv1/{device}/{component}/main/log/{level}` through the reserved `log`
+class seam. It is disabled by default; `captureNative` observes stdlib `logging` records and
+`captureConsole` requests stdout/stderr capture where supported.
+
 ### Application Section
 The `component` section is reserved for application-specific configuration:
 
@@ -356,7 +361,7 @@ resolved_path = config_service.resolve_template("/data/{ThingName}/{site}/logs")
 {
   "logging": {
     "level": "DEBUG",
-    "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    "python_format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     "fileLogging": {
       "enabled": true,
       "filePath": "./logs/dev-{ComponentName}.log"

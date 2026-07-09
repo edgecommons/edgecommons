@@ -31,6 +31,7 @@ class ReservedTopicGuardTest {
     private static final String RESERVED_METRIC = "ecv1/gw-01/opcua-adapter/main/metric/m1";
     private static final String RESERVED_CFG = "ecv1/gw-01/opcua-adapter/main/cfg";
     private static final String RESERVED_LOG = "ecv1/gw-01/opcua-adapter/main/log/tail";
+    private static final String RESERVED_LOG_LEVEL = "ecv1/gw-01/opcua-adapter/main/log/error";
     private static final String ALLOWED_DATA = "ecv1/gw-01/opcua-adapter/main/data/temp";
 
     private MessagingProvider provider;
@@ -62,7 +63,8 @@ class ReservedTopicGuardTest {
 
     @Test
     void publishRejectsReservedTopics() {
-        for (String topic : new String[]{RESERVED_STATE, RESERVED_METRIC, RESERVED_CFG, RESERVED_LOG}) {
+        for (String topic : new String[]{RESERVED_STATE, RESERVED_METRIC, RESERVED_CFG,
+                RESERVED_LOG, RESERVED_LOG_LEVEL}) {
             ReservedTopicException ex = assertThrows(ReservedTopicException.class,
                     () -> client.publish(topic, message()), topic);
             assertEquals(topic, ex.getTopic());

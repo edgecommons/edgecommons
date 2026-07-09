@@ -160,6 +160,10 @@ impl ReservedMessaging for RecordingMessaging {
             .push((topic.to_string(), msg.clone()));
         Ok(())
     }
+
+    fn connected(&self) -> bool {
+        self.connected.load(Ordering::SeqCst)
+    }
 }
 
 #[async_trait]

@@ -276,4 +276,43 @@ describe("Config.fromValue", () => {
       expect(lc.fileLogging?.backupCount()).toBe(3);
     });
   });
+
+  describe("Logging publish config", () => {
+    it("applies log bus publishing defaults", () => {
+      const publish = Config.fromValue("c", "t", {}).parsed.logging.publish;
+      expect(publish.enabled).toBe(false);
+      expect(publish.destination).toBe("local");
+      expect(publish.minLevel).toBe("INFO");
+      expect(publish.captureNative).toBe(true);
+      expect(publish.captureConsole).toBe(false);
+      expect(publish.maxRecordBytes).toBe(8192);
+      expect(publish.queue).toEqual({ maxRecords: 1000, onFull: "dropOldest" });
+      expect(publish.redaction).toEqual({ enabled: true, replacement: "***", extraPatterns: [] });
+    });
+
+    it("parses explicit log bus publishing settings", () => {
+      const publish = Config.fromValue("c", "t", {
+        logging: {
+          publish: {
+            enabled: true,
+            destination: "northbound",
+            minLevel: "ERROR",
+            captureNative: false,
+            captureConsole: true,
+            maxRecordBytes: 4096,
+            queue: { maxRecords: 12, onFull: "dropOldest" },
+            redaction: { enabled: false, replacement: "X", extraPatterns: ["secret"] },
+          },
+        },
+      }).parsed.logging.publish;
+      expect(publish.enabled).toBe(true);
+      expect(publish.destination).toBe("northbound");
+      expect(publish.minLevel).toBe("ERROR");
+      expect(publish.captureNative).toBe(false);
+      expect(publish.captureConsole).toBe(true);
+      expect(publish.maxRecordBytes).toBe(4096);
+      expect(publish.queue).toEqual({ maxRecords: 12, onFull: "dropOldest" });
+      expect(publish.redaction).toEqual({ enabled: false, replacement: "X", extraPatterns: ["secret"] });
+    });
+  });
 });

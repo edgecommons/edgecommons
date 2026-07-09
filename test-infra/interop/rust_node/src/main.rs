@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
+use edgecommons::prelude::{EdgeCommonsBuilder, LogLevel, LogRecord};
 use serde_json::json;
 #[cfg(feature = "greengrass")]
 use serde_json::{Map, Value};
@@ -163,6 +164,72 @@ async fn provider(suffix: &str) -> Arc<DefaultMessagingService> {
     Arc::new(DefaultMessagingService::new(Arc::new(provider)))
 }
 
+fn log_component_token() -> String {
+    format!("interop-log-{LANG}")
+}
+
+fn write_log_runtime_config() -> std::path::PathBuf {
+    let host =
+        std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT")
+        .unwrap_or_else(|_| "1883".to_string())
+        .parse::<u16>()
+        .expect("valid MQTT port");
+    let path = std::env::temp_dir().join(format!(
+        "edgecommons-log-{LANG}-{}-{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let cfg = json!({
+        "component": { "token": log_component_token() },
+        "messaging": {
+            "local": {
+                "type": "mqtt",
+                "host": host,
+                "port": port,
+                "clientId": format!("interop-{LANG}-log-runtime-{}", std::process::id())
+            },
+            "requestTimeoutSeconds": 2
+        },
+        "heartbeat": { "enabled": false },
+        "health": { "enabled": false },
+        "logging": {
+            "level": "WARN",
+            "publish": {
+                "enabled": true,
+                "destination": "local",
+                "minLevel": "TRACE",
+                "captureNative": false,
+                "captureConsole": false,
+                "redaction": { "enabled": false }
+            }
+        }
+    });
+    std::fs::write(&path, serde_json::to_vec(&cfg).expect("serialize config"))
+        .expect("write log runtime config");
+    path
+}
+
+fn log_runtime_args(path: &std::path::Path) -> Vec<String> {
+    let path = path.to_string_lossy().to_string();
+    vec![
+        "interop-rust-node".to_string(),
+        "--platform".to_string(),
+        "HOST".to_string(),
+        "--transport".to_string(),
+        "MQTT".to_string(),
+        path.clone(),
+        "-c".to_string(),
+        "FILE".to_string(),
+        path,
+        "-t".to_string(),
+        "interop-device".to_string(),
+    ]
+}
+
 #[cfg(feature = "greengrass")]
 fn gg_topic(run_id: &str, publisher: &str, subscriber: &str) -> String {
     format!("edgecommons/interop/binary/{run_id}/{publisher}/{subscriber}")
@@ -266,6 +333,212 @@ async fn wait_for_gg_ready(run_id: &str, expected_langs: &[String]) -> Vec<Strin
         .filter(|lang| !std::path::Path::new(&gg_ready_path(run_id, lang)).exists())
         .cloned()
         .collect()
+}
+
+#[cfg(feature = "greengrass")]
+fn gg_log_ready_path(run_id: &str, lang: &str) -> String {
+    format!("/tmp/edgecommons_gg_ipc_log_ready_{lang}_{run_id}")
+}
+
+#[cfg(feature = "greengrass")]
+async fn wait_for_gg_log_ready(run_id: &str, expected_langs: &[String]) -> Vec<String> {
+    let ready_wait_secs: f64 = std::env::var("EDGECOMMONS_GG_READY_WAIT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(180.0);
+    let deadline = std::time::Instant::now() + Duration::from_secs_f64(ready_wait_secs);
+    while std::time::Instant::now() < deadline {
+        let missing: Vec<String> = expected_langs
+            .iter()
+            .filter(|lang| !std::path::Path::new(&gg_log_ready_path(run_id, lang)).exists())
+            .cloned()
+            .collect();
+        if missing.is_empty() {
+            return missing;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    expected_langs
+        .iter()
+        .filter(|lang| !std::path::Path::new(&gg_log_ready_path(run_id, lang)).exists())
+        .cloned()
+        .collect()
+}
+
+#[cfg(feature = "greengrass")]
+fn gg_log_runtime_args(path: &std::path::Path) -> Vec<String> {
+    let path = path.to_string_lossy().to_string();
+    vec![
+        "interop-rust-node".to_string(),
+        "--platform".to_string(),
+        "GREENGRASS".to_string(),
+        "--transport".to_string(),
+        "IPC".to_string(),
+        "-c".to_string(),
+        "FILE".to_string(),
+        path,
+        "-t".to_string(),
+        "interop-device".to_string(),
+    ]
+}
+
+#[cfg(feature = "greengrass")]
+async fn run_gg_log_matrix(args: &[String]) -> ! {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let run_id = args[2].clone();
+    let expected_langs: Vec<String> = args[3]
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    let expected: BTreeSet<String> = expected_langs.iter().cloned().collect();
+    let ready_langs: Vec<String> = std::env::var("EDGECOMMONS_GG_READY_LANGS")
+        .unwrap_or_else(|_| args[3].clone())
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    let ready_lang =
+        std::env::var("EDGECOMMONS_GG_READY_LANG").unwrap_or_else(|_| LANG.to_string());
+    let subscribe_delay_secs: f64 = std::env::var("EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8.0);
+    let wait_secs: f64 = std::env::var("EDGECOMMONS_GG_WAIT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(35.0);
+
+    let svc = ipc_provider().await;
+    let received = Arc::new(std::sync::Mutex::new(
+        BTreeMap::<String, serde_json::Value>::new(),
+    ));
+    let errors = Arc::new(std::sync::Mutex::new(BTreeMap::<String, String>::new()));
+    let rh = received.clone();
+    let eh = errors.clone();
+    let run_id_for_handler = run_id.clone();
+    let expected_for_handler = expected.clone();
+    svc.subscribe(
+        "ecv1/interop-device/+/main/log/warn",
+        message_handler(move |topic, m| {
+            let rh = rh.clone();
+            let eh = eh.clone();
+            let run_id = run_id_for_handler.clone();
+            let expected = expected_for_handler.clone();
+            async move {
+                let identity = m.identity.as_ref();
+                let component = identity.map(|id| id.component()).unwrap_or("");
+                let publisher = component.strip_prefix("interop-log-").unwrap_or(component);
+                let fields = &m.body["fields"];
+                let expected_logger = format!("interop.{publisher}");
+                let expected_message = format!("gg-log-interop-{run_id}-{publisher}");
+                let ok = expected.contains(publisher)
+                    && identity.is_some_and(|id| {
+                        id.device() == "interop-device" && id.instance() == "main"
+                    })
+                    && m.body["schema"].as_str() == Some("edgecommons.log.v1")
+                    && m.body["level"].as_str() == Some("WARN")
+                    && m.body["logger"].as_str() == Some(expected_logger.as_str())
+                    && m.body["message"].as_str() == Some(expected_message.as_str())
+                    && fields["runId"].as_str() == Some(run_id.as_str())
+                    && fields["publisher"].as_str() == Some(publisher);
+                if !publisher.is_empty() {
+                    rh.lock().unwrap().entry(publisher.to_string()).or_insert_with(
+                        || json!({"ok": ok, "topic": topic, "identity": m.identity, "body": m.body}),
+                    );
+                } else {
+                    eh.lock()
+                        .unwrap()
+                        .insert(format!("log:{topic}"), "missing publisher identity".to_string());
+                }
+            }
+        }),
+        64,
+        1,
+    )
+    .await
+    .expect("subscribe log");
+
+    println!("READY");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    std::fs::write(gg_log_ready_path(&run_id, &ready_lang), "ready").expect("write ready file");
+
+    let ready_missing = wait_for_gg_log_ready(&run_id, &ready_langs).await;
+    tokio::time::sleep(Duration::from_secs_f64(subscribe_delay_secs)).await;
+    let mut published = json!({});
+    if ready_missing.is_empty() {
+        let path = write_log_runtime_config();
+        let gg = EdgeCommonsBuilder::new(format!(
+            "com.mbreissi.edgecommons.interop.{LANG}.LogPublisher"
+        ))
+        .args(gg_log_runtime_args(&path))
+        .build()
+        .await
+        .expect("build EdgeCommons Greengrass log publisher");
+        gg.logs()
+            .publish(
+                LogRecord::builder(
+                    LogLevel::Warn,
+                    format!("interop.{LANG}"),
+                    format!("gg-log-interop-{run_id}-{LANG}"),
+                )
+                .field("runId", json!(run_id))
+                .field("publisher", json!(LANG))
+                .build(),
+            )
+            .await
+            .expect("publish Greengrass log record");
+        let stats = gg.logs().stats();
+        published = json!({
+            "published": stats.published,
+            "failed": stats.failed,
+            "queued": stats.queued,
+            "dropped": stats.dropped
+        });
+        drop(gg);
+        let _ = std::fs::remove_file(path);
+    }
+
+    let deadline = std::time::Instant::now() + Duration::from_secs_f64(wait_secs);
+    while std::time::Instant::now() < deadline {
+        let keys: BTreeSet<String> = received.lock().unwrap().keys().cloned().collect();
+        if expected.is_subset(&keys) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let received_snapshot = received.lock().unwrap().clone();
+    let errors_snapshot = errors.lock().unwrap().clone();
+    let missing: Vec<String> = expected
+        .iter()
+        .filter(|lang| !received_snapshot.contains_key(*lang))
+        .cloned()
+        .collect();
+    let all_ok = expected.iter().all(|lang| {
+        received_snapshot
+            .get(lang)
+            .and_then(|item| item.get("ok"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    });
+    let ok = ready_missing.is_empty() && missing.is_empty() && errors_snapshot.is_empty() && all_ok;
+    let result = json!({
+        "ok": ok,
+        "lang": LANG,
+        "run_id": run_id,
+        "ready_missing": ready_missing,
+        "received": received_snapshot,
+        "missing": missing,
+        "errors": errors_snapshot,
+        "published": published
+    });
+    let path = format!("/tmp/edgecommons_gg_ipc_log_{ready_lang}_{}.json", args[2]);
+    std::fs::write(&path, serde_json::to_vec(&result).unwrap()).expect("write result");
+    println!("{}", result);
+    std::process::exit(if ok { 0 } else { 1 });
 }
 
 #[cfg(feature = "greengrass")]
@@ -466,6 +739,12 @@ async fn run_gg_binary_matrix(args: &[String]) -> ! {
 #[cfg(not(feature = "greengrass"))]
 async fn run_gg_binary_matrix(_args: &[String]) -> ! {
     eprintln!("gg-binary-matrix requires the greengrass cargo feature");
+    std::process::exit(2);
+}
+
+#[cfg(not(feature = "greengrass"))]
+async fn run_gg_log_matrix(_args: &[String]) -> ! {
+    eprintln!("gg-log-matrix requires the greengrass cargo feature");
     std::process::exit(2);
 }
 
@@ -1192,6 +1471,115 @@ async fn main() {
             svc.publish(&topic, &msg).await.expect("publish");
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
+        "log-sub" => {
+            let topic = args[2].clone();
+            let token = args[3].clone();
+            let svc = provider("logsub").await;
+            let recv = Arc::new(std::sync::Mutex::new(None));
+            let rh = recv.clone();
+            let expected_topic = topic.clone();
+            svc.subscribe(
+                &topic,
+                message_handler(move |t, m| {
+                    let rh = rh.clone();
+                    let expected_topic = expected_topic.clone();
+                    let token = token.clone();
+                    async move {
+                        let identity = m.identity.as_ref();
+                        let fields = &m.body["fields"];
+                        let ok = t == expected_topic
+                            && m.body["schema"].as_str() == Some("edgecommons.log.v1")
+                            && m.body["level"].as_str() == Some("WARN")
+                            && m.body["message"].as_str()
+                                == Some(format!("log-interop-{token}").as_str())
+                            && fields["nonce"].as_str() == Some(token.as_str())
+                            && identity.is_some_and(|id| {
+                                id.device() == "interop-device"
+                                    && id.component().starts_with("interop-log-")
+                                    && id.instance() == "main"
+                            })
+                            && m.header.name == "log"
+                            && m.header.version == "1.0";
+                        *rh.lock().unwrap() = Some(json!({
+                            "ok": ok,
+                            "topic": t,
+                            "header": m.header,
+                            "identity": m.identity,
+                            "body": m.body
+                        }));
+                    }
+                }),
+                16,
+                1,
+            )
+            .await
+            .expect("subscribe");
+            println!("READY");
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            for _ in 0..100 {
+                if recv.lock().unwrap().is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            let result = recv.lock().unwrap().take();
+            match result {
+                Some(payload) => {
+                    let ok = payload.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                    println!("{}", payload);
+                    std::process::exit(if ok { 0 } else { 1 });
+                }
+                None => {
+                    println!("{}", json!({"ok": false, "error": "timeout"}));
+                    std::process::exit(1);
+                }
+            }
+        }
+        "log-pub" => {
+            let token = args[2].clone();
+            let path = write_log_runtime_config();
+            let args = log_runtime_args(&path);
+            let gg = EdgeCommonsBuilder::new(format!(
+                "com.mbreissi.edgecommons.interop.{LANG}.LogPublisher"
+            ))
+            .args(args)
+            .build()
+            .await
+            .expect("build EdgeCommons log publisher");
+            gg.logs()
+                .publish(
+                    LogRecord::builder(
+                        LogLevel::Warn,
+                        format!("interop.{LANG}"),
+                        format!("log-interop-{token}"),
+                    )
+                    .field("nonce", json!(token))
+                    .field("publisher", json!(LANG))
+                    .build(),
+                )
+                .await
+                .expect("publish log record");
+            let stats = gg.logs().stats();
+            let ok = stats.published >= 1;
+            drop(gg);
+            let _ = std::fs::remove_file(&path);
+            println!(
+                "{}",
+                json!({
+                    "ok": ok,
+                    "component": log_component_token(),
+                    "stats": {
+                        "published": stats.published,
+                        "failed": stats.failed,
+                        "queued": stats.queued,
+                        "dropped": stats.dropped
+                    }
+                })
+            );
+            std::process::exit(if ok { 0 } else { 1 });
+        }
+        "gg-log-matrix" => run_gg_log_matrix(&args).await,
         "gg-binary-matrix" => run_gg_binary_matrix(&args).await,
         "gg-config-request" => run_gg_config_request(&args).await,
         "gg-config-update" => run_gg_config_update(&args).await,

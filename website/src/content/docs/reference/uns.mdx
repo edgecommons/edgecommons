@@ -39,6 +39,8 @@ dynamically (an unknown id logs a DEBUG diagnostic).
 
 Eight classes; `state`/`metric`/`cfg`/`log` are **reserved** (library-owned publish),
 `state`/`cfg` are **leaf** (channel forbidden), every other class **requires** ≥ 1 channel token.
+The `log` publisher is exposed as `getLogs()` in Java and `logs()` in Python, Rust, and TypeScript;
+it emits `edgecommons.log.v1` records on `log/{level}` without exposing the reserved publish seam.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
@@ -955,6 +957,9 @@ Every publish path that takes a client-chosen topic — `publish`, `publishRaw`,
 reserved class (`state` | `metric` | `cfg` | `log`) under the `ecv1` root. `subscribe*` is never
 guarded (consumers must read reserved classes), and non-`ecv1` topics (reply topics,
 `cloudwatch/metric/put`, legacy/foreign MQTT) pass untouched.
+
+Use the dedicated library surfaces instead: heartbeat owns `state`, metric emission owns `metric`,
+the effective-config publisher owns `cfg`, and the log bus publisher owns `log`.
 
 | Language | Error type |
 |----------|------------|

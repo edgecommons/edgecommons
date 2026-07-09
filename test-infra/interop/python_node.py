@@ -45,6 +45,7 @@ from edgecommons.messaging.message import _binary_marker
 from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.messaging.identity import MessageIdentity
 from edgecommons.uns import Uns, UnsClass
+from edgecommons import EdgeCommons, LogRecord
 
 LANG = "python"
 HOST = os.environ.get("EDGECOMMONS_IT_MQTT_HOST", "localhost")
@@ -82,6 +83,67 @@ def _provider(suffix):
     finally:
         os.unlink(path)
     return StandaloneProvider(config, f"interop-{LANG}")
+
+
+def _log_component_token():
+    return f"interop-log-{LANG}"
+
+
+def _write_log_runtime_config():
+    component_token = _log_component_token()
+    cfg = {
+        "component": {"token": component_token},
+        "messaging": {
+            "local": {
+                "type": "mqtt",
+                "host": HOST,
+                "port": PORT,
+                "clientId": f"interop-{LANG}-log-runtime-{os.getpid()}",
+            },
+            "requestTimeoutSeconds": 2,
+        },
+        "heartbeat": {"enabled": False},
+        "health": {"enabled": False},
+        "logging": {
+            "level": "WARN",
+            "publish": {
+                "enabled": True,
+                "destination": "local",
+                "minLevel": "TRACE",
+                "captureNative": False,
+                "captureConsole": False,
+                "redaction": {"enabled": False},
+            },
+        },
+    }
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(cfg, f)
+        return f.name
+
+
+def _log_runtime_args(path):
+    return [
+        "--platform",
+        "HOST",
+        "--transport",
+        "MQTT",
+        path,
+        "-c",
+        "FILE",
+        path,
+        "-t",
+        "interop-device",
+    ]
+
+
+def _wire_identity_device(identity):
+    if not isinstance(identity, dict):
+        return None
+    hier = identity.get("hier")
+    if not isinstance(hier, list) or not hier:
+        return None
+    tail = hier[-1]
+    return tail.get("value") if isinstance(tail, dict) else None
 
 
 def run_responder(topic):
@@ -290,6 +352,93 @@ def run_typed_pub(topic, body_hex):
         prov.disconnect()
 
 
+def run_log_sub(topic, token):
+    prov = _provider("logsub")
+    state = {}
+    got = threading.Event()
+
+    def handler(t, m):
+        try:
+            body = m.get_body()
+            identity = m.get_identity().to_dict() if m.get_identity() else None
+            header = m.get_header().to_dict() if m.get_header() else None
+            fields = body.get("fields", {}) if isinstance(body, dict) else {}
+            ok = (
+                t == topic
+                and isinstance(body, dict)
+                and body.get("schema") == "edgecommons.log.v1"
+                and body.get("level") == "WARN"
+                and body.get("message") == f"log-interop-{token}"
+                and fields.get("nonce") == token
+                and identity is not None
+                and _wire_identity_device(identity) == "interop-device"
+                and identity.get("component", "").startswith("interop-log-")
+                and identity.get("instance") == "main"
+                and header is not None
+                and header.get("name") == "log"
+                and header.get("version") == "1.0"
+            )
+            state["result"] = {
+                "ok": bool(ok),
+                "topic": t,
+                "header": header,
+                "identity": identity,
+                "body": body,
+            }
+        except Exception as exc:  # pragma: no cover - exercised by subprocess harness
+            state["result"] = {"ok": False, "error": str(exc)}
+        got.set()
+
+    prov.subscribe(topic, handler)
+    print("READY", flush=True)
+    try:
+        if not got.wait(10):
+            print(json.dumps({"ok": False, "error": "timeout"}), flush=True)
+            return 1
+        print(json.dumps(state["result"]), flush=True)
+        return 0 if state["result"].get("ok") else 1
+    finally:
+        prov.disconnect()
+
+
+def run_log_pub(token):
+    path = _write_log_runtime_config()
+    gg = None
+    try:
+        gg = EdgeCommons(
+            f"com.mbreissi.edgecommons.interop.{LANG}.LogPublisher",
+            _log_runtime_args(path),
+        )
+        gg.logs().publish(
+            LogRecord(
+                level="WARN",
+                logger=f"interop.{LANG}",
+                message=f"log-interop-{token}",
+                fields={"nonce": token, "publisher": LANG},
+            )
+        )
+        ok = gg.logs().flush(timeout=5)
+        stats = gg.logs().stats()
+        print(
+            json.dumps(
+                {
+                    "ok": bool(ok and stats.get("published", 0) >= 1),
+                    "component": _log_component_token(),
+                    "stats": stats,
+                }
+            ),
+            flush=True,
+        )
+        return 0 if ok and stats.get("published", 0) >= 1 else 1
+    finally:
+        if gg is not None:
+            gg.shutdown()
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def _gg_topic(run_id, publisher, subscriber):
     return f"edgecommons/interop/binary/{run_id}/{publisher}/{subscriber}"
 
@@ -322,6 +471,155 @@ def _gg_wait_for_ready(run_id, expected_langs):
         lang for lang in expected_langs
         if not os.path.exists(_gg_ready_path(run_id, lang))
     ]
+
+
+def _gg_log_ready_path(run_id, lang):
+    return f"/tmp/edgecommons_gg_ipc_log_ready_{lang}_{run_id}"
+
+
+def _gg_log_wait_for_ready(run_id, expected_langs):
+    ready_wait = float(os.environ.get("EDGECOMMONS_GG_READY_WAIT_SECS", "180"))
+    deadline = time.monotonic() + ready_wait
+    while time.monotonic() < deadline:
+        missing = [
+            lang for lang in expected_langs
+            if not os.path.exists(_gg_log_ready_path(run_id, lang))
+        ]
+        if not missing:
+            return []
+        time.sleep(0.2)
+    return [
+        lang for lang in expected_langs
+        if not os.path.exists(_gg_log_ready_path(run_id, lang))
+    ]
+
+
+def _gg_log_runtime_args(path):
+    return [
+        "--platform",
+        "GREENGRASS",
+        "--transport",
+        "IPC",
+        "-c",
+        "FILE",
+        path,
+        "-t",
+        "interop-device",
+    ]
+
+
+def run_gg_log_matrix(run_id, langs_csv, _unused=None):
+    from edgecommons.messaging.providers.greengrass.greengrass_ipc import GreengrassIpcProvider
+
+    expected_langs = [p for p in langs_csv.split(",") if p]
+    ready_langs = [
+        p for p in os.environ.get("EDGECOMMONS_GG_READY_LANGS", langs_csv).split(",") if p
+    ]
+    ready_lang = os.environ.get("EDGECOMMONS_GG_READY_LANG", LANG)
+    subscribe_delay = float(os.environ.get("EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS", "8"))
+    wait_secs = float(os.environ.get("EDGECOMMONS_GG_WAIT_SECS", "35"))
+    prov = GreengrassIpcProvider(receive_own_messages=True)
+    received = {}
+    errors = {}
+    lock = threading.Lock()
+    done = threading.Event()
+
+    def maybe_done():
+        if set(received) >= set(expected_langs):
+            done.set()
+
+    def log_handler(topic, m):
+        try:
+            body = m.get_body()
+            identity = m.get_identity().to_dict() if m.get_identity() else None
+            publisher = (identity or {}).get("component", "").removeprefix("interop-log-")
+            fields = body.get("fields", {}) if isinstance(body, dict) else {}
+            ok = (
+                publisher in expected_langs
+                and _wire_identity_device(identity) == "interop-device"
+                and (identity or {}).get("instance") == "main"
+                and body.get("schema") == "edgecommons.log.v1"
+                and body.get("level") == "WARN"
+                and body.get("logger") == f"interop.{publisher}"
+                and body.get("message") == f"gg-log-interop-{run_id}-{publisher}"
+                and fields.get("runId") == run_id
+                and fields.get("publisher") == publisher
+            )
+            with lock:
+                if publisher:
+                    received[publisher] = {
+                        "ok": bool(ok),
+                        "topic": topic,
+                        "identity": identity,
+                        "body": body,
+                    }
+                maybe_done()
+        except Exception as exc:  # pragma: no cover - exercised on device
+            with lock:
+                errors[f"log:{topic}"] = str(exc)
+                maybe_done()
+
+    prov.subscribe(
+        "ecv1/interop-device/+/main/log/warn",
+        log_handler,
+        max_concurrency=1,
+        max_messages=64,
+    )
+    print("READY", flush=True)
+    with open(_gg_log_ready_path(run_id, ready_lang), "w", encoding="utf-8") as f:
+        f.write(str(time.time()))
+    gg = None
+    path = None
+    try:
+        ready_missing = _gg_log_wait_for_ready(run_id, ready_langs)
+        time.sleep(subscribe_delay)
+        stats = {}
+        if not ready_missing:
+            path = _write_log_runtime_config()
+            gg = EdgeCommons(
+                f"com.mbreissi.edgecommons.interop.{LANG}.LogPublisher",
+                _gg_log_runtime_args(path),
+            )
+            gg.logs().publish(
+                LogRecord(
+                    level="WARN",
+                    logger=f"interop.{LANG}",
+                    message=f"gg-log-interop-{run_id}-{LANG}",
+                    fields={"runId": run_id, "publisher": LANG},
+                )
+            )
+            gg.logs().flush(timeout=5)
+            stats = gg.logs().stats()
+        done.wait(wait_secs)
+        with lock:
+            missing = [lang for lang in expected_langs if lang not in received]
+            ok = not ready_missing and not missing and not errors and all(
+                received.get(lang, {}).get("ok") for lang in expected_langs
+            )
+            result = {
+                "ok": bool(ok),
+                "lang": LANG,
+                "run_id": run_id,
+                "ready_missing": ready_missing,
+                "received": received,
+                "missing": missing,
+                "errors": errors,
+                "published": stats,
+            }
+        result_path = f"/tmp/edgecommons_gg_ipc_log_{ready_lang}_{run_id}.json"
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, sort_keys=True)
+        print(json.dumps(result, sort_keys=True), flush=True)
+        return 0 if ok else 1
+    finally:
+        if gg is not None:
+            gg.shutdown()
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        prov.disconnect()
 
 
 def run_gg_binary_matrix(run_id, langs_csv, expected_hex):
@@ -558,6 +856,12 @@ if __name__ == "__main__":
         sys.exit(run_typed_sub(sys.argv[2], sys.argv[3]))
     elif role == "typed-pub":
         sys.exit(run_typed_pub(sys.argv[2], sys.argv[3]))
+    elif role == "log-sub":
+        sys.exit(run_log_sub(sys.argv[2], sys.argv[3]))
+    elif role == "log-pub":
+        sys.exit(run_log_pub(sys.argv[2]))
+    elif role == "gg-log-matrix":
+        sys.exit(run_gg_log_matrix(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else None))
     elif role == "gg-binary-matrix":
         sys.exit(run_gg_binary_matrix(sys.argv[2], sys.argv[3], sys.argv[4]))
     elif role == "uns-pub":

@@ -13,7 +13,7 @@ matches the Java/Python/TypeScript schema. Known top-level sections are strict
 `component.global` and `component.instances[]`.
 
 ```
-logging:        { level, format, fileLogging: { enabled, filePath }, loggers, globalControl }
+logging:        { level, rust_format, fileLogging: { enabled, filePath }, loggers, globalControl, publish }
 metricEmission: { target, namespace, largeFleetWorkaround, targetConfig: {...} }
 heartbeat:      { enabled, intervalSecs, measures: { cpu, memory, disk, threads, files, fds }, destination }
 hierarchy:      { levels: [ "site", ..., "device" ] }    # UNS hierarchy — last level = the node (thing name)
@@ -23,6 +23,10 @@ messaging:      { local{qos}, northbound{qos}, requestTimeoutSeconds }
 tags:           { <key>: <value>, ... }
 component:      { global: {...}, instances: [ { id, ... }, ... ] }
 ```
+
+`logging.publish` is the optional structured log-bus publisher. When enabled, Rust publishes
+`edgecommons.log.v1` records to `ecv1/{device}/{component}/main/log/{level}` through the reserved `log`
+class seam. It is disabled by default; native capture observes `tracing` events.
 
 Validation fails **closed**: an invalid document is a hard error at startup, and an
 invalid hot-reloaded document is rejected with the previous snapshot kept.

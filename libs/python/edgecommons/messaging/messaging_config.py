@@ -39,7 +39,7 @@ class LocalMqttConfig:
     type: str
     host: str
     port: int
-    client_id: str
+    client_id: Optional[str] = None
     qos: QosDefaults = field(default_factory=QosDefaults)
     credentials: Optional[CredentialsConfig] = None
 
@@ -50,7 +50,7 @@ class NorthboundMqttConfig:
 
     endpoint: str
     port: int
-    client_id: str
+    client_id: Optional[str] = None
     qos: QosDefaults = field(default_factory=QosDefaults)
     credentials: Optional[CredentialsConfig] = None
 
@@ -148,7 +148,7 @@ class MessagingConfiguration:
                     type=local_data.get('type', 'mqtt'),
                     host=local_data['host'],
                     port=local_data['port'],
-                    client_id=local_data['clientId'],
+                    client_id=local_data.get('clientId'),
                     qos=_parse_qos_defaults(local_data.get('qos'), 2, "messaging.local.qos"),
                     credentials=credentials
                 )
@@ -180,7 +180,7 @@ class MessagingConfiguration:
                 northbound_config = NorthboundMqttConfig(
                     endpoint=northbound_host,
                     port=northbound_data['port'],
-                    client_id=northbound_data['clientId'],
+                    client_id=northbound_data.get('clientId'),
                     qos=_parse_qos_defaults(northbound_data.get('qos'), 2, "messaging.northbound.qos"),
                     credentials=northbound_credentials
                 )

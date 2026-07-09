@@ -101,6 +101,11 @@ These sections are managed by edgecommons and configure framework behavior:
 - **`metricEmission`**: Metrics collection and emission configuration
 - **`tags`**: Component tagging for organization and templating
 
+`logging.publish` is the optional structured log-bus publisher. When enabled, Java publishes
+`edgecommons.log.v1` records to `ecv1/{device}/{component}/main/log/{level}` through the reserved `log`
+class seam. The publisher is disabled by default; `captureNative` captures the configured logging stack
+and `captureConsole` requests stdout/stderr capture where supported.
+
 ### Application Section
 The `component` section is reserved for application-specific configuration:
 
@@ -220,8 +225,10 @@ String resolvedPath = configManager.resolveTemplate("/data/{ThingName}/{site}/lo
 {
   "logging": {
     "level": "DEBUG",
-    "fileLogging": true,
-    "logFilePath": "/var/log/{ComponentName}-{site}.log"
+    "fileLogging": {
+      "enabled": true,
+      "filePath": "/var/log/{ComponentName}-{site}.log"
+    }
   },
   "tags": {
     "site": "factory-north",
@@ -230,7 +237,6 @@ String resolvedPath = configManager.resolveTemplate("/data/{ThingName}/{site}/lo
   "metricEmission": {
     "target": "messaging",
     "targetConfig": {
-      "topic": "metrics/{site}/{ComponentName}",
       "destination": "ipc"
     }
   },
@@ -347,9 +353,11 @@ String resolvedPath = configManager.resolveTemplate("/data/{ThingName}/{site}/lo
 {
   "logging": {
     "level": "TRACE",
-    "format": "%d{HH:mm:ss.SSS} [%level] %logger{36} - %msg%n",
-    "fileLogging": true,
-    "logFilePath": "./logs/dev-{ComponentName}.log"
+    "java_format": "%d{HH:mm:ss.SSS} [%level] %logger{36} - %msg%n",
+    "fileLogging": {
+      "enabled": true,
+      "filePath": "./logs/dev-{ComponentName}.log"
+    }
   },
   "heartbeat": {
     "intervalSecs": 5,

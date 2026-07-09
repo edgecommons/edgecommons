@@ -1443,7 +1443,7 @@ function encodeInstanceConnectivity(item: Record<string, unknown>): Buffer {
 }
 
 function decodeInstanceConnectivity(r: ProtoReader): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
+  const out: Record<string, unknown> = { connected: false };
   while (!r.eof()) {
     const { field, wireType } = r.tag();
     if (field === 1) out.instance = r.string();

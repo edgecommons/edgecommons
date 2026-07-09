@@ -165,6 +165,26 @@ def _dual_config():
     return cfg
 
 
+def test_file_loader_accepts_missing_client_id_and_provider_uses_identity(tmp_path):
+    config_path = tmp_path / "messaging.json"
+    config_path.write_text(
+        json.dumps({
+            "messaging": {
+                "local": {"type": "mqtt", "host": "localhost", "port": 1883}
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    cfg = MessagingConfiguration.load_from_file(str(config_path))
+    assert cfg.messaging.local.client_id is None
+    prov = StandaloneProvider(cfg, "pod-identity")
+    try:
+        assert prov.get_native_client()["local"].client_id == "pod-identity"
+    finally:
+        prov.disconnect()
+
+
 @pytest.fixture
 def _patch_ssl(monkeypatch):
     """Avoid real cert file IO when the northbound/local TLS path runs."""

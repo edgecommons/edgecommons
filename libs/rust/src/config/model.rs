@@ -64,6 +64,16 @@ where
     Ok(value.as_ref().and_then(value_as_u64))
 }
 
+/// `serde` deserializer for a required/defaulted `u64` config field that may be
+/// encoded as a JSON float (see [`value_as_u64`]).
+fn de_lenient_u64<'de, D>(deserializer: D) -> std::result::Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    value_as_u64(&value).ok_or_else(|| serde::de::Error::custom("expected integer"))
+}
+
 /// `serde` deserializer for an optional `f64` config field that accepts any JSON
 /// number (integer or float). Absent, `null`, or non-numeric yields `None`.
 fn de_lenient_opt_f64<'de, D>(deserializer: D) -> std::result::Result<Option<f64>, D::Error>
@@ -86,6 +96,205 @@ pub struct LoggingConfig {
     pub file_logging: Option<FileLogging>,
     pub loggers: BTreeMap<String, String>,
     pub global_control: bool,
+    pub publish: LoggingPublishConfig,
+}
+
+/// `logging.publish.destination`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoggingPublishDestination {
+    Local,
+    Northbound,
+}
+
+impl Default for LoggingPublishDestination {
+    fn default() -> Self {
+        Self::Local
+    }
+}
+
+impl<'de> Deserialize<'de> for LoggingPublishDestination {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match String::deserialize(deserializer)?
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "local" => Ok(Self::Local),
+            "northbound" => Ok(Self::Northbound),
+            other => Err(serde::de::Error::custom(format!(
+                "logging.publish.destination must be local or northbound (got {other})"
+            ))),
+        }
+    }
+}
+
+/// `logging.publish.minLevel`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LoggingPublishLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Fatal,
+}
+
+impl LoggingPublishLevel {
+    /// Uppercase body token.
+    pub fn uppercase(self) -> &'static str {
+        match self {
+            Self::Trace => "TRACE",
+            Self::Debug => "DEBUG",
+            Self::Info => "INFO",
+            Self::Warn => "WARN",
+            Self::Error => "ERROR",
+            Self::Fatal => "FATAL",
+        }
+    }
+
+    /// Lowercase topic token.
+    pub fn lowercase(self) -> &'static str {
+        match self {
+            Self::Trace => "trace",
+            Self::Debug => "debug",
+            Self::Info => "info",
+            Self::Warn => "warn",
+            Self::Error => "error",
+            Self::Fatal => "fatal",
+        }
+    }
+}
+
+impl Default for LoggingPublishLevel {
+    fn default() -> Self {
+        Self::Info
+    }
+}
+
+impl<'de> Deserialize<'de> for LoggingPublishLevel {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match String::deserialize(deserializer)?
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "trace" => Ok(Self::Trace),
+            "debug" => Ok(Self::Debug),
+            "info" => Ok(Self::Info),
+            "warn" | "warning" => Ok(Self::Warn),
+            "error" => Ok(Self::Error),
+            "fatal" => Ok(Self::Fatal),
+            other => Err(serde::de::Error::custom(format!(
+                "logging.publish.minLevel must be trace/debug/info/warn/error/fatal (got {other})"
+            ))),
+        }
+    }
+}
+
+/// `logging.publish.queue.onFull`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoggingPublishQueueOnFull {
+    DropOldest,
+}
+
+impl Default for LoggingPublishQueueOnFull {
+    fn default() -> Self {
+        Self::DropOldest
+    }
+}
+
+impl<'de> Deserialize<'de> for LoggingPublishQueueOnFull {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match String::deserialize(deserializer)?
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "dropoldest" => Ok(Self::DropOldest),
+            other => Err(serde::de::Error::custom(format!(
+                "logging.publish.queue.onFull must be dropOldest (got {other})"
+            ))),
+        }
+    }
+}
+
+/// `logging.publish.queue`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LoggingPublishQueueConfig {
+    #[serde(
+        default = "default_log_queue_max_records",
+        deserialize_with = "de_lenient_u64"
+    )]
+    pub max_records: u64,
+    pub on_full: LoggingPublishQueueOnFull,
+}
+
+impl Default for LoggingPublishQueueConfig {
+    fn default() -> Self {
+        Self {
+            max_records: default_log_queue_max_records(),
+            on_full: LoggingPublishQueueOnFull::DropOldest,
+        }
+    }
+}
+
+/// `logging.publish.redaction`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LoggingPublishRedactionConfig {
+    pub enabled: bool,
+    pub replacement: String,
+    pub extra_patterns: Vec<String>,
+}
+
+impl Default for LoggingPublishRedactionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            replacement: "***".to_string(),
+            extra_patterns: Vec::new(),
+        }
+    }
+}
+
+/// `logging.publish`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LoggingPublishConfig {
+    pub enabled: bool,
+    pub destination: LoggingPublishDestination,
+    pub min_level: LoggingPublishLevel,
+    pub capture_native: bool,
+    pub capture_console: bool,
+    #[serde(
+        default = "default_log_max_record_bytes",
+        deserialize_with = "de_lenient_u64"
+    )]
+    pub max_record_bytes: u64,
+    pub queue: LoggingPublishQueueConfig,
+    pub redaction: LoggingPublishRedactionConfig,
+}
+
+impl Default for LoggingPublishConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            destination: LoggingPublishDestination::Local,
+            min_level: LoggingPublishLevel::Info,
+            capture_native: true,
+            capture_console: false,
+            max_record_bytes: default_log_max_record_bytes(),
+            queue: LoggingPublishQueueConfig::default(),
+            redaction: LoggingPublishRedactionConfig::default(),
+        }
+    }
 }
 
 /// `logging.fileLogging` section.
@@ -191,6 +400,14 @@ impl Default for Measures {
 /// `serde` default helper: `true`.
 fn default_true() -> bool {
     true
+}
+
+fn default_log_max_record_bytes() -> u64 {
+    8192
+}
+
+fn default_log_queue_max_records() -> u64 {
+    1000
 }
 
 /// `health` section (FR-HB-1) — the Kubernetes HTTP health/readiness endpoint.
@@ -578,6 +795,84 @@ mod tests {
         let cfg = Config::from_value("c", "t", json!({})).unwrap();
         assert_eq!(cfg.parsed.logging.level, None);
         assert!(cfg.instance_ids().is_empty());
+    }
+
+    #[test]
+    fn logging_publish_defaults_match_contract() {
+        let cfg = Config::from_value("c", "t", json!({})).unwrap();
+        let publish = &cfg.parsed.logging.publish;
+        assert!(!publish.enabled);
+        assert_eq!(publish.destination, LoggingPublishDestination::Local);
+        assert_eq!(publish.min_level, LoggingPublishLevel::Info);
+        assert!(publish.capture_native);
+        assert!(!publish.capture_console);
+        assert_eq!(publish.max_record_bytes, 8192);
+        assert_eq!(publish.queue.max_records, 1000);
+        assert_eq!(publish.queue.on_full, LoggingPublishQueueOnFull::DropOldest);
+        assert!(publish.redaction.enabled);
+        assert_eq!(publish.redaction.replacement, "***");
+        assert!(publish.redaction.extra_patterns.is_empty());
+    }
+
+    #[test]
+    fn logging_publish_reads_explicit_values_and_greengrass_numbers() {
+        let cfg = Config::from_value(
+            "c",
+            "t",
+            json!({ "logging": { "publish": {
+                "enabled": true,
+                "destination": "northbound",
+                "minLevel": "WARN",
+                "captureNative": false,
+                "captureConsole": true,
+                "maxRecordBytes": 128.0,
+                "queue": { "maxRecords": 2.0, "onFull": "dropOldest" },
+                "redaction": {
+                    "enabled": false,
+                    "replacement": "[redacted]",
+                    "extraPatterns": ["secret=[^ ]+"]
+                }
+            } } }),
+        )
+        .unwrap();
+        let publish = &cfg.parsed.logging.publish;
+        assert!(publish.enabled);
+        assert_eq!(publish.destination, LoggingPublishDestination::Northbound);
+        assert_eq!(publish.min_level, LoggingPublishLevel::Warn);
+        assert!(!publish.capture_native);
+        assert!(publish.capture_console);
+        assert_eq!(publish.max_record_bytes, 128);
+        assert_eq!(publish.queue.max_records, 2);
+        assert_eq!(publish.redaction.replacement, "[redacted]");
+        assert_eq!(publish.redaction.extra_patterns, vec!["secret=[^ ]+"]);
+    }
+
+    #[test]
+    fn logging_publish_rejects_invalid_enums() {
+        assert!(
+            Config::from_value(
+                "c",
+                "t",
+                json!({ "logging": { "publish": { "destination": "somewhere" } } }),
+            )
+            .is_err()
+        );
+        assert!(
+            Config::from_value(
+                "c",
+                "t",
+                json!({ "logging": { "publish": { "minLevel": "verbose" } } }),
+            )
+            .is_err()
+        );
+        assert!(
+            Config::from_value(
+                "c",
+                "t",
+                json!({ "logging": { "publish": { "queue": { "onFull": "block" } } } }),
+            )
+            .is_err()
+        );
     }
 
     #[test]

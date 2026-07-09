@@ -170,6 +170,9 @@ pub(crate) trait ReservedMessaging: Send + Sync {
     /// Publish a message to a reserved topic on the northbound transport, without the guard.
     async fn publish_reserved_northbound(&self, topic: &str, msg: &Message, qos: Qos)
     -> Result<()>;
+
+    /// Whether the reserved-publish transport is currently connected.
+    fn connected(&self) -> bool;
 }
 
 /// Transport-agnostic messaging operations over [`Message`]s, with explicit local /
@@ -598,6 +601,10 @@ impl ReservedMessaging for DefaultMessagingService {
         self.provider
             .publish(topic, msg.to_vec()?, Destination::Northbound, qos)
             .await
+    }
+
+    fn connected(&self) -> bool {
+        self.provider.connected()
     }
 }
 
@@ -1306,6 +1313,20 @@ mod tests {
         assert!(
             provider.published.lock().unwrap().is_empty(),
             "nothing reached the provider"
+        );
+    }
+
+    #[tokio::test]
+    async fn guard_rejects_public_raw_publish_to_log_class() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        let reserved = "ecv1/gw-01/comp/main/log/info";
+
+        assert_reserved(svc.publish(reserved, &msg(1)).await.unwrap_err());
+        assert_reserved(svc.publish_raw(reserved, &json!({})).await.unwrap_err());
+        assert!(
+            provider.published.lock().unwrap().is_empty(),
+            "public log-class publishes must not reach the provider"
         );
     }
 

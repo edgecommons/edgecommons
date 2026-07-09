@@ -90,4 +90,33 @@ describe("config validation", () => {
       }),
     ).toThrow(EdgeCommonsError);
   });
+
+  it("accepts strict logging.publish settings and rejects unknown knobs", () => {
+    expect(() =>
+      validate({
+        component: {},
+        logging: {
+          publish: {
+            enabled: true,
+            destination: "local",
+            minLevel: "WARN",
+            captureNative: true,
+            captureConsole: false,
+            maxRecordBytes: 8192,
+            queue: { maxRecords: 1000, onFull: "dropOldest" },
+            redaction: { enabled: true, replacement: "***", extraPatterns: ["secret-[0-9]+"] },
+          },
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validate({ component: {}, logging: { publish: { enabled: true, destination: "stream" } } }),
+    ).toThrow(EdgeCommonsError);
+    expect(() =>
+      validate({ component: {}, logging: { publish: { enabled: true, queue: { onFull: "block" } } } }),
+    ).toThrow(EdgeCommonsError);
+    expect(() =>
+      validate({ component: {}, logging: { publish: { enabled: true, unknown: true } } }),
+    ).toThrow(EdgeCommonsError);
+  });
 });

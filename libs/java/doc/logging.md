@@ -33,18 +33,43 @@ The logging system is configured through the `logging` section of the component 
 
 - **`level`**: Root logging level (Default: "INFO")
   - Valid values: "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"
-- **`format`**: Log message pattern (Default: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n")
+- **`java_format`**: Log4j2 pattern, or `"json"` for the structured stdout sink
 - **`globalControl`**: Enable global logging control (Default: false)
+- **`publish`**: Optional structured UNS log publisher configuration (disabled by default)
 
 ### File Logging Options
 
-- **`fileLogging`**: Enable file-based logging (Default: false)
-- **`logFilePath`**: Path to log file (supports template variables)
+- **`fileLogging`**: File logging object
+  - **`enabled`**: Enable file-based logging (Default: false)
+  - **`filePath`**: Path to log file (supports template variables)
+  - **`maxFileSize`**: Maximum file size before rotation (Default: "10MB")
+  - **`backupCount`**: Number of backup files to keep (Default: 5)
 
 ### Logger-Specific Configuration
 
 - **`loggers`**: Map of logger names to specific log levels
 - Allows fine-grained control over individual logger output
+
+### UNS Log Bus Publishing
+
+`logging.publish.enabled` turns on the library-owned log publisher. Records are emitted to
+`ecv1/{device}/{component}/main/log/{level}` with envelope header `{name:"log", version:"1.0"}` and body
+schema `edgecommons.log.v1`. The `log` class remains reserved; raw public `MessagingClient.publish(...)`
+calls to `.../log/...` are rejected.
+
+Application code can publish an explicit structured record through `edgeCommons.getLogs()`:
+
+```java
+edgeCommons.getLogs().publish(LogRecord.builder()
+    .withLevel("INFO")
+    .withLogger("app")
+    .withMessage("started")
+    .addField("instance", "main")
+    .build());
+```
+
+`captureNative` captures Log4j2/JUL/SLF4J events routed through the configured logging stack.
+`captureConsole` requests stdout/stderr capture where supported and is disabled by default.
 
 ### Template Variables
 
@@ -61,7 +86,7 @@ The following template variables are supported in configuration strings:
 {
   "logging": {
     "level": "INFO",
-    "format": "%d{HH:mm:ss.SSS} [%level] %logger{36} - %msg%n"
+    "java_format": "%d{HH:mm:ss.SSS} [%level] %logger{36} - %msg%n"
   }
 }
 ```
@@ -72,9 +97,11 @@ This configuration provides basic console logging with INFO level and a simplifi
 {
   "logging": {
     "level": "DEBUG",
-    "format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n",
-    "fileLogging": true,
-    "logFilePath": "/var/log/{ComponentName}-{ThingName}.log"
+    "java_format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n",
+    "fileLogging": {
+      "enabled": true,
+      "filePath": "/var/log/{ComponentName}-{ThingName}.log"
+    }
   }
 }
 ```
@@ -85,10 +112,12 @@ This configuration enables both console and file logging with DEBUG level, using
 {
   "logging": {
     "level": "WARN",
-    "format": "%d{ISO8601} [%level] %logger - %msg%n",
+    "java_format": "%d{ISO8601} [%level] %logger - %msg%n",
     "globalControl": true,
-    "fileLogging": true,
-    "logFilePath": "/greengrass/v2/logs/{ComponentFullName}.log",
+    "fileLogging": {
+      "enabled": true,
+      "filePath": "/greengrass/v2/logs/{ComponentFullName}.log"
+    },
     "loggers": {
       "com.mbreissi.edgecommons.metrics": "DEBUG",
       "com.mbreissi.edgecommons.messaging": "INFO",
@@ -104,10 +133,12 @@ This configuration demonstrates global control with different log levels for spe
 {
   "logging": {
     "level": "TRACE",
-    "format": "%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n",
+    "java_format": "%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n",
     "globalControl": true,
-    "fileLogging": true,
-    "logFilePath": "./logs/debug-{ComponentName}.log",
+    "fileLogging": {
+      "enabled": true,
+      "filePath": "./logs/debug-{ComponentName}.log"
+    },
     "loggers": {
       "root": "DEBUG",
       "com.mbreissi.edgecommons": "TRACE",
@@ -124,10 +155,12 @@ This configuration is optimized for development with detailed logging for edgeco
 {
   "logging": {
     "level": "INFO",
-    "format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} [%t] : %m%n",
+    "java_format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} [%t] : %m%n",
     "globalControl": false,
-    "fileLogging": true,
-    "logFilePath": "/greengrass/v2/logs/{ComponentName}.log",
+    "fileLogging": {
+      "enabled": true,
+      "filePath": "/greengrass/v2/logs/{ComponentName}.log"
+    },
     "loggers": {
       "com.mbreissi.edgecommons.metrics": "WARN",
       "com.mbreissi.edgecommons.messaging": "INFO",

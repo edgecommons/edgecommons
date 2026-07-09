@@ -154,7 +154,12 @@ public class MockConfigurationService extends ConfigManager {
     
     @Override
     public LoggingConfiguration getLoggingConfig() {
-        return ConfigurationFactory.createLoggingConfiguration(null);
+        return loggingConfig;
+    }
+
+    /** Injects a custom logging configuration. */
+    public void setLoggingConfig(LoggingConfiguration loggingConfig) {
+        this.loggingConfig = loggingConfig;
     }
     
     @Override
@@ -163,6 +168,7 @@ public class MockConfigurationService extends ConfigManager {
     }
 
     private HealthConfiguration healthConfig = ConfigurationFactory.createHealthConfiguration(null);
+    private LoggingConfiguration loggingConfig = ConfigurationFactory.createLoggingConfiguration(null);
 
     @Override
     public HealthConfiguration getHealthConfig() {

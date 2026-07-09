@@ -10,7 +10,9 @@ import com.google.gson.JsonObject;
 import org.apache.logging.log4j.Level;
 
 import java.util.Collections;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -46,6 +48,8 @@ public class LoggingConfiguration
     
     // Global control flag
     private boolean globalControl = false;
+
+    private LogPublishConfiguration publishConfig = new LogPublishConfiguration(null);
 
     /**
      * Creates a new logging configuration from a JSON configuration object.
@@ -97,6 +101,9 @@ public class LoggingConfiguration
             // Parse global control flag
             if (jsonConfig.has("globalControl"))
                 globalControl = jsonConfig.get("globalControl").getAsBoolean();
+
+            if (jsonConfig.has("publish") && jsonConfig.get("publish").isJsonObject())
+                publishConfig = new LogPublishConfiguration(jsonConfig.getAsJsonObject("publish"));
         }
     }
 
@@ -136,6 +143,8 @@ public class LoggingConfiguration
         if (globalControl) {
             retVal.addProperty("globalControl", globalControl);
         }
+
+        retVal.add("publish", publishConfig.toDict());
         
         return retVal;
     }
@@ -232,5 +241,160 @@ public class LoggingConfiguration
      */
     public boolean isGlobalControlEnabled() {
         return globalControl;
+    }
+
+    /** Returns the log bus publish configuration. */
+    public LogPublishConfiguration getPublishConfig() {
+        return publishConfig;
+    }
+
+    /** Configuration for {@code logging.publish}. */
+    public static final class LogPublishConfiguration {
+        public enum Destination {
+            LOCAL,
+            NORTHBOUND;
+
+            static Destination parse(String value) {
+                if (value == null) return LOCAL;
+                return switch (value.trim().toLowerCase()) {
+                    case "local" -> LOCAL;
+                    case "northbound" -> NORTHBOUND;
+                    default -> throw new IllegalArgumentException(
+                            "logging.publish.destination must be local or northbound");
+                };
+            }
+
+            String wire() {
+                return name().toLowerCase();
+            }
+        }
+
+        public enum QueueOnFull {
+            DROP_OLDEST;
+
+            static QueueOnFull parse(String value) {
+                if (value == null) return DROP_OLDEST;
+                if ("dropOldest".equals(value) || "dropoldest".equals(value.toLowerCase())) {
+                    return DROP_OLDEST;
+                }
+                throw new IllegalArgumentException(
+                        "logging.publish.queue.onFull must be dropOldest");
+            }
+
+            String wire() {
+                return "dropOldest";
+            }
+        }
+
+        private boolean enabled = false;
+        private Destination destination = Destination.LOCAL;
+        private String minLevel = "INFO";
+        private boolean captureNative = true;
+        private boolean captureConsole = false;
+        private int maxRecordBytes = 8192;
+        private int queueMaxRecords = 1000;
+        private QueueOnFull queueOnFull = QueueOnFull.DROP_OLDEST;
+        private boolean redactionEnabled = true;
+        private String redactionReplacement = "***";
+        private List<String> redactionExtraPatterns = new ArrayList<>();
+
+        LogPublishConfiguration(JsonObject jsonConfig) {
+            if (jsonConfig == null) {
+                return;
+            }
+            if (jsonConfig.has("enabled")) enabled = jsonConfig.get("enabled").getAsBoolean();
+            if (jsonConfig.has("destination")) {
+                destination = Destination.parse(jsonConfig.get("destination").getAsString());
+            }
+            if (jsonConfig.has("minLevel")) {
+                String parsed = jsonConfig.get("minLevel").getAsString().toUpperCase();
+                // Validate against the log bus level set while keeping this config package
+                // independent from the public logging API enum.
+                switch (parsed) {
+                    case "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL" -> minLevel = parsed;
+                    default -> throw new IllegalArgumentException(
+                            "logging.publish.minLevel must be TRACE, DEBUG, INFO, WARN, ERROR or FATAL");
+                }
+            }
+            if (jsonConfig.has("captureNative")) {
+                captureNative = jsonConfig.get("captureNative").getAsBoolean();
+            }
+            if (jsonConfig.has("captureConsole")) {
+                captureConsole = jsonConfig.get("captureConsole").getAsBoolean();
+            }
+            if (jsonConfig.has("maxRecordBytes")) {
+                maxRecordBytes = positiveInt(jsonConfig.get("maxRecordBytes"), "maxRecordBytes");
+            }
+            if (jsonConfig.has("queue") && jsonConfig.get("queue").isJsonObject()) {
+                JsonObject queue = jsonConfig.getAsJsonObject("queue");
+                if (queue.has("maxRecords")) {
+                    queueMaxRecords = positiveInt(queue.get("maxRecords"), "queue.maxRecords");
+                }
+                if (queue.has("onFull")) {
+                    queueOnFull = QueueOnFull.parse(queue.get("onFull").getAsString());
+                }
+            }
+            if (jsonConfig.has("redaction") && jsonConfig.get("redaction").isJsonObject()) {
+                JsonObject redaction = jsonConfig.getAsJsonObject("redaction");
+                if (redaction.has("enabled")) {
+                    redactionEnabled = redaction.get("enabled").getAsBoolean();
+                }
+                if (redaction.has("replacement")) {
+                    redactionReplacement = redaction.get("replacement").getAsString();
+                }
+                if (redaction.has("extraPatterns") && redaction.get("extraPatterns").isJsonArray()) {
+                    redactionExtraPatterns = new ArrayList<>();
+                    for (JsonElement element : redaction.getAsJsonArray("extraPatterns")) {
+                        redactionExtraPatterns.add(element.getAsString());
+                    }
+                }
+            }
+        }
+
+        private static int positiveInt(JsonElement element, String field) {
+            int value = element.getAsInt();
+            if (value <= 0) {
+                throw new IllegalArgumentException("logging.publish." + field + " must be positive");
+            }
+            return value;
+        }
+
+        JsonObject toDict() {
+            JsonObject retVal = new JsonObject();
+            retVal.addProperty("enabled", enabled);
+            retVal.addProperty("destination", destination.wire());
+            retVal.addProperty("minLevel", minLevel);
+            retVal.addProperty("captureNative", captureNative);
+            retVal.addProperty("captureConsole", captureConsole);
+            retVal.addProperty("maxRecordBytes", maxRecordBytes);
+            JsonObject queue = new JsonObject();
+            queue.addProperty("maxRecords", queueMaxRecords);
+            queue.addProperty("onFull", queueOnFull.wire());
+            retVal.add("queue", queue);
+            JsonObject redaction = new JsonObject();
+            redaction.addProperty("enabled", redactionEnabled);
+            redaction.addProperty("replacement", redactionReplacement);
+            com.google.gson.JsonArray patterns = new com.google.gson.JsonArray();
+            for (String pattern : redactionExtraPatterns) {
+                patterns.add(pattern);
+            }
+            redaction.add("extraPatterns", patterns);
+            retVal.add("redaction", redaction);
+            return retVal;
+        }
+
+        public boolean isEnabled() { return enabled; }
+        public Destination getDestination() { return destination; }
+        public String getMinLevel() { return minLevel; }
+        public boolean isCaptureNative() { return captureNative; }
+        public boolean isCaptureConsole() { return captureConsole; }
+        public int getMaxRecordBytes() { return maxRecordBytes; }
+        public int getQueueMaxRecords() { return queueMaxRecords; }
+        public QueueOnFull getQueueOnFull() { return queueOnFull; }
+        public boolean isRedactionEnabled() { return redactionEnabled; }
+        public String getRedactionReplacement() { return redactionReplacement; }
+        public List<String> getRedactionExtraPatterns() {
+            return Collections.unmodifiableList(redactionExtraPatterns);
+        }
     }
 }

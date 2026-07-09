@@ -21,7 +21,7 @@ same CLI contract, the same subsystem boundaries, the same on-wire message envel
 | Heartbeat | `src/heartbeat.ts` | The UNS `state` keepalive (`ecv1/{device}/{component}/main/state`, `{"status":"RUNNING","uptimeSecs":n}`, best-effort `STOPPED` on shutdown) + the enabled cpu/mem/disk/… measures emitted as the `sys` metric through the metric subsystem; on/5 s/local by default; reacts to config reload. |
 | UNS | `src/uns.ts` | `gg.uns()` / `gg.instance(id).uns()` — the unified-namespace topic builder + validator (`ecv1[/{site}]/{device}/{component}/{instance}/{class}[/{channel…}]`), `UnsScope` filters, machine-readable `UnsValidationError` codes, and the reserved-class predicate behind the publish guard (`state|metric|cfg|log` are library-owned). |
 | Health | `src/health.ts` | Dependency-free HTTP `GET /livez` (process alive; never checks the broker), `/readyz` + `/startupz` (200 only when messaging-connected && `setReady` && not shutting down); on by default on KUBERNETES, opt-in via `health.enabled` elsewhere. |
-| Logging | `src/logging.ts` | Leveled logger with file rotation; reconfigures on reload; per-logger levels via `getLogger(name)`. |
+| Logging | `src/logging.ts`, `src/log_bus.ts` | Leveled logger with file rotation; reconfigures on reload; per-logger levels via `getLogger(name)`. Optional `logging.publish` sends structured records through `gg.logs()` to the reserved UNS `log` class. |
 | Message | `src/message.ts` | The cross-language `Message` envelope + `MessageBuilder`. |
 | Credentials | `src/credentials/` | `gg.credentials()` — encrypted local vault + key providers (File/KMS/SecretsManager); opt-in (undefined unless a `credentials` config section is present). |
 | Parameters | `src/parameters/` | `gg.parameters()` — offline-first externalized config (env / mountedDir / AWS SSM); opt-in. |
@@ -46,6 +46,9 @@ await svc.subscribe(`${cfg.thingName}/cmd`, (topic, msg) => {
 
 await gg.metrics().emitMetric("ticks", { count: 1 });
 
+// Optional structured log bus publishing (disabled by default via logging.publish.enabled=false):
+await gg.logs().publish({ level: "INFO", logger: "app", message: "started" });
+
 // Opt-in subsystems — undefined unless their config section is present:
 const creds = gg.credentials();   // CredentialService | undefined
 const params = gg.parameters();   // ParameterService | undefined
@@ -62,6 +65,19 @@ npm install
 npm run build      # tsc -> dist/
 npm test           # vitest unit tests (cli, config, message, metrics, messaging, heartbeat)
 ```
+
+## Log bus publishing
+
+`logging.publish` enables the library-owned UNS log publisher. Records publish to
+`ecv1/{device}/{component}/main/log/{level}` with envelope header
+`{name:"log", version:"1.0"}` and body schema `edgecommons.log.v1`. The `log`
+class remains reserved: raw public `messaging.publish(...)` to `.../log/...` is
+still rejected, and the publisher uses the internal reserved seam.
+
+`captureNative` captures EdgeCommons `Logger` records. `captureConsole` requests
+console capture and, in this SDK, patches `console.*` when enabled; it is disabled
+by default. TypeScript cannot universally capture arbitrary third-party logging
+libraries unless those libraries write through EdgeCommons `Logger` or `console.*`.
 
 ## Runtime model — platform × transport
 

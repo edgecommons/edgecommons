@@ -1,6 +1,8 @@
 # EdgeCommons Binary Messaging - Design Proposal
 
-> **Status:** PROPOSED. This document is a design correction, not an implementation claim.
+> **Status:** DEPRECATED. This document has been superceded by the now implemented DESIGN-protobuf-messaging.md
+> and the DESIGN-protobuf-messaging-implementation.md.
+> This document is a design correction, not an implementation claim.
 > It supersedes the current "binary body marker only at `body`" interpretation with two
 > distinct capabilities:
 >
@@ -576,7 +578,7 @@ Binary messaging does not add new UNS classes. It adds wire forms that ride exis
 | `state` | no | no | Reserved platform status remains JSON. |
 | `cfg` | no | no | Config remains JSON. |
 | `metric` | no | no | Metrics remain JSON/EMF-compatible. |
-| `log` | no for v1 | no for v1 | Revisit with log-tail publisher. |
+| `log` | no for v1 | no for v1 | The shipped log publisher is structured (`edgecommons.log.v1`); opaque binary log frames remain out of scope. |
 
 ### 5.2 Header/Topic Consistency
 

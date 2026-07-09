@@ -72,7 +72,7 @@ The validation schema covers all edgecommons configuration sections:
 {
   "logging": {
     "level": "INFO",
-    "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    "python_format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     "fileLogging": {
       "enabled": true,
       "filePath": "/var/log/component.log",

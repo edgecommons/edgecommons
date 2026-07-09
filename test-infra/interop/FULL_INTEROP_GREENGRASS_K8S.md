@@ -174,6 +174,22 @@ $ipcPackage = .\test-infra\interop\gg_ipc\package.ps1 `
   -Langs "python,java,rust,ts"
 ```
 
+The IPC package defaults to the binary body matrix. For the structured log bus matrix, pass the
+explicit role:
+
+```powershell
+$logPackage = .\test-infra\interop\gg_ipc\package.ps1 `
+  -RunId "log-$(Get-Date -Format yyyyMMddHHmmss)" `
+  -Langs "python,java,rust,ts" `
+  -Role gg-log-matrix
+```
+
+The `gg-log-matrix` role uses the same packaged Java, Python, Rust, RustPeer, and TypeScript
+interop components, but each participant publishes one runtime structured log record and subscribes
+to the UNS `ecv1/<device>/+/main/log/warn` stream. Each participant writes a result file named
+`/tmp/edgecommons_gg_ipc_log_<ready-lang>_<run-id>.json`; the run passes only when every result has
+`ok:true`, `missing:[]`, no errors, and received records from Java, Python, Rust, and TypeScript.
+
 Package the hierarchical ConfigComponent, four skeletons, catalogs, and one-shot verifier:
 
 ```powershell

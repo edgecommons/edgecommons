@@ -28,7 +28,7 @@ reference pages give the exact *what* — signatures, return types, and per-lang
   <LinkCard title="UNS" href="/reference/uns/" description="gg.uns() and gg.instance() — UNS topic building, validation, MessageIdentity, and the reserved-class guard." />
   <LinkCard title="Metrics" href="/reference/metrics/" description="MetricBuilder, the metric emitter / service, and Measure." />
   <LinkCard title="Heartbeat" href="/reference/heartbeat/" description="The library-owned state keepalive + sys measures metric, and its config model." />
-  <LinkCard title="Logging" href="/reference/logging/" description="Logger setup and the per-language logging format token." />
+  <LinkCard title="Logging" href="/reference/logging/" description="Logger setup, the structured UNS log publisher, and per-language format tokens." />
   <LinkCard title="Health" href="/reference/health/" description="The readiness flag and the HTTP health endpoint." />
   <LinkCard title="Credentials" href="/reference/credentials/" description="The credential service (opt-in): the encrypted vault and central sync." />
   <LinkCard title="Parameters" href="/reference/parameters/" description="The parameter service (opt-in): offline-first externalized config." />
@@ -53,6 +53,7 @@ This table is the map. Find the row for what you need, read across to your langu
 | **UNS topic builder** | `getUns()` | `uns()` | `uns()` | `uns()` |
 | **Instance handle** | `instance(id)` | `instance(id)` | `instance(id)` (`Result`) | `instance(id)` |
 | **Metrics** | `getMetrics()` | `get_metrics()` | `metrics()` | `metrics()` |
+| **Logs** | `getLogs()` | `logs()` | `logs()` | `logs()` |
 | **Config** | `getConfigManager()` | `get_config_manager()` | `config()` | `config()` |
 | **Credentials** (opt-in) | `getCredentials()` | `get_credentials()` | `credentials()` | `credentials()` |
 | **Parameters** (opt-in) | `getParameters()` | `get_parameters()` | `parameters()` | `parameters()` |

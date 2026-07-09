@@ -100,6 +100,12 @@ class EdgeCommons:
         self._credentials = None
         self._credential_metrics = None
         self._parameters = None
+        # Library-owned UNS log publisher. The root logging handler is installed before
+        # config loads and stays disabled until logging.publish enables capture.
+        from edgecommons.logs import LogService
+
+        self._logs = LogService()
+        self._logs.install_handler()
         # Phase 1c health slice: readiness state + HTTP health server + SIGTERM bookkeeping.
         # Created defensively before the try so the shutdown path (also reached on a failed init)
         # can null-guard them.
@@ -147,6 +153,7 @@ class EdgeCommons:
                 and _identity is not None
                 and len(_identity.hier) >= 2
             )
+            self._init_logs(_MC)
 
             # Logging is configured inside _init_config_manager (via the config manager's
             # _apply_config -> configure_logging). Defer the startup-fact lines to here so they
@@ -452,6 +459,11 @@ class EdgeCommons:
         from edgecommons.metrics.metric_emitter import MetricEmitter
 
         MetricEmitter.init(self._config_manager)
+
+    def _init_logs(self, messaging_client) -> None:
+        """Configure the library-owned UNS log publisher and hot-reload listener."""
+        self._logs.configure(self._config_manager, messaging_client)
+        self._config_manager.add_config_change_listener(self._logs)
 
     def set_instance_connectivity_provider(self, provider) -> None:
         """Register the component's per-instance connectivity provider — the overridable
@@ -842,6 +854,10 @@ class EdgeCommons:
 
         return self.instance(MessageIdentity.DEFAULT_INSTANCE).app()
 
+    def logs(self):
+        """The library-owned UNS ``log`` publisher facade for this component."""
+        return self._logs
+
     def _require_resolved_identity(self) -> ConfigManager:
         """Guards the UNS accessors: they need the config manager and its resolved
         component identity, which exist only after init has constructed the
@@ -930,6 +946,12 @@ class EdgeCommons:
             MetricEmitter.shutdown()
         except Exception as e:
             logger.error(f"Error shutting down metrics during shutdown: {e}")
+
+        try:
+            if self._logs is not None:
+                self._logs.close()
+        except Exception as e:
+            logger.error(f"Error shutting down log bus during shutdown: {e}")
 
         try:
             MessagingClient.shutdown()

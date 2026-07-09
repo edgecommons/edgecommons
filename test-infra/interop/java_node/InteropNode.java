@@ -1,3 +1,5 @@
+import com.mbreissi.edgecommons.EdgeCommons;
+import com.mbreissi.edgecommons.logging.LogRecord;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.MessageIdentity;
@@ -13,6 +15,7 @@ import com.mbreissi.edgecommons.uns.Uns;
 import com.mbreissi.edgecommons.uns.UnsClass;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 
 import java.util.concurrent.CountDownLatch;
@@ -20,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Map;
+import java.time.Duration;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
@@ -55,6 +59,75 @@ public class InteropNode {
                 + ProcessHandle.current().pid() + "\"} } }";
         MessagingConfiguration cfg = GSON.fromJson(json, MessagingConfiguration.class);
         return new StandaloneMessagingProvider(cfg, "interop-java");
+    }
+
+    static String logComponentToken() {
+        return "interop-log-" + LANG;
+    }
+
+    static Path writeLogRuntimeConfig() throws Exception {
+        JsonObject cfg = new JsonObject();
+
+        JsonObject component = new JsonObject();
+        component.addProperty("token", logComponentToken());
+        cfg.add("component", component);
+
+        JsonObject local = new JsonObject();
+        local.addProperty("type", "mqtt");
+        local.addProperty("host", host());
+        local.addProperty("port", Integer.parseInt(port()));
+        local.addProperty("clientId", "interop-" + LANG + "-log-runtime-" + ProcessHandle.current().pid());
+        JsonObject messaging = new JsonObject();
+        messaging.add("local", local);
+        messaging.addProperty("requestTimeoutSeconds", 2);
+        cfg.add("messaging", messaging);
+
+        JsonObject heartbeat = new JsonObject();
+        heartbeat.addProperty("enabled", false);
+        cfg.add("heartbeat", heartbeat);
+        JsonObject health = new JsonObject();
+        health.addProperty("enabled", false);
+        cfg.add("health", health);
+
+        JsonObject publish = new JsonObject();
+        publish.addProperty("enabled", true);
+        publish.addProperty("destination", "local");
+        publish.addProperty("minLevel", "TRACE");
+        publish.addProperty("captureNative", false);
+        publish.addProperty("captureConsole", false);
+        JsonObject redaction = new JsonObject();
+        redaction.addProperty("enabled", false);
+        publish.add("redaction", redaction);
+        JsonObject logging = new JsonObject();
+        logging.addProperty("level", "WARN");
+        logging.add("publish", publish);
+        cfg.add("logging", logging);
+
+        Path path = Files.createTempFile("edgecommons-log-" + LANG + "-", ".json");
+        Files.writeString(path, GSON.toJson(cfg), StandardCharsets.UTF_8);
+        return path;
+    }
+
+    static String[] logRuntimeArgs(Path path) {
+        String p = path.toString();
+        return new String[] {
+                "--platform", "HOST",
+                "--transport", "MQTT", p,
+                "-c", "FILE", p,
+                "-t", "interop-device"
+        };
+    }
+
+    static String wireIdentityDevice(JsonObject identity) {
+        if (identity == null || !identity.has("hier") || !identity.get("hier").isJsonArray()) {
+            return null;
+        }
+        var hier = identity.getAsJsonArray("hier");
+        if (hier.isEmpty()) {
+            return null;
+        }
+        JsonObject tail = hier.get(hier.size() - 1).getAsJsonObject();
+        return tail.has("value") ? tail.get("value").getAsString() : null;
     }
 
     static JsonElement asElement(Object o) {
@@ -98,6 +171,10 @@ public class InteropNode {
         return Path.of("/tmp", "edgecommons_gg_ipc_binary_ready_" + lang + "_" + runId);
     }
 
+    static Path ggLogReadyPath(String runId, String lang) {
+        return Path.of("/tmp", "edgecommons_gg_ipc_log_ready_" + lang + "_" + runId);
+    }
+
     static java.util.List<String> waitForGgReady(String runId, String[] expectedLangs)
             throws InterruptedException {
         long readyWaitMs = (long) (Double.parseDouble(
@@ -122,6 +199,41 @@ public class InteropNode {
             }
         }
         return missing;
+    }
+
+    static java.util.List<String> waitForGgLogReady(String runId, String[] expectedLangs)
+            throws InterruptedException {
+        long readyWaitMs = (long) (Double.parseDouble(
+                System.getenv().getOrDefault("EDGECOMMONS_GG_READY_WAIT_SECS", "180")) * 1000);
+        long deadline = System.currentTimeMillis() + readyWaitMs;
+        while (System.currentTimeMillis() < deadline) {
+            java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+            for (String lang : expectedLangs) {
+                if (!Files.exists(ggLogReadyPath(runId, lang))) {
+                    missing.add(lang);
+                }
+            }
+            if (missing.isEmpty()) {
+                return missing;
+            }
+            Thread.sleep(200);
+        }
+        java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+        for (String lang : expectedLangs) {
+            if (!Files.exists(ggLogReadyPath(runId, lang))) {
+                missing.add(lang);
+            }
+        }
+        return missing;
+    }
+
+    static String[] ggLogRuntimeArgs(Path path) {
+        return new String[] {
+                "--platform", "GREENGRASS",
+                "--transport", "IPC",
+                "-c", "FILE", path.toString(),
+                "-t", "interop-device"
+        };
     }
 
     /**
@@ -351,6 +463,188 @@ public class InteropNode {
             prov.publish(topic, msg);
             Thread.sleep(500);
             prov.close();
+        } else if (role.equals("log-sub")) {
+            String topic = args[1];
+            String token = args[2];
+            StandaloneMessagingProvider prov = provider("logsub");
+            final CountDownLatch latch = new CountDownLatch(1);
+            final JsonObject[] result = new JsonObject[1];
+            prov.subscribe(topic, (t, m) -> {
+                JsonObject out = new JsonObject();
+                try {
+                    JsonObject body = (JsonObject) m.getBody();
+                    JsonObject identity = m.getIdentity() == null ? null : m.getIdentity().toDict();
+                    JsonObject header = m.getHeader() == null ? null : m.getHeader().toDict();
+                    JsonObject fields = body.has("fields") ? body.getAsJsonObject("fields") : new JsonObject();
+                    boolean ok = t.equals(topic)
+                            && "edgecommons.log.v1".equals(body.get("schema").getAsString())
+                            && "WARN".equals(body.get("level").getAsString())
+                            && ("log-interop-" + token).equals(body.get("message").getAsString())
+                            && fields.has("nonce") && token.equals(fields.get("nonce").getAsString())
+                            && identity != null
+                            && "interop-device".equals(wireIdentityDevice(identity))
+                            && identity.get("component").getAsString().startsWith("interop-log-")
+                            && "main".equals(identity.get("instance").getAsString())
+                            && header != null
+                            && "log".equals(header.get("name").getAsString())
+                            && "1.0".equals(header.get("version").getAsString());
+                    out.addProperty("ok", ok);
+                    out.addProperty("topic", t);
+                    out.add("header", header == null ? JsonNull.INSTANCE : header);
+                    out.add("identity", identity == null ? JsonNull.INSTANCE : identity);
+                    out.add("body", body);
+                } catch (Exception e) {
+                    out.addProperty("ok", false);
+                    out.addProperty("error", e.toString());
+                }
+                result[0] = out;
+                latch.countDown();
+            }, 1);
+            System.out.println("READY");
+            System.out.flush();
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                JsonObject out = new JsonObject();
+                out.addProperty("ok", false);
+                out.addProperty("error", "timeout");
+                System.out.println(out);
+                System.exit(1);
+            }
+            System.out.println(result[0]);
+            prov.close();
+            System.exit(result[0].has("ok") && result[0].get("ok").getAsBoolean() ? 0 : 1);
+        } else if (role.equals("log-pub")) {
+            String token = args[1];
+            Path path = writeLogRuntimeConfig();
+            EdgeCommons gg = null;
+            try {
+                gg = new EdgeCommons(
+                        "com.mbreissi.edgecommons.interop." + LANG + ".LogPublisher",
+                        logRuntimeArgs(path));
+                gg.getLogs().publish(LogRecord.builder()
+                        .withLevel("WARN")
+                        .withLogger("interop." + LANG)
+                        .withMessage("log-interop-" + token)
+                        .withFields(Map.of("nonce", token, "publisher", LANG))
+                        .build());
+                boolean flushed = gg.getLogs().flush(Duration.ofSeconds(5));
+                JsonObject out = new JsonObject();
+                out.addProperty("ok", flushed && gg.getLogs().stats().getPublishedRecords() >= 1);
+                out.addProperty("component", logComponentToken());
+                out.addProperty("published", gg.getLogs().stats().getPublishedRecords());
+                System.out.println(out);
+                System.exit(out.get("ok").getAsBoolean() ? 0 : 1);
+            } finally {
+                if (gg != null) {
+                    gg.shutdown();
+                }
+                Files.deleteIfExists(path);
+            }
+        } else if (role.equals("gg-log-matrix")) {
+            String runId = args[1];
+            String[] expectedLangs = args[2].split(",");
+            String[] readyLangs = System.getenv().getOrDefault("EDGECOMMONS_GG_READY_LANGS", args[2]).split(",");
+            String readyLang = System.getenv().getOrDefault("EDGECOMMONS_GG_READY_LANG", LANG);
+            long subscribeDelayMs = (long) (Double.parseDouble(
+                    System.getenv().getOrDefault("EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS", "8")) * 1000);
+            long waitMs = (long) (Double.parseDouble(
+                    System.getenv().getOrDefault("EDGECOMMONS_GG_WAIT_SECS", "35")) * 1000);
+            MessagingProvider prov = new GreengrassMessagingProvider(true);
+            java.util.concurrent.ConcurrentHashMap<String, JsonObject> received = new java.util.concurrent.ConcurrentHashMap<>();
+            java.util.concurrent.ConcurrentHashMap<String, String> errors = new java.util.concurrent.ConcurrentHashMap<>();
+            CountDownLatch latch = new CountDownLatch(expectedLangs.length);
+            prov.subscribe("ecv1/interop-device/+/main/log/warn", (topic, m) -> {
+                try {
+                    JsonObject body = (JsonObject) m.getBody();
+                    JsonObject identity = m.getIdentity() == null ? null : m.getIdentity().toDict();
+                    String component = identity == null ? "" : identity.get("component").getAsString();
+                    String publisher = component.startsWith("interop-log-")
+                            ? component.substring("interop-log-".length())
+                            : component;
+                    JsonObject fields = body.has("fields") ? body.getAsJsonObject("fields") : new JsonObject();
+                    boolean ok = java.util.Arrays.asList(expectedLangs).contains(publisher)
+                            && "interop-device".equals(wireIdentityDevice(identity))
+                            && identity != null
+                            && "main".equals(identity.get("instance").getAsString())
+                            && "edgecommons.log.v1".equals(body.get("schema").getAsString())
+                            && "WARN".equals(body.get("level").getAsString())
+                            && ("interop." + publisher).equals(body.get("logger").getAsString())
+                            && ("gg-log-interop-" + runId + "-" + publisher).equals(body.get("message").getAsString())
+                            && fields.has("runId") && runId.equals(fields.get("runId").getAsString())
+                            && fields.has("publisher") && publisher.equals(fields.get("publisher").getAsString());
+                    JsonObject item = new JsonObject();
+                    item.addProperty("ok", ok);
+                    item.addProperty("topic", topic);
+                    item.add("identity", identity == null ? JsonNull.INSTANCE : identity);
+                    item.add("body", body);
+                    if (received.putIfAbsent(publisher, item) == null) {
+                        latch.countDown();
+                    }
+                } catch (Exception e) {
+                    errors.put("log:" + topic, e.toString());
+                }
+            }, 1, 64);
+            System.out.println("READY");
+            System.out.flush();
+            Files.writeString(ggLogReadyPath(runId, readyLang), Long.toString(System.currentTimeMillis()),
+                    StandardCharsets.UTF_8);
+            EdgeCommons gg = null;
+            Path path = null;
+            JsonObject published = new JsonObject();
+            try {
+                java.util.List<String> readyMissing = waitForGgLogReady(runId, readyLangs);
+                Thread.sleep(subscribeDelayMs);
+                if (readyMissing.isEmpty()) {
+                    path = writeLogRuntimeConfig();
+                    gg = new EdgeCommons(
+                            "com.mbreissi.edgecommons.interop." + LANG + ".LogPublisher",
+                            ggLogRuntimeArgs(path));
+                    gg.getLogs().publish(LogRecord.builder()
+                            .withLevel("WARN")
+                            .withLogger("interop." + LANG)
+                            .withMessage("gg-log-interop-" + runId + "-" + LANG)
+                            .withFields(Map.of("runId", runId, "publisher", LANG))
+                            .build());
+                    gg.getLogs().flush(Duration.ofSeconds(5));
+                    published.addProperty("published", gg.getLogs().stats().getPublishedRecords());
+                    published.addProperty("failed", gg.getLogs().stats().getPublishFailures());
+                }
+                latch.await(waitMs, TimeUnit.MILLISECONDS);
+                java.util.List<String> missing = new java.util.ArrayList<>();
+                for (String lang : expectedLangs) {
+                    if (!received.containsKey(lang)) {
+                        missing.add(lang);
+                    }
+                }
+                boolean allOk = true;
+                for (String lang : expectedLangs) {
+                    JsonObject item = received.get(lang);
+                    allOk = allOk && item != null && item.has("ok") && item.get("ok").getAsBoolean();
+                }
+                boolean ok = readyMissing.isEmpty() && missing.isEmpty() && errors.isEmpty() && allOk;
+                JsonObject result = new JsonObject();
+                result.addProperty("ok", ok);
+                result.addProperty("lang", LANG);
+                result.addProperty("run_id", runId);
+                result.add("ready_missing", GSON.toJsonTree(readyMissing));
+                result.add("missing", GSON.toJsonTree(missing));
+                result.add("received", GSON.toJsonTree(received));
+                result.add("errors", GSON.toJsonTree(errors));
+                result.add("published", published);
+                Files.writeString(
+                        Path.of("/tmp", "edgecommons_gg_ipc_log_" + readyLang + "_" + runId + ".json"),
+                        GSON.toJson(result),
+                        StandardCharsets.UTF_8);
+                System.out.println(result);
+                System.exit(ok ? 0 : 1);
+            } finally {
+                if (gg != null) {
+                    gg.shutdown();
+                }
+                if (path != null) {
+                    Files.deleteIfExists(path);
+                }
+                prov.close();
+            }
         } else if (role.equals("gg-binary-matrix")) {
             String runId = args[1];
             String[] expectedLangs = args[2].split(",");

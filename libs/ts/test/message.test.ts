@@ -210,6 +210,22 @@ describe("Message / MessageBuilder", () => {
     expect(event.getBody()).toMatchObject({ type: "door-open" });
   });
 
+  it("protobuf state instance connectivity defaults an omitted proto3 bool to disconnected", () => {
+    // Java/protobuf omits a false proto3 bool on the wire. The diagnostic body must still carry the
+    // contract's required `connected: false` value so consumers can render disconnected instances.
+    const payload = Buffer.from(
+      "0a0c0a0573746174651203312e30aa01180a0752554e4e494e471a0d0a0b70616c6c6574697a657231",
+      "hex",
+    );
+    const state = Message.fromBytes(payload);
+
+    expect(state.getBodyCase()).toBe(MessageBodyCase.StateUpdate);
+    expect(state.getBody()).toEqual({
+      status: "RUNNING",
+      instances: [{ instance: "palletizer1", connected: false }],
+    });
+  });
+
   it("explicit command body preserves the component-facing payload", () => {
     const msg = MessageBuilder.create("ping", "1.0").withCommand({ status: "RUNNING" }).build();
     const back = Message.fromBytes(msg.toBytes());

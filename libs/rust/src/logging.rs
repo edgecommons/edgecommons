@@ -118,6 +118,7 @@ pub fn init(config: &Config, profile_format_default: Option<&str>) {
             let correlation = correlation_fields(&env, &config.thing_name, &config.component_name);
             tracing_subscriber::registry()
                 .with(filter_layer)
+                .with(crate::logs::LogCaptureLayer::new())
                 .with(JsonLayer { correlation })
                 .try_init()
                 .is_ok()
@@ -125,6 +126,7 @@ pub fn init(config: &Config, profile_format_default: Option<&str>) {
         // A non-json token template → render every event through the token layer (console + file).
         Some(template) => tracing_subscriber::registry()
             .with(filter_layer)
+            .with(crate::logs::LogCaptureLayer::new())
             .with(TokenLayer {
                 template,
                 component: config.component_name.clone(),
@@ -138,6 +140,7 @@ pub fn init(config: &Config, profile_format_default: Option<&str>) {
                 file_writer.map(|writer| fmt::layer().with_ansi(false).with_writer(writer));
             tracing_subscriber::registry()
                 .with(filter_layer)
+                .with(crate::logs::LogCaptureLayer::new())
                 .with(fmt::layer())
                 .with(file_layer)
                 .try_init()

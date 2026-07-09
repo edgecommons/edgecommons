@@ -7,6 +7,7 @@ package com.mbreissi.edgecommons.test;
 import com.mbreissi.edgecommons.EdgeCommons;
 import com.mbreissi.edgecommons.ParsedCommandLine;
 import com.mbreissi.edgecommons.config.ConfigManagerFactory;
+import com.mbreissi.edgecommons.logging.LogService;
 
 /**
  * Test-specific EdgeCommons that wires a real (file-backed) ConfigManager together with mock
@@ -24,6 +25,8 @@ public class TestableEdgeCommons extends EdgeCommons {
             // Mock collaborators injected directly - no real provider is created.
             this.messagingClient = new MockMessagingService();
             this.metricEmitter = new MockMetricService();
+            this.logService = new LogService(this.configManager, this.messagingClient);
+            this.configManager.addConfigChangeListener(this.logService);
             this.configManager.completeInitialization();
         } catch (Exception e) {
             throw new RuntimeException("Failed to initialize TestableEdgeCommons: " + e.getMessage(), e);

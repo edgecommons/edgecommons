@@ -41,6 +41,7 @@ mod instance;
 #[cfg(feature = "greengrass")]
 pub mod ipc;
 pub mod logging;
+pub mod logs;
 pub mod messaging;
 pub mod metrics;
 #[cfg(feature = "parameters")]
@@ -75,6 +76,7 @@ pub struct EdgeCommons {
     args: ParsedArgs,
     config: Arc<ArcSwap<Config>>,
     messaging: Option<Arc<dyn messaging::MessagingService>>,
+    logs: Arc<dyn logs::LogService>,
     metrics: Arc<dyn metrics::MetricService>,
     /// Telemetry streams (the `streaming` feature). Always present when the feature is on;
     /// empty if no `streaming` config section was provided.
@@ -213,6 +215,11 @@ impl EdgeCommons {
                     .to_string(),
             )
         })
+    }
+
+    /// The log bus publisher for this component.
+    pub fn logs(&self) -> Arc<dyn logs::LogService> {
+        self.logs.clone()
     }
 
     /// The metric service for this component (the testable seam).
@@ -492,13 +499,16 @@ impl EdgeCommonsBuilder {
             service.set_default_request_timeout(cfg.messaging_request_timeout());
             service.set_guard_include_root(cfg.effective_include_root());
         }
+        let config: Arc<ArcSwap<Config>> = Arc::new(ArcSwap::from_pointee(cfg));
+        let logs = logs::DefaultLogService::start(config.clone(), reserved.clone())?;
+
         // Logging is configured from the component CONFIG, which loads after the resolver. The
         // resolved platform is already known, so its profile's default logging format (json on
         // KUBERNETES — FR-LOG-1) is threaded in to seed the format when the config omits one
         // (precedence FR-RT-3: explicit config ▸ profile default ▸ library default).
         let profile_logging_default =
             crate::platform::profile(parsed.platform).and_then(|p| p.logging_format);
-        logging::init(&cfg, profile_logging_default);
+        logging::init(&config.load_full(), profile_logging_default);
 
         // Deferred early-bootstrap observability: the platform-resolver summary and the messaging
         // connection happen BEFORE the tracing subscriber is installed (above), so they are emitted
@@ -523,14 +533,14 @@ impl EdgeCommonsBuilder {
             tracing::info!("messaging connected (transport={:?})", parsed.transport);
         }
 
+        let thing_for_log = config.load_full().thing_name.clone();
         tracing::info!(
             component = %self.component_name,
-            thing = %cfg.thing_name,
+            thing = %thing_for_log,
             config_source = source.source_name(),
             "EdgeCommons initialized"
         );
 
-        let config: Arc<ArcSwap<Config>> = Arc::new(ArcSwap::from_pointee(cfg));
         let snapshot = config.load_full();
         // The resolved platform threads the metric-target profile default into target selection the
         // same way logging-format/health-enabled are threaded (FR-MET-1 / FR-RT-3): the effective
@@ -705,6 +715,7 @@ impl EdgeCommonsBuilder {
         let listeners: ConfigListeners = Arc::new(std::sync::Mutex::new(Vec::new()));
         if let Ok(mut l) = listeners.lock() {
             l.push(emitter as Arc<dyn config::ConfigurationChangeListener>);
+            l.push(logs.clone() as Arc<dyn config::ConfigurationChangeListener>);
             l.push(Arc::new(logging::LoggingReconfigurer)
                 as Arc<dyn config::ConfigurationChangeListener>);
         }
@@ -818,6 +829,7 @@ impl EdgeCommonsBuilder {
             args: parsed,
             config,
             messaging,
+            logs,
             metrics,
             #[cfg(feature = "streaming")]
             streams,
@@ -1089,6 +1101,7 @@ pub mod prelude {
         AppFacade, Channel, DataFacade, EventsFacade, Quality, Sample, Severity, SignalUpdate,
     };
     pub use crate::heartbeat::{InstanceConnectivity, InstanceConnectivityProvider};
+    pub use crate::logs::{LogLevel, LogRecord, LogService, LogStats};
     pub use crate::messaging::{
         MessageHandler, MessageIdentity, MessagingService, Qos, ReplyFuture, message_handler,
     };

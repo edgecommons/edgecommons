@@ -49,6 +49,12 @@ public ConfigManager getConfigManager()
 Returns the configuration manager instance.
 
 ```java
+public LogService getLogs()
+```
+Returns the structured UNS log publisher. It publishes `edgecommons.log.v1` records on
+`ecv1/{device}/{component}/main/log/{level}` through the reserved `log` class seam.
+
+```java
 public static ParsedCommandLine processArgs(String componentName, String[] args, Options appOptions)
 ```
 Processes command line arguments and returns parsed result.
@@ -247,6 +253,30 @@ Returns the log file path template.
 public Map<String, Level> getLoggerLevels()
 ```
 Returns map of logger names to their specific levels.
+
+```java
+public LogPublishConfiguration getPublishConfig()
+```
+Returns the parsed `logging.publish` configuration for the structured log bus publisher.
+
+#### LogService
+
+```java
+public void publish(LogRecord record)
+```
+Queues a structured log record for publication. The call is non-blocking; if the bounded queue is full,
+the oldest queued record is dropped and counted.
+
+```java
+public boolean flush(Duration timeout)
+```
+Waits for records queued at the time of the call to publish or for the timeout to expire.
+
+```java
+public LogStats stats()
+```
+Returns publisher counters: enqueued, published, dropped, filtered, redacted, truncated, failed, and
+currently queued records.
 
 ---
 

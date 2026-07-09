@@ -19,8 +19,8 @@ EdgeCommons instance; component code just obtains a logger and writes to it.
 <Aside type="note" title="Config keys differ by language">
 The only logging key that is language-specific is the **format token**:
 `java_format`, `python_format`, `rust_format`, and `ts_format`. Each SDK reads **only its own** token
-and ignores the other three. Every other key (`level`, `fileLogging`, `loggers`, `globalControl`) is
-identical across all four SDKs.
+and ignores the other three. Every other key (`level`, `fileLogging`, `loggers`, `globalControl`,
+`publish`) is identical across all four SDKs.
 </Aside>
 
 ## Where logging is configured
@@ -244,6 +244,48 @@ When `enabled` is `false` (or `fileLogging` is omitted), only the console sink r
 `fileLogging.filePath` — there is no top-level `logFilePath` key, and `"fileLogging": true` will
 fail schema validation.
 </Aside>
+
+## Publish logs on the UNS bus
+
+Set `logging.publish.enabled` when a component should publish a bounded, structured log stream to the
+site bus for an operator console or another consumer:
+
+```json
+{
+  "logging": {
+    "level": "INFO",
+    "publish": {
+      "enabled": true,
+      "destination": "local",
+      "minLevel": "INFO",
+      "captureNative": true,
+      "captureConsole": false
+    }
+  }
+}
+```
+
+The topic is fixed and library-owned:
+
+```text
+ecv1/{device}/{component}/main/log/{level}
+```
+
+The envelope header is `{ "name": "log", "version": "1.0" }`; the body carries
+`schema: "edgecommons.log.v1"` plus `timestamp`, `level`, `logger`, `message`, `sequence`, and optional
+`thread`, `fields`, `error`, `truncated`, and `dropped`. The `log` class remains reserved: ordinary
+`messaging.publish(...)` calls to `.../log/...` are rejected, and only the SDK's log publisher can use
+the reserved seam.
+
+The publisher is disabled by default because logs can be noisy. Its queue is bounded
+(`logging.publish.queue.maxRecords`, default `1000`, drop-oldest), record bodies are capped
+(`maxRecordBytes`, default `8192`), and redaction is on by default for common credential-like strings.
+Use `destination: "northbound"` only when the configured northbound broker is the intended log sink.
+
+`captureNative` captures the SDK's logging framework where supported: Log4j2/JUL/SLF4J in Java, stdlib
+`logging` in Python, `tracing` in Rust, and EdgeCommons `Logger` in TypeScript. `captureConsole` requests
+stdout/stderr or console capture where the SDK/runtime can support it; it is off by default and should
+not be treated as a portable substitute for using the language's logger.
 
 ## The stdout-JSON sink
 

@@ -2,6 +2,7 @@
 from edgecommons.edgecommons import EdgeCommons
 from edgecommons.edgecommons_builder import EdgeCommonsBuilder
 from edgecommons.edgecommons_instance import EdgeCommonsInstance
+from edgecommons.logs import LogRecord, LogService
 from edgecommons.messaging.messaging_client import MessagingClient
 from edgecommons.messaging.qos import Qos
 from edgecommons.messaging.errors import RequestTimeoutError, ReservedTopicError
@@ -21,6 +22,8 @@ __all__ = [
     'EdgeCommonsBuilder',
     'EdgeCommonsInstance',
     'HierEntry',
+    'LogRecord',
+    'LogService',
     'MessageIdentity',
     'MessagingClient',
     'Qos',

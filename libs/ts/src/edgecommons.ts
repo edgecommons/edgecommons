@@ -34,6 +34,7 @@ import type { StreamSink } from "./facades";
 import { Heartbeat } from "./heartbeat";
 import type { InstanceConnectivityProvider } from "./instance_connectivity";
 import { initLogging, reconfigureLogging, LoggingReconfigurer, logger } from "./logging";
+import { LogBusService, LogService } from "./log_bus";
 import { MessageBuilder, MessageIdentity } from "./message";
 import { DefaultMessagingService } from "./messaging/service";
 import { IMessagingService } from "./messaging/types";
@@ -179,6 +180,7 @@ export class EdgeCommons {
     private current: Config,
     private readonly messagingService: IMessagingService | undefined,
     private readonly metricsService: MetricService,
+    private readonly logService: LogBusService,
     private readonly listeners: ConfigurationChangeListener[],
     private readonly heartbeat: Heartbeat,
     private readonly configSource: ConfigSource,
@@ -378,6 +380,11 @@ export class EdgeCommons {
     return this.metricsService;
   }
 
+  /** The structured log publisher for the library-owned UNS `log` class. */
+  logs(): LogService {
+    return this.logService;
+  }
+
   /**
    * The UNS topic builder + validator bound to this component's resolved identity (instance
    * `"main"`) and its `topic.includeRoot` setting (UNS-CANONICAL-DESIGN §2). For
@@ -499,6 +506,8 @@ export class EdgeCommons {
     this.credentialMetrics?.close();
     this.streamMetrics?.close();
     this.streamsService?.close();
+    await this.logService.flush().catch(() => undefined);
+    this.logService.close();
     // Stop the heartbeat BEFORE messaging disconnects so its best-effort STOPPED state
     // (UNS-CANONICAL-DESIGN §4.3 / D-U14) can still leave over the live transport.
     await this.heartbeat.stop().catch(() => undefined);
@@ -599,6 +608,7 @@ export class EdgeCommonsBuilder {
     // still wins and HOST/GREENGRASS keep today's console/text default. The platform is known here
     // (resolved at parse time) even though config loads after the resolver/messaging.
     initLogging(current, { formatDefault: profileLoggingFormat(parsed.platform) });
+    const logService = new LogBusService(() => current, messaging);
     // Deferred early-bootstrap observability: the resolver summary and the messaging "connected"
     // fact are produced BEFORE logging is configured, so they are emitted here — immediately after
     // initLogging — using values already resolved at parse time (`parsed`) and the messaging service.
@@ -624,7 +634,7 @@ export class EdgeCommonsBuilder {
     );
     const metrics: MetricService = emitter;
 
-    const listeners: ConfigurationChangeListener[] = [emitter, new LoggingReconfigurer()];
+    const listeners: ConfigurationChangeListener[] = [emitter, new LoggingReconfigurer(), logService];
 
     const heartbeat = Heartbeat.start(() => current, metrics, messaging);
 
@@ -676,6 +686,7 @@ export class EdgeCommonsBuilder {
       current,
       messaging,
       metrics,
+      logService,
       listeners,
       heartbeat,
       source,

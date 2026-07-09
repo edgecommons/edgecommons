@@ -1,6 +1,6 @@
 ---
 title: Logging API
-description: The public logging API per SDK — how to obtain a logger, the log methods and level predicates, the logging configuration type, and the format tokens.
+description: The public logging API per SDK — how to obtain a logger, publish structured log records on the UNS log class, configure log sinks, and use format tokens.
 sidebar:
   order: 9
 ---
@@ -8,14 +8,15 @@ sidebar:
 import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
 
 This page is the API reference for EdgeCommons logging: the logger type in each SDK, how you obtain
-one, the log methods and level predicates, the configuration type, the configurator entry points,
-and the per-language format tokens. For the concepts behind these — how levels are honored, the
-stdout-JSON sink, file rotation, and hot reload — see the [Logging guide](/guides/logging/).
+one, the log methods and level predicates, the structured UNS log publisher, the configuration type,
+the configurator entry points, and the per-language format tokens. For the concepts behind these —
+how levels are honored, the stdout-JSON sink, file rotation, log-bus publishing, and hot reload — see
+the [Logging guide](/guides/logging/).
 
 There is **no `gg.logging()` accessor** in any SDK. The framework configures your language's logging
 framework when you build your EdgeCommons instance; component code obtains a logger from the native
-facility and writes to it. The configuration types and configurator functions below are wired by the
-framework — component authors normally only touch the *get a logger and log* surface.
+facility and writes to it. The optional structured bus publisher is exposed separately as
+`getLogs()` in Java and `logs()` in Python, Rust, and TypeScript.
 
 ## At a glance
 
@@ -215,6 +216,7 @@ String  getMaxFileSize();                            // default "10MB"
 int     getBackupCount();                            // default 5
 java.util.Map<String, Level> getLoggerLevels();      // from logging.loggers
 boolean isGlobalControlEnabled();                    // default false
+LogPublishConfiguration getPublishConfig();          // logging.publish
 ```
 
 Defaults: level `INFO`, format
@@ -237,7 +239,8 @@ EnhancedLoggingConfiguration(
 cfg.configure_logging(config_manager=None)   # clears root handlers, installs sinks
 cfg.get_level(); cfg.get_format(); cfg.is_json_sink()
 cfg.is_file_logging_enabled(); cfg.get_log_file_path()
-cfg.get_logger_levels(); cfg.is_global_control_enabled(); cfg.to_dict()
+cfg.get_logger_levels(); cfg.is_global_control_enabled()
+cfg.get_publish_config(); cfg.to_dict()
 ```
 
 Defaults: level `logging.INFO`, format `%(asctime)s [%(levelname)s] %(name)s: %(message)s`. The
@@ -259,6 +262,7 @@ file_logging.enabled: bool,
 file_logging.file_path: String,
 file_logging.max_file_size(): String,   // default "10MB"
 file_logging.backup_count(): u32,       // default 5
+publish: LoggingPublishConfig,          // logging.publish
 ```
 
 There are no getters to call; the values are consumed directly by the configurator.
@@ -278,6 +282,7 @@ fileLogging.enabled: boolean;
 fileLogging.filePath: string;
 fileLogging.maxFileSize(): string;      // default "10MB"
 fileLogging.backupCount(): number;      // default 5
+publish: LoggingPublishConfig;
 ```
 
 The platform default (e.g. `json` on Kubernetes) is supplied through `LoggingOptions`:
@@ -358,6 +363,89 @@ configurator on hot reload and can swap the file writer live. `LoggingReconfigur
 
 </TabItem>
 </Tabs>
+
+## Structured log bus publisher
+
+The `log` UNS class is library-owned and reserved. When `logging.publish.enabled` is `true`,
+EdgeCommons publishes structured records to:
+
+```text
+ecv1/{device}/{component}/main/log/{level}
+```
+
+Each message uses envelope header `{ name: "log", version: "1.0" }` and body schema
+`edgecommons.log.v1`. The core body fields are `timestamp`, `level`, `logger`, `message`, and
+`sequence`; optional fields include `thread`, `fields`, `error`, `truncated`, and `dropped`.
+Application code still cannot publish raw messages to `.../log/...` through the public messaging API;
+the log publisher uses the internal reserved publish seam.
+
+<Tabs syncKey="lang">
+<TabItem label="Java">
+
+```java
+LogService logs = gg.getLogs();
+logs.publish(LogRecord.builder()
+    .withLevel("INFO")
+    .withLogger("app")
+    .withMessage("started")
+    .addField("instance", "main")
+    .build());
+logs.flush(Duration.ofSeconds(2));
+LogStats stats = logs.stats();
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from edgecommons.logs import LogRecord
+
+gg.logs().publish(LogRecord(
+    level="INFO",
+    logger="app",
+    message="started",
+    fields={"instance": "main"},
+))
+gg.logs().flush(timeout=2.0)
+stats = gg.logs().stats()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use edgecommons::logs::{LogLevel, LogRecord};
+
+gg.logs().try_publish(
+    LogRecord::builder(LogLevel::Info, "app", "started")
+        .field("instance", serde_json::json!("main"))
+        .build(),
+)?;
+let stats = gg.logs().stats();
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+await gg.logs().publish({
+  level: "INFO",
+  logger: "app",
+  message: "started",
+  fields: { instance: "main" },
+});
+await gg.logs().flush();
+const stats = gg.logs().stats();
+```
+
+</TabItem>
+</Tabs>
+
+Automatic capture is controlled by `logging.publish.captureNative` and
+`logging.publish.captureConsole`. Native capture observes the logging framework that the SDK wires:
+Log4j2/JUL/SLF4J in Java, stdlib `logging` in Python, `tracing` in Rust, and EdgeCommons `Logger` in
+TypeScript. Console/stdout capture is runtime-dependent; the config field is shared, but not every SDK
+can intercept arbitrary third-party output.
 
 ## Format tokens
 

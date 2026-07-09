@@ -211,6 +211,7 @@ MessagingClient   getMessaging();       // concrete instance
 Uns               getUns();             // the UNS topic builder (component identity, instance "main")
 EdgeCommonsInstance        instance(String id);  // instance-scoped handle (validated token; cached per id)
 MetricEmitter     getMetrics();         // concrete instance
+LogService        getLogs();            // structured UNS log publisher
 StreamService     getStreams();         // null when no `streaming` config section
 CredentialService getCredentials();     // null when no `credentials` section
 ParameterService  getParameters();      // null when no `parameters` section
@@ -228,6 +229,7 @@ def get_messaging(self)                            # returns the MessagingClient
 def uns(self) -> Uns                               # the UNS topic builder (bare name — no get_ prefix)
 def instance(self, instance_id: str) -> EdgeCommonsInstance # instance-scoped handle (validated; cached per id)
 def get_metrics(self)                              # returns the MetricEmitter CLASS
+def logs(self)                                     # returns the structured UNS log publisher
 def get_streams(self)                              # None when no `streaming` section
 def get_credentials(self)                          # None when no `credentials` section
 def get_parameters(self)                           # None when no `parameters` section
@@ -248,6 +250,7 @@ fn messaging(&self) -> Result<Arc<dyn messaging::MessagingService>>;  // Err if 
 fn uns(&self) -> uns::Uns;                                            // the UNS topic builder
 fn instance(&self, instance_id: &str) -> Result<EdgeCommonsInstance>;          // Err on an invalid token
 fn metrics(&self) -> Arc<dyn metrics::MetricService>;
+fn logs(&self) -> Arc<dyn logs::LogService>;
 
 #[cfg(feature = "streaming")]
 fn streams(&self) -> Arc<dyn streaming::StreamService>;               // NOT Option — empty service when no section
@@ -274,6 +277,7 @@ messaging(): IMessagingService;                    // throws EdgeCommonsError.me
 uns(): Uns;                                        // the UNS topic builder
 instance(instanceId: string): EdgeCommonsInstance;          // instance-scoped handle (validated; cached per id)
 metrics(): MetricService;
+logs(): LogService;
 streams(): StreamService | undefined;              // undefined when no `streaming` section
 credentials(): CredentialService | undefined;      // undefined when no `credentials` section
 parameters(): ParameterService | undefined;        // undefined when no `parameters` section
@@ -590,6 +594,7 @@ TypeScript is **builder-only** — there is no public direct constructor and no 
 | UNS builder | `getUns()` | `uns()` | `uns()` | `uns()` |
 | Instance handle | `instance(id)` | `instance(id)` | `instance(id)` (`Result`) | `instance(id)` |
 | Metrics accessor | `getMetrics()` | `get_metrics()` | `metrics()` | `metrics()` |
+| Logs accessor | `getLogs()` | `logs()` | `logs()` | `logs()` |
 | Opt-in absent value | `null` | `None` | `Option` `None` (`streams()` empty service) | `undefined` |
 | Readiness setter | `setReady(b)` | `set_ready(b)` | `set_ready(b)` | `setReady(b)` |
 | Teardown | `shutdown()` + JVM hook | `shutdown()` + context mgr | RAII `Drop` (no method) | `close()` |

@@ -74,6 +74,86 @@
           "type": "boolean",
           "default": false,
           "description": "Enable global logging control for entire application"
+        },
+        "publish": {
+          "type": "object",
+          "description": "Library-owned UNS log bus publishing configuration.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable publishing structured log records on the reserved UNS log class."
+            },
+            "destination": {
+              "type": "string",
+              "enum": ["local", "northbound"],
+              "default": "local",
+              "description": "Publish log records on the local transport or the northbound transport."
+            },
+            "minLevel": {
+              "type": "string",
+              "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"],
+              "default": "INFO",
+              "description": "Minimum log level captured or published."
+            },
+            "captureNative": {
+              "type": "boolean",
+              "default": true,
+              "description": "Capture native language logging events through the library hook."
+            },
+            "captureConsole": {
+              "type": "boolean",
+              "default": false,
+              "description": "Request stdout/stderr or console capture as log bus records where supported by the SDK/runtime."
+            },
+            "maxRecordBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 8192,
+              "description": "Maximum serialized log record body size before truncation."
+            },
+            "queue": {
+              "type": "object",
+              "properties": {
+                "maxRecords": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "default": 1000,
+                  "description": "Maximum queued log records."
+                },
+                "onFull": {
+                  "type": "string",
+                  "enum": ["dropOldest"],
+                  "default": "dropOldest",
+                  "description": "Queue overflow policy."
+                }
+              },
+              "additionalProperties": false
+            },
+            "redaction": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Enable redaction before publishing."
+                },
+                "replacement": {
+                  "type": "string",
+                  "default": "***",
+                  "description": "Replacement text for redacted matches."
+                },
+                "extraPatterns": {
+                  "type": "array",
+                  "items": {"type": "string"},
+                  "default": [],
+                  "description": "Additional regular expressions to redact."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

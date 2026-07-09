@@ -17,6 +17,7 @@ import com.mbreissi.edgecommons.health.HealthServer;
 import com.mbreissi.edgecommons.heartbeat.Heartbeat;
 import com.mbreissi.edgecommons.heartbeat.HeartbeatBuilder;
 import com.mbreissi.edgecommons.heartbeat.InstanceConnectivityProvider;
+import com.mbreissi.edgecommons.logging.LogService;
 import com.mbreissi.edgecommons.messaging.MessageIdentity;
 import com.mbreissi.edgecommons.messaging.MessagingClient;
 import com.mbreissi.edgecommons.messaging.MessagingClientBuilder;
@@ -59,6 +60,7 @@ public class EdgeCommons
     protected MessagingClient messagingClient;
     protected MetricEmitter metricEmitter;
     protected Heartbeat heartbeat;
+    protected LogService logService;
     /** Telemetry streaming (the native edgestreamlog binding). Null when no {@code streaming} config. */
     protected StreamService streams;
     protected CredentialService credentials;
@@ -219,6 +221,9 @@ public class EdgeCommons
                     configManager.isTopicIncludeRoot()
                             && configManager.getComponentIdentity().getHier().size() >= 2);
 
+            logService = new LogService(configManager, messagingClient);
+            configManager.addConfigChangeListener(logService);
+
             // Logging is now (re)configured (the ConfigManager constructor applied the config and
             // reconfigured Log4j2). Re-emit the startup facts that were resolved/connected BEFORE
             // logging was ready, so they actually reach the log: the resolver summary and, if the
@@ -318,6 +323,16 @@ public class EdgeCommons
     public MetricEmitter getMetrics()
     {
         return metricEmitter;
+    }
+
+    /**
+     * Returns the log bus publisher for explicit structured log records and configured capture.
+     *
+     * @return the log service
+     */
+    public LogService getLogs()
+    {
+        return logService;
     }
 
     /**
@@ -806,6 +821,11 @@ public class EdgeCommons
         if (metricEmitter != null)
         {
             metricEmitter.close();
+        }
+        if (logService != null)
+        {
+            logService.flush(java.time.Duration.ofSeconds(2));
+            logService.close();
         }
         if (messagingClient != null)
         {

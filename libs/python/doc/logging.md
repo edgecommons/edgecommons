@@ -34,6 +34,7 @@ The logging system is configured through the `logging` section of the component 
 - **`level`**: Root logging level (Default: "INFO")
   - Valid values: "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"
 - **`python_format`**: Log message pattern, the per-language format token (Default: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"). The special case-insensitive value **`"json"`** selects the structured stdout-JSON sink (see below).
+- **`publish`**: Optional structured UNS log publisher configuration (disabled by default).
 
 ### Structured stdout-JSON sink (Kubernetes)
 
@@ -60,6 +61,28 @@ Setting `python_format` to the case-insensitive token **`"json"`** swaps the con
 - **`loggers`**: Dictionary of logger names to specific log levels
 - Allows fine-grained control over individual logger output
 
+### UNS Log Bus Publishing
+
+`logging.publish.enabled` turns on the library-owned log publisher. Records are emitted to
+`ecv1/{device}/{component}/main/log/{level}` with envelope header `{name:"log", version:"1.0"}` and body
+schema `edgecommons.log.v1`. The `log` class remains reserved; raw public `MessagingClient.publish(...)`
+calls to `.../log/...` are rejected.
+
+```python
+from edgecommons.logs import LogRecord
+
+edgecommons.logs().publish(LogRecord(
+    level="INFO",
+    logger="app",
+    message="started",
+    fields={"instance": "main"},
+))
+edgecommons.logs().flush(timeout=2.0)
+```
+
+`captureNative` captures stdlib `logging` records through an installed root handler.
+`captureConsole` requests stdout/stderr capture where supported and is disabled by default.
+
 ### Template Variables
 
 The following template variables are supported in configuration strings:
@@ -75,7 +98,7 @@ The following template variables are supported in configuration strings:
 {
   "logging": {
     "level": "INFO",
-    "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    "python_format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
   }
 }
 ```
@@ -86,7 +109,7 @@ This configuration provides basic console logging with INFO level and a standard
 {
   "logging": {
     "level": "DEBUG",
-    "format": "%(asctime)s [%(levelname)s] %(name)s (%(filename)s:%(lineno)d): %(message)s",
+    "python_format": "%(asctime)s [%(levelname)s] %(name)s (%(filename)s:%(lineno)d): %(message)s",
     "fileLogging": {
       "enabled": true,
       "filePath": "/var/log/{ComponentName}-{ThingName}.log",
@@ -103,7 +126,7 @@ This configuration enables both console and file logging with DEBUG level, using
 {
   "logging": {
     "level": "WARN",
-    "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    "python_format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     "fileLogging": {
       "enabled": true,
       "filePath": "/greengrass/v2/logs/{ComponentFullName}.log"
@@ -124,7 +147,7 @@ This configuration demonstrates different log levels for specific packages while
 {
   "logging": {
     "level": "DEBUG",
-    "format": "%(asctime)s [%(threadName)s] %(levelname)-5s %(name)s - %(message)s",
+    "python_format": "%(asctime)s [%(threadName)s] %(levelname)-5s %(name)s - %(message)s",
     "fileLogging": {
       "enabled": true,
       "filePath": "./logs/debug-{ComponentName}.log",
@@ -147,7 +170,7 @@ This configuration is optimized for development with detailed logging for edgeco
 {
   "logging": {
     "level": "INFO",
-    "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    "python_format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     "fileLogging": {
       "enabled": true,
       "filePath": "/greengrass/v2/logs/{ComponentName}.log",

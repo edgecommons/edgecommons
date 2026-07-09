@@ -4,6 +4,7 @@
  */
 package com.mbreissi.edgecommons.config;
 
+import com.mbreissi.edgecommons.logging.LogBusAppender;
 import com.mbreissi.edgecommons.platform.PlatformResolver;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -75,6 +76,7 @@ public class GlobalLoggingManager {
 
             AppenderComponentBuilder consoleAppender = builder.newAppender("Console", "Console")
                 .addAttribute("target", "SYSTEM_OUT")
+                .addAttribute("follow", true)
                 .add(layoutBuilder);
             builder.add(consoleAppender);
 
@@ -115,8 +117,12 @@ public class GlobalLoggingManager {
             }
             
             // Apply globally
-            context.start(builder.build());
-            context.updateLoggers();
+            Configuration newConfig = builder.build();
+            LoggingConfiguration.LogPublishConfiguration publishConfig = loggingConfig.getPublishConfig();
+            boolean enableNativeCapture = publishConfig.isEnabled() && publishConfig.isCaptureNative();
+            LogBusAppender.configure(newConfig, enableNativeCapture);
+            context.reconfigure(newConfig);
+            LogBusAppender.install(context, enableNativeCapture);
             
         } catch (Exception e) {
             System.err.println("Failed to configure global logging: " + e.getMessage());

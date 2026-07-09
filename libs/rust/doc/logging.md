@@ -59,9 +59,32 @@ logging.level: "INFO"  ->  (edit config)  ->  logging.level: "DEBUG"  // takes e
 | `fileLogging` | Implemented (size-rotated file output) — **not installed under the `json` sink** (FR-LOG-2). |
 | `loggers` (per-logger levels) | Reserved — map to `EnvFilter` directives. |
 | `globalControl` | Reserved. |
+| `publish` | Implemented. Optional structured UNS log publisher, disabled by default. |
 
 `level` accepts a tracing `EnvFilter` string, so per-module directives work, e.g.
 `"info,edgecommons::messaging=debug"`.
+
+## UNS log bus publishing
+
+`logging.publish.enabled` turns on the library-owned log publisher. Records publish to
+`ecv1/{device}/{component}/main/log/{level}` with envelope header `{name:"log", version:"1.0"}` and body
+schema `edgecommons.log.v1`. The `log` class remains reserved: raw public `messaging().publish(...)`
+calls to `.../log/...` are rejected.
+
+```rust
+use edgecommons::logs::{LogLevel, LogRecord};
+
+gg.logs().try_publish(
+    LogRecord::builder(LogLevel::Info, "app", "started")
+        .field("instance", serde_json::json!("main"))
+        .build(),
+)?;
+let stats = gg.logs().stats();
+```
+
+`captureNative` captures `tracing` events through the installed layer. `captureConsole` is part of the
+shared schema but Rust does not install a portable stdout/stderr interception layer; use `tracing` for
+records that must reach the bus.
 
 ## Relationship to metric logs
 

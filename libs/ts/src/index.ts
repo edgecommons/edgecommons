@@ -62,6 +62,7 @@ export {
   Config,
   LoggingConfig,
   FileLoggingConfig,
+  LoggingPublishConfig,
   HeartbeatConfig,
   MetricConfig,
   HealthConfig,
@@ -75,6 +76,11 @@ export type {
   RawConfig,
   Measures,
   ComponentConfig,
+  LoggingPublishDestination,
+  LoggingPublishLevel,
+  LoggingPublishOnFull,
+  LoggingPublishQueueConfig,
+  LoggingPublishRedactionConfig,
   ConfigurationChangeListener,
   ConfigSource,
 } from "./config";
@@ -176,7 +182,9 @@ export type { HealthServerOptions, HealthPaths, HealthResponse } from "./health"
 
 // Logging
 export { logger, getLogger, initLogging, reconfigureLogging, LoggingReconfigurer, Logger } from "./logging";
-export type { LoggingOptions } from "./logging";
+export type { LoggingOptions, LoggerSink, LoggerSinkRecord } from "./logging";
+export { LogBusService } from "./log_bus";
+export type { LogLevelName, LogRecord, LogPublishStats, LogService } from "./log_bus";
 
 // Telemetry streaming
 export { StreamService, StreamHandle, EdgeStreamError, StreamMetricsBridge } from "./streaming";

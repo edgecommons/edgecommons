@@ -26,9 +26,12 @@ import {
   ReservedTopicError,
   Uns,
   unsClassFromToken,
+  EdgeCommonsBuilder,
 } from "../../../../libs/ts/dist/index";
 import type { MessagingConfig } from "../../../../libs/ts/dist/index";
-import { existsSync, writeFileSync } from "fs";
+import { existsSync, unlinkSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
 const LANG = "ts";
 const HOST = process.env.EDGECOMMONS_IT_MQTT_HOST ?? "localhost";
@@ -62,6 +65,66 @@ async function service(suffix: string): Promise<DefaultMessagingService> {
 async function ipcService(): Promise<DefaultMessagingService> {
   const provider = await IpcMessagingProvider.connect({ receiveOwnMessages: true });
   return new DefaultMessagingService(provider);
+}
+
+function logComponentToken(): string {
+  return `interop-log-${LANG}`;
+}
+
+function writeLogRuntimeConfig(): string {
+  const path = join(tmpdir(), `edgecommons-log-${LANG}-${process.pid}-${Date.now()}.json`);
+  writeFileSync(
+    path,
+    JSON.stringify({
+      component: { token: logComponentToken() },
+      messaging: {
+        local: {
+          type: "mqtt",
+          host: HOST,
+          port: PORT,
+          clientId: `interop-${LANG}-log-runtime-${process.pid}`,
+        },
+        requestTimeoutSeconds: 2,
+      },
+      heartbeat: { enabled: false },
+      health: { enabled: false },
+      logging: {
+        level: "WARN",
+        publish: {
+          enabled: true,
+          destination: "local",
+          minLevel: "TRACE",
+          captureNative: false,
+          captureConsole: false,
+          redaction: { enabled: false },
+        },
+      },
+    }),
+    "utf8",
+  );
+  return path;
+}
+
+function logRuntimeArgs(path: string): string[] {
+  return [
+    "--platform",
+    "HOST",
+    "--transport",
+    "MQTT",
+    path,
+    "-c",
+    "FILE",
+    path,
+    "-t",
+    "interop-device",
+  ];
+}
+
+function wireIdentityDevice(identity: Record<string, unknown> | undefined): unknown {
+  const hier = identity?.hier;
+  return Array.isArray(hier) && hier.length > 0
+    ? (hier[hier.length - 1] as Record<string, unknown>).value
+    : undefined;
 }
 
 function emit(obj: unknown): void {
@@ -255,6 +318,70 @@ async function runTypedPub(topic: string, bodyHex: string): Promise<number> {
   }
 }
 
+async function runLogSub(topic: string, token: string): Promise<number> {
+  const svc = await service("logsub");
+  try {
+    const got = new Promise<{ topic: string; message: Message }>((resolve) => {
+      void svc.subscribe(topic, (t, m) => resolve({ topic: t, message: m }))
+        .then(() => process.stdout.write("READY\n"));
+    });
+    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000));
+    const received = await Promise.race([got, timeout]);
+    if (received === null) {
+      emit({ ok: false, error: "timeout" });
+      return 1;
+    }
+    const envelope = received.message.toObject() as Record<string, any>;
+    const header = envelope.header as Record<string, unknown> | undefined;
+    const identity = envelope.identity as Record<string, unknown> | undefined;
+    const body = received.message.getBody() as Record<string, any>;
+    const fields = (body.fields ?? {}) as Record<string, unknown>;
+    const ok = received.topic === topic
+      && body.schema === "edgecommons.log.v1"
+      && body.level === "WARN"
+      && body.message === `log-interop-${token}`
+      && fields.nonce === token
+      && wireIdentityDevice(identity) === "interop-device"
+      && typeof identity?.component === "string"
+      && identity.component.startsWith("interop-log-")
+      && identity?.instance === "main"
+      && header?.name === "log"
+      && header?.version === "1.0";
+    emit({ ok, topic: received.topic, header, identity, body });
+    return ok ? 0 : 1;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
+async function runLogPub(token: string): Promise<number> {
+  const path = writeLogRuntimeConfig();
+  let gg: Awaited<ReturnType<EdgeCommonsBuilder["build"]>> | undefined;
+  try {
+    gg = await new EdgeCommonsBuilder(`com.mbreissi.edgecommons.interop.${LANG}.LogPublisher`)
+      .args(logRuntimeArgs(path))
+      .build();
+    await gg.logs().publish({
+      level: "WARN",
+      logger: `interop.${LANG}`,
+      message: `log-interop-${token}`,
+      fields: { nonce: token, publisher: LANG },
+    });
+    await gg.logs().flush();
+    const stats = gg.logs().stats();
+    const ok = stats.published >= 1;
+    emit({ ok, component: logComponentToken(), stats });
+    return ok ? 0 : 1;
+  } finally {
+    if (gg) await gg.close();
+    try {
+      unlinkSync(path);
+    } catch {
+      // best effort
+    }
+  }
+}
+
 function ggTopic(runId: string, publisher: string, subscriber: string): string {
   return `edgecommons/interop/binary/${runId}/${publisher}/${subscriber}`;
 }
@@ -272,6 +399,10 @@ function ggReadyPath(runId: string, lang: string): string {
   return `/tmp/edgecommons_gg_ipc_binary_ready_${lang}_${runId}`;
 }
 
+function ggLogReadyPath(runId: string, lang: string): string {
+  return `/tmp/edgecommons_gg_ipc_log_ready_${lang}_${runId}`;
+}
+
 async function waitForGgReady(runId: string, expectedLangs: string[]): Promise<string[]> {
   const readyWaitSecs = Number(process.env.EDGECOMMONS_GG_READY_WAIT_SECS ?? "180");
   const deadline = Date.now() + readyWaitSecs * 1000;
@@ -281,6 +412,129 @@ async function waitForGgReady(runId: string, expectedLangs: string[]): Promise<s
     await new Promise((r) => setTimeout(r, 200));
   }
   return expectedLangs.filter((lang) => !existsSync(ggReadyPath(runId, lang)));
+}
+
+async function waitForGgLogReady(runId: string, expectedLangs: string[]): Promise<string[]> {
+  const readyWaitSecs = Number(process.env.EDGECOMMONS_GG_READY_WAIT_SECS ?? "180");
+  const deadline = Date.now() + readyWaitSecs * 1000;
+  while (Date.now() < deadline) {
+    const missing = expectedLangs.filter((lang) => !existsSync(ggLogReadyPath(runId, lang)));
+    if (missing.length === 0) return [];
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return expectedLangs.filter((lang) => !existsSync(ggLogReadyPath(runId, lang)));
+}
+
+function ggLogRuntimeArgs(path: string): string[] {
+  return [
+    "--platform",
+    "GREENGRASS",
+    "--transport",
+    "IPC",
+    "-c",
+    "FILE",
+    path,
+    "-t",
+    "interop-device",
+  ];
+}
+
+async function runGgLogMatrix(runId: string, langsCsv: string): Promise<number> {
+  const expectedLangs = langsCsv.split(",").filter(Boolean);
+  const expected = new Set(expectedLangs);
+  const readyLangs = (process.env.EDGECOMMONS_GG_READY_LANGS ?? langsCsv).split(",").filter(Boolean);
+  const readyLang = process.env.EDGECOMMONS_GG_READY_LANG ?? LANG;
+  const subscribeDelaySecs = Number(process.env.EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS ?? "8");
+  const waitSecs = Number(process.env.EDGECOMMONS_GG_WAIT_SECS ?? "35");
+  const svc = await ipcService();
+  const received = new Map<string, unknown>();
+  const errors = new Map<string, string>();
+  try {
+    await svc.subscribe(
+      "ecv1/interop-device/+/main/log/warn",
+      (topic, message) => {
+        try {
+          const envelope = message.toObject() as Record<string, any>;
+          const identity = envelope.identity as Record<string, unknown> | undefined;
+          const component = typeof identity?.component === "string" ? identity.component : "";
+          const publisher = component.startsWith("interop-log-")
+            ? component.slice("interop-log-".length)
+            : component;
+          const body = message.getBody() as Record<string, any>;
+          const fields = (body.fields ?? {}) as Record<string, unknown>;
+          const ok = expected.has(publisher)
+            && wireIdentityDevice(identity) === "interop-device"
+            && identity?.instance === "main"
+            && body.schema === "edgecommons.log.v1"
+            && body.level === "WARN"
+            && body.logger === `interop.${publisher}`
+            && body.message === `gg-log-interop-${runId}-${publisher}`
+            && fields.runId === runId
+            && fields.publisher === publisher;
+          if (publisher && !received.has(publisher)) {
+            received.set(publisher, { ok, topic, identity, body });
+          }
+        } catch (e) {
+          errors.set(`log:${topic}`, String(e));
+        }
+      },
+      64,
+      1,
+    );
+    process.stdout.write("READY\n");
+    writeFileSync(ggLogReadyPath(runId, readyLang), "ready", "utf8");
+    const readyMissing = await waitForGgLogReady(runId, readyLangs);
+    await new Promise((r) => setTimeout(r, subscribeDelaySecs * 1000));
+    let published: unknown = {};
+    if (readyMissing.length === 0) {
+      const path = writeLogRuntimeConfig();
+      let gg: Awaited<ReturnType<EdgeCommonsBuilder["build"]>> | undefined;
+      try {
+        gg = await new EdgeCommonsBuilder(`com.mbreissi.edgecommons.interop.${LANG}.LogPublisher`)
+          .args(ggLogRuntimeArgs(path))
+          .build();
+        await gg.logs().publish({
+          level: "WARN",
+          logger: `interop.${LANG}`,
+          message: `gg-log-interop-${runId}-${LANG}`,
+          fields: { runId, publisher: LANG },
+        });
+        await gg.logs().flush();
+        published = gg.logs().stats();
+      } finally {
+        if (gg) await gg.close();
+        try {
+          unlinkSync(path);
+        } catch {
+          // best effort
+        }
+      }
+    }
+
+    const deadline = Date.now() + waitSecs * 1000;
+    while (Date.now() < deadline) {
+      if (expectedLangs.every((lang) => received.has(lang))) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    const missing = expectedLangs.filter((lang) => !received.has(lang));
+    const allOk = expectedLangs.every((lang) => (received.get(lang) as any)?.ok === true);
+    const result = {
+      ok: readyMissing.length === 0 && missing.length === 0 && errors.size === 0 && allOk,
+      lang: LANG,
+      run_id: runId,
+      ready_missing: readyMissing,
+      received: Object.fromEntries(received),
+      missing,
+      errors: Object.fromEntries(errors),
+      published,
+    };
+    writeFileSync(`/tmp/edgecommons_gg_ipc_log_${readyLang}_${runId}.json`, JSON.stringify(result), "utf8");
+    emit(result);
+    return result.ok ? 0 : 1;
+  } finally {
+    await svc.disconnect();
+  }
 }
 
 async function runGgBinaryMatrix(runId: string, langsCsv: string, expectedHex: string): Promise<number> {
@@ -509,6 +763,12 @@ async function main(): Promise<void> {
       process.exit(await runTypedSub(a, b));
     case "typed-pub":
       process.exit(await runTypedPub(a, b));
+    case "log-sub":
+      process.exit(await runLogSub(a, b));
+    case "log-pub":
+      process.exit(await runLogPub(a));
+    case "gg-log-matrix":
+      process.exit(await runGgLogMatrix(a, b));
     case "gg-binary-matrix":
       process.exit(await runGgBinaryMatrix(a, b, c));
     case "uns-pub":

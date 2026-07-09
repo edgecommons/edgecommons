@@ -407,6 +407,77 @@ def test_interop_typed_telemetry_byte_sample(commands, publisher, subscriber):
                 sub_proc.kill()
 
 
+def _log_topic(publisher):
+    return f"ecv1/interop-device/interop-log-{publisher}/main/log/warn"
+
+
+def _identity_device(identity):
+    hier = (identity or {}).get("hier") or []
+    return hier[-1].get("value") if hier else None
+
+
+@pytest.mark.parametrize("subscriber", LANGS)
+@pytest.mark.parametrize("publisher", LANGS)
+def test_interop_log_bus(commands, publisher, subscriber):
+    """One language publishes a structured log record through its runtime log facade
+    (`gg.logs()` / `getLogs()` / `logs()`), and another language receives the
+    canonical UNS `log/{level}` envelope over the local MQTT transport."""
+    for lang in (publisher, subscriber):
+        if lang not in commands:
+            pytest.skip(f"{lang} toolchain/artifact unavailable")
+
+    token = uuid.uuid4().hex
+    topic = _log_topic(publisher)
+
+    sub_proc, lines, ready = _launch(commands[subscriber]("log-sub", topic, token))
+    try:
+        assert ready.wait(20), f"{subscriber} log-sub never signalled READY"
+
+        pub = subprocess.run(
+            commands[publisher]("log-pub", token),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=45,
+            cwd=str(RUN_DIR),
+        )
+        assert pub.returncode == 0, f"{publisher} log-pub failed: {pub.stdout}\n{pub.stderr}"
+        pub_out = _last_json(pub.stdout.splitlines())
+        assert pub_out is not None, f"no JSON from {publisher} log-pub: {pub.stdout}"
+        assert pub_out["ok"] is True, f"{publisher} log-pub did not publish: {pub_out}"
+        assert pub_out["component"] == f"interop-log-{publisher}"
+
+        try:
+            sub_proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
+
+        payload = _last_json(lines)
+        assert payload is not None, f"no JSON from {subscriber} log-sub; lines={lines}"
+        assert payload["ok"] is True, f"{publisher}->{subscriber} log bus failed: {payload}"
+        assert payload["topic"] == topic
+        assert payload["header"]["name"] == "log"
+        assert payload["header"]["version"] == "1.0"
+        identity = payload["identity"]
+        assert _identity_device(identity) == "interop-device"
+        assert identity["component"] == f"interop-log-{publisher}"
+        assert identity["instance"] == "main"
+        body = payload["body"]
+        assert body["schema"] == "edgecommons.log.v1"
+        assert body["level"] == "WARN"
+        assert body["logger"] == f"interop.{publisher}"
+        assert body["message"] == f"log-interop-{token}"
+        assert body["fields"]["nonce"] == token
+        assert body["fields"]["publisher"] == publisher
+    finally:
+        if sub_proc.poll() is None:
+            sub_proc.terminate()
+            try:
+                sub_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                sub_proc.kill()
+
+
 # --- UNS suite (M14 — UNS-CANONICAL-DESIGN §7, D-U22/D-U24) --------------------------
 
 # The fixed conformance identity every language's `uns-pub` is handed (wire form). The

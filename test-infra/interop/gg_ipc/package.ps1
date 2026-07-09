@@ -3,7 +3,9 @@ param(
   [string]$Version = ("1.0." + ([int](Get-Date -Format "Hmmss"))),
   [string]$OutputRoot = "",
   [string]$BinaryHex = "000102030a0d1f207f80feff",
-  [string]$Langs = "python,java,rust,ts"
+  [string]$Langs = "python,java,rust,ts",
+  [ValidateSet("gg-binary-matrix", "gg-log-matrix")]
+  [string]$Role = "gg-binary-matrix"
 )
 
 Set-StrictMode -Version Latest
@@ -205,14 +207,14 @@ $pythonLifecycle = @"
         Script: |
           $envPrefix
           PY_WORK="/greengrass/v2/work/$($components.python)"
-          exec env PYTHONPATH="`$PY_WORK/libs-python" "`$PY_WORK/venv/bin/python" -u "{artifacts:decompressedPath}/python/ggpython/python_node.py" gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
+          exec env PYTHONPATH="`$PY_WORK/libs-python" "`$PY_WORK/venv/bin/python" -u "{artifacts:decompressedPath}/python/ggpython/python_node.py" "$Role" "$RunId" "$Langs" "$BinaryHex"
 "@
 
 $javaLifecycle = @"
       Run:
         Script: |
           $envPrefix
-          exec java -cp "{artifacts:decompressedPath}/java/ggjava/edgecommons.jar:{artifacts:decompressedPath}/java/ggjava" InteropNode gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
+          exec java -cp "{artifacts:decompressedPath}/java/ggjava/edgecommons.jar:{artifacts:decompressedPath}/java/ggjava" InteropNode "$Role" "$RunId" "$Langs" "$BinaryHex"
 "@
 
 $rustLifecycle = @"
@@ -221,7 +223,7 @@ $rustLifecycle = @"
       Run:
         Script: |
           $envPrefix
-          exec "{artifacts:decompressedPath}/rust/ggrust/interop-rust-node" gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
+          exec "{artifacts:decompressedPath}/rust/ggrust/interop-rust-node" "$Role" "$RunId" "$Langs" "$BinaryHex"
 "@
 
 $rustPeerLifecycle = @"
@@ -231,7 +233,7 @@ $rustPeerLifecycle = @"
         Script: |
           export EDGECOMMONS_GG_READY_LANG=rustpeer
           $envPrefix
-          exec "{artifacts:decompressedPath}/rust/ggrust/interop-rust-node" gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
+          exec "{artifacts:decompressedPath}/rust/ggrust/interop-rust-node" "$Role" "$RunId" "$Langs" "$BinaryHex"
 "@
 
 $tsLifecycle = @"
@@ -243,7 +245,7 @@ $tsLifecycle = @"
         Script: |
           $envPrefix
           cd "{artifacts:decompressedPath}/ts/ggts"
-          exec node test-infra/interop/ts_node/dist/interop_node.js gg-binary-matrix "$RunId" "$Langs" "$BinaryHex"
+          exec node test-infra/interop/ts_node/dist/interop_node.js "$Role" "$RunId" "$Langs" "$BinaryHex"
 "@
 
 New-Recipe -ComponentName $components.python -ZipName "python.zip" -Description "Python Greengrass IPC binary message interop verifier." -Lifecycle $pythonLifecycle
@@ -260,4 +262,5 @@ New-Recipe -ComponentName $components.ts -ZipName "ts.zip" -Description "TypeScr
   ArtifactDir = $artifactsDir
   BinaryHex = $BinaryHex
   Langs = $Langs
+  Role = $Role
 }

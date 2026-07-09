@@ -1,6 +1,6 @@
 # EdgeCommons CBOR Messaging - Design Proposal
 
-> **Status:** PROPOSED. This document is a design correction and expansion, not an
+> **Status:** DEPRECATED - using protobuf. This document is a design correction and expansion, not an
 > implementation claim.
 >
 > This proposal supersedes the narrower

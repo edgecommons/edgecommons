@@ -52,17 +52,20 @@ import {
 
 /** Severity levels, ordered low → high. */
 enum Level {
-  DEBUG = 0,
-  INFO = 1,
-  WARN = 2,
-  ERROR = 3,
+  TRACE = 0,
+  DEBUG = 1,
+  INFO = 2,
+  WARN = 3,
+  ERROR = 4,
+  FATAL = 5,
 }
 
 /** Parse a level name (case-insensitive); unknown falls back to INFO (like Rust). */
 function parseLevel(name: string | undefined): Level {
   switch ((name ?? "INFO").trim().toUpperCase()) {
-    case "DEBUG":
     case "TRACE":
+      return Level.TRACE;
+    case "DEBUG":
       return Level.DEBUG;
     case "INFO":
       return Level.INFO;
@@ -71,6 +74,8 @@ function parseLevel(name: string | undefined): Level {
       return Level.WARN;
     case "ERROR":
       return Level.ERROR;
+    case "FATAL":
+      return Level.FATAL;
     default:
       return Level.INFO;
   }
@@ -255,9 +260,9 @@ const DEFAULT_TS_FORMAT = "{timestamp} [{level}] {message}";
  * `{timestamp}` (ISO-8601 UTC), `{level}`, `{logger}` (logger name), `{message}`.
  * Unknown `{...}` tokens are left as-is.
  */
-function renderLine(format: string, level: Level, message: string, loggerName: string): string {
+function renderLine(format: string, level: Level, message: string, loggerName: string, timestamp: string): string {
   return format
-    .replace(/\{timestamp\}/g, new Date().toISOString())
+    .replace(/\{timestamp\}/g, timestamp)
     .replace(/\{level\}/g, Level[level])
     .replace(/\{logger\}/g, loggerName)
     .replace(/\{message\}/g, message);
@@ -311,10 +316,11 @@ function renderJsonLine(
   message: string,
   loggerName: string,
   corr: Correlation,
+  timestamp: string,
   error?: unknown,
 ): string {
   const obj: Record<string, unknown> = {
-    timestamp: new Date().toISOString(),
+    timestamp,
     level: Level[level],
     logger: loggerName,
     message,
@@ -344,6 +350,35 @@ let moduleFormatDefault: string | undefined;
 /** Environment used to source correlation fields (default `process.env`; injectable for tests). */
 let moduleEnv: Env = process.env;
 const registry = new Map<string, Logger>();
+
+export interface LoggerSinkRecord {
+  timestamp: string;
+  level: "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR" | "FATAL";
+  logger: string;
+  message: string;
+  error?: unknown;
+}
+
+export type LoggerSink = (record: LoggerSinkRecord) => void;
+
+const loggerSinks = new Set<LoggerSink>();
+
+export function addLoggerSink(sink: LoggerSink): () => void {
+  loggerSinks.add(sink);
+  return () => {
+    loggerSinks.delete(sink);
+  };
+}
+
+function emitLoggerSinks(record: LoggerSinkRecord): void {
+  for (const sink of [...loggerSinks]) {
+    try {
+      sink(record);
+    } catch {
+      /* fail-soft */
+    }
+  }
+}
 
 /**
  * Resolve a logger's effective level from `logging.loggers`: longest dotted-prefix match
@@ -408,14 +443,15 @@ export class Logger {
       return;
     }
     let line: string;
+    const timestamp = new Date().toISOString();
     try {
       if (this.jsonMode) {
-        line = renderJsonLine(level, message, this.loggerName, this.correlation, error);
+        line = renderJsonLine(level, message, this.loggerName, this.correlation, timestamp, error);
       } else {
         // Text mode (unchanged token-template behavior). An error, when supplied, is appended inline
         // so it is not lost (no existing call site passes one, so existing output is byte-identical).
         const text = error !== undefined ? `${message}: ${errorToString(error)}` : message;
-        line = renderLine(this.format, level, text, this.loggerName);
+        line = renderLine(this.format, level, text, this.loggerName, timestamp);
       }
     } catch {
       return; /* fail-soft: never let a render error escape */
@@ -435,8 +471,18 @@ export class Logger {
     if (this.fileWriter) {
       this.fileWriter.write(line + "\n");
     }
+    emitLoggerSinks({
+      timestamp,
+      level: Level[level] as LoggerSinkRecord["level"],
+      logger: this.loggerName,
+      message,
+      error,
+    });
   }
 
+  trace(message: string, error?: unknown): void {
+    this.log(Level.TRACE, message, error);
+  }
   debug(message: string, error?: unknown): void {
     this.log(Level.DEBUG, message, error);
   }
@@ -448,6 +494,9 @@ export class Logger {
   }
   error(message: string, error?: unknown): void {
     this.log(Level.ERROR, message, error);
+  }
+  fatal(message: string, error?: unknown): void {
+    this.log(Level.FATAL, message, error);
   }
 }
 

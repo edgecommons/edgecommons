@@ -53,6 +53,23 @@ the **byte-identical** topic from a fixed identity and that the receiver parses 
 **structurally identical** top-level `identity` (D-U22); `test_uns_guard` asserts the
 reserved-class guard rejects in all four languages (D-U24).
 
+## Log bus roles
+
+Each node also exposes the structured log publishing surface used by `gg.logs()` /
+`getLogs()` / `logs()`:
+
+- `log-pub <token>` — start the runtime with log publishing enabled, emit one WARN
+  structured log record on the canonical UNS `log/{level}` topic, and print
+  `{"ok": true, "component": <component>, "published": <stats>}`.
+- `log-sub <topic> <token>` — subscribe to the supplied canonical log topic, print
+  `READY`, receive one structured log envelope, and print the parsed topic, header,
+  identity, and body JSON.
+
+`test_interop_log_bus` runs every publisher/subscriber pair over the local MQTT
+transport and asserts the canonical topic, envelope header, top-level identity, and
+`edgecommons.log.v1` body shape. This is the local MQTT gate for changes to the
+library-owned UNS `log` class.
+
 Nodes (each consumes its library's public API, like a real component):
 - `python_node.py` — uses the installed `edgecommons` package.
 - `rust_node/` — a small cargo binary depending on `libs/rust` by path.

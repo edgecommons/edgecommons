@@ -154,10 +154,26 @@ Console logging plus optional size-rotated file logging. Object, strict.
 | `fileLogging.backupCount` | integer (min 0) | `5` | — | Number of rotated backups to keep. |
 | `loggers` | object | — | keys `^[a-zA-Z0-9._-]+$` → level enum | Per-logger level overrides. |
 | `globalControl` | boolean | `false` | — | Apply logging config to the whole application, not just EdgeCommons. |
+| `publish` | object (strict) | — | — | Optional library-owned UNS log publisher. Disabled by default. |
+| `publish.enabled` | boolean | `false` | — | Publish structured log records to the reserved UNS `log` class. |
+| `publish.destination` | string | `local` | `local`, `northbound` | Send log records on the local transport or configured northbound transport. |
+| `publish.minLevel` | string | `INFO` | `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL` | Minimum level captured or published. |
+| `publish.captureNative` | boolean | `true` | — | Capture the SDK-wired logging framework where supported. |
+| `publish.captureConsole` | boolean | `false` | — | Request stdout/stderr or console capture where supported by the SDK/runtime. |
+| `publish.maxRecordBytes` | integer (min 1) | `8192` | — | Maximum serialized log record body size before truncation. |
+| `publish.queue.maxRecords` | integer (min 1) | `1000` | — | Maximum queued log records, drop-oldest on overflow. |
+| `publish.queue.onFull` | string | `dropOldest` | `dropOldest` | Queue overflow policy. |
+| `publish.redaction.enabled` | boolean | `true` | — | Redact common credential-like strings before publishing. |
+| `publish.redaction.replacement` | string | `***` | — | Replacement text for redacted matches. |
+| `publish.redaction.extraPatterns` | array[string] | `[]` | regex strings | Additional redaction regexes. |
 
 Each library reads **only its own** `<lang>_format` key and ignores the other three. The
 case-insensitive token `json` in a `<lang>_format` field selects the structured stdout-JSON sink — it
 is the default on the `KUBERNETES` platform.
+
+When enabled, `logging.publish` emits `edgecommons.log.v1` records on
+`ecv1/{device}/{component}/main/log/{level}` through the library's reserved-publish seam. Public
+component publishes to the `log` class remain rejected.
 
 ## `metricEmission`
 

@@ -25,6 +25,8 @@ import time
 from typing import Dict, Optional, Any
 from pathlib import Path
 
+from edgecommons.logs import LogPublishConfig
+
 #: The case-insensitive token (FR-LOG-4) that selects the stdout-JSON sink. Mirrors
 #: :data:`edgecommons.platform.resolver.LOGGING_FORMAT_JSON`; duplicated here as a plain literal so
 #: this module carries no import-time dependency on the platform package.
@@ -156,6 +158,11 @@ class EnhancedLoggingConfiguration:
                 
         # Global control settings
         self._global_control = self._config.get('globalControl', False)
+
+        # Library-owned UNS log publisher configuration. This parser is strict even though
+        # the broader logging section has historically been lenient in code; the packaged
+        # schema carries the same strict surface for normal validation.
+        self._publish_config = LogPublishConfig.from_logging_config(self._config)
         
     def _parse_level(self, level_str: str) -> int:
         """
@@ -171,6 +178,7 @@ class EnhancedLoggingConfiguration:
             return level_str
             
         level_map = {
+            'TRACE': 5,
             'DEBUG': logging.DEBUG,
             'INFO': logging.INFO,
             'WARNING': logging.WARNING,
@@ -225,10 +233,18 @@ class EnhancedLoggingConfiguration:
         
         # Clear existing handlers
         for handler in root_logger.handlers[:]:
+            if getattr(handler, "_edgecommons_log_bus_handler", False):
+                continue
             root_logger.removeHandler(handler)
             
-        # Set root level
-        root_logger.setLevel(self._level)
+        # Set root level low enough for the bus capture handler to see its configured
+        # minLevel; console/file handlers still filter at the ordinary logging.level.
+        bus_level = (
+            self._publish_config.min_level_value
+            if self._publish_config.enabled and self._publish_config.capture_native
+            else self._level
+        )
+        root_logger.setLevel(min(self._level, bus_level))
 
         # Create the layout for the always-on stdout/console appender. FR-LOG-1: when the JSON sink
         # is selected the LAYOUT becomes one-JSON-object-per-line (with best-effort correlation
@@ -316,6 +332,10 @@ class EnhancedLoggingConfiguration:
     def is_global_control_enabled(self) -> bool:
         """Check if global logging control is enabled."""
         return self._global_control
+
+    def get_publish_config(self) -> LogPublishConfig:
+        """Get the parsed ``logging.publish`` log-bus configuration."""
+        return self._publish_config
         
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -337,5 +357,25 @@ class EnhancedLoggingConfiguration:
                 name: logging.getLevelName(level) 
                 for name, level in self._logger_levels.items()
             },
-            'globalControl': self._global_control
+            'globalControl': self._global_control,
+            'publish': {
+                'enabled': self._publish_config.enabled,
+                'destination': self._publish_config.destination,
+                'minLevel': self._publish_config.min_level,
+                'captureNative': self._publish_config.capture_native,
+                'captureConsole': self._publish_config.capture_console,
+                'maxRecordBytes': self._publish_config.max_record_bytes,
+                'queue': {
+                    'maxRecords': self._publish_config.queue.max_records,
+                    'onFull': self._publish_config.queue.on_full,
+                },
+                'redaction': {
+                    'enabled': self._publish_config.redaction.enabled,
+                    'replacement': self._publish_config.redaction.replacement,
+                    'extraPatterns': [
+                        pattern.pattern
+                        for pattern in self._publish_config.redaction.extra_patterns
+                    ],
+                },
+            }
         }

@@ -59,4 +59,54 @@ class LoggingConfigurationTest {
         assertEquals("1GB", fileLogging.get("maxFileSize").getAsString());
         assertEquals(2, fileLogging.get("backupCount").getAsInt());
     }
+
+    @Test
+    void publishDefaultsMatchLogBusSpec() {
+        LoggingConfiguration cfg = parse("{}");
+        LoggingConfiguration.LogPublishConfiguration publish = cfg.getPublishConfig();
+        assertFalse(publish.isEnabled());
+        assertEquals(LoggingConfiguration.LogPublishConfiguration.Destination.LOCAL,
+                publish.getDestination());
+        assertEquals("INFO", publish.getMinLevel());
+        assertTrue(publish.isCaptureNative());
+        assertFalse(publish.isCaptureConsole());
+        assertEquals(8192, publish.getMaxRecordBytes());
+        assertEquals(1000, publish.getQueueMaxRecords());
+        assertEquals(LoggingConfiguration.LogPublishConfiguration.QueueOnFull.DROP_OLDEST,
+                publish.getQueueOnFull());
+        assertTrue(publish.isRedactionEnabled());
+        assertEquals("***", publish.getRedactionReplacement());
+        assertTrue(publish.getRedactionExtraPatterns().isEmpty());
+    }
+
+    @Test
+    void publishConfigParsesPopulatedSection() {
+        LoggingConfiguration cfg = parse("""
+            {"publish":{"enabled":true,"destination":"northbound","minLevel":"DEBUG",\
+            "captureNative":false,"captureConsole":true,"maxRecordBytes":4096,\
+            "queue":{"maxRecords":25,"onFull":"dropOldest"},\
+            "redaction":{"enabled":false,"replacement":"[x]","extraPatterns":["abc"]}}}""");
+        LoggingConfiguration.LogPublishConfiguration publish = cfg.getPublishConfig();
+        assertTrue(publish.isEnabled());
+        assertEquals(LoggingConfiguration.LogPublishConfiguration.Destination.NORTHBOUND,
+                publish.getDestination());
+        assertEquals("DEBUG", publish.getMinLevel());
+        assertFalse(publish.isCaptureNative());
+        assertTrue(publish.isCaptureConsole());
+        assertEquals(4096, publish.getMaxRecordBytes());
+        assertEquals(25, publish.getQueueMaxRecords());
+        assertFalse(publish.isRedactionEnabled());
+        assertEquals("[x]", publish.getRedactionReplacement());
+        assertEquals(java.util.List.of("abc"), publish.getRedactionExtraPatterns());
+    }
+
+    @Test
+    void publishConfigRejectsInvalidEnums() {
+        assertThrows(IllegalArgumentException.class,
+                () -> parse("{\"publish\":{\"destination\":\"remote\"}}"));
+        assertThrows(IllegalArgumentException.class,
+                () -> parse("{\"publish\":{\"minLevel\":\"NOTICE\"}}"));
+        assertThrows(IllegalArgumentException.class,
+                () -> parse("{\"publish\":{\"queue\":{\"onFull\":\"block\"}}}"));
+    }
 }

@@ -509,7 +509,7 @@ the M8 named client (Rust only); schema changes + `uns-test-vectors` + the inter
 facades (incl. registering arbitrary component-defined `cmd` verbs through a generalized facade — the
 minimal `commands()` inbox and the `data()`/`events()`/`app()` publish facades have since shipped, see
 the update note below); the
-`log`-tail publisher (class reserved+guarded now, publisher later); streaming enrichment (M15); the
+`log` publisher (class reserved+guarded; structured `edgecommons.log.v1` publisher now shipped); streaming enrichment (M15); the
 southbound command family (M9); D‑U15/16 (Phase 5).
 
 > **Update (2026-07-03) — four of these have since shipped, ahead of this note:** the `_bcast`
