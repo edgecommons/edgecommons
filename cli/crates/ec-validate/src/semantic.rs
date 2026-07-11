@@ -19,7 +19,133 @@ pub fn check(config: &Value, platform: Option<Platform>, source: &str) -> Report
     r.extend(config_source_platform(config, platform, source));
     r.extend(transport_platform(config, platform, source));
     r.extend(config_bootstrap_loop(config, source));
+    r.extend(lineage_is_ordered_and_acyclic(config, source));
+    r.extend(uns_tokens(config, source));
+    r.extend(reserved_uns_classes(config, source));
     r
+}
+
+/// `EC2004` — a hierarchical config lineage must be acyclic and ordered.
+///
+/// The lineage is an ordered list of scopes (enterprise → site → … → component). A repeated
+/// scope is a cycle in the only sense that matters here: the merge would apply the same layer
+/// twice and the "effective" config would depend on iteration order rather than on the model.
+fn lineage_is_ordered_and_acyclic(config: &Value, source: &str) -> Vec<Diagnostic> {
+    let Some(levels) = config.pointer("/hierarchy").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut seen: Vec<&str> = Vec::new();
+    let mut out = Vec::new();
+    for (i, entry) in levels.iter().enumerate() {
+        // A hierarchy entry is either a bare level name or {level, value}.
+        let level = entry
+            .as_str()
+            .or_else(|| entry.get("level").and_then(Value::as_str))
+            .unwrap_or_default();
+        if level.is_empty() {
+            continue;
+        }
+        if seen.contains(&level) {
+            out.push(
+                Diagnostic::error(
+                    ec_diag::EC2004_LINEAGE_CYCLE,
+                    format!("hierarchy level `{level}` appears more than once"),
+                )
+                .with_file(source)
+                .with_pointer(format!("/hierarchy/{i}"))
+                .with_help("a lineage is an ordered list of distinct scopes; a repeated level makes the merged result depend on iteration order"),
+            );
+        }
+        seen.push(level);
+    }
+    out
+}
+
+/// `EC2008` — UNS identity tokens must satisfy the character set and the depth guard.
+///
+/// The rules are the UNS grammar's, not this crate's invention: a token is lower-kebab, and a
+/// topic may not exceed the IoT Core seven-slash depth once the class and channel are appended.
+fn uns_tokens(config: &Value, source: &str) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for (pointer, token) in identity_tokens(config) {
+        if token.is_empty() {
+            continue;
+        }
+        if !is_uns_token(&token) {
+            out.push(
+                Diagnostic::error(
+                    ec_diag::EC2008_INVALID_UNS_TOKEN,
+                    format!("`{token}` is not a valid UNS token"),
+                )
+                .with_file(source)
+                .with_pointer(pointer)
+                .with_help(
+                    "UNS tokens are lower-kebab: [a-z0-9] separated by single hyphens (e.g. `opcua-adapter`)",
+                ),
+            );
+        }
+    }
+    out
+}
+
+/// `EC2006` — a raw publish to a reserved UNS class is rejected.
+///
+/// `state`, `metric`, `cfg` and `log` are library-owned: the library publishes them, and a
+/// component that raw-publishes to them corrupts a class other tools rely on. `data`, `evt`,
+/// `cmd` and `app` are the application-facing classes.
+fn reserved_uns_classes(config: &Value, source: &str) -> Vec<Diagnostic> {
+    const RESERVED: [&str; 4] = ["state", "metric", "cfg", "log"];
+    let mut out = Vec::new();
+
+    walk(config, "", &mut |pointer, key, value| {
+        // A configured publish target: a `topic`/`publishTopic` naming a UNS class.
+        if !matches!(key, "topic" | "publishTopic" | "publish_topic") {
+            return;
+        }
+        let Some(topic) = value.as_str() else { return };
+        // ecv1/{device}/{component}/{instance}/{class}[/channel]
+        let class = topic.split('/').nth(4).unwrap_or_default();
+        if RESERVED.contains(&class) {
+            out.push(
+                Diagnostic::error(
+                    ec_diag::EC2006_RESERVED_UNS_CLASS,
+                    format!("`{class}` is a reserved UNS class and cannot be published to directly"),
+                )
+                .with_file(source)
+                .with_pointer(pointer)
+                .with_help(
+                    "the library owns state/metric/cfg/log; publish application traffic to data, evt, cmd or app",
+                ),
+            );
+        }
+    });
+    out
+}
+
+/// Every identity token in a config, with its pointer.
+fn identity_tokens(config: &Value) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (ptr, key) in [
+        ("/component/token", "token"),
+        ("/identity/component", "component"),
+        ("/identity/instance", "instance"),
+    ] {
+        if let Some(v) = config.pointer(ptr).and_then(Value::as_str) {
+            let _ = key;
+            out.push((ptr.to_string(), v.to_string()));
+        }
+    }
+    out
+}
+
+/// The UNS token grammar: lower-kebab, no leading/trailing/doubled hyphens.
+fn is_uns_token(t: &str) -> bool {
+    !t.is_empty()
+        && !t.starts_with('-')
+        && !t.ends_with('-')
+        && !t.contains("--")
+        && t.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// `EC2005` — secret **values** are forbidden anywhere; only `secret://` references.
@@ -328,6 +454,88 @@ mod tests {
             "component": { "configSource": "CONFIGMAP" }
         });
         assert_eq!(check(&cfg, None, "c.json").error_count(), 0);
+    }
+
+    #[test]
+    fn a_repeated_hierarchy_level_is_caught() {
+        // EC2004: a lineage is an ordered list of DISTINCT scopes. A repeated level makes the
+        // merged result depend on iteration order rather than on the model.
+        let bad = json!({
+            "component": { "token": "x" },
+            "hierarchy": [
+                { "level": "site", "value": "dallas" },
+                { "level": "line", "value": "fill-1" },
+                { "level": "site", "value": "austin" }
+            ]
+        });
+        let r = check(&bad, None, "c.json");
+        assert_eq!(r.error_count(), 1, "{}", r.render_human());
+        assert_eq!(r.diagnostics[0].code, ec_diag::EC2004_LINEAGE_CYCLE);
+
+        let good = json!({
+            "component": { "token": "x" },
+            "hierarchy": [
+                { "level": "site", "value": "dallas" },
+                { "level": "line", "value": "fill-1" }
+            ]
+        });
+        assert_eq!(check(&good, None, "c.json").error_count(), 0);
+    }
+
+    #[test]
+    fn an_invalid_uns_token_is_caught() {
+        // EC2008: UNS tokens are lower-kebab. `MyComponent` would produce a topic no fleet-wide
+        // consumer could match.
+        for bad in [
+            "MyComponent",
+            "my_component",
+            "-leading",
+            "trailing-",
+            "double--hyphen",
+        ] {
+            let cfg = json!({ "component": { "token": bad } });
+            let r = check(&cfg, None, "c.json");
+            assert_eq!(r.error_count(), 1, "`{bad}` should be rejected");
+            assert_eq!(r.diagnostics[0].code, ec_diag::EC2008_INVALID_UNS_TOKEN);
+        }
+        for good in ["opcua-adapter", "telemetry-processor", "gw01", "a-b-c"] {
+            let cfg = json!({ "component": { "token": good } });
+            assert_eq!(
+                check(&cfg, None, "c.json").error_count(),
+                0,
+                "`{good}` should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn publishing_to_a_reserved_uns_class_is_rejected() {
+        // EC2006: state/metric/cfg/log are library-owned. A component that raw-publishes to them
+        // corrupts a class the rest of the fleet relies on.
+        for class in ["state", "metric", "cfg", "log"] {
+            let cfg = json!({
+                "component": { "token": "x", "global": { "topic": format!("ecv1/gw01/thing/main/{class}") } }
+            });
+            let r = check(&cfg, None, "c.json");
+            assert_eq!(
+                r.error_count(),
+                1,
+                "`{class}` must be reserved: {}",
+                r.render_human()
+            );
+            assert_eq!(r.diagnostics[0].code, ec_diag::EC2006_RESERVED_UNS_CLASS);
+        }
+        // The application-facing classes are fine.
+        for class in ["data", "evt", "cmd", "app"] {
+            let cfg = json!({
+                "component": { "token": "x", "global": { "topic": format!("ecv1/gw01/thing/main/{class}/x") } }
+            });
+            assert_eq!(
+                check(&cfg, None, "c.json").error_count(),
+                0,
+                "`{class}` must be allowed"
+            );
+        }
     }
 
     #[test]

@@ -23,8 +23,11 @@ clap = { workspace = true }
 clap_complete = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+tempfile = { workspace = true }
 toml_edit = { workspace = true }
 walkdir = { workspace = true }
 
 [dev-dependencies]
+ec-scaffold = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }

@@ -55,7 +55,7 @@ dependency source is what makes the image build standalone (no monorepo checkout
 <TabItem label="Linux">
 
 ```bash
-edgecommons create-component -n com.example.MyComponent -l PYTHON \
+edgecommons component new -n com.example.MyComponent -l PYTHON \
   --platforms KUBERNETES --dep-source registry
 ```
 
@@ -63,7 +63,7 @@ edgecommons create-component -n com.example.MyComponent -l PYTHON \
 <TabItem label="Windows">
 
 ```powershell
-edgecommons create-component -n com.example.MyComponent -l PYTHON `
+edgecommons component new -n com.example.MyComponent -l PYTHON `
   --platforms KUBERNETES --dep-source registry
 ```
 
@@ -454,8 +454,8 @@ a `Service` and/or a `ServiceMonitor` (below) to let a cluster collector scrape 
 A complete, parameterized Helm chart lives at **`test-infra/k8s/chart`**. It renders the Deployment,
 ConfigMap, a ServiceAccount, an optional namespaced RBAC role, a ClusterIP Service, an optional
 ServiceMonitor, and the vault-KEK Secret. It is **shared test/reference infra** — it is not produced
-by `create-component` and is not published as a chart — but it is the most complete worked example of
-a production-shaped deployment, and the live counterpart to the per-language unit tests.
+by `edgecommons component new` and is not published as a chart — but it is the most complete worked
+example of a production-shaped deployment, and the live counterpart to the per-language unit tests.
 
 Key knobs in `values.yaml`:
 

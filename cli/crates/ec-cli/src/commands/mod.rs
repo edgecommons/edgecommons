@@ -8,14 +8,17 @@ pub mod release;
 
 use ec_diag::Fatal;
 
-/// A verb that is declared in the surface but not built in this phase.
+/// A verb that is declared in the surface but not built in this binary.
 ///
 /// Declared-but-unbuilt is reported honestly with its own exit code
 /// ([`ec_diag::ExitCode::NotImplemented`]) rather than as a crash or a usage error, so CI can
 /// tell "this build cannot do that yet" from "you invoked it wrong".
-pub fn not_implemented(verb: &str, phase: &str, section: &str) -> Fatal {
+///
+/// The message names no internal phase, roadmap item, or design document: those are ours, not
+/// the user's, and a tool that talks about its own backlog to the person trying to use it is
+/// leaking its plumbing.
+pub fn not_implemented(verb: &str) -> Fatal {
     Fatal::NotImplemented(format!(
-        "`edgecommons {verb}` is not implemented in this build ({phase}). \
-         See docs/platform/DESIGN-cli.md {section}."
+        "`edgecommons {verb}` is not available in this build."
     ))
 }

@@ -72,7 +72,7 @@ pub fn package(args: &PackageArgs, quiet: bool) -> Outcome {
             Platform::Host | Platform::Kubernetes => {
                 report.push(
                     Diagnostic::warning(
-                        ec_diag::Code("EC5002"),
+                        ec_diag::EC4007_CONTAINER_BUILD_IS_CI,
                         format!(
                             "{} artifacts are container images; building and pushing them is the release \
                              workflow's job, not the CLI's",

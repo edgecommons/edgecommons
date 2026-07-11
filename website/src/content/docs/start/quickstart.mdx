@@ -16,9 +16,9 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 
 1. ### Install the prerequisites
 
-   The scaffolding CLI is a Python tool, and each language has its own toolchain. At a minimum you
-   need **git**, **Python 3.9+** (to run the CLI), **Docker** (for the local MQTT broker), and the
-   toolchain for the language you are targeting:
+   The scaffolding CLI is a single static binary. At a minimum you need **git**, a `rustup` toolchain
+   (to build the CLI), **Docker** (for the local MQTT broker), and the toolchain for the language you
+   are targeting:
 
    - **Java** — JDK 25 and Maven. (The library targets Java 25, so the JDK must be 25 even though
      the generated component compiles to an older bytecode level.)
@@ -34,49 +34,48 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="Linux">
 
      ```bash
-     # From the monorepo root — installs the `edgecommons` / `edgecommons-cli` commands.
-     pipx install ./cli        # or: python -m pip install ./cli
-     edgecommons doctor          # reports git, gdk, cargo, mvn, python3, node, npm, aws
+     # From the monorepo root — installs the `edgecommons` command.
+     cargo install --path cli/crates/ec-cli
+     edgecommons doctor --platforms HOST     # checks only what a HOST component needs
      ```
 
 </TabItem>
 <TabItem label="Windows">
 
      ```powershell
-     # From the monorepo root — installs the `edgecommons` / `edgecommons-cli` commands.
-     pipx install ./cli        # or: python -m pip install ./cli
-     edgecommons doctor          # reports git, gdk, cargo, mvn, python3, node, npm, aws
+     # From the monorepo root — installs the `edgecommons` command.
+     cargo install --path cli/crates/ec-cli
+     edgecommons doctor --platforms HOST     # checks only what a HOST component needs
      ```
 
 </TabItem>
 </Tabs>
 
-   `edgecommons doctor` checks eight tools and prints `[ok] <name> -> <path>` or
-   `[missing] <name>` for each. It only reports status — a missing tool you do not need for your
-   language will not stop you.
+   `edgecommons doctor` prints `[ok] <name> -> <path>` (with the tool's version) or
+   `[missing] <name>` for each tool, and exits non-zero when a required one is missing. `--platforms`
+   and `-l/--language` narrow it to the tools your workflow actually uses.
 
 2. ### Scaffold a component
 
-   `edgecommons create-component` generates a component from a bundled template. Templates ship inside
-   the CLI, so scaffolding works offline. The output directory is `<path>/<ComponentName>`, where
-   `ComponentName` is the last dot-segment of the name you pass (`com.example.MyComponent`
-   produces a `MyComponent/` directory).
+   `edgecommons component new` generates a component from a template carried inside the binary, so
+   scaffolding works offline. The output directory is `<path>/<ComponentName>`, where `ComponentName`
+   is the last dot-segment of the name you pass (`com.example.MyComponent` produces a `MyComponent/`
+   directory).
 
-   The interactive wizard prompts for everything (and starts automatically if you omit `-n` on a
-   terminal):
+   Run it with no flags on a terminal and it asks for the language and the name:
 
 <Tabs syncKey="os">
 <TabItem label="Linux">
 
      ```bash
-     edgecommons create-component -i
+     edgecommons component new
      ```
 
 </TabItem>
 <TabItem label="Windows">
 
      ```powershell
-     edgecommons create-component -i
+     edgecommons component new
      ```
 
 </TabItem>
@@ -90,7 +89,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 
      ```bash
      # Choose -l to match the language tab you are following.
-     edgecommons create-component -n com.example.MyComponent -l JAVA
+     edgecommons component new -n com.example.MyComponent -l JAVA
      # -l PYTHON  |  -l RUST  |  -l TYPESCRIPT
      ```
 
@@ -98,7 +97,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="Windows">
 
      ```powershell
-     edgecommons create-component -n com.example.MyComponent -l JAVA
+     edgecommons component new -n com.example.MyComponent -l JAVA
      # -l PYTHON  |  -l RUST  |  -l TYPESCRIPT
      ```
 
@@ -107,16 +106,21 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 
    On success the CLI prints `Done. Component generated at: <dir>`. By default the component targets
    all platforms (`--platforms GREENGRASS,HOST,KUBERNETES`) and uses a local library dependency
-   (`--dep-source local`). The Kubernetes artifacts (`Dockerfile`, `k8s/`) are only emitted when
-   `KUBERNETES` is among the selected platforms.
+   (`--dep-source local`). `--platforms` selects the artifact packs: the Kubernetes `Dockerfile` and
+   `k8s/` manifests are emitted only when `KUBERNETES` is among them, and the Greengrass `recipe.yaml`
+   and `gdk-config.json` only when `GREENGRASS` is.
 
    <Aside type="note" title="Where the library comes from">
-   `--dep-source` and `--edgecommons-path` only affect **Rust** and **TypeScript**, whose default
-   `local` dependency points at the in-repo `libs/rust` / `libs/ts` so they build offline inside the
-   monorepo. **Java** always depends on `com.mbreissi.edgecommons:edgecommons` and **Python** on
-   `edgecommons`, so those two must be able to resolve the library — either from a registry
-   or from a local install. See the [Installation guide](/start/installation/).
+   `--dep-source local` (the default) writes a path/file dependency on the monorepo checkout the CLI
+   was built from, so a scaffolded component builds offline inside the monorepo in every language.
+   `--dep-source registry` writes the published artifact instead, which has to resolve from GitHub
+   Packages or a git tag. Point `local` somewhere else with `--library-path`. See the
+   [Installation guide](/start/installation/).
    </Aside>
+
+   Every scaffold also ships a `config.schema.json` describing the component's own configuration — the
+   object at `component.global`. It is what `edgecommons component validate` checks your config
+   against, so a typo'd key is caught before it reaches a device.
 
 3. ### Tour the generated project
 
