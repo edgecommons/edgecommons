@@ -308,17 +308,6 @@ pub enum Language {
     Typescript,
 }
 
-impl Language {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Java => "JAVA",
-            Self::Python => "PYTHON",
-            Self::Rust => "RUST",
-            Self::Typescript => "TYPESCRIPT",
-        }
-    }
-}
 
 /// The component archetype (D-CLI-4). Mirrors the registry's own category vocabulary,
 /// so a scaffolded component and its catalog entry speak the same word.
@@ -331,17 +320,6 @@ pub enum Kind {
     Sink,
 }
 
-impl Kind {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Service => "service",
-            Self::ProtocolAdapter => "protocol-adapter",
-            Self::Processor => "processor",
-            Self::Sink => "sink",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
 #[value(rename_all = "UPPER")]
@@ -374,15 +352,6 @@ pub enum DepSource {
     Registry,
 }
 
-impl DepSource {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Local => "local",
-            Self::Registry => "registry",
-        }
-    }
-}
 
 /// The registry's full category enum. The Python CLI advertised three of these six.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

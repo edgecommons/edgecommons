@@ -28,6 +28,7 @@ ec-studio = { path = "crates/ec-studio" }
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
+include_dir = "0.7"
 # default-features = false drops the `resolve-http` feature (and with it reqwest). The
 # validation engine must not be able to fetch a schema over the network: `component validate`
 # and `deployment validate` are offline by construction (DESIGN-cli P2). Schemas come from

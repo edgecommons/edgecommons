@@ -76,7 +76,6 @@ Manifests:
           . $COMPONENT_DIR/venv/bin/activate
           pip3 install --upgrade pip
           pip3 install -r {artifacts:decompressedPath}/<<COMPONENTNAME>>/requirements.txt
-          pip3 install {artifacts:decompressedPath}/<<COMPONENTNAME>>/greengrass_commons-0.0.10038883-py3-none-any.whl
           deactivate
       Run:
         Script: |-

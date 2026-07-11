@@ -55,8 +55,8 @@ Manifests:
           python3 -m venv "$COMPONENT_DIR/venv"
           . $COMPONENT_DIR/venv/bin/activate
           pip3 install --upgrade pip
-          # Bundled edgecommons wheel first (not on public PyPI), then the rest.
-          pip3 install {artifacts:decompressedPath}/<<COMPONENTNAME>>/greengrass_commons-*.whl
+          # requirements.txt carries the edgecommons dependency itself (a git pin for
+          # --dep-source registry, an editable sibling install for --dep-source local).
           pip3 install -r {artifacts:decompressedPath}/<<COMPONENTNAME>>/requirements.txt
           deactivate
       Run:

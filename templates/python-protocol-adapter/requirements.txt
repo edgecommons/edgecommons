@@ -1,3 +1,6 @@
-edgecommons
+# The edgecommons Python library. The CLI substitutes the dependency form you chose with
+# `--dep-source`: a pinned git requirement for `registry`, or an editable install of a local
+# sibling checkout for `local`. Bump it later with `edgecommons component upgrade --to <ver>`.
+<<EDGECOMMONS_DEP>>
 # TODO: add your protocol client library here, e.g.:
 # pymodbus>=3.6

@@ -1,20 +1,85 @@
 {
+  "schemaVersion": 2,
+  "id": "python/service",
   "language": "PYTHON",
-  "description": "Python Greengrass component built on the edgecommons (edgecommons) library.",
+  "kind": "service",
+  "description": "Python component built on the edgecommons Python library.",
+  "platforms": [
+    "GREENGRASS",
+    "HOST",
+    "KUBERNETES"
+  ],
+  "requires": [
+    "EDGECOMMONS_DEP"
+  ],
   "substitutions": {
-    "recipe.yaml": ["DESCRIPTION", "COMPONENTFULLNAME", "AUTHOR", "COMPONENTNAME"],
-    "gdk-config.json": ["COMPONENTFULLNAME", "AUTHOR", "BUCKET", "REGION"],
-    "main.py": ["COMPONENTNAME"],
-    "app/greengrass_app.py": ["COMPONENTNAME"],
-    "README.md": ["COMPONENTNAME", "COMPONENTFULLNAME"],
-    "Dockerfile": ["COMPONENTNAME"],
-    "k8s/configmap.yaml": ["COMPONENTNAME", "COMPONENTFULLNAME"],
-    "k8s/deployment.yaml": ["COMPONENTNAME"]
+    "requirements.txt": [
+      "EDGECOMMONS_DEP"
+    ],
+    "recipe.yaml": [
+      "DESCRIPTION",
+      "COMPONENTFULLNAME",
+      "AUTHOR",
+      "COMPONENTNAME"
+    ],
+    "gdk-config.json": [
+      "COMPONENTFULLNAME",
+      "AUTHOR",
+      "BUCKET",
+      "REGION"
+    ],
+    "main.py": [
+      "COMPONENTNAME"
+    ],
+    "app/greengrass_app.py": [
+      "COMPONENTNAME"
+    ],
+    "README.md": [
+      "COMPONENTNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "config.schema.json": [
+      "COMPONENTNAME"
+    ],
+    "compose.yaml": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "supervisor/component.conf": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "Dockerfile": [
+      "COMPONENTNAME"
+    ],
+    "k8s/configmap.yaml": [
+      "COMPONENTNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "k8s/deployment.yaml": [
+      "COMPONENTNAME"
+    ]
   },
   "renames": [
-    {"from": "app/greengrass_app.py", "to": "app/{COMPONENTNAME}.py"}
+    {
+      "from": "app/greengrass_app.py",
+      "to": "app/{COMPONENTNAME}.py"
+    }
   ],
-  "conditional": [
-    {"when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"]}
-  ]
+  "packs": {
+    "GREENGRASS": [
+      "recipe.yaml",
+      "gdk-config.json"
+    ],
+    "HOST": [
+      "compose.yaml",
+      "supervisor",
+      "Dockerfile"
+    ],
+    "KUBERNETES": [
+      "Dockerfile",
+      "k8s"
+    ]
+  },
+  "conditional": []
 }

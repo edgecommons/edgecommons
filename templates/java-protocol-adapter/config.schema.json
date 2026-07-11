@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docs.edgecommons.mbreissi.com/schemas/<<COMPONENTNAME>>/config.schema.json",
+  "title": "<<COMPONENTNAME>> southbound adapter configuration",
+  "description": "The configuration <<COMPONENTNAME>> itself understands: the object at `component.global` in an EdgeCommons config file. Each entry of `component.instances[]` — one field device / endpoint — is validated against `#/$defs/instance`. The library envelope (logging, messaging, metricEmission, heartbeat, streaming, credentials, parameters, health, hierarchy, identity, topic, tags) is owned by the canonical schema (schema/edgecommons-config-schema.json) and is deliberately NOT redeclared here. This schema is derived from the scaffold's example adapter config (test-configs/<<COMPONENTNAME>>.json) and the keys the adapter reads. Replace the protocol-agnostic placeholders with your protocol's real keys as you implement it, and keep `additionalProperties: false` so a typo'd or unknown key is caught at deploy time instead of being silently ignored.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "defaults": {
+      "type": "object",
+      "description": "Defaults applied to every instance unless the instance overrides them.",
+      "additionalProperties": false,
+      "properties": {
+        "publishIntervalMs": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1000,
+          "description": "Milliseconds between northbound publishes of collected signal values."
+        },
+        "samplingRateMs": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 500,
+          "description": "How often the adapter samples a signal on the device, in milliseconds (the requested rate for subscriptions; the poll period for polled protocols)."
+        },
+        "queueSize": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 100,
+          "description": "Per-signal queue depth the adapter asks the device/server to hold for undelivered samples."
+        }
+      }
+    },
+    "healthThresholds": {
+      "type": "object",
+      "description": "Thresholds that drive the standard `southbound_health` metric (contract §5).",
+      "additionalProperties": false,
+      "properties": {
+        "staleSignalSecs": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 30,
+          "description": "A signal with no fresh sample for this many seconds counts toward the `staleSignals` measure."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "instance": {
+      "title": "<<COMPONENTNAME>> device instance",
+      "description": "One entry of `component.instances[]`: a single device/endpoint with its own connection and subscriptions. Each instance runs on its own worker thread and publishes to its own UNS data topics (ecv1/{device}/{component}/{instance}/data/{signalPath}).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "connection"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique instance identifier. It is the `{instance}` token of this instance's UNS topics and is stamped into the envelope identity and into `body.device.instance`."
+        },
+        "adapter": {
+          "type": "string",
+          "minLength": 1,
+          "default": "example",
+          "description": "Protocol identifier emitted in `body.device.adapter` of every SouthboundSignalUpdate (for example `opcua`, `modbus`, `ethernetip`)."
+        },
+        "connection": {
+          "type": "object",
+          "description": "How to reach this device. `endpoint` is the only key the scaffold reads; add your protocol's own connection keys (credentials, security policy, unit id, timeouts) alongside it.",
+          "additionalProperties": true,
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Protocol endpoint URL/address for this device, e.g. `opc.tcp://host:4840` or `modbus://host:502`."
+            }
+          }
+        },
+        "defaults": {
+          "type": "object",
+          "description": "Per-instance override of `component.global.defaults`.",
+          "additionalProperties": false,
+          "properties": {
+            "publishIntervalMs": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Milliseconds between northbound publishes for this device."
+            },
+            "samplingRateMs": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Device sampling/poll rate for this device, in milliseconds."
+            },
+            "queueSize": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Per-signal queue depth for this device."
+            }
+          }
+        },
+        "publish": {
+          "type": "object",
+          "description": "How updates from this device are batched northbound. Topics are minted by the UNS builder and are never configured here.",
+          "additionalProperties": false,
+          "properties": {
+            "batchMs": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 1000,
+              "description": "Coalescing window in milliseconds: samples arriving within the window ride in one SouthboundSignalUpdate. 0 publishes every change immediately."
+            }
+          }
+        },
+        "write": {
+          "type": "object",
+          "description": "The southbound write (device command) surface for this device.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this adapter accepts writes toward the device. Keep false until the write path is implemented and authorized."
+            }
+          }
+        },
+        "subscriptions": {
+          "type": "array",
+          "description": "The signal sets this instance subscribes to (or polls). Each entry names an include/exclude ruleset over the device's address space.",
+          "items": { "$ref": "#/$defs/subscription" }
+        }
+      }
+    },
+    "subscription": {
+      "title": "Signal subscription",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifier for this subscription, used in logs and health reporting."
+        },
+        "include": {
+          "type": "array",
+          "description": "Rules selecting the signals to subscribe to. Evaluated before `exclude`.",
+          "items": { "$ref": "#/$defs/signalRule" }
+        },
+        "exclude": {
+          "type": "array",
+          "description": "Rules removing signals matched by `include`.",
+          "items": { "$ref": "#/$defs/signalRule" }
+        }
+      }
+    },
+    "signalRule": {
+      "title": "Signal selection rule",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["match"],
+      "properties": {
+        "namespace": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Protocol-native address-space namespace the rule applies to (for example the OPC UA namespace index). Omit for protocols with a flat address space."
+        },
+        "match": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Regular expression matched against the protocol-native signal address/identifier. `.*` selects every signal in the namespace."
+        },
+        "samplingRateMs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Sampling/poll rate for the signals this rule matches. Overrides the instance and global defaults."
+        },
+        "queueSize": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Queue depth for the signals this rule matches. Overrides the instance and global defaults."
+        },
+        "deadband": {
+          "type": "object",
+          "description": "Change filter: suppress samples whose value moved less than this from the last published one.",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": {
+              "enum": ["None", "Absolute", "Percent"],
+              "description": "None publishes every change; Absolute compares against `value` in engineering units; Percent compares against `value` as a percentage of the signal's range."
+            },
+            "value": {
+              "type": "number",
+              "minimum": 0,
+              "description": "The deadband magnitude. 0 with type Absolute publishes every change."
+            }
+          }
+        }
+      }
+    }
+  }
+}
