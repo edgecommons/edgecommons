@@ -261,6 +261,7 @@ The rules JSON Schema cannot express. Each has a stable code and a `--fix` hint 
 | `EC2006` | A raw publish to a reserved UNS class (`state`, `metric`, `cfg`, `log`) is rejected — validated via `uns.rs`, not a local regex. |
 | `EC2007` | A component bootstrapping from `CONFIG_COMPONENT` may not depend recursively on `CONFIG_COMPONENT` for its own bootstrap config. |
 | `EC2008` | UNS identity/topic tokens must satisfy the char-set and the IoT-Core 7-slash depth guard (`uns.rs`). |
+| `EC2009` | A component's config source must be legal for its platform — `CONFIGMAP` only on KUBERNETES, `GG_CONFIG` only on GREENGRASS (§8.5.3). |
 
 ### 6.3 Layer 3 — artifact lint
 
@@ -430,7 +431,7 @@ server exists.
 | Stream | What it promotes | Reconciled by |
 |---|---|---|
 | **Artifact** | A component's binary/image at a pinned version + digest (§8.7). | A platform deployment — on Greengrass, a per-thing deployment carrying a new `componentVersion`. |
-| **Config** | The effective config / catalog content. | A ConfigComponent catalog push, **or** a config-only platform deployment. The adapter chooses (§8.5.2). |
+| **Config** | The effective config. | A delivery adapter chosen by the component's **config source** — catalog push, config-only deployment, ConfigMap, staged file, env, or shadow (§8.5.3). |
 
 The `ReleaseLock` is a **correlation and evidence envelope over both — not an atomic apply unit.** It
 records what was in effect together; it does not force the two to move together. A config change ships
@@ -476,25 +477,49 @@ audit trail still says which config and which artifact were in effect, and eithe
 alone (the adapter emits a deployment that reverts one and retains the other — the capability Greengrass
 already has).
 
-Two delivery paths for the config stream on Greengrass, and the adapter picks per command:
+### 8.5.3 Config delivery is per provider — ConfigComponent is preferred, not required
 
-1. **The ConfigComponent catalog push** — publish a new catalog lineage; the deployed component picks it
-   up. No Greengrass deployment at all, and no artifact reship.
-2. **A config-only Greengrass deployment** — unchanged `componentVersion`, new `configurationUpdate`.
-   Still per-thing.
+**`config-component` is not a dependency of the deployment system.** It is the preferred config source, and
+the design should say so — but a customer remains free to use the native Greengrass config source, or any
+other supported provider. The Studio must not quietly make one component mandatory.
 
-**The restart caveat, which is why this is not merely cosmetic.** A pure config update does **not reliably
-restart the component**. That is precisely the problem EdgeCommons' **dynamic config (hot reload)** exists
-to solve — a component sourcing config through the library picks a change up live. So a config release's
-*actual* effect depends on whether the target component hot-reloads or requires a restart, and the
-renderer must not pretend otherwise.
+So the config stream has **one model and N delivery adapters**. The effective config is computed **once**,
+by `layered.rs` (P4); only *how it reaches the device* varies. The component's declared config source —
+already part of the runtime contract (`-c/--config <SOURCE>`) and therefore part of the definition — selects
+the adapter:
 
-Concretely: **restart impact is a first-class field of the plan**, per component per config change. The
-deck's `diff` already groups changes by consequence and already has a **restart** group — this is what
-populates it. `deployment plan` therefore states, for each config change, whether it is picked up live or
-forces a restart, and an operator sees the blast radius *before* applying rather than discovering it.
+| Config source | How the config stream is delivered | Picked up live? |
+|---|---|---|
+| `CONFIG_COMPONENT` *(preferred)* | A catalog lineage push. **No platform deployment at all**, on any platform. | Yes — a catalog push is the hot path |
+| `GG_CONFIG` | A config-only Greengrass deployment: unchanged `componentVersion`, new `configurationUpdate`. Still per-thing. | **Not reliably** — see below |
+| `CONFIGMAP` | The Kubernetes renderer's ConfigMap (whole-volume mount, no `subPath`). | Yes — the `..data` swap is watched |
+| `FILE` | A config file staged into the HOST bundle, checksummed. | Yes — the file is watched |
+| `ENV` | Environment in the unit/manifest. | **No** — an env change requires a restart |
+| `SHADOW` | A shadow document update. | Yes — via the shadow delta |
 
-### 8.5.3 The compatibility guard (proposed — not yet decided)
+This is a strictly better shape than a ConfigComponent-first design: it keeps the deployment system free of
+any hard dependency on a specific component, and it agrees with REVIEW #6, which already preferred rendering
+Git content into the existing file/ConfigMap sources over building a `GitCatalogSource` first.
+
+A new semantic rule falls out: **a config source must be legal for the platform it is deployed on**
+(`EC2009`, §6.2) — `CONFIGMAP` only on KUBERNETES, `GG_CONFIG` only on GREENGRASS — and `CONFIG_COMPONENT`
+already carries the bootstrap-loop guard (`EC2007`).
+
+### 8.5.4 The restart caveat, which is why the matrix has a third column
+
+A pure config update does **not reliably restart the component**. That is precisely the problem EdgeCommons'
+**dynamic config (hot reload)** exists to solve — a component sourcing config through the library can pick a
+change up live. But as the matrix shows, **that capability is a property of the config source, not of the
+platform**: a `CONFIGMAP` or `FILE` change is watched, an `ENV` change is not, and a Greengrass
+`configurationUpdate` is not reliably a restart either.
+
+Concretely: **restart impact is a first-class field of the plan**, computed **per component, per config
+change, from that component's config source**. The deck's `diff` already groups changes by consequence and
+already has a **restart** group — this is what populates it. `deployment plan` therefore states, for each
+config change, whether it is picked up live or forces a restart, and an operator sees the blast radius
+*before* applying rather than discovering it in production.
+
+### 8.5.5 The compatibility guard (proposed — not yet decided)
 
 Two-stream buys independence, and independence has one sharp edge that must be closed or it will bite in
 production: **nothing stops a config release from shipping config that the deployed binary cannot parse.**
@@ -679,7 +704,8 @@ test. This register — not the current pytest suite — is the behavioral oracl
 | D-CLI-11 | **The registry splits into discovery / release index / pin+lock** (§9.1); `version` and `digest` are *not* added to the catalog entry. | Per-release data in a hand-edited catalog is stale by the second release, cannot express historical pins, and a single digest is meaningless across three platforms. |
 | D-CLI-12 | **`deployment lock` is the only networked verb.** | Makes RM-012's "no server and no network" literal for `validate\|render\|plan\|diff`, and puts every hash input in Git, which is what §8.3's determinism actually requires. |
 | D-CLI-13 | **Stream separation is a *model* invariant, not a *transport* one.** The model, releases, evidence, drift, and rollback keep config and artifact distinct; a platform adapter **may coalesce** them into one native deployment when that suits the command (§8.5.2). | Greengrass does not actually fuse the two — its *tooling* does. Forbidding a combined deployment would impose a restriction the platform never had, while fusing the *model* would import the coupling RM-002 rejects. Separate where it buys reasoning; combine where it buys an apply. |
-| D-CLI-14 | **Restart impact is a first-class field of the plan**, per component per config change. | A pure config update does not reliably restart a component — the reason EdgeCommons has dynamic config/hot reload. The deck's `diff` already groups by consequence and already has a **restart** group; this populates it, so an operator sees the blast radius before applying. |
+| D-CLI-14 | **Restart impact is a first-class field of the plan** — computed per component, per config change, **from that component's config source**. | A pure config update does not reliably restart a component; dynamic config/hot reload is what addresses that, and **whether it applies is a property of the config source, not the platform** (`FILE`/`CONFIGMAP` are watched, `ENV` is not, a GG `configurationUpdate` is not reliably one). The deck's `diff` already has a **restart** consequence group; this populates it. |
+| D-CLI-15 | **`config-component` is preferred, not required.** The config stream is **provider-agnostic**: one model, one `layered.rs` computation, and a **delivery adapter per config source** (§8.5.3) — catalog push, config-only deployment, ConfigMap, staged file, env, or shadow. | Customers may use the native Greengrass config source or any supported provider; the deployment system must not make one component mandatory. Also agrees with REVIEW #6, which already preferred rendering Git content into the existing file/ConfigMap sources over building `GitCatalogSource` first. |
 
 ---
 
