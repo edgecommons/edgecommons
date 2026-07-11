@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 2,
+  "id": "rust/sink",
+  "language": "RUST",
+  "kind": "sink",
+  "description": "Rust sink component: consume, deliver idempotently to a destination, verify, retry, report.",
+  "platforms": [
+    "GREENGRASS",
+    "HOST",
+    "KUBERNETES"
+  ],
+  "requires": [
+    "EDGECOMMONS_DEP"
+  ],
+  "substitutions": {
+    "build.sh": [
+      "BINNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "Cargo.toml": [
+      "BINNAME",
+      "DESCRIPTION",
+      "EDGECOMMONS_DEP"
+    ],
+    "compose.yaml": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "config.schema.json": [
+      "COMPONENTNAME"
+    ],
+    "Dockerfile": [
+      "BINNAME"
+    ],
+    "gdk-config.json": [
+      "AUTHOR",
+      "BUCKET",
+      "COMPONENTFULLNAME",
+      "REGION"
+    ],
+    "README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "recipe.yaml": [
+      "AUTHOR",
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "DESCRIPTION"
+    ],
+    "k8s/configmap.yaml": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "k8s/deployment.yaml": [
+      "COMPONENTNAME"
+    ],
+    "src/app.rs": [
+      "COMPONENTNAME"
+    ],
+    "src/main.rs": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "supervisor/component.conf": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "test-configs/standalone-messaging.json": [
+      "BINNAME"
+    ]
+  },
+  "renames": [],
+  "packs": {
+    "GREENGRASS": [
+      "recipe.yaml",
+      "gdk-config.json",
+      "build.sh"
+    ],
+    "HOST": [
+      "compose.yaml",
+      "supervisor",
+      "Dockerfile"
+    ],
+    "KUBERNETES": [
+      "Dockerfile",
+      "k8s"
+    ]
+  },
+  "conditional": []
+}

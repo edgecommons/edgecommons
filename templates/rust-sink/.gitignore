@@ -1,0 +1,5 @@
+/target
+/greengrass-build
+*.metric.log
+# Cargo.lock is committed for binary components; the template ships without one so
+# the first build generates it for your crate.

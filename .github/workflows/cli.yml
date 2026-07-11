@@ -58,6 +58,12 @@ jobs:
             kind: protocol-adapter
           - language: JAVA
             kind: protocol-adapter
+          - language: RUST
+            kind: protocol-adapter
+          - language: RUST
+            kind: processor
+          - language: RUST
+            kind: sink
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -92,9 +98,15 @@ jobs:
         run: mvn -q -B -DskipTests compile
         working-directory: /tmp/scaffold/Gated
 
-      - name: Build (Rust)
+      # A scaffold that builds with warnings is a scaffold that teaches the author to ignore
+      # warnings. And its own tests must pass — a template whose tests fail is a template that
+      # hands its user a failing suite on day one.
+      - name: Build and test (Rust)
         if: matrix.language == 'RUST'
-        run: cargo build
+        run: |
+          cargo build 2>&1 | tee build.log
+          ! grep -q '^warning' build.log
+          cargo test
         working-directory: /tmp/scaffold/Gated
 
       - uses: actions/setup-node@v4

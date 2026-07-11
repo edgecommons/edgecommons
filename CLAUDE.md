@@ -198,7 +198,7 @@ D‑CLI‑1…D‑CLI‑16, defect register §12).
   `renames`, `packs`, `conditional`). The catalog is built by scanning the embedded tree, so adding a
   template needs **no CLI change**. Templates and the canonical config schema are compiled into the
   binary → scaffolding and validation are **offline**.
-- **Two axes:** language × **kind** (`service`, `protocol-adapter`, `processor`, `sink`).
+- **Two axes:** language × **kind** (`service`, `protocol-adapter`, `processor`, `sink`). Today: `{java,python,rust,typescript}/service`, `{java,python,rust}/protocol-adapter`, `rust/processor`, `rust/sink` — run `edgecommons template list`. Each archetype template teaches its shape (the adapter's `DeviceSession` seam + SouthboundSignalUpdate publish; the processor's `Processor` stage trait + self-echo guard; the sink's `Destination` seam + verify-before-confirm + jittered retry), and each ships a `config.schema.json` and passing tests.
 - **Platform packs** gate artifacts symmetrically: a HOST-only scaffold gets `compose.yaml` +
   `supervisor/` and **no** Greengrass recipe; KUBERNETES gets `Dockerfile` + `k8s/`. A path may belong
   to several packs (the `Dockerfile` serves both HOST and KUBERNETES) and is pruned only when no

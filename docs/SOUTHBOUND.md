@@ -325,11 +325,10 @@ Optional: `reconnects`, `writeErrors`, `signalsSubscribed`. Emit on connect/disc
 
 ## 6. The `protocol-adapter` scaffold template
 
-There is no component "kind" concept today — the CLI keys templates by language only. Tier-1 ships a
-`templates/java-protocol-adapter/` directory (mirror of `templates/java/` with a modernized,
-Builder + `CountDownLatch` lifecycle skeleton, an OPC UA-ready `pom.xml`, and a `recipe.yaml` /
-`test-configs` seeding the §4 convention). The **`protocol-adapter` kind** is a first-class scaffold
-axis — `-k/--kind` selects the archetype, `-l/--language` the language:
+The **`protocol-adapter` kind** is a first-class scaffold axis: `-k/--kind` selects the archetype and
+`-l/--language` the language. A protocol-adapter scaffold ships a Builder + lifecycle skeleton, a
+`recipe.yaml` / `test-configs` seeding the §4 convention, and a `config.schema.json` modelling the
+adapter's own configuration (`connection`, `subscriptions`, per-signal rules):
 
 ```bash
 edgecommons component new -l JAVA -k protocol-adapter \
