@@ -1,0 +1,86 @@
+# HOST platform pack for the <<COMPONENTNAME>> southbound protocol adapter.
+#
+# Runs the adapter exactly the way the README's HOST section does — --platform HOST --transport MQTT
+# <messaging config> -c FILE <config> -t <thing> — but containerized, against a throw-away EMQX
+# broker on the compose network.
+#
+#   docker compose up --build          # build the image (./Dockerfile) and start broker + adapter
+#   docker compose logs -f <<BINNAME>>
+#   docker compose down -v
+#
+# Watch the southbound data plane (SouthboundSignalUpdate) and the automatic state keepalive:
+#   mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/data/#' -t 'ecv1/+/+/+/state' -v
+#
+# Point the adapter at a real device by editing `component.instances[].connection` in
+# test-configs/<<COMPONENTNAME>>.json. If the device lives on your workstation (a simulator), reach
+# it from the container at host.docker.internal (see extra_hosts below). A serial adapter also needs
+# the tty passed in — see the commented `devices:` block.
+#
+# The device (thing) name defaults to <<BINNAME>>-dev; override with THING_NAME=... docker compose up.
+name: <<BINNAME>>
+
+services:
+  # Local MQTT broker — the HOST platform's `messaging.local` target.
+  emqx:
+    image: emqx/emqx:latest
+    container_name: <<BINNAME>>-emqx
+    ports:
+      - "1883:1883"     # MQTT
+      - "18083:18083"   # EMQX dashboard (default login admin / public)
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  <<BINNAME>>:
+    build:
+      context: .
+      dockerfile: Dockerfile          # python:3.12-slim + requirements.txt, ENTRYPOINT python3 /app/main.py
+    image: <<BINNAME>>:dev
+    container_name: <<BINNAME>>
+    depends_on:
+      emqx:
+        condition: service_healthy
+    # Standard runtime CLI args, appended to the image's ENTRYPOINT.
+    command:
+      - "--platform"
+      - "HOST"
+      - "--transport"
+      - "MQTT"
+      - "/etc/edgecommons/messaging.json"
+      - "-c"
+      - "FILE"
+      - "/etc/edgecommons/test-configs/<<COMPONENTNAME>>.json"
+      - "-t"
+      - "${THING_NAME:-<<BINNAME>>-dev}"
+    # Lets `connection` reach a protocol simulator running on your workstation.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # A serial (RTU) adapter needs its tty; uncomment and adjust:
+    # devices:
+    #   - "/dev/ttyUSB0:/dev/ttyUSB0"
+    volumes:
+      # The adapter config source (-c FILE ...) — instances, connections, read/write topics.
+      - ./test-configs:/etc/edgecommons/test-configs:ro
+    configs:
+      - source: messaging
+        target: /etc/edgecommons/messaging.json
+    restart: unless-stopped
+
+configs:
+  # The --transport MQTT messaging config. Kept inline (rather than in test-configs/) because it
+  # must point at the `emqx` service on the compose network, not at localhost.
+  messaging:
+    content: |
+      {
+        "messaging": {
+          "local": {
+            "host": "emqx",
+            "port": 1883,
+            "clientId": "<<BINNAME>>-local"
+          }
+        }
+      }

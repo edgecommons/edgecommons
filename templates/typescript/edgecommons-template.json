@@ -1,21 +1,92 @@
 {
+  "schemaVersion": 2,
+  "id": "typescript/service",
   "language": "TYPESCRIPT",
-  "description": "TypeScript Greengrass component built on the edgecommons TypeScript library.",
-  "required": ["EDGECOMMONS_DEP"],
+  "kind": "service",
+  "description": "TypeScript component built on the edgecommons TypeScript library.",
+  "platforms": [
+    "GREENGRASS",
+    "HOST",
+    "KUBERNETES"
+  ],
+  "requires": [
+    "EDGECOMMONS_DEP"
+  ],
   "substitutions": {
-    "package.json": ["COMPONENTNAME", "DESCRIPTION", "EDGECOMMONS_DEP"],
-    "recipe.yaml": ["DESCRIPTION", "COMPONENTFULLNAME", "AUTHOR", "COMPONENTNAME"],
-    "gdk-config.json": ["COMPONENTFULLNAME", "AUTHOR", "BUCKET", "REGION"],
-    "build.sh": ["COMPONENTFULLNAME", "COMPONENTNAME"],
-    "src/main.ts": ["COMPONENTFULLNAME", "COMPONENTNAME"],
-    "src/app.ts": ["COMPONENTNAME"],
-    "README.md": ["COMPONENTNAME", "COMPONENTFULLNAME"],
-    "k8s/configmap.yaml": ["COMPONENTNAME", "COMPONENTFULLNAME"],
-    "k8s/deployment.yaml": ["COMPONENTNAME"]
+    "package.json": [
+      "COMPONENTNAME",
+      "DESCRIPTION",
+      "EDGECOMMONS_DEP"
+    ],
+    "recipe.yaml": [
+      "DESCRIPTION",
+      "COMPONENTFULLNAME",
+      "AUTHOR",
+      "COMPONENTNAME"
+    ],
+    "gdk-config.json": [
+      "COMPONENTFULLNAME",
+      "AUTHOR",
+      "BUCKET",
+      "REGION"
+    ],
+    "build.sh": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "src/main.ts": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "src/app.ts": [
+      "COMPONENTNAME"
+    ],
+    "README.md": [
+      "COMPONENTNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "config.schema.json": [
+      "COMPONENTNAME"
+    ],
+    "compose.yaml": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "supervisor/component.conf": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "k8s/configmap.yaml": [
+      "COMPONENTNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "k8s/deployment.yaml": [
+      "COMPONENTNAME"
+    ]
   },
   "renames": [],
+  "packs": {
+    "GREENGRASS": [
+      "recipe.yaml",
+      "gdk-config.json",
+      "build.sh"
+    ],
+    "HOST": [
+      "compose.yaml",
+      "supervisor",
+      "Dockerfile"
+    ],
+    "KUBERNETES": [
+      "Dockerfile",
+      "k8s"
+    ]
+  },
   "conditional": [
-    {"when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"]},
-    {"when": "dep:registry", "paths": [".npmrc"]}
+    {
+      "when": "dep:registry",
+      "paths": [
+        ".npmrc"
+      ]
+    }
   ]
 }

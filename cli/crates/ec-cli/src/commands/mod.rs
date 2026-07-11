@@ -1,6 +1,7 @@
 //! Verb implementations. Each returns an [`ec_diag::Outcome`]: either it ran (yielding a
 //! report of findings) or it could not run (a [`ec_diag::Fatal`]).
 
+pub mod component;
 pub mod doctor;
 
 use ec_diag::Fatal;

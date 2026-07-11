@@ -1,22 +1,93 @@
 {
+  "schemaVersion": 2,
+  "id": "python/protocol-adapter",
   "language": "PYTHON",
-  "description": "Python protocol-adapter component (southbound device->cloud bridge) built on the edgecommons (edgecommons) library and the southbound contract (docs/SOUTHBOUND.md).",
+  "kind": "protocol-adapter",
+  "description": "Python protocol-adapter component (southbound device bridge) built on the edgecommons Python library and the southbound contract (docs/SOUTHBOUND.md).",
+  "platforms": [
+    "GREENGRASS",
+    "HOST",
+    "KUBERNETES"
+  ],
+  "requires": [
+    "EDGECOMMONS_DEP"
+  ],
   "substitutions": {
-    "recipe.yaml": ["DESCRIPTION", "COMPONENTFULLNAME", "AUTHOR", "COMPONENTNAME"],
-    "gdk-config.json": ["COMPONENTFULLNAME", "AUTHOR", "BUCKET", "REGION"],
-    "main.py": ["COMPONENTNAME", "COMPONENTFULLNAME"],
-    "app/adapter.py": ["COMPONENTNAME"],
-    "README.md": ["COMPONENTNAME", "COMPONENTFULLNAME"],
-    "Dockerfile": ["COMPONENTNAME"],
-    "k8s/configmap.yaml": ["COMPONENTNAME", "COMPONENTFULLNAME"],
-    "k8s/deployment.yaml": ["COMPONENTNAME"],
-    "test-configs/TestComponent.json": ["COMPONENTFULLNAME"]
+    "requirements.txt": [
+      "EDGECOMMONS_DEP"
+    ],
+    "recipe.yaml": [
+      "DESCRIPTION",
+      "COMPONENTFULLNAME",
+      "AUTHOR",
+      "COMPONENTNAME"
+    ],
+    "gdk-config.json": [
+      "COMPONENTFULLNAME",
+      "AUTHOR",
+      "BUCKET",
+      "REGION"
+    ],
+    "main.py": [
+      "COMPONENTNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "app/adapter.py": [
+      "COMPONENTNAME"
+    ],
+    "README.md": [
+      "COMPONENTNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "config.schema.json": [
+      "COMPONENTNAME"
+    ],
+    "compose.yaml": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "supervisor/component.conf": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "Dockerfile": [
+      "COMPONENTNAME"
+    ],
+    "k8s/configmap.yaml": [
+      "COMPONENTNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "k8s/deployment.yaml": [
+      "COMPONENTNAME"
+    ],
+    "test-configs/TestComponent.json": [
+      "COMPONENTFULLNAME"
+    ]
   },
   "renames": [
-    { "from": "app/adapter.py", "to": "app/{COMPONENTNAME}.py" },
-    { "from": "test-configs/TestComponent.json", "to": "test-configs/{COMPONENTNAME}.json" }
+    {
+      "from": "app/adapter.py",
+      "to": "app/{COMPONENTNAME}.py"
+    },
+    {
+      "from": "test-configs/TestComponent.json",
+      "to": "test-configs/{COMPONENTNAME}.json"
+    }
   ],
-  "conditional": [
-    { "when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"] }
-  ]
+  "packs": {
+    "GREENGRASS": [
+      "recipe.yaml",
+      "gdk-config.json"
+    ],
+    "HOST": [
+      "compose.yaml",
+      "supervisor",
+      "Dockerfile"
+    ],
+    "KUBERNETES": [
+      "Dockerfile",
+      "k8s"
+    ]
+  },
+  "conditional": []
 }

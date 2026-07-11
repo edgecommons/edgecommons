@@ -59,11 +59,9 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
             Ok(Report::new())
         }
 
-        // --- Phase P1 ---------------------------------------------------------------
-        Command::Component(ComponentCmd::New(_)) => Err(commands::not_implemented("component new", "Phase P1", "§5")),
-        Command::Template(TemplateCmd::List | TemplateCmd::Show { .. }) => {
-            Err(commands::not_implemented("template", "Phase P1", "§5"))
-        }
+        Command::Component(ComponentCmd::New(args)) => commands::component::new(args, cli.quiet, cli.yes),
+        Command::Template(TemplateCmd::List) => commands::component::template_list(cli.json),
+        Command::Template(TemplateCmd::Show { id }) => commands::component::template_show(id, cli.json),
 
         // --- Phase P2 ---------------------------------------------------------------
         Command::Component(ComponentCmd::Validate(_)) => {

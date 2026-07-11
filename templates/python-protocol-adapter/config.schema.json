@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docs.edgecommons.mbreissi.com/schemas/<<COMPONENTNAME>>/config.schema.json",
+  "title": "<<COMPONENTNAME>> southbound adapter configuration",
+  "description": "The configuration <<COMPONENTNAME>> itself understands: the object at `component.global` in an EdgeCommons config file. Each entry of `component.instances[]` — one field device / endpoint — is validated against `#/$defs/instance`. The library envelope (logging, messaging, metricEmission, heartbeat, streaming, credentials, parameters, health, hierarchy, identity, topic, tags) is owned by the canonical schema (schema/edgecommons-config-schema.json) and is deliberately NOT redeclared here. This schema is derived from the scaffold's example adapter config (test-configs/<<COMPONENTNAME>>.json) and the keys app/<<COMPONENTNAME>>.py reads. Replace the protocol-agnostic placeholders with your protocol's real keys as you implement it, and keep `additionalProperties: false` so a typo'd or unknown key is caught at deploy time instead of being silently ignored.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "defaults": {
+      "type": "object",
+      "description": "Defaults applied to every instance unless the instance overrides them.",
+      "additionalProperties": false,
+      "properties": {
+        "pollIntervalMs": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1000,
+          "description": "Milliseconds between polls of the device in the adapter's poll loop. Subscribe-based protocols ignore it."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "instance": {
+      "title": "<<COMPONENTNAME>> device instance",
+      "description": "One entry of `component.instances[]`: a single device/endpoint. Each instance runs on its own worker thread and publishes to its own UNS data topics (ecv1/{device}/{component}/{instance}/data/{signalPath}).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "connection"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique instance identifier. It is the `{instance}` token of this instance's UNS topics and is stamped into the envelope identity and into `body.device.instance`."
+        },
+        "adapter": {
+          "type": "string",
+          "minLength": 1,
+          "default": "example",
+          "description": "Protocol identifier emitted in `body.device.adapter` of every SouthboundSignalUpdate (for example `opcua`, `modbus`, `ethernetip`)."
+        },
+        "pollIntervalMs": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1000,
+          "description": "Per-instance poll period, in milliseconds — the value the adapter's poll loop actually reads. Falls back to 1000 when unset."
+        },
+        "connection": {
+          "type": "object",
+          "description": "How to reach this device. The scaffold ships no fixed keys here: declare your protocol's own connection keys (host/port/unitId, an OPC UA endpoint URL, a serial port + baud rate, credentials, timeouts).",
+          "additionalProperties": true,
+          "properties": {
+            "_comment": { "$ref": "#/$defs/comment" }
+          }
+        },
+        "publish": {
+          "type": "object",
+          "description": "How updates from this device are batched northbound. Topics are minted by the UNS builder and are never configured here.",
+          "additionalProperties": false,
+          "properties": {
+            "batchMs": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "description": "Coalescing window in milliseconds: samples arriving within the window ride in one SouthboundSignalUpdate. 0 publishes every change immediately."
+            },
+            "_comment": { "$ref": "#/$defs/comment" }
+          }
+        },
+        "write": {
+          "type": "object",
+          "description": "The southbound write (device command) surface for this device.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether this adapter accepts writes toward the device."
+            },
+            "topic": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Topic the adapter subscribes to for write requests. Supports the {ComponentName} and {InstanceId} placeholders."
+            },
+            "_comment": { "$ref": "#/$defs/comment" }
+          }
+        },
+        "read": {
+          "type": "object",
+          "description": "The on-demand read surface for this device.",
+          "additionalProperties": false,
+          "properties": {
+            "topic": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Topic the adapter subscribes to for on-demand read requests. Supports the {ComponentName} and {InstanceId} placeholders."
+            },
+            "_comment": { "$ref": "#/$defs/comment" }
+          }
+        }
+      }
+    },
+    "comment": {
+      "type": "string",
+      "description": "Free-form note. Ignored by the adapter; carried so annotated example configs stay valid."
+    }
+  }
+}

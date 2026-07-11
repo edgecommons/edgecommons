@@ -1,22 +1,97 @@
 {
+  "schemaVersion": 2,
+  "id": "java/service",
   "language": "JAVA",
-  "description": "Java Greengrass component built on the edgecommons Java library.",
-  "substitutions": {
-    "recipe.yaml": ["DESCRIPTION", "COMPONENTFULLNAME", "AUTHOR", "JARNAME", "MAINCLASSNAME"],
-    "gdk-config.json": ["COMPONENTFULLNAME", "AUTHOR", "BUCKET", "REGION"],
-    "pom.xml": ["PACKAGE", "JARNAME", "COMPONENTNAME", "MAINCLASSNAME", "EDGECOMMONS_VERSION"],
-    "src/main/java/com/mbreissi/testcomponent/App.java": ["PACKAGE", "COMPONENTNAME", "COMPONENTFULLNAME"],
-    "README.md": ["COMPONENTNAME", "COMPONENTFULLNAME", "JARNAME"],
-    "Dockerfile": ["JARNAME"],
-    "k8s/configmap.yaml": ["COMPONENTNAME", "COMPONENTFULLNAME"],
-    "k8s/deployment.yaml": ["COMPONENTNAME"]
-  },
-  "conditional": [
-    {"when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"]}
+  "kind": "service",
+  "description": "Java component built on the edgecommons Java library.",
+  "platforms": [
+    "GREENGRASS",
+    "HOST",
+    "KUBERNETES"
   ],
+  "substitutions": {
+    "recipe.yaml": [
+      "DESCRIPTION",
+      "COMPONENTFULLNAME",
+      "AUTHOR",
+      "JARNAME",
+      "MAINCLASSNAME"
+    ],
+    "gdk-config.json": [
+      "COMPONENTFULLNAME",
+      "AUTHOR",
+      "BUCKET",
+      "REGION"
+    ],
+    "pom.xml": [
+      "PACKAGE",
+      "JARNAME",
+      "COMPONENTNAME",
+      "MAINCLASSNAME",
+      "EDGECOMMONS_VERSION"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/App.java": [
+      "PACKAGE",
+      "COMPONENTNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "README.md": [
+      "COMPONENTNAME",
+      "COMPONENTFULLNAME",
+      "JARNAME"
+    ],
+    "config.schema.json": [
+      "COMPONENTNAME"
+    ],
+    "compose.yaml": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "supervisor/component.conf": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "Dockerfile": [
+      "JARNAME"
+    ],
+    "k8s/configmap.yaml": [
+      "COMPONENTNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "k8s/deployment.yaml": [
+      "COMPONENTNAME"
+    ]
+  },
+  "packs": {
+    "GREENGRASS": [
+      "recipe.yaml",
+      "gdk-config.json"
+    ],
+    "HOST": [
+      "compose.yaml",
+      "supervisor",
+      "Dockerfile"
+    ],
+    "KUBERNETES": [
+      "Dockerfile",
+      "k8s"
+    ]
+  },
+  "conditional": [],
   "renames": [
-    {"from": "src/main/java/com/mbreissi/testcomponent", "to": "src/main/java/{PACKAGEPATH}"},
-    {"from": "src/main/java/{PACKAGEPATH}/App.java", "to": "src/main/java/{PACKAGEPATH}/{COMPONENTNAME}.java"},
-    {"from": "test-configs/TestComponent.json", "to": "test-configs/{COMPONENTNAME}.json"}
+    {
+      "from": "src/main/java/com/mbreissi/testcomponent",
+      "to": "src/main/java/{PACKAGEPATH}"
+    },
+    {
+      "from": "src/main/java/{PACKAGEPATH}/App.java",
+      "to": "src/main/java/{PACKAGEPATH}/{COMPONENTNAME}.java"
+    },
+    {
+      "from": "test-configs/TestComponent.json",
+      "to": "test-configs/{COMPONENTNAME}.json"
+    }
   ]
 }
