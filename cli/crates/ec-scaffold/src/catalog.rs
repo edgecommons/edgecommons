@@ -71,7 +71,9 @@ pub fn find(language: Language, kind: Kind) -> Option<Template> {
 /// Every file in an embedded template, as `(relative path, bytes)`.
 #[must_use]
 pub fn files(dir: &str) -> Vec<(String, Vec<u8>)> {
-    let Some(root) = TEMPLATES.get_dir(dir) else { return Vec::new() };
+    let Some(root) = TEMPLATES.get_dir(dir) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     collect(root, dir, &mut out);
     out
@@ -80,7 +82,10 @@ pub fn files(dir: &str) -> Vec<(String, Vec<u8>)> {
 fn collect(dir: &Dir<'_>, root: &str, out: &mut Vec<(String, Vec<u8>)>) {
     for f in dir.files() {
         let full = f.path().to_string_lossy().replace('\\', "/");
-        let rel = full.strip_prefix(&format!("{root}/")).unwrap_or(&full).to_string();
+        let rel = full
+            .strip_prefix(&format!("{root}/"))
+            .unwrap_or(&full)
+            .to_string();
         out.push((rel, f.contents().to_vec()));
     }
     for d in dir.dirs() {
@@ -120,7 +125,12 @@ mod tests {
 
     #[test]
     fn the_four_service_templates_are_discoverable() {
-        for lang in [Language::Java, Language::Python, Language::Rust, Language::Typescript] {
+        for lang in [
+            Language::Java,
+            Language::Python,
+            Language::Rust,
+            Language::Typescript,
+        ] {
             assert!(
                 find(lang, Kind::Service).is_some(),
                 "{} service template must be discoverable",

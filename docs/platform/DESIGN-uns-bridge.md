@@ -417,7 +417,7 @@ monorepo.
   coupled, and the rev-pin bump train (library `main` first, then one migration PR per component)
   is the established mechanism.
 - **Everything downstream keys on the registry**: `registry/components.json` drives
-  `edgecommons list-components`, the org profile tables, and `clone.sh` (which auto-clones every
+  `edgecommons registry list`, the org profile tables, and `clone.sh` (which auto-clones every
   registry component — verified: it iterates `components[].repo`). The docs site syncs each
   component's `docs/` (`website/scripts/sync-component-docs.mjs`). An in-monorepo bridge would be
   the one component invisible to all of that.

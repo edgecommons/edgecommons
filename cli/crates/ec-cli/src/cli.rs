@@ -308,7 +308,6 @@ pub enum Language {
     Typescript,
 }
 
-
 /// The component archetype (D-CLI-4). Mirrors the registry's own category vocabulary,
 /// so a scaffolded component and its catalog entry speak the same word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -319,7 +318,6 @@ pub enum Kind {
     Processor,
     Sink,
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
 #[value(rename_all = "UPPER")]
@@ -351,7 +349,6 @@ pub enum DepSource {
     Local,
     Registry,
 }
-
 
 /// The registry's full category enum. The Python CLI advertised three of these six.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -394,8 +391,16 @@ mod tests {
 
     #[test]
     fn noun_verb_parses() {
-        let cli = Cli::try_parse_from(["edgecommons", "component", "new", "-n", "com.example.Foo", "-l", "RUST"])
-            .unwrap();
+        let cli = Cli::try_parse_from([
+            "edgecommons",
+            "component",
+            "new",
+            "-n",
+            "com.example.Foo",
+            "-l",
+            "RUST",
+        ])
+        .unwrap();
         match cli.command {
             Command::Component(ComponentCmd::New(a)) => {
                 assert_eq!(a.name.as_deref(), Some("com.example.Foo"));
@@ -410,7 +415,14 @@ mod tests {
     #[test]
     fn the_archetype_axis_is_reachable() {
         let cli = Cli::try_parse_from([
-            "edgecommons", "component", "new", "-n", "com.example.Modbus", "-l", "PYTHON", "-k",
+            "edgecommons",
+            "component",
+            "new",
+            "-n",
+            "com.example.Modbus",
+            "-l",
+            "PYTHON",
+            "-k",
             "protocol-adapter",
         ])
         .unwrap();
@@ -430,7 +442,14 @@ mod tests {
 
     #[test]
     fn registry_exposes_all_six_categories() {
-        for c in ["adapter", "processor", "sink", "bridge", "console", "service"] {
+        for c in [
+            "adapter",
+            "processor",
+            "sink",
+            "bridge",
+            "console",
+            "service",
+        ] {
             assert!(
                 Cli::try_parse_from(["edgecommons", "registry", "list", "--category", c]).is_ok(),
                 "category {c} should be accepted"
@@ -441,7 +460,12 @@ mod tests {
     #[test]
     fn deployment_release_takes_a_stream_not_an_atomic_apply() {
         let cli = Cli::try_parse_from([
-            "edgecommons", "deployment", "release", "def.yaml", "--stream", "config",
+            "edgecommons",
+            "deployment",
+            "release",
+            "def.yaml",
+            "--stream",
+            "config",
         ])
         .unwrap();
         match cli.command {

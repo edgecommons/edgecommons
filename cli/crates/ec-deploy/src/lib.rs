@@ -126,7 +126,10 @@ pub struct Plan {
 impl Plan {
     #[must_use]
     pub fn restarts(&self) -> Vec<&PlanEntry> {
-        self.entries.iter().filter(|e| e.restarts_component).collect()
+        self.entries
+            .iter()
+            .filter(|e| e.restarts_component)
+            .collect()
     }
 }
 
@@ -164,7 +167,9 @@ pub struct Definition {
 
 impl Definition {
     pub fn new(path: impl AsRef<Path>) -> Self {
-        Self { path: path.as_ref().to_path_buf() }
+        Self {
+            path: path.as_ref().to_path_buf(),
+        }
     }
 }
 

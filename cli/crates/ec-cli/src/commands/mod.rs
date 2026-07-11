@@ -3,6 +3,8 @@
 
 pub mod component;
 pub mod doctor;
+pub mod registry;
+pub mod release;
 
 use ec_diag::Fatal;
 

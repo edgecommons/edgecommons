@@ -3,8 +3,8 @@
 //! The constraints JSON Schema cannot express. Each has a stable code, so CI can pin behavior
 //! to `EC2003` rather than to a sentence that may be reworded.
 
-use ec_diag::{Diagnostic, Report};
 use ec_deploy::{ConfigSource, Platform};
+use ec_diag::{Diagnostic, Report};
 use serde_json::Value;
 
 /// Run every semantic rule against a config.
@@ -53,9 +53,18 @@ fn secret_values(config: &Value, source: &str) -> Vec<Diagnostic> {
 
 fn looks_secretish(key: &str) -> bool {
     let k = key.to_ascii_lowercase();
-    ["password", "secret", "token", "apikey", "api_key", "privatekey", "private_key", "credential"]
-        .iter()
-        .any(|needle| k.contains(needle))
+    [
+        "password",
+        "secret",
+        "token",
+        "apikey",
+        "api_key",
+        "privatekey",
+        "private_key",
+        "credential",
+    ]
+    .iter()
+    .any(|needle| k.contains(needle))
 }
 
 /// Keys that *look* secret-shaped but are documented, non-secret parts of the config contract.
@@ -73,7 +82,11 @@ fn is_known_safe(pointer: &str) -> bool {
 ///
 /// `CONFIGMAP` exists only on Kubernetes; `GG_CONFIG` only on Greengrass. Everything else is
 /// portable.
-fn config_source_platform(config: &Value, platform: Option<Platform>, source: &str) -> Vec<Diagnostic> {
+fn config_source_platform(
+    config: &Value,
+    platform: Option<Platform>,
+    source: &str,
+) -> Vec<Diagnostic> {
     let (Some(platform), Some(cs)) = (platform, declared_config_source(config)) else {
         return Vec::new();
     };
@@ -92,7 +105,9 @@ fn config_source_platform(config: &Value, platform: Option<Platform>, source: &s
 
 /// `EC2001` — `--transport IPC` is valid only on GREENGRASS.
 fn transport_platform(config: &Value, platform: Option<Platform>, source: &str) -> Vec<Diagnostic> {
-    let Some(platform) = platform else { return Vec::new() };
+    let Some(platform) = platform else {
+        return Vec::new();
+    };
     let transport = config
         .pointer("/messaging/transport")
         .and_then(Value::as_str)
@@ -221,25 +236,41 @@ mod tests {
         // ...while several secret-shaped key spellings must.
         for key in ["password", "API_KEY", "privateKey", "dbCredential"] {
             let v = json!({ "component": { "global": { key: "literal" } } });
-            assert_eq!(check(&v, None, "c.json").error_count(), 1, "key `{key}` should be caught");
+            assert_eq!(
+                check(&v, None, "c.json").error_count(),
+                1,
+                "key `{key}` should be caught"
+            );
         }
     }
 
     #[test]
     fn configmap_is_kubernetes_only() {
         let cfg = json!({ "component": { "configSource": "CONFIGMAP" } });
-        assert_eq!(check(&cfg, Some(Platform::Kubernetes), "c.json").error_count(), 0);
+        assert_eq!(
+            check(&cfg, Some(Platform::Kubernetes), "c.json").error_count(),
+            0
+        );
 
         let r = check(&cfg, Some(Platform::Host), "c.json");
         assert_eq!(r.error_count(), 1);
-        assert_eq!(r.diagnostics[0].code, ec_diag::EC2009_CONFIG_SOURCE_PLATFORM);
+        assert_eq!(
+            r.diagnostics[0].code,
+            ec_diag::EC2009_CONFIG_SOURCE_PLATFORM
+        );
     }
 
     #[test]
     fn gg_config_is_greengrass_only() {
         let cfg = json!({ "component": { "configSource": "GG_CONFIG" } });
-        assert_eq!(check(&cfg, Some(Platform::Greengrass), "c.json").error_count(), 0);
-        assert_eq!(check(&cfg, Some(Platform::Kubernetes), "c.json").error_count(), 1);
+        assert_eq!(
+            check(&cfg, Some(Platform::Greengrass), "c.json").error_count(),
+            0
+        );
+        assert_eq!(
+            check(&cfg, Some(Platform::Kubernetes), "c.json").error_count(),
+            1
+        );
     }
 
     #[test]
@@ -247,7 +278,11 @@ mod tests {
         for src in ["FILE", "ENV", "SHADOW", "CONFIG_COMPONENT"] {
             let cfg = json!({ "component": { "configSource": src } });
             for p in [Platform::Host, Platform::Kubernetes, Platform::Greengrass] {
-                assert_eq!(check(&cfg, Some(p), "c.json").error_count(), 0, "{src} on {p:?}");
+                assert_eq!(
+                    check(&cfg, Some(p), "c.json").error_count(),
+                    0,
+                    "{src} on {p:?}"
+                );
             }
         }
     }
@@ -255,11 +290,17 @@ mod tests {
     #[test]
     fn ipc_outside_greengrass_is_rejected() {
         let cfg = json!({ "messaging": { "transport": "IPC" } });
-        assert_eq!(check(&cfg, Some(Platform::Greengrass), "c.json").error_count(), 0);
+        assert_eq!(
+            check(&cfg, Some(Platform::Greengrass), "c.json").error_count(),
+            0
+        );
 
         let r = check(&cfg, Some(Platform::Host), "c.json");
         assert_eq!(r.error_count(), 1);
-        assert_eq!(r.diagnostics[0].code, ec_diag::EC2001_IPC_REQUIRES_GREENGRASS);
+        assert_eq!(
+            r.diagnostics[0].code,
+            ec_diag::EC2001_IPC_REQUIRES_GREENGRASS
+        );
     }
 
     #[test]
@@ -295,7 +336,12 @@ mod tests {
         let r = check(&cfg, None, "c.json");
         assert_eq!(r.error_count(), 1);
         assert!(
-            r.diagnostics[0].locus.as_ref().unwrap().to_string().contains("a~1b"),
+            r.diagnostics[0]
+                .locus
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .contains("a~1b"),
             "{:?}",
             r.diagnostics[0].locus
         );

@@ -37,8 +37,11 @@ pub fn lint_recipe(path: &Path) -> Report {
         Ok(d) => d,
         Err(e) => {
             r.push(
-                Diagnostic::error(ec_diag::EC3005_RECIPE_UNPARSABLE, format!("recipe is not valid YAML: {e}"))
-                    .with_file(path),
+                Diagnostic::error(
+                    ec_diag::EC3005_RECIPE_UNPARSABLE,
+                    format!("recipe is not valid YAML: {e}"),
+                )
+                .with_file(path),
             );
             return r;
         }
@@ -131,8 +134,11 @@ pub fn lint_gdk_config(path: &Path) -> Report {
         Ok(d) => d,
         Err(e) => {
             r.push(
-                Diagnostic::error(ec_diag::EC3006_GDK_CONFIG, format!("gdk-config.json is not valid JSON: {e}"))
-                    .with_file(path),
+                Diagnostic::error(
+                    ec_diag::EC3006_GDK_CONFIG,
+                    format!("gdk-config.json is not valid JSON: {e}"),
+                )
+                .with_file(path),
             );
             return r;
         }
@@ -140,16 +146,22 @@ pub fn lint_gdk_config(path: &Path) -> Report {
 
     let Some(component) = doc.get("component").and_then(Json::as_object) else {
         r.push(
-            Diagnostic::error(ec_diag::EC3006_GDK_CONFIG, "gdk-config.json has no `component` object".to_string())
-                .with_file(path),
+            Diagnostic::error(
+                ec_diag::EC3006_GDK_CONFIG,
+                "gdk-config.json has no `component` object".to_string(),
+            )
+            .with_file(path),
         );
         return r;
     };
 
     if component.is_empty() {
         r.push(
-            Diagnostic::error(ec_diag::EC3006_GDK_CONFIG, "gdk-config.json declares no component".to_string())
-                .with_file(path),
+            Diagnostic::error(
+                ec_diag::EC3006_GDK_CONFIG,
+                "gdk-config.json declares no component".to_string(),
+            )
+            .with_file(path),
         );
     }
 
@@ -215,10 +227,17 @@ Manifests:
     #[test]
     fn the_component_name_placeholder_is_caught() {
         let d = tempfile::tempdir().unwrap();
-        let p = write(d.path(), "recipe.yaml", "ComponentName: '{COMPONENT_NAME}'\nComponentVersion: '1.0.0'\n");
+        let p = write(
+            d.path(),
+            "recipe.yaml",
+            "ComponentName: '{COMPONENT_NAME}'\nComponentVersion: '1.0.0'\n",
+        );
         let r = lint_recipe(&p);
         assert_eq!(r.error_count(), 1);
-        assert_eq!(r.diagnostics[0].code, ec_diag::EC3001_RECIPE_COMPONENT_NAME_PLACEHOLDER);
+        assert_eq!(
+            r.diagnostics[0].code,
+            ec_diag::EC3001_RECIPE_COMPONENT_NAME_PLACEHOLDER
+        );
     }
 
     #[test]
@@ -238,7 +257,10 @@ Manifests:
         );
         let r = lint_recipe(&p);
         assert_eq!(r.error_count(), 1, "{}", r.render_human());
-        assert_eq!(r.diagnostics[0].code, ec_diag::EC3002_RECIPE_PERMISSIONS_BLOCK);
+        assert_eq!(
+            r.diagnostics[0].code,
+            ec_diag::EC3002_RECIPE_PERMISSIONS_BLOCK
+        );
     }
 
     #[test]
@@ -258,7 +280,12 @@ Manifests:
 ",
         );
         let r = lint_recipe(&p);
-        assert_eq!(r.error_count(), 0, "a comment must not trip the rule: {}", r.render_human());
+        assert_eq!(
+            r.error_count(),
+            0,
+            "a comment must not trip the rule: {}",
+            r.render_human()
+        );
     }
 
     #[test]
@@ -279,7 +306,11 @@ Manifests:
         );
         let r = lint_recipe(&p);
         assert_eq!(r.warning_count(), 1, "{}", r.render_human());
-        assert_eq!(r.error_count(), 0, "root is a warning, not an error — it is occasionally legitimate");
+        assert_eq!(
+            r.error_count(),
+            0,
+            "root is a warning, not an error — it is occasionally legitimate"
+        );
         assert_eq!(r.diagnostics[0].code, ec_diag::EC3004_REQUIRES_PRIVILEGE);
     }
 
@@ -295,9 +326,17 @@ Manifests:
     #[test]
     fn leftover_tokens_are_caught_with_a_line_number() {
         let d = tempfile::tempdir().unwrap();
-        let p = write(d.path(), "recipe.yaml", "ComponentName: com.example.Thing\nAuthor: <<AUTHOR>>\n");
+        let p = write(
+            d.path(),
+            "recipe.yaml",
+            "ComponentName: com.example.Thing\nAuthor: <<AUTHOR>>\n",
+        );
         let r = lint_recipe(&p);
-        assert!(r.diagnostics.iter().any(|x| x.code == ec_diag::EC3003_UNSUBSTITUTED_TOKEN));
+        assert!(
+            r.diagnostics
+                .iter()
+                .any(|x| x.code == ec_diag::EC3003_UNSUBSTITUTED_TOKEN)
+        );
     }
 
     #[test]

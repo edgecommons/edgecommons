@@ -96,7 +96,10 @@ mod tests {
 
     #[test]
     fn a_partial_apply_is_not_complete() {
-        let mut r = ApplyReport { applied: vec!["gw-fill-01".into()], failed: vec![] };
+        let mut r = ApplyReport {
+            applied: vec!["gw-fill-01".into()],
+            failed: vec![],
+        };
         assert!(r.is_complete());
         r.failed.push(("gw-pack-02".into(), "unreachable".into()));
         assert!(!r.is_complete());

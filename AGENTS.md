@@ -23,7 +23,7 @@ envelope. **Java is the canonical reference.**
 | `libs/rust/` | The Rust port (crate `edgecommons`). | Rust (edition 2024, MSRV 1.85), Cargo |
 | `libs/ts/` | The TypeScript port (npm `edgecommons`). | TypeScript 5 / Node 18+ |
 | `libs/rust-streamlog/` | Shared `edgestreamlog` core: the embedded telemetry-streaming engine. All four languages use it via native bindings (Java/Panama, Python/PyO3, Node/napi-rs); Rust uses it directly. | Rust (edition 2021), Cargo |
-| `cli/` | Scaffolding CLI (`edgecommons` / `edgecommons-cli`): generate, validate, build, publish, deploy, upgrade components. | Python |
+| `cli/` | The `edgecommons` CLI: scaffold, validate, upgrade/version, package, release components; the deployment kernel and its five ports. A Cargo workspace. Design: `docs/platform/DESIGN-cli.md`. | Rust (edition 2024, MSRV 1.85) |
 | `examples/{java,python,rust,ts}/` | Worked "best-practice" example components (skeletons) that demonstrate each library. | per language |
 | `templates/{java,python,rust,typescript}/` | Minimal manifest-driven starting templates the CLI copies. | per language |
 | `schema/` | **Single source of truth** for the config JSON schema (`edgecommons-config-schema.json`) + sync scripts. | JSON |
@@ -179,20 +179,43 @@ npm test             # vitest run
 npm run coverage     # vitest run --coverage
 ```
 
-### Scaffolding CLI (`cli/`)
+### CLI (`cli/`) — a Rust cargo workspace
 ```bash
-pipx install ./cli           # or: python -m pip install ./cli  → gives `edgecommons` / `edgecommons-cli`
-edgecommons doctor             # check prerequisites (git, gdk, cargo, mvn, python3, aws)
-edgecommons create-component -n com.example.MyComponent -l PYTHON   # JAVA|PYTHON|RUST|TYPESCRIPT
-edgecommons create-component -i                                     # interactive wizard (prompts for inputs)
-edgecommons list-templates | validate | deploy | upgrade
+cd cli && cargo build --release        # -> cli/target/release/edgecommons  (or: cargo install --path cli/crates/ec-cli)
+edgecommons doctor --platforms HOST    # platform-aware; exits non-zero when a prerequisite is missing
+edgecommons template list              # the language × kind matrix
+edgecommons component new -n com.example.MyComponent -l PYTHON -k protocol-adapter
+edgecommons component validate -p MyComponent
+edgecommons component upgrade|version|package|release
+edgecommons registry list|show|versions
 ```
-Templates are **manifest-driven**: each ships a `edgecommons-template.json` declaring placeholder
-`substitutions`, file `renames`, and optional **`conditional`** (platform-gated) artifacts, so adding
-a language needs a template, not CLI code. `create-component` supports an **interactive wizard**
-(`-i`, auto when `-n` is omitted on a TTY) and gates optional artifacts by `--platforms`
-(e.g. the k8s `Dockerfile`+`k8s/` manifests emit only when `KUBERNETES` is selected) and
-`--dep-source` (`local` path dep vs `registry`).
+**Noun–verb surface, no aliases** — the old flat verbs (`create-component`, `list-components`,
+`list-templates`, `deploy`) are gone. Design: `docs/platform/DESIGN-cli.md` (decision register
+D‑CLI‑1…D‑CLI‑16, defect register §12).
+
+- **Templates are discovered, not registered.** Each ships an `edgecommons-template.json`
+  (**manifest v2**: `schemaVersion`, `id`, `language`, `kind`, `platforms`, `substitutions`,
+  `renames`, `packs`, `conditional`). The catalog is built by scanning the embedded tree, so adding a
+  template needs **no CLI change**. Templates and the canonical config schema are compiled into the
+  binary → scaffolding and validation are **offline**.
+- **Two axes:** language × **kind** (`service`, `protocol-adapter`, `processor`, `sink`).
+- **Platform packs** gate artifacts symmetrically: a HOST-only scaffold gets `compose.yaml` +
+  `supervisor/` and **no** Greengrass recipe; KUBERNETES gets `Dockerfile` + `k8s/`. A path may belong
+  to several packs (the `Dockerfile` serves both HOST and KUBERNETES) and is pruned only when no
+  selected platform claims it.
+- **Every scaffold ships `config.schema.json`** — the component's own config contract (what goes under
+  `component.global`, which the canonical schema leaves `additionalProperties: true`). One artifact,
+  three consumers: `component validate`, `deployment validate` against the pinned version (D‑CLI‑16),
+  and the runtime (roadmap RM‑014).
+- **`component upgrade` moves the *library*; `component version` moves the *component*.** Distinct verbs.
+- **`component release` produces; it never publishes** (D‑CLI‑10) — it builds, digests, and emits a
+  release descriptor. Tagging/upload is the CI release workflow's job.
+- **`deployment`/`studio` verbs are declared but not built** in this build; they exit **5**
+  (not implemented) rather than pretending. Exit codes: `0` ok · `1` findings · `2` usage ·
+  `3` environment · `4` internal · `5` not implemented.
+- The acceptance gate is **scaffold → build**, not "the Rust tests pass": `.github/workflows/cli.yml`
+  scaffolds every template and compiles it in its own language, plus a 90% coverage gate.
+
 
 ### Config schema (single source — `schema/`)
 The canonical config schema lives **only** in `schema/edgecommons-config-schema.json`. After editing

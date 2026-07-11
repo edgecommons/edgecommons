@@ -17,7 +17,9 @@ use std::process::ExitCode as ProcExit;
 use clap::{CommandFactory, Parser};
 use ec_diag::{ExitCode, Fatal, Report};
 
-use crate::cli::{Cli, Command, ComponentCmd, DeploymentCmd, RegistryCmd, Shell, StudioCmd, TemplateCmd};
+use crate::cli::{
+    Cli, Command, ComponentCmd, DeploymentCmd, RegistryCmd, Shell, StudioCmd, TemplateCmd,
+};
 
 fn main() -> ProcExit {
     let cli = Cli::parse();
@@ -63,26 +65,70 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
             Ok(Report::new())
         }
 
-        Command::Component(ComponentCmd::New(args)) => commands::component::new(args, cli.quiet, cli.yes),
+        Command::Component(ComponentCmd::New(args)) => {
+            commands::component::new(args, cli.quiet, cli.yes)
+        }
         Command::Template(TemplateCmd::List) => commands::component::template_list(cli.json),
-        Command::Template(TemplateCmd::Show { id }) => commands::component::template_show(id, cli.json),
+        Command::Template(TemplateCmd::Show { id }) => {
+            commands::component::template_show(id, cli.json)
+        }
 
         Command::Component(ComponentCmd::Validate(args)) => {
             if !args.path.is_dir() {
-                return Err(Fatal::Usage(format!("no such component directory: {}", args.path.display())));
+                return Err(Fatal::Usage(format!(
+                    "no such component directory: {}",
+                    args.path.display()
+                )));
             }
-            Ok(ec_validate::validate_project(&args.path, args.config.as_deref()))
+            Ok(ec_validate::validate_project(
+                &args.path,
+                args.config.as_deref(),
+            ))
         }
 
-        // --- Phase P3 ---------------------------------------------------------------
-        Command::Component(
-            ComponentCmd::Upgrade(_)
-            | ComponentCmd::Version(_)
-            | ComponentCmd::Package(_)
-            | ComponentCmd::Release(_),
-        ) => Err(commands::not_implemented("component", "Phase P3", "§7")),
-        Command::Registry(RegistryCmd::List(_) | RegistryCmd::Show { .. } | RegistryCmd::Versions { .. }) => {
-            Err(commands::not_implemented("registry", "Phase P3", "§9"))
+        Command::Component(ComponentCmd::Upgrade(args)) => {
+            let (changes, report) =
+                ec_scaffold::upgrade::upgrade(&args.path, &args.to, args.dry_run)?;
+            for c in &changes {
+                println!(
+                    "{}{}",
+                    if args.dry_run { "[dry-run] " } else { "" },
+                    c.describe()
+                );
+            }
+            Ok(report)
+        }
+        Command::Component(ComponentCmd::Version(args)) => {
+            let changes =
+                ec_scaffold::upgrade::set_component_version(&args.path, &args.to, args.dry_run)?;
+            if changes.is_empty() {
+                return Err(Fatal::Usage(
+                    "no manifest declaring a component version found (Cargo.toml, package.json)"
+                        .into(),
+                ));
+            }
+            for c in &changes {
+                println!(
+                    "{}{}",
+                    if args.dry_run { "[dry-run] " } else { "" },
+                    c.describe()
+                );
+            }
+            Ok(Report::new())
+        }
+        Command::Component(ComponentCmd::Package(args)) => {
+            commands::release::package(args, cli.quiet)
+        }
+        Command::Component(ComponentCmd::Release(args)) => {
+            commands::release::release(args, cli.quiet)
+        }
+
+        Command::Registry(RegistryCmd::List(args)) => commands::registry::list(args, cli.json),
+        Command::Registry(RegistryCmd::Show { name }) => {
+            commands::registry::show(name, None, cli.json)
+        }
+        Command::Registry(RegistryCmd::Versions { name }) => {
+            commands::registry::versions(name, None)
         }
 
         // --- Phase P4 ---------------------------------------------------------------
@@ -96,8 +142,11 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
         ) => Err(commands::not_implemented("deployment", "Phase P4", "§8")),
 
         Command::Studio(StudioCmd::Serve { repo, bind }) => {
-            ec_studio::serve(&ec_studio::ServeOptions { repo: repo.clone(), bind: bind.clone() })
-                .map(|()| Report::new())
+            ec_studio::serve(&ec_studio::ServeOptions {
+                repo: repo.clone(),
+                bind: bind.clone(),
+            })
+            .map(|()| Report::new())
         }
     }
 }

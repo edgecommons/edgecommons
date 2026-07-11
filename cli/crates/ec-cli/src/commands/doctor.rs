@@ -156,8 +156,11 @@ struct Found {
 }
 
 pub fn run(args: &DoctorArgs, json: bool) -> Outcome {
-    let platforms: Vec<Platform> =
-        if args.platforms.is_empty() { Platform::all() } else { args.platforms.clone() };
+    let platforms: Vec<Platform> = if args.platforms.is_empty() {
+        Platform::all()
+    } else {
+        args.platforms.clone()
+    };
 
     let mut report = Report::new();
     let mut lines: Vec<String> = Vec::new();
@@ -193,7 +196,10 @@ pub fn run(args: &DoctorArgs, json: bool) -> Outcome {
                                 check.minimum.unwrap_or("?")
                             ),
                         )
-                        .with_help(format!("upgrade {} — needed to {}", check.binary, check.why)),
+                        .with_help(format!(
+                            "upgrade {} — needed to {}",
+                            check.binary, check.why
+                        )),
                     );
                 }
 
@@ -202,7 +208,11 @@ pub fn run(args: &DoctorArgs, json: bool) -> Outcome {
                     if stale { "old" } else { " ok" },
                     check.binary,
                     found.binary,
-                    found.version.as_deref().map(|v| format!("  ({v})")).unwrap_or_default()
+                    found
+                        .version
+                        .as_deref()
+                        .map(|v| format!("  ({v})"))
+                        .unwrap_or_default()
                 ));
                 rows.push(serde_json::json!({
                     "tool": check.binary,
@@ -220,7 +230,10 @@ pub fn run(args: &DoctorArgs, json: bool) -> Outcome {
                     )
                     .with_help(format!("needed to {}", check.why)),
                 );
-                lines.push(format!("  [missing] {:<10} needed to {}", check.binary, check.why));
+                lines.push(format!(
+                    "  [missing] {:<10} needed to {}",
+                    check.binary, check.why
+                ));
                 rows.push(serde_json::json!({
                     "tool": check.binary,
                     "found": false,
@@ -243,7 +256,11 @@ pub fn run(args: &DoctorArgs, json: bool) -> Outcome {
     } else {
         println!(
             "Checking prerequisites for {}:\n",
-            platforms.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", ")
+            platforms
+                .iter()
+                .map(|p| p.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         for l in &lines {
             println!("{l}");
@@ -258,7 +275,11 @@ pub fn run(args: &DoctorArgs, json: bool) -> Outcome {
 /// `doctor` maps its report onto [`ExitCode::Environment`] rather than `Findings`.
 #[must_use]
 pub fn exit_code(report: &Report) -> ExitCode {
-    if report.error_count() > 0 { ExitCode::Environment } else { ExitCode::Ok }
+    if report.error_count() > 0 {
+        ExitCode::Environment
+    } else {
+        ExitCode::Ok
+    }
 }
 
 fn wanted(check: &Check, platforms: &[Platform], language: Option<Language>) -> bool {
@@ -273,7 +294,10 @@ fn locate(check: &Check) -> Option<Found> {
     let candidates = std::iter::once(check.binary).chain(check.alternatives.iter().copied());
     for binary in candidates {
         if let Some(path) = which(binary) {
-            return Some(Found { binary: path.display().to_string(), version: probe_version(binary, check.version_args) });
+            return Some(Found {
+                binary: path.display().to_string(),
+                version: probe_version(binary, check.version_args),
+            });
         }
     }
     None
@@ -298,7 +322,9 @@ fn probe_version(binary: &str, args: &[&str]) -> Option<String> {
 /// Deliberately lenient: tools print versions in wildly different shapes, and a doctor that
 /// cries wolf on an unparseable string is worse than one that stays quiet.
 fn version_is_below(text: &str, minimum: &str) -> bool {
-    let Some(found) = first_version(text) else { return false };
+    let Some(found) = first_version(text) else {
+        return false;
+    };
     let want = parse_parts(minimum);
     for (i, w) in want.iter().enumerate() {
         match found.get(i) {
@@ -323,7 +349,11 @@ fn first_version(text: &str) -> Option<Vec<u64>> {
             current.clear();
         }
     }
-    if current.chars().any(|c| c.is_ascii_digit()) { Some(parse_parts(&current)) } else { None }
+    if current.chars().any(|c| c.is_ascii_digit()) {
+        Some(parse_parts(&current))
+    } else {
+        None
+    }
 }
 
 fn parse_parts(v: &str) -> Vec<u64> {
@@ -340,7 +370,10 @@ mod tests {
         assert!(!version_is_below("cargo 1.96.0 (abc)", "1.85"));
         assert!(!version_is_below("cargo 1.85.0", "1.85"));
         // openjdk version "21.0.1"  -> below 25
-        assert!(version_is_below("openjdk version \"21.0.1\" 2023-10-17", "25"));
+        assert!(version_is_below(
+            "openjdk version \"21.0.1\" 2023-10-17",
+            "25"
+        ));
         assert!(!version_is_below("openjdk version \"25\" 2025-09-16", "25"));
         // Node prints a leading v.
         assert!(version_is_below("v16.20.0", "18"));
@@ -397,7 +430,10 @@ mod tests {
     fn a_missing_prerequisite_is_an_environment_failure_not_a_finding() {
         let mut r = Report::new();
         assert_eq!(exit_code(&r), ExitCode::Ok);
-        r.push(Diagnostic::error(ec_diag::Code("EC0001"), "gdk not found on PATH"));
+        r.push(Diagnostic::error(
+            ec_diag::Code("EC0001"),
+            "gdk not found on PATH",
+        ));
         // Not `Findings` (1) — a missing tool is an environment problem (3), and it is
         // non-zero, which the Python doctor never was.
         assert_eq!(exit_code(&r), ExitCode::Environment);

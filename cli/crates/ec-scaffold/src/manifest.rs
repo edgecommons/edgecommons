@@ -145,11 +145,16 @@ impl Manifest {
     pub fn parse(json: &str) -> Result<Self, ManifestError> {
         let m: Self = serde_json::from_str(json).map_err(|e| ManifestError::Json(e.to_string()))?;
         if m.schema_version != 2 {
-            return Err(ManifestError::Version { found: m.schema_version });
+            return Err(ManifestError::Version {
+                found: m.schema_version,
+            });
         }
         let expected = m.expected_id();
         if m.id != expected {
-            return Err(ManifestError::IdMismatch { id: m.id.clone(), expected });
+            return Err(ManifestError::IdMismatch {
+                id: m.id.clone(),
+                expected,
+            });
         }
         if m.platforms.is_empty() {
             return Err(ManifestError::NoPlatforms);
@@ -160,7 +165,11 @@ impl Manifest {
     /// The id this manifest's language and kind imply.
     #[must_use]
     pub fn expected_id(&self) -> String {
-        format!("{}/{}", self.language.as_str().to_lowercase(), self.kind.as_str())
+        format!(
+            "{}/{}",
+            self.language.as_str().to_lowercase(),
+            self.kind.as_str()
+        )
     }
 
     #[must_use]
@@ -242,7 +251,10 @@ mod tests {
     #[test]
     fn a_future_schema_version_is_rejected_rather_than_guessed() {
         let m = valid().replace("\"schemaVersion\":2", "\"schemaVersion\":3");
-        assert_eq!(Manifest::parse(&m).unwrap_err(), ManifestError::Version { found: 3 });
+        assert_eq!(
+            Manifest::parse(&m).unwrap_err(),
+            ManifestError::Version { found: 3 }
+        );
     }
 
     #[test]
@@ -251,14 +263,20 @@ mod tests {
         let e = Manifest::parse(&m).unwrap_err();
         assert_eq!(
             e,
-            ManifestError::IdMismatch { id: "rust/processor".into(), expected: "rust/service".into() }
+            ManifestError::IdMismatch {
+                id: "rust/processor".into(),
+                expected: "rust/service".into()
+            }
         );
     }
 
     #[test]
     fn unknown_fields_are_rejected_so_manifest_drift_cannot_ship() {
         let m = valid().replace("\"description\":", "\"nonsense\":\"x\",\"description\":");
-        assert!(matches!(Manifest::parse(&m).unwrap_err(), ManifestError::Json(_)));
+        assert!(matches!(
+            Manifest::parse(&m).unwrap_err(),
+            ManifestError::Json(_)
+        ));
     }
 
     #[test]
@@ -296,11 +314,17 @@ mod tests {
 
         let pruned = m.pruned_packs(&[Platform::Host]);
         assert!(pruned.contains(&"k8s".to_string()));
-        assert!(!pruned.contains(&"Dockerfile".to_string()), "HOST still needs the Dockerfile");
+        assert!(
+            !pruned.contains(&"Dockerfile".to_string()),
+            "HOST still needs the Dockerfile"
+        );
 
         let pruned = m.pruned_packs(&[Platform::Kubernetes]);
         assert!(pruned.contains(&"compose.yaml".to_string()));
-        assert!(!pruned.contains(&"Dockerfile".to_string()), "KUBERNETES still needs the Dockerfile");
+        assert!(
+            !pruned.contains(&"Dockerfile".to_string()),
+            "KUBERNETES still needs the Dockerfile"
+        );
     }
 
     #[test]
@@ -313,7 +337,10 @@ mod tests {
     #[test]
     fn the_protocol_adapter_kind_round_trips() {
         let json = valid()
-            .replace("\"id\":\"rust/service\"", "\"id\":\"rust/protocol-adapter\"")
+            .replace(
+                "\"id\":\"rust/service\"",
+                "\"id\":\"rust/protocol-adapter\"",
+            )
             .replace("\"kind\":\"service\"", "\"kind\":\"protocol-adapter\"");
         let m = Manifest::parse(&json).unwrap();
         assert_eq!(m.kind, Kind::ProtocolAdapter);

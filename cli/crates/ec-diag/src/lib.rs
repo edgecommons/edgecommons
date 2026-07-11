@@ -135,7 +135,10 @@ pub enum Locus {
 impl fmt::Display for Locus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Line { line, column: Some(c) } => write!(f, "{line}:{c}"),
+            Self::Line {
+                line,
+                column: Some(c),
+            } => write!(f, "{line}:{c}"),
             Self::Line { line, column: None } => write!(f, "{line}"),
             Self::Pointer(p) if p.is_empty() => write!(f, "(root)"),
             Self::Pointer(p) => f.write_str(p),
@@ -161,11 +164,25 @@ pub struct Diagnostic {
 
 impl Diagnostic {
     pub fn error(code: Code, message: impl Into<String>) -> Self {
-        Self { code, severity: Severity::Error, file: None, locus: None, message: message.into(), help: None }
+        Self {
+            code,
+            severity: Severity::Error,
+            file: None,
+            locus: None,
+            message: message.into(),
+            help: None,
+        }
     }
 
     pub fn warning(code: Code, message: impl Into<String>) -> Self {
-        Self { code, severity: Severity::Warning, file: None, locus: None, message: message.into(), help: None }
+        Self {
+            code,
+            severity: Severity::Warning,
+            file: None,
+            locus: None,
+            message: message.into(),
+            help: None,
+        }
     }
 
     #[must_use]
@@ -237,7 +254,11 @@ impl Report {
     /// Errors mean findings; warnings alone still exit `0` (DESIGN-cli §6.4).
     #[must_use]
     pub fn exit_code(&self) -> ExitCode {
-        if self.error_count() > 0 { ExitCode::Findings } else { ExitCode::Ok }
+        if self.error_count() > 0 {
+            ExitCode::Findings
+        } else {
+            ExitCode::Ok
+        }
     }
 
     /// Render for a terminal.
@@ -322,7 +343,10 @@ mod tests {
     #[test]
     fn warnings_alone_do_not_fail_the_build() {
         let mut r = Report::new();
-        r.push(Diagnostic::warning(EC3004_REQUIRES_PRIVILEGE, "runs as root"));
+        r.push(Diagnostic::warning(
+            EC3004_REQUIRES_PRIVILEGE,
+            "runs as root",
+        ));
         assert_eq!(r.exit_code(), ExitCode::Ok);
         assert_eq!(r.warning_count(), 1);
         assert_eq!(r.error_count(), 0);
@@ -331,7 +355,10 @@ mod tests {
     #[test]
     fn errors_yield_findings_exit_code() {
         let mut r = Report::new();
-        r.push(Diagnostic::warning(EC3004_REQUIRES_PRIVILEGE, "runs as root"));
+        r.push(Diagnostic::warning(
+            EC3004_REQUIRES_PRIVILEGE,
+            "runs as root",
+        ));
         r.push(Diagnostic::error(EC1001_SCHEMA, "bad config"));
         assert_eq!(r.exit_code(), ExitCode::Findings);
         assert_eq!(r.error_count(), 1);
@@ -358,14 +385,24 @@ mod tests {
         assert_eq!(v["errorCount"], 1);
         assert_eq!(v["diagnostics"][0]["code"], "EC1002");
         assert_eq!(v["diagnostics"][0]["severity"], "error");
-        assert_eq!(v["diagnostics"][0]["locus"]["pointer"], "/component/global/pipeline");
-        assert_eq!(v["diagnostics"][0]["help"], "remove the key, or deploy >= 0.4.0");
+        assert_eq!(
+            v["diagnostics"][0]["locus"]["pointer"],
+            "/component/global/pipeline"
+        );
+        assert_eq!(
+            v["diagnostics"][0]["help"],
+            "remove the key, or deploy >= 0.4.0"
+        );
     }
 
     #[test]
     fn human_render_shows_file_and_locus() {
         let mut r = Report::new();
-        r.push(Diagnostic::error(EC3003_UNSUBSTITUTED_TOKEN, "leftover token").with_file("recipe.yaml").with_line(12));
+        r.push(
+            Diagnostic::error(EC3003_UNSUBSTITUTED_TOKEN, "leftover token")
+                .with_file("recipe.yaml")
+                .with_line(12),
+        );
         let s = r.render_human();
         assert!(s.contains("error[EC3003]"), "{s}");
         assert!(s.contains("recipe.yaml:12"), "{s}");
@@ -374,8 +411,17 @@ mod tests {
     #[test]
     fn fatal_maps_to_distinct_exit_codes() {
         assert_eq!(Fatal::Usage(String::new()).exit_code(), ExitCode::Usage);
-        assert_eq!(Fatal::Environment(String::new()).exit_code(), ExitCode::Environment);
-        assert_eq!(Fatal::NotImplemented(String::new()).exit_code(), ExitCode::NotImplemented);
-        assert_eq!(Fatal::Internal(String::new()).exit_code(), ExitCode::Internal);
+        assert_eq!(
+            Fatal::Environment(String::new()).exit_code(),
+            ExitCode::Environment
+        );
+        assert_eq!(
+            Fatal::NotImplemented(String::new()).exit_code(),
+            ExitCode::NotImplemented
+        );
+        assert_eq!(
+            Fatal::Internal(String::new()).exit_code(),
+            ExitCode::Internal
+        );
     }
 }

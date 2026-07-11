@@ -1,297 +1,128 @@
-# EdgeCommons CLI
+# `edgecommons` — the EdgeCommons CLI
 
-A scaffolding command-line tool for building **AWS IoT Greengrass v2** components on top of
-the `edgecommons` libraries (Java, Python, Rust, TypeScript). It generates new component projects
-from language templates and helps validate, build, publish, deploy, and upgrade them.
+A single static binary that scaffolds, validates, and releases EdgeCommons components.
 
-Once installed it provides two equivalent commands: **`edgecommons`** and **`edgecommons-cli`**.
+Scaffolding a Java or TypeScript component needs no Python runtime and no JVM — just this binary.
 
-## Installation
-
-Requires **Python 3.8+**.
+## Install
 
 ```bash
-pipx install .            # recommended: a global `edgecommons` command, isolated
-python -m pip install .   # or a plain install
-python -m pip install -e .   # editable install, for developing the CLI itself
+cargo install --path cli/crates/ec-cli
 ```
 
-The component templates are **bundled into the wheel at build time** (from the
-monorepo's `templates/`), so an installed CLI scaffolds **offline** — no repo
-checkout or network needed. Override the template source per command with
-`--template-url` (a git URL or a local directory). An editable install falls back
-to the in-repo `templates/`.
-
-## Usage at a glance
+Or build it in place:
 
 ```bash
-edgecommons --help              # list all commands
-edgecommons --version           # print the CLI version
-edgecommons <command> --help    # full options for one command
+cd cli && cargo build --release   # -> cli/target/release/edgecommons
 ```
 
-Conventions that apply to every command:
-
-- Running `edgecommons` with **no command** prints the top-level help.
-- An **unknown command** prints `Unknown command: <x>` and exits `2`.
-- A command that **fails** prints `error: <message>` (no stack trace) and exits `1`.
-- Commands are **auto-discovered** from `edgecommons_cli/commands/*.py` (see *Extending* below),
-  so the set below is whatever ships in this package.
-
----
+Templates and the canonical config schema are compiled into the binary, so scaffolding and
+validation work offline.
 
 ## Commands
 
-### `create-component` — scaffold a new component
+| Command | What it does |
+|---|---|
+| `component new` | Scaffold a component: language × kind × platforms. |
+| `component validate` | Check a component's config and artifacts. |
+| `component upgrade` | Move a component to a given **edgecommons library** version. |
+| `component version` | Set the **component's own** version across its manifests. |
+| `component package` | Build deployable artifacts for the selected platforms. |
+| `component release` | Build, digest, and emit a release descriptor. Never publishes. |
+| `template list` / `show` | The language × kind matrix, and one template's contents. |
+| `registry list` / `show` / `versions` | The ecosystem catalog. |
+| `deployment …` | Model-to-artifact deployment. Not available in this build. |
+| `studio serve` | The Deployment Studio server. Not available in this build. |
+| `doctor` | Check the external tools the platforms you target need. |
+| `completions <shell>` | A shell completion script. |
 
-Generates a new component project from the template for the chosen language, substitutes
-placeholders, and runs post-generation checks.
+Every command takes `--json`.
 
-**Result:** a new directory `<path>/<ComponentName>` is created (where `ComponentName` is the
-**last dot-segment** of the fully-qualified `--name`, e.g. `com.example.MyComponent` →
-`MyComponent`). The template is fetched (git clone or local copy), every `<<TOKEN>>`
-placeholder is substituted (component name, description, author, bucket, region, jar name,
-Rust path dependency, …), files are renamed per the template manifest, the template's
-`edgecommons-template.json` manifest is removed, and the CLI then **fails fast if any
-`<<...>>` token remains** and **lints the generated `recipe.yaml`** (printing
-`WARNING (recipe): …` for anything that would break `gdk component publish`). On success it
-prints `Done. Component generated at: <dir>`.
+### Exit codes
 
-| Flag | Required | Default | Description |
-|------|----------|---------|-------------|
-| `-n`, `--name` | yes¹ | – | Fully-qualified component name (e.g. `com.example.MyComponent`). The generated directory and recipe `ComponentName` use the last segment. |
-| `-l`, `--language` | yes¹ | – | One of `JAVA`, `PYTHON`, `RUST`, `TYPESCRIPT`. |
-| `-i`, `--interactive` | no | off | Prompt for the inputs with a guided wizard (Enter accepts each `[default]`). **Auto-enabled when `-n/--name` is omitted on a terminal.** |
-| `--platforms` | no | `GREENGRASS,HOST,KUBERNETES` (all) | Comma-separated target platforms. Controls which **platform-specific artifacts** the template emits — e.g. the Kubernetes `Dockerfile` + `k8s/` manifests are generated **only when `KUBERNETES` is included**. |
-| `--dep-source` | no | `local` | How the component depends on the edgecommons library: `local` (a path/`file:` dependency on a monorepo checkout) or `registry` (the published artifact). `registry` skips the `--edgecommons-path` requirement. |
-| `-d`, `--description` | no | `This is a Greengrass v2 component` | Short description embedded in the recipe. |
-| `-p`, `--path` | no | `.` | Directory to create the component in (the project is created at `<path>/<ComponentName>`). |
-| `-j`, `--jar` | no | the component name | Jar file name (Java only). |
-| `-a`, `--author` | no | `Amazon Web Services` | Component author. |
-| `-b`, `--bucket` | no | `greengrass-component-artifacts-us-east-1` | S3 bucket recorded in `gdk-config.json`. |
-| `-r`, `--region` | no | `us-east-1` | AWS region recorded in `gdk-config.json`. |
-| `-g`, `--edgecommons-path` | no | the in-repo `libs/rust` (or `libs/ts` for TypeScript) | **Rust/TypeScript with `--dep-source local` only** — absolute path to the edgecommons library; becomes the Cargo **path** dependency (Rust) or npm `file:` dependency (TypeScript). |
-| `-u`, `--template-url` | no | the built-in source for the language | Override the template source: a **git URL** (cloned) **or** a **local directory** (copied). |
-| `--template-ref` | no | the repo's default branch | Git branch or tag to clone (ignored when `--template-url` is a local directory). |
-| `-f`, `--force` | no | off | Overwrite the target directory if it already exists and is non-empty. |
+| Code | Meaning |
+|---|---|
+| `0` | Success. |
+| `1` | The command ran and found problems (validation failed, lint errors). |
+| `2` | The command was invoked incorrectly. |
+| `3` | A required external tool is missing. |
+| `4` | An internal error. |
+| `5` | The verb is declared but not available in this build. |
 
-¹ Required in non-interactive use. In `--interactive` mode (or when `-n` is omitted on a terminal) they are prompted for.
-
-**Examples**
+## Scaffolding
 
 ```bash
-edgecommons create-component -n com.example.MyComponent -l RUST
+edgecommons template list
+edgecommons component new -n com.example.MyComponent -l RUST
+edgecommons component new -n com.example.MyAdapter -l PYTHON -k protocol-adapter
 ```
-Creates `./MyComponent/` from the Rust template, wiring the Cargo dependency to the in-repo
-`libs/rust`, with the default author/bucket/region. Result: a ready-to-build Rust Greengrass
-component project.
+
+Kinds are `service`, `protocol-adapter`, `processor`, and `sink`.
+
+`--platforms` selects which artifacts are emitted. A HOST-only component gets a `compose.yaml`
+and a supervisord program block and no Greengrass recipe; a Kubernetes one gets a `Dockerfile`
+and `k8s/` manifests:
 
 ```bash
-edgecommons create-component -n com.example.MyComponent -l JAVA -j my-component
+edgecommons component new -n com.example.Thing -l RUST --platforms HOST
 ```
-Creates `./MyComponent/` from the Java template; the build/recipe use `my-component` as the
-jar name instead of the default (`MyComponent`).
+
+Every scaffold ships a `config.schema.json` describing its own configuration — what goes under
+`component.global`. That is the file `component validate` checks a config against, and it
+travels with the component's release descriptor.
+
+## Validating
 
 ```bash
-edgecommons create-component -n com.example.MyComponent -l PYTHON \
-  -p ./components -a "Jane Dev" -b my-artifacts-bucket -r us-west-2 --force
+edgecommons component validate -p MyComponent
 ```
-Creates `./components/MyComponent/` from the Python template, overwriting it if present, with
-the given author and an S3 bucket/region of `my-artifacts-bucket` / `us-west-2` in
-`gdk-config.json`.
+
+Three layers, one diagnostic stream:
+
+* **`EC1xxx`** — the canonical EdgeCommons config schema, plus the component's own
+  `config.schema.json`.
+* **`EC2xxx`** — semantic rules JSON Schema cannot express: `IPC` only on `GREENGRASS`,
+  `CONFIGMAP` only on `KUBERNETES`, no secret values, no `CONFIG_COMPONENT` bootstrap loop.
+* **`EC3xxx`** — the Greengrass recipe and `gdk-config.json`, parsed.
+
+```text
+error[EC1002] MyComponent/test-configs/config.json:/component/global
+  Additional properties are not allowed ('publish_intervall' was unexpected)
+  help: this key is not accepted by the component's own config.schema.json
+```
+
+## Versions
+
+`component upgrade` moves the **edgecommons library** dependency. `component version` sets the
+**component's own** version. They are different things:
 
 ```bash
-edgecommons create-component -n com.example.MyComponent -l PYTHON \
-  -u ./templates/python
+edgecommons component upgrade -p MyComponent --to 0.3.0   # the library
+edgecommons component version -p MyComponent --to 1.4.2   # the component
 ```
-Generates from a **local** template directory instead of cloning the default git source —
-useful for a forked/offline template.
+
+## Releasing
+
+`component release` builds the artifacts, computes their digests, and writes a release
+descriptor. **It publishes nothing.** Tagging, uploading, and cataloguing belong to a release
+workflow running this same binary in CI — so a local run emits exactly the bytes CI would, which
+is what makes the descriptor reviewable before it is real.
 
 ```bash
-edgecommons create-component -i
-```
-Runs the **interactive wizard**: prompts for language, name, description, **target platform(s)**,
-and dependency source. Selecting only `GREENGRASS`/`HOST` omits the Kubernetes `Dockerfile` +
-`k8s/` manifests; including `KUBERNETES` emits them. The same gating is available
-non-interactively, e.g. `--platforms GREENGRASS,KUBERNETES`.
-
----
-
-### `list-templates` — show available languages
-
-Takes no options.
-
-**Result:** prints the languages the CLI can generate and the default template source (git
-URL) for each, e.g.:
-
-```
-Available templates (override any source with --template-url):
-
-  JAVA        git@…/java-component-template.git
-  PYTHON      git@…/python-component-template.git
-  RUST        git@…/rust-component-template.git
-  TYPESCRIPT  git@…/typescript-component-template.git
+edgecommons component version -p MyComponent --to 1.4.2
+edgecommons component release -p MyComponent --out release.json
 ```
 
-```bash
-edgecommons list-templates
-```
+## Layout
 
----
+| Crate | Responsibility |
+|---|---|
+| `ec-cli` | The binary: argument parsing, output, exit codes. |
+| `ec-diag` | The diagnostic model and its human/JSON renderers. |
+| `ec-scaffold` | Embedded templates, the manifest engine, generation, version manipulation. |
+| `ec-validate` | The canonical schema, the component schema, semantic rules, artifact lint. |
+| `ec-deploy` | The deployment kernel: model, plan, and the five ports. No I/O. |
+| `ec-adapters` | Adapters behind the ports. The only crate that may link a cloud SDK. |
+| `ec-studio` | The Deployment Studio server shell. |
 
-### `validate` — check a recipe for publish-readiness
-
-Lints a component's `recipe.yaml` for constructs that make `gdk component publish` fail.
-
-**Result:** prints `OK: <recipe> has no known GDK-publish issues.` and exits `0` if clean.
-Otherwise it lists each problem and exits `1`. It flags:
-- the `{COMPONENT_NAME}` placeholder (GDK does not substitute it → publish is rejected),
-- an artifact `Permissions:` block (`CreateComponentVersion` rejects it),
-- any leftover `<<...>>` template placeholders.
-
-| Flag | Required | Default | Description |
-|------|----------|---------|-------------|
-| `-p`, `--path` | no | `.` | Path to the component project **or** directly to a `recipe.yaml`. |
-
-```bash
-edgecommons validate -p ./MyComponent
-```
-Lints `./MyComponent/recipe.yaml`. Result: confirmation that the recipe is publish-ready, or
-a numbered list of issues to fix (with a non-zero exit so it can gate CI).
-
----
-
-### `doctor` — check prerequisites
-
-Takes no options.
-
-**Result:** prints an `[ok]`/`[missing]` line for each external tool the build/publish flows
-need, followed by a summary. The tools checked are: `git` (clone templates), `gdk`
-(build/publish), `cargo` (Rust builds), `mvn` (Java builds), `python3` (Python builds), and
-`aws` (publish/deploy). Found tools show their resolved path; missing ones explain what they're
-needed for. (It reports status only — it does not exit non-zero on missing tools.)
-
-```bash
-edgecommons doctor
-```
-
----
-
-### `deploy` — build, publish, and (optionally) deploy with the GDK
-
-Runs the Greengrass Development Kit against a component project, and optionally creates a
-cloud deployment. Requires `gdk` on `PATH` (and AWS credentials for publish/deploy).
-
-**Result depends on the flags:**
-- *(no flags)* — runs `gdk component build`, then prints a hint that you can `--publish` or
-  `--target`.
-- `--publish` — build, then `gdk component publish` (uploads artifacts + creates a component
-  version in the cloud).
-- `--target <arn>` — implies `--publish`, then reads the component name/version from
-  `gdk-config.json` and runs `aws greengrassv2 create-deployment` to deploy that exact version
-  to the target thing or thing-group ARN. (The version must be concrete — a `NEXT_PATCH`
-  placeholder is rejected so the deployed version is unambiguous.)
-
-> Note: this command does cloud deployments. **On-device local deployments** are done with
-> `greengrass-cli` on the core itself and are out of scope here.
-
-| Flag | Required | Default | Description |
-|------|----------|---------|-------------|
-| `-p`, `--path` | no | `.` | Path to the component project. |
-| `--publish` | no | off | Publish the component to the cloud after building. |
-| `-t`, `--target` | no | – | Deployment target ARN (thing or thing group). Implies `--publish` and creates a cloud deployment. |
-| `-r`, `--region` | no | `us-east-1` | AWS region for the deployment. |
-
-```bash
-edgecommons deploy -p ./MyComponent                 # build only
-edgecommons deploy -p ./MyComponent --publish       # build + publish a component version
-edgecommons deploy -p ./MyComponent \
-  -t arn:aws:iot:us-east-1:123456789012:thinggroup/edge-fleet -r us-east-1
-```
-The last form builds, publishes, and creates a Greengrass v2 deployment of `MyComponent` (at
-the version in `gdk-config.json`) to the `edge-fleet` thing group.
-
----
-
-### `upgrade` — bump the edgecommons dependency
-
-Updates a generated component's dependency on the edgecommons library to a specific version,
-editing whichever manifest is present.
-
-**Result:** rewrites the edgecommons dependency version in `pom.xml` (Java `<artifactId>edgecommons</artifactId>`),
-`requirements.txt` (the `edgecommons` pin), and/or `Cargo.toml` (the `edgecommons`
-version dependency), then prints one line per file describing the change. A Rust **path**
-dependency is left untouched (there's no version to bump). If no edgecommons dependency is found,
-it prints `No edgecommons dependency found to upgrade.`
-
-| Flag | Required | Default | Description |
-|------|----------|---------|-------------|
-| `-p`, `--path` | no | `.` | Path to the component project. |
-| `-t`, `--to` | **yes** | – | Target edgecommons version (e.g. `1.2.3`). |
-
-```bash
-edgecommons upgrade -p ./MyComponent --to 1.3.2
-```
-Pins the component's edgecommons dependency to `1.3.2` in whichever manifest it uses, and reports
-what changed.
-
----
-
-## Typical workflow
-
-```bash
-edgecommons doctor                                   # confirm the tools you need are installed
-edgecommons create-component -n com.example.Foo -l PYTHON   # scaffold ./Foo
-edgecommons validate -p ./Foo                        # confirm the recipe is publish-ready
-edgecommons deploy   -p ./Foo --publish              # build + publish
-edgecommons upgrade  -p ./Foo --to 1.3.2             # later: move to a newer edgecommons
-```
-
-## Extending the CLI
-
-- **Add a command:** drop a `edgecommons_cli/commands/<name>.py` exposing a class that extends
-  `CommandBase` with an `execute_command(self, args)` method and a `get_json_configuration`
-  **classmethod** returning `{ "name", "description", "parameters": [...] }`. Each parameter
-  declares `name`, `description`, `type` (use `"boolean"` for flags), and optionally `short`,
-  `required`, `default`, and `enum`. The framework auto-registers it as a subcommand and builds
-  its `argparse` flags from that schema.
-- **Add a language/template:** templates are **manifest-driven** — a template repo ships a
-  `edgecommons-template.json` declaring the placeholder `substitutions` and file `renames`, so adding
-  a language needs a template (and an entry in `create-component`'s template sources), not new
-  CLI logic.
-- **Conditional (platform-gated) artifacts:** a manifest may add a `conditional` array —
-  `[{"when": "platform:KUBERNETES", "paths": ["Dockerfile", "k8s"]}, ...]`. Each entry's paths are
-  generated **only when its `when` flag is active**; the active flags are one `platform:<P>` per
-  selected `--platforms` value plus `dep:<source>` from `--dep-source`. Unmet paths are removed,
-  and any `substitutions`/`renames` that reference a removed path are skipped (so a file can appear
-  in both `substitutions` and `conditional`). This is how a template ships k8s artifacts that only
-  materialize when the user targets Kubernetes.
-
-## Repository structure
-
-```
-.
-├── pyproject.toml                  # packaging + console entry points (edgecommons / edgecommons-cli)
-├── edgecommons_cli/
-│   ├── cli.py                      # framework: arg parsing + command auto-discovery
-│   ├── recipe_lint.py             # shared Greengrass-recipe linting (used by validate + create-component)
-│   └── commands/                   # one auto-discovered command per file
-│       ├── create_component.py
-│       ├── list_templates.py
-│       ├── validate.py
-│       ├── doctor.py
-│       ├── deploy.py
-│       └── upgrade.py
-└── scripts/                        # legacy wrapper scripts (optional once installed)
-```
-
-## Data flow
-
-```
-[User input] -> edgecommons (cli.py) -> CLIFramework parses argv + selects the command
-             -> the command's execute_command(args) runs (scaffold / lint / gdk / aws / edit files)
-             -> output + exit code back to the user
-```
-
-`cli.py` keeps the CLI framework (arg parsing, command discovery, error handling) separate from
-each command's logic in `commands/`, which is where the actual work happens.
+Design: [`docs/platform/DESIGN-cli.md`](../docs/platform/DESIGN-cli.md).

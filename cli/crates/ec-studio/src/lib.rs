@@ -43,7 +43,11 @@ mod tests {
 
     #[test]
     fn serve_reports_not_implemented_rather_than_failing_obscurely() {
-        let e = serve(&ServeOptions { repo: ".".into(), bind: "127.0.0.1:8080".into() }).unwrap_err();
+        let e = serve(&ServeOptions {
+            repo: ".".into(),
+            bind: "127.0.0.1:8080".into(),
+        })
+        .unwrap_err();
         assert_eq!(e.exit_code(), ec_diag::ExitCode::NotImplemented);
         assert!(e.to_string().contains("DESIGN-cli.md"));
     }

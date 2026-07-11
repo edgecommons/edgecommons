@@ -77,7 +77,11 @@ pub fn bin_name(short: &str) -> String {
         }
     }
     let trimmed = out.trim_matches('-').to_string();
-    if trimmed.is_empty() { "component".into() } else { trimmed }
+    if trimmed.is_empty() {
+        "component".into()
+    } else {
+        trimmed
+    }
 }
 
 /// The dependency declaration a template substitutes for `<<EDGECOMMONS_DEP>>`.
@@ -122,7 +126,8 @@ pub fn default_library_subdir(language: Language) -> Option<&'static str> {
 }
 
 fn posix(p: Option<&Path>) -> String {
-    p.map(|p| p.display().to_string().replace('\\', "/")).unwrap_or_default()
+    p.map(|p| p.display().to_string().replace('\\', "/"))
+        .unwrap_or_default()
 }
 
 /// The placeholder table: the single mapping from token name to value.
@@ -153,7 +158,11 @@ pub fn tokens(language: Language, inputs: &Inputs) -> BTreeMap<String, String> {
 /// The active condition flags a manifest's `conditional` entries test against.
 #[must_use]
 pub fn flags(inputs: &Inputs, template: &Template) -> Vec<String> {
-    let mut f: Vec<String> = inputs.platforms.iter().map(|p| format!("platform:{}", p.as_str())).collect();
+    let mut f: Vec<String> = inputs
+        .platforms
+        .iter()
+        .map(|p| format!("platform:{}", p.as_str()))
+        .collect();
     f.push(format!("dep:{}", inputs.dep_source.as_str()));
     f.push(format!("kind:{}", template.manifest.kind.as_str()));
     f
@@ -191,7 +200,12 @@ pub fn generate(
         }
     }
 
-    if target.is_dir() && target.read_dir().map(|mut d| d.next().is_some()).unwrap_or(false) {
+    if target.is_dir()
+        && target
+            .read_dir()
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false)
+    {
         if !force {
             return Err(Fatal::Usage(format!(
                 "target directory `{}` exists and is not empty; pass --force to overwrite",
@@ -287,7 +301,9 @@ pub fn generate(
             Diagnostic::error(ec_diag::EC3003_UNSUBSTITUTED_TOKEN, text)
                 .with_file(&path)
                 .with_line(line)
-                .with_help("the template names a token the CLI does not supply (template/CLI drift)"),
+                .with_help(
+                    "the template names a token the CLI does not supply (template/CLI drift)",
+                ),
         );
     }
 
@@ -301,11 +317,15 @@ fn interpolate(path: &str, values: &BTreeMap<String, String>) -> Result<String, 
         out.push_str(&rest[..start]);
         let after = &rest[start + 1..];
         let Some(end) = after.find('}') else {
-            return Err(Fatal::Internal(format!("unterminated placeholder in manifest path `{path}`")));
+            return Err(Fatal::Internal(format!(
+                "unterminated placeholder in manifest path `{path}`"
+            )));
         };
         let key = &after[..end];
         let Some(v) = values.get(key) else {
-            return Err(Fatal::Internal(format!("unknown placeholder `{{{key}}}` in manifest path `{path}`")));
+            return Err(Fatal::Internal(format!(
+                "unknown placeholder `{{{key}}}` in manifest path `{path}`"
+            )));
         };
         out.push_str(v);
         rest = &after[end + 1..];
@@ -324,7 +344,10 @@ fn prune_empty_dirs(root: &Path) {
     // Deepest first, so a directory emptied by its children's removal is itself removed.
     dirs.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
     for d in dirs {
-        if d.read_dir().map(|mut r| r.next().is_none()).unwrap_or(false) {
+        if d.read_dir()
+            .map(|mut r| r.next().is_none())
+            .unwrap_or(false)
+        {
             let _ = std::fs::remove_dir(&d);
         }
     }
@@ -333,7 +356,10 @@ fn prune_empty_dirs(root: &Path) {
 /// Find any surviving `<<TOKEN>>` in the generated tree.
 fn leftover_tokens(root: &Path) -> Vec<(PathBuf, usize, String)> {
     let mut out = Vec::new();
-    for entry in walkdir::WalkDir::new(root).into_iter().filter_map(Result::ok) {
+    for entry in walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
         if !entry.file_type().is_file() {
             continue;
         }
@@ -385,24 +411,44 @@ mod tests {
         // Whatever libs/rust is at, this must equal it — it cannot drift by construction.
         assert!(!EDGECOMMONS_VERSION.is_empty());
         assert!(
-            EDGECOMMONS_VERSION.chars().next().is_some_and(|c| c.is_ascii_digit()),
+            EDGECOMMONS_VERSION
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit()),
             "expected a semver, got `{EDGECOMMONS_VERSION}`"
         );
-        assert_ne!(EDGECOMMONS_VERSION, "0.1.0", "the stale hardcoded version must not reappear");
+        assert_ne!(
+            EDGECOMMONS_VERSION, "0.1.0",
+            "the stale hardcoded version must not reappear"
+        );
     }
 
     #[test]
     fn registry_dep_pins_the_real_current_version() {
         let dep = library_dep(Language::Rust, DepSource::Registry, None);
-        assert!(dep.contains(&format!("rust-lib/v{EDGECOMMONS_VERSION}")), "{dep}");
-        assert!(!dep.contains("v0.1.0"), "the nonexistent tag must not be emitted: {dep}");
+        assert!(
+            dep.contains(&format!("rust-lib/v{EDGECOMMONS_VERSION}")),
+            "{dep}"
+        );
+        assert!(
+            !dep.contains("v0.1.0"),
+            "the nonexistent tag must not be emitted: {dep}"
+        );
     }
 
     #[test]
     fn local_dep_uses_a_posix_path_on_every_os() {
-        let dep = library_dep(Language::Rust, DepSource::Local, Some(Path::new("C:\\repo\\libs\\rust")));
+        let dep = library_dep(
+            Language::Rust,
+            DepSource::Local,
+            Some(Path::new("C:\\repo\\libs\\rust")),
+        );
         assert_eq!(dep, "path = \"C:/repo/libs/rust\"");
-        let ts = library_dep(Language::Typescript, DepSource::Local, Some(Path::new("C:\\repo\\libs\\ts")));
+        let ts = library_dep(
+            Language::Typescript,
+            DepSource::Local,
+            Some(Path::new("C:\\repo\\libs\\ts")),
+        );
         assert_eq!(ts, "file:C:/repo/libs/ts");
     }
 
@@ -426,11 +472,19 @@ mod tests {
         let t = catalog::find(Language::Rust, Kind::Service).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("MyComponent");
-        let report =
-            generate_embedded(&t, &inputs(DepSource::Local, vec![Platform::Host]), &target, false).unwrap();
+        let report = generate_embedded(
+            &t,
+            &inputs(DepSource::Local, vec![Platform::Host]),
+            &target,
+            false,
+        )
+        .unwrap();
         assert_eq!(report.error_count(), 0, "{}", report.render_human());
 
-        assert!(!target.join("recipe.yaml").exists(), "a HOST-only scaffold must not carry a GG recipe");
+        assert!(
+            !target.join("recipe.yaml").exists(),
+            "a HOST-only scaffold must not carry a GG recipe"
+        );
         assert!(!target.join("gdk-config.json").exists());
         assert!(!target.join("k8s").exists());
         // ...and it must carry its own Cargo project.
@@ -443,7 +497,13 @@ mod tests {
         let t = catalog::find(Language::Rust, Kind::Service).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("MyComponent");
-        generate_embedded(&t, &inputs(DepSource::Local, vec![Platform::Greengrass]), &target, false).unwrap();
+        generate_embedded(
+            &t,
+            &inputs(DepSource::Local, vec![Platform::Greengrass]),
+            &target,
+            false,
+        )
+        .unwrap();
         assert!(target.join("recipe.yaml").exists());
         assert!(target.join("gdk-config.json").exists());
     }
@@ -482,13 +542,27 @@ mod tests {
         std::fs::create_dir_all(&target).unwrap();
         std::fs::write(target.join("keep.txt"), "important").unwrap();
 
-        let e = generate_embedded(&t, &inputs(DepSource::Local, vec![Platform::Host]), &target, false)
-            .unwrap_err();
+        let e = generate_embedded(
+            &t,
+            &inputs(DepSource::Local, vec![Platform::Host]),
+            &target,
+            false,
+        )
+        .unwrap_err();
         assert!(matches!(e, Fatal::Usage(_)), "{e:?}");
-        assert!(target.join("keep.txt").exists(), "the refusal must not have deleted anything");
+        assert!(
+            target.join("keep.txt").exists(),
+            "the refusal must not have deleted anything"
+        );
 
         // --force overwrites.
-        generate_embedded(&t, &inputs(DepSource::Local, vec![Platform::Host]), &target, true).unwrap();
+        generate_embedded(
+            &t,
+            &inputs(DepSource::Local, vec![Platform::Host]),
+            &target,
+            true,
+        )
+        .unwrap();
         assert!(!target.join("keep.txt").exists());
         assert!(target.join("Cargo.toml").exists());
     }
@@ -513,7 +587,13 @@ mod tests {
         let t = catalog::find(Language::Rust, Kind::Service).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("MyComponent");
-        generate_embedded(&t, &inputs(DepSource::Local, vec![Platform::Host]), &target, false).unwrap();
+        generate_embedded(
+            &t,
+            &inputs(DepSource::Local, vec![Platform::Host]),
+            &target,
+            false,
+        )
+        .unwrap();
         assert!(!target.join(MANIFEST_NAME).exists());
     }
 
@@ -528,9 +608,17 @@ mod tests {
 
         // com.example.MyComponent -> src/main/java/com/example/mycomponent/MyComponent.java
         let expected = target.join("src/main/java/com/example/mycomponent/MyComponent.java");
-        assert!(expected.exists(), "renamed class not found; tree: {:?}", walk(&target));
+        assert!(
+            expected.exists(),
+            "renamed class not found; tree: {:?}",
+            walk(&target)
+        );
         // The template's original package directory must not survive the rename.
-        assert!(!target.join("src/main/java/com/mbreissi/testcomponent").exists());
+        assert!(
+            !target
+                .join("src/main/java/com/mbreissi/testcomponent")
+                .exists()
+        );
     }
 
     fn walk(root: &Path) -> Vec<String> {
