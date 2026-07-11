@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 2,
+  "id": "java/sink",
+  "language": "JAVA",
+  "kind": "sink",
+  "description": "Java sink component: consume, deliver idempotently to a destination, verify, retry, report.",
+  "platforms": [
+    "GREENGRASS",
+    "HOST",
+    "KUBERNETES"
+  ],
+  "substitutions": {
+    "compose.yaml": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "config.schema.json": [
+      "COMPONENTNAME"
+    ],
+    "Dockerfile": [
+      "JARNAME"
+    ],
+    "gdk-config.json": [
+      "AUTHOR",
+      "BUCKET",
+      "COMPONENTFULLNAME",
+      "REGION"
+    ],
+    "pom.xml": [
+      "COMPONENTNAME",
+      "EDGECOMMONS_VERSION",
+      "JARNAME",
+      "MAINCLASSNAME",
+      "PACKAGE"
+    ],
+    "README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "recipe.yaml": [
+      "AUTHOR",
+      "COMPONENTFULLNAME",
+      "DESCRIPTION",
+      "JARNAME",
+      "MAINCLASSNAME"
+    ],
+    "k8s/configmap.yaml": [
+      "COMPONENTNAME"
+    ],
+    "k8s/deployment.yaml": [
+      "COMPONENTNAME"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/App.java": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME",
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/Delivered.java": [
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/DeliverException.java": [
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/Destination.java": [
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/Item.java": [
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/LocalDestination.java": [
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/SinkConfig.java": [
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/AppTest.java": [
+      "COMPONENTNAME",
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/LocalDestinationTest.java": [
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/SinkConfigTest.java": [
+      "PACKAGE"
+    ],
+    "supervisor/component.conf": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "test-configs/standalone-messaging.json": [
+      "BINNAME"
+    ]
+  },
+  "renames": [
+    {
+      "from": "src/main/java/com/mbreissi/testcomponent",
+      "to": "src/main/java/{PACKAGEPATH}"
+    },
+    {
+      "from": "src/main/java/{PACKAGEPATH}/App.java",
+      "to": "src/main/java/{PACKAGEPATH}/{COMPONENTNAME}.java"
+    },
+    {
+      "from": "src/test/java/com/mbreissi/testcomponent",
+      "to": "src/test/java/{PACKAGEPATH}"
+    },
+    {
+      "from": "src/test/java/{PACKAGEPATH}/AppTest.java",
+      "to": "src/test/java/{PACKAGEPATH}/{COMPONENTNAME}Test.java"
+    }
+  ],
+  "packs": {
+    "GREENGRASS": [
+      "recipe.yaml",
+      "gdk-config.json"
+    ],
+    "HOST": [
+      "compose.yaml",
+      "supervisor",
+      "Dockerfile"
+    ],
+    "KUBERNETES": [
+      "Dockerfile",
+      "k8s"
+    ]
+  },
+  "conditional": []
+}

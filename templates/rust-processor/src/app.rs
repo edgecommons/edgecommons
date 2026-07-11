@@ -147,6 +147,10 @@ impl App {
         let config = gg.config();
         let metrics = gg.metrics();
 
+        // `component.global.defaults` applies to every instance that does not override it.
+        // A knob the schema promises and the code ignores is worse than no knob at all.
+        let defaults = config.global().get("defaults").cloned().unwrap_or_default();
+
         metrics.define_metric(
             MetricBuilder::create(METRIC_NAME)
                 .with_config(&config)
@@ -167,7 +171,10 @@ impl App {
                 .ok_or_else(|| anyhow::anyhow!("no config"))
                 .and_then(|v| Ok(serde_json::from_value::<RouteConfig>(v.clone())?))
             {
-                Ok(route) => routes.push(route),
+                Ok(mut route) => {
+                    apply_defaults(&mut route, &defaults);
+                    routes.push(route);
+                }
                 Err(e) => tracing::warn!("skipping malformed route `{id}`: {e}"),
             }
         }
@@ -379,5 +386,21 @@ mod tests {
             "id": "r", "publishTopic": "t", "pipelnie": []
         }));
         assert!(bad.is_err());
+    }
+}
+
+/// Apply `component.global.defaults` to a route that did not set the key itself.
+///
+/// The schema promises this knob; a knob the code ignores is worse than no knob at all.
+fn apply_defaults(route: &mut RouteConfig, defaults: &serde_json::Value) {
+    if route.tick_ms == default_tick_ms() {
+        if let Some(v) = defaults.get("tickMs").and_then(serde_json::Value::as_u64) {
+            route.tick_ms = v;
+        }
+    }
+    if route.max_queue == default_max_queue() {
+        if let Some(v) = defaults.get("maxQueue").and_then(serde_json::Value::as_u64) {
+            route.max_queue = usize::try_from(v).unwrap_or_else(|_| default_max_queue());
+        }
     }
 }

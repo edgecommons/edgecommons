@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 2,
+  "id": "typescript/processor",
+  "language": "TYPESCRIPT",
+  "kind": "processor",
+  "description": "TypeScript processing component: subscribe, transform through a pipeline of stages, forward.",
+  "platforms": [
+    "GREENGRASS",
+    "HOST",
+    "KUBERNETES"
+  ],
+  "requires": [
+    "EDGECOMMONS_DEP"
+  ],
+  "substitutions": {
+    "build.sh": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "compose.yaml": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "config.schema.json": [
+      "COMPONENTNAME"
+    ],
+    "gdk-config.json": [
+      "AUTHOR",
+      "BUCKET",
+      "COMPONENTFULLNAME",
+      "REGION"
+    ],
+    "package.json": [
+      "COMPONENTNAME",
+      "DESCRIPTION",
+      "EDGECOMMONS_DEP"
+    ],
+    "README.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "recipe.yaml": [
+      "AUTHOR",
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME",
+      "DESCRIPTION"
+    ],
+    "k8s/configmap.yaml": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "k8s/deployment.yaml": [
+      "COMPONENTNAME"
+    ],
+    "src/app.ts": [
+      "COMPONENTNAME"
+    ],
+    "src/main.ts": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "supervisor/component.conf": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "test-configs/config.json": [
+      "BINNAME"
+    ],
+    "test-configs/standalone-messaging.json": [
+      "BINNAME"
+    ]
+  },
+  "renames": [],
+  "packs": {
+    "GREENGRASS": [
+      "recipe.yaml",
+      "gdk-config.json",
+      "build.sh"
+    ],
+    "HOST": [
+      "compose.yaml",
+      "supervisor",
+      "Dockerfile"
+    ],
+    "KUBERNETES": [
+      "Dockerfile",
+      "k8s"
+    ]
+  },
+  "conditional": [
+    {
+      "when": "dep:registry",
+      "paths": [
+        ".npmrc"
+      ]
+    }
+  ]
+}

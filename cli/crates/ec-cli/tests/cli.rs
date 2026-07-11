@@ -237,22 +237,38 @@ fn the_protocol_adapter_kind_is_reachable() {
 }
 
 #[test]
-fn a_kind_with_no_template_is_a_usage_error_that_lists_what_exists() {
+fn the_language_by_kind_matrix_is_complete() {
+    // Every language x kind cell has a template. This is the invariant that replaced
+    // "an unfilled cell is a usage error" -- there are no unfilled cells left to test with.
+    // If a template is ever deleted, this is what says so.
+    let o = run(&["--json", "template", "list"], &repo_root());
+    assert_eq!(code(&o), 0);
+    let rows: serde_json::Value = serde_json::from_str(&stdout(&o)).unwrap();
+    let ids: Vec<&str> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap())
+        .collect();
+
+    for language in ["java", "python", "rust", "typescript"] {
+        for kind in ["service", "protocol-adapter", "processor", "sink"] {
+            let id = format!("{language}/{kind}");
+            assert!(
+                ids.contains(&id.as_str()),
+                "the matrix is missing `{id}`: {ids:?}"
+            );
+        }
+    }
+    assert_eq!(ids.len(), 16, "4 languages x 4 kinds");
+}
+
+#[test]
+fn an_unknown_kind_is_rejected_by_the_parser() {
+    // The kinds are a closed set; a kind outside it never reaches template resolution.
     let d = tempfile::tempdir().unwrap();
-    // TypeScript has no processor template. (`rust/sink` and `rust/processor` now DO exist —
-    // which is the point: filling a cell of the matrix is template work, not CLI work.)
-    let o = scaffold(
-        d.path(),
-        "com.example.X",
-        "TYPESCRIPT",
-        &["-k", "processor"],
-    );
+    let o = scaffold(d.path(), "com.example.X", "RUST", &["-k", "nonsense"]);
     assert_eq!(code(&o), 2);
-    let e = stderr(&o);
-    assert!(
-        e.contains("typescript/service"),
-        "the error must list the templates that do exist:\n{e}"
-    );
 }
 
 #[test]

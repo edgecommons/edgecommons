@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 2,
+  "id": "typescript/sink",
+  "language": "TYPESCRIPT",
+  "kind": "sink",
+  "description": "TypeScript sink component: consume, deliver idempotently to a destination, verify, retry, report.",
+  "platforms": [
+    "GREENGRASS",
+    "HOST",
+    "KUBERNETES"
+  ],
+  "requires": [
+    "EDGECOMMONS_DEP"
+  ],
+  "substitutions": {
+    "README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "build.sh": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "compose.yaml": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "config.schema.json": [
+      "COMPONENTNAME"
+    ],
+    "gdk-config.json": [
+      "AUTHOR",
+      "BUCKET",
+      "COMPONENTFULLNAME",
+      "REGION"
+    ],
+    "k8s/configmap.yaml": [
+      "COMPONENTNAME"
+    ],
+    "k8s/deployment.yaml": [
+      "COMPONENTNAME"
+    ],
+    "package.json": [
+      "COMPONENTNAME",
+      "DESCRIPTION",
+      "EDGECOMMONS_DEP"
+    ],
+    "recipe.yaml": [
+      "AUTHOR",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME",
+      "DESCRIPTION"
+    ],
+    "src/app.ts": [
+      "COMPONENTNAME"
+    ],
+    "src/main.ts": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "supervisor/component.conf": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "test-configs/standalone-messaging.json": [
+      "BINNAME"
+    ]
+  },
+  "renames": [],
+  "packs": {
+    "GREENGRASS": [
+      "recipe.yaml",
+      "gdk-config.json",
+      "build.sh"
+    ],
+    "HOST": [
+      "compose.yaml",
+      "supervisor",
+      "Dockerfile"
+    ],
+    "KUBERNETES": [
+      "Dockerfile",
+      "k8s"
+    ]
+  },
+  "conditional": [
+    {
+      "when": "dep:registry",
+      "paths": [
+        ".npmrc"
+      ]
+    }
+  ]
+}

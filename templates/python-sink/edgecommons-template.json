@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 2,
+  "id": "python/sink",
+  "language": "PYTHON",
+  "kind": "sink",
+  "description": "Python sink component: consume, deliver idempotently to a destination, verify, retry, report.",
+  "platforms": [
+    "GREENGRASS",
+    "HOST",
+    "KUBERNETES"
+  ],
+  "requires": [
+    "EDGECOMMONS_DEP"
+  ],
+  "substitutions": {
+    "requirements.txt": [
+      "EDGECOMMONS_DEP"
+    ],
+    "recipe.yaml": [
+      "AUTHOR",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME",
+      "DESCRIPTION"
+    ],
+    "gdk-config.json": [
+      "AUTHOR",
+      "BUCKET",
+      "COMPONENTFULLNAME",
+      "REGION"
+    ],
+    "main.py": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "app/sink.py": [
+      "COMPONENTNAME"
+    ],
+    "app/dest.py": [
+      "COMPONENTNAME"
+    ],
+    "README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "config.schema.json": [
+      "COMPONENTNAME"
+    ],
+    "compose.yaml": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "supervisor/component.conf": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "Dockerfile": [
+      "COMPONENTNAME"
+    ],
+    "k8s/configmap.yaml": [
+      "COMPONENTNAME"
+    ],
+    "k8s/deployment.yaml": [
+      "COMPONENTNAME"
+    ],
+    "test-configs/standalone-messaging.json": [
+      "BINNAME"
+    ]
+  },
+  "renames": [
+    {
+      "from": "app/sink.py",
+      "to": "app/{COMPONENTNAME}.py"
+    }
+  ],
+  "packs": {
+    "GREENGRASS": [
+      "recipe.yaml",
+      "gdk-config.json"
+    ],
+    "HOST": [
+      "compose.yaml",
+      "supervisor",
+      "Dockerfile"
+    ],
+    "KUBERNETES": [
+      "Dockerfile",
+      "k8s"
+    ]
+  },
+  "conditional": []
+}

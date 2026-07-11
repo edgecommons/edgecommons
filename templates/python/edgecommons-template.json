@@ -13,50 +13,52 @@
     "EDGECOMMONS_DEP"
   ],
   "substitutions": {
-    "requirements.txt": [
-      "EDGECOMMONS_DEP"
+    "compose.yaml": [
+      "BINNAME",
+      "COMPONENTNAME"
     ],
-    "recipe.yaml": [
-      "DESCRIPTION",
-      "COMPONENTFULLNAME",
-      "AUTHOR",
+    "config.schema.json": [
+      "COMPONENTNAME"
+    ],
+    "Dockerfile": [
       "COMPONENTNAME"
     ],
     "gdk-config.json": [
-      "COMPONENTFULLNAME",
       "AUTHOR",
       "BUCKET",
+      "COMPONENTFULLNAME",
       "REGION"
     ],
     "main.py": [
       "COMPONENTNAME"
     ],
+    "README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "recipe.yaml": [
+      "AUTHOR",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME",
+      "DESCRIPTION"
+    ],
+    "requirements.txt": [
+      "EDGECOMMONS_DEP"
+    ],
     "app/greengrass_app.py": [
       "COMPONENTNAME"
     ],
-    "README.md": [
-      "COMPONENTNAME",
-      "COMPONENTFULLNAME"
-    ],
-    "config.schema.json": [
+    "k8s/configmap.yaml": [
       "COMPONENTNAME"
     ],
-    "compose.yaml": [
-      "BINNAME",
+    "k8s/deployment.yaml": [
       "COMPONENTNAME"
     ],
     "supervisor/component.conf": [
       "BINNAME",
       "COMPONENTNAME"
     ],
-    "Dockerfile": [
-      "COMPONENTNAME"
-    ],
-    "k8s/configmap.yaml": [
-      "COMPONENTNAME",
-      "COMPONENTFULLNAME"
-    ],
-    "k8s/deployment.yaml": [
+    "test-configs/standalone-messaging.json": [
       "COMPONENTNAME"
     ]
   },

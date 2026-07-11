@@ -1,27 +1,15 @@
 # <<COMPONENTNAME>>
 
-An AWS IoT Greengrass v2 component (`<<COMPONENTFULLNAME>>`) written in Rust on top
-of the `edgecommons` Rust library, generated from the EdgeCommons Rust component template
-by the `edgecommons` CLI. It gives you the library's
-standard CLI contract, configuration, logging, messaging, metrics, and heartbeat —
-so you write only business logic in [`src/app.rs`](src/app.rs).
+A **sink component**: the last thing standing between data and its destination. It consumes work,
+delivers it outward, and only then lets go of the source.
 
-## Project layout
+```text
+  consume ──► deliver (idempotent, stable key) ──► verify ──► confirm ──► report
+                       ▲                                                   │
+                       └────────── retry with full jitter ◄────────────────┘
+```
 
-| Path | Purpose |
-|------|---------|
-| `src/main.rs` | Entry point: builds the `edgecommons` runtime from CLI args, runs the app. |
-| `src/app.rs` | Your component logic (starts as a minimal app + config-change listener). |
-| `Cargo.toml` | Crate manifest. Depends on the `edgecommons` library (path dependency). |
-| `recipe.yaml` | Greengrass component recipe (default config + IPC access control). |
-| `gdk-config.json` | Greengrass Development Kit config (`build_system: custom` → `build.sh`). |
-| `build.sh` | Builds the release binary (with the `greengrass` feature) and stages it for the GDK. |
-| `test-configs/` | Sample `config.json` + `standalone-messaging.json` for local runs. |
-
-## Develop & run locally (HOST platform, MQTT transport)
-
-Local development runs on the HOST platform with the MQTT transport (dual-broker MQTT) — no
-Greengrass core or Linux/`libclang` toolchain needed. Start a local MQTT broker, then:
+## Run it
 
 ```bash
 cargo run -- \
@@ -30,102 +18,61 @@ cargo run -- \
   -t my-thing
 ```
 
-## The demonstrated monitoring + command surface
+The shipped example consumes every `data` message on the bus and writes each one to `./out`.
 
-Beyond the fully-automatic `state` keepalive and command inbox (`ping` / `reload-config` /
-`get-configuration`, live with zero code), `src/app.rs` demonstrates the rest of the surface an
-edge-console reads/drives (DESIGN-uns §7/§9), through the **app-usable class facades**
-(`docs/platform/DESIGN-class-facades.md`) rather than hand-built topics/bodies:
+## Where your code goes
 
-| Surface | Where | Topic |
-|---|---|---|
-| Metric (`loopTicks`: `tickCount` counter + `uptimeSecs` gauge) | `gg.metrics()` | `ecv1/{device}/{component}/main/metric/loopTicks` (target-dependent; `messaging` target shown) |
-| Data signal (`demo-signal`: a sine-wave reading) | `gg.data().publish_value("demo-signal", value).await?` | `ecv1/{device}/{component}/main/data/demo-signal` |
-| Event (`sample-event`, severity + context) | `gg.events().emit(Severity::Info, "sample-event", message, context).await?` | `ecv1/{device}/{component}/main/evt/info/sample-event` |
-| Custom command verb (`set-greeting`) | `gg.commands().register("set-greeting", ...)` | `ecv1/{device}/{component}/main/cmd/set-greeting` |
+`src/dest.rs`. A backend implements `Destination`:
 
-Subscribe `ecv1/+/+/+/metric/#`, `ecv1/+/+/+/data/#` and `ecv1/+/+/+/evt/#` to see them (metrics
-only publish over MQTT when `metricEmission.target` is `messaging`; the default `log` target
-writes a local file instead). `DataFacade` defaults an omitted sample `quality` to `Quality::Good`
-(marked `qualityRaw:"unspecified"` on the wire) — pass an explicit `Quality` when your source
-knows a read failed or is stale. `EventsFacade` derives the `evt/{severity}/{type}` channel from
-the body's own severity + type, so the topic and body can never disagree; use
-`raise_alarm`/`clear_alarm` for stateful alarms instead of one-shot `emit`. Invoke the custom verb
-with a request/reply tool (e.g. MQTTX) by publishing `{"header":{"name":"set-greeting","version":
-"1.0"},"body":{"greeting":"Hi there"}}` to `ecv1/{device}/{component}/main/cmd/set-greeting`; the
-next `app` status publish reflects the new greeting. Replace all four with your own
-metrics/signals/events/verbs.
-
-## CLI contract
-
-- `-c/--config <SOURCE> [args...]` — `FILE | ENV | GG_CONFIG | SHADOW | CONFIG_COMPONENT` (default: from the resolved platform profile — GREENGRASS → GG_CONFIG, HOST → FILE, KUBERNETES → CONFIGMAP)
-- `--platform <PLATFORM>` — `GREENGRASS | HOST | KUBERNETES | auto` (default `auto`)
-- `--transport <TRANSPORT> [path]` — `IPC | MQTT [messaging_config.json]` (default: from the platform; IPC only valid on GREENGRASS)
-- `-t/--thing <name>` — IoT Thing name
-
-## UNS identity & topics
-
-Topics live in the unified namespace
-(`ecv1/{device}/{component}/{instance}/{class}/{channel…}`) and are minted via
-`gg.uns()` (or `gg.instance(id)?.uns()`) — never hand-written. The component's
-identity is config-driven: the optional top-level `hierarchy`
-(`{"levels": ["site", "device"]}`) + `identity` (`{"site": "factory-1"}`) blocks in
-`test-configs/config.json`; the last hierarchy level's value is always the resolved
-thing name (`-t`). Messages built `.from_config(..)` carry that identity in their
-envelope. The heartbeat is an automatic UNS `state` keepalive (on, every 5 s, local)
-tuned by the optional `heartbeat` config block; the reserved classes
-(`state`/`metric`/`cfg`/`log`) are library-owned and rejected on direct publish.
-
-## Deploy to Greengrass
-
-The on-device build uses the GDK **custom** build system (`gdk-config.json` →
-`custom_build_command: bash build.sh`). `build.sh` compiles the binary with the
-`greengrass` feature (Greengrass IPC) and stages it per the GDK contract, then
-`gdk component publish` uploads the artifact + recipe and registers the component
-version in your account.
-
-```bash
-gdk component build
-gdk component publish
+```rust
+#[async_trait]
+pub trait Destination: Send + Sync {
+    fn kind(&self) -> &'static str;
+    async fn deliver(&self, item: &Item) -> Result<Delivered>;
+    async fn verify(&self, item: &Item, delivered: &Delivered) -> Result<()>;
+}
 ```
 
-> **Linux-only device build:** the `greengrass` feature compiles a C-FFI SDK and
-> only builds on Linux (with `libclang`). Build on a Linux host, or cross-compile:
-> `EDGECOMMONS_TARGET=x86_64-unknown-linux-gnu gdk component build`.
+`LocalDestination` ships as an example: it writes a temp file and **atomically renames** it into
+place, so a reader never observes a half-written object and a crash leaves no corrupt artifact at
+the real key. Add S3, HTTP, or whatever you are delivering to — everything above the trait (retry,
+verification, reporting) is written against it and never learns what a bucket is.
 
-## Deploy to Kubernetes
+## The order is the archetype
 
-Generated only when KUBERNETES is a selected target. The `Dockerfile` builds the
-standalone binary into a slim, non-root image; `k8s/` holds the manifests. With
-`--platform auto` the library detects KUBERNETES from the ServiceAccount token, so
-no args are needed — config source defaults to CONFIGMAP, transport to MQTT (broker
-config from the mounted ConfigMap), identity from the Downward API.
+**Deliver idempotently, to a stable key.** The same item always lands in the same place, so a
+redelivery is an *overwrite*, not a duplicate. A sink that cannot retry without duplicating cannot
+retry at all.
 
-```bash
-# 1. Build the image (the cargo git dep needs network + git auth — see Dockerfile).
-docker build -t ghcr.io/<owner>/<<COMPONENTNAME>>:latest .
+**Verify before you confirm.** Trusting `deliver`'s `Ok` and releasing the source without checking
+what actually landed is how you end up having deleted the only copy.
 
-# 2. Make it available to the cluster: push to your registry, or load into a local kind cluster.
-docker push ghcr.io/<owner>/<<COMPONENTNAME>>:latest
-#   kind load docker-image ghcr.io/<owner>/<<COMPONENTNAME>>:latest
+**Classify the failure.** `DeliverError::Transient` may succeed next time; `Permanent` never will.
+Retrying a permanent failure burns the budget and floods the log; giving up on a transient one loses
+data that a second attempt would have delivered.
 
-# 3. Set `image:` in k8s/deployment.yaml to that reference (replace REPLACE_ME), then apply.
-kubectl apply -f k8s/
+**Report every transition.** `delivery-started` → `delivery-completed`, or `delivery-failed`
+(carrying `willRetry`), and finally `delivery-exhausted` at Critical. A sink that fails quietly is
+indistinguishable from one that is idle.
+
+## Configuration
+
+```json
+{
+  "id": "archive",
+  "subscribe": "ecv1/+/+/+/data/#",
+  "destination": { "type": "local", "path": "./out" },
+  "retry": { "baseDelayMs": 1000, "maxDelayMs": 900000, "giveUpAfterMs": 3600000 }
+}
 ```
 
-The ConfigMap is mounted as a **directory** at `/etc/edgecommons`; edit `k8s/configmap.yaml`
-and `kubectl apply -f k8s/` again to hot-reload the component config in-process (no restart).
+The backoff is exponential with **full jitter**: without it, every component that lost the same
+endpoint retries on the same instant, and an endpoint that is already struggling gets a synchronized
+thundering herd on every boundary.
 
-## The edgecommons dependency
+`giveUpAfterMs` is a **time budget, not an attempt count**. "Twenty attempts" means something very
+different at 1 s and at 15 min of backoff; "keep trying for an hour" means the same thing at every
+cadence, and it is what an operator can actually reason about.
 
-`Cargo.toml` depends on the `edgecommons` crate via an **absolute path** (filled in at
-generation time, `--dep-source local`, the default). This IS the local-dev override already:
-Cargo resolves straight from the sibling checkout's current source, so it works against an
-unpublished branch (e.g. `feat/unified-namespace`) with no extra step — unlike an
-already-published component whose committed manifest carries a git-rev pin (see the `uns-bridge`
-component's gitignored `.cargo/config.toml` `[patch]` for how THAT case is locally overridden
-without touching the committed pin).
-
-Regenerate with `--dep-source registry` once the library tags a real `rust-lib/vX.Y.Z` release to
-switch to a git dependency (see `Cargo.toml`'s dependency comment); that pin is a release-time
-item, not something this template can do today.
+`config.schema.json` is the contract, and `edgecommons component validate` checks against it —
+including the config your Kubernetes ConfigMap and Greengrass recipe deploy with.

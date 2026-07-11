@@ -31,7 +31,8 @@ ComponentConfiguration:
         targetConfig:
           intervalSecs: 10
       component:
-        global: {}
+        global:
+          publish_interval: 2
         instances: []
     accessControl:
       aws.greengrass.ipc.pubsub:

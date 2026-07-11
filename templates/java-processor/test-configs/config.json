@@ -1,0 +1,58 @@
+{
+  "logging": {
+    "level": "INFO",
+    "java_format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n"
+  },
+  "hierarchy": {
+    "levels": ["site", "device"]
+  },
+  "identity": {
+    "site": "factory-1"
+  },
+  "heartbeat": {
+    "enabled": true,
+    "intervalSecs": 5,
+    "destination": "local",
+    "measures": {
+      "cpu": true,
+      "memory": true
+    }
+  },
+  "metricEmission": {
+    "target": "log",
+    "targetConfig": {
+      "logFileName": "{ComponentFullName}.metric.log"
+    }
+  },
+  "tags": {
+    "site": "factory-1"
+  },
+  "component": {
+    "global": {
+      "defaults": {
+        "tickMs": 10000,
+        "maxQueue": 256
+      }
+    },
+    "instances": [
+      {
+        "id": "rollup",
+        "subscribe": ["ecv1/+/+/+/data/#"],
+        "publishTopic": "ecv1/gw-01/<<BINNAME>>/rollup/data/summary",
+        "target": "local",
+        "pipeline": [
+          {
+            "fieldEquals": {
+              "path": "signal.id",
+              "value": "temperature-1"
+            }
+          },
+          {
+            "countPerTick": {}
+          }
+        ],
+        "tickMs": 10000
+      }
+    ]
+  }
+}

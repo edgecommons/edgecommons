@@ -1,83 +1,79 @@
----
-RecipeFormatVersion: "2020-01-25"
-ComponentName: "<<COMPONENTFULLNAME>>"
-ComponentVersion: "1.0.0"
-ComponentDescription: "<<DESCRIPTION>>"
-ComponentPublisher: "<<AUTHOR>>"
+RecipeFormatVersion: '2020-01-25'
+ComponentName: <<COMPONENTFULLNAME>>
+ComponentVersion: 1.0.0
+ComponentDescription: <<DESCRIPTION>>
+ComponentPublisher: <<AUTHOR>>
 ComponentConfiguration:
   DefaultConfiguration:
     ComponentConfig:
       logging:
-        level: "INFO"
-        # Per-language log format (token template): {timestamp} {level} {component} {target} {message}.
-        rust_format: "{timestamp} [{level}] [{component}] {target} - {message}"
-      # UNS identity (optional): the topic hierarchy defaults to a single "device"
-      # level whose value is the resolved thing name, so topics mint as
-      # ecv1/{thing}/{component}/{instance}/{class}/... out of the box. To place the
-      # device in a deeper enterprise hierarchy, declare the levels and supply every
-      # value except the last (the device = the thing name), e.g.:
-      #   hierarchy: { levels: ["site", "device"] }
-      #   identity: { site: "dallas" }
+        level: INFO
+        rust_format: '{timestamp} [{level}] [{component}] {target} - {message}'
       heartbeat:
         enabled: true
         intervalSecs: 5
-        # UNS state keepalive destination ("local" | "northbound"); the enabled
-        # measures are emitted as the metric 'sys' via metricEmission.
-        destination: "local"
+        destination: local
         measures:
           cpu: true
           memory: true
           disk: false
       metricEmission:
-        target: "log"
-        namespace: "edgecommons"
-        # Component work dir — writable by a non-root (ggc_user) component.
+        target: log
+        namespace: edgecommons
         targetConfig:
-          logFileName: "/greengrass/v2/work/{ComponentFullName}/metric.log"
+          logFileName: /greengrass/v2/work/{ComponentFullName}/metric.log
       tags:
-        appId: "Test"
-        site: "Chantilly"
+        appId: Test
+        site: Chantilly
       component:
         global:
-          publish_interval: 3
-        instances: []
+          defaults:
+            tickMs: 10000
+        instances:
+        - id: rollup
+          subscribe:
+          - ecv1/+/+/+/data/#
+          publishTopic: ecv1/gw-01/<<BINNAME>>/rollup/data/summary
+          target: local
+          pipeline:
+          - fieldEquals:
+              path: signal.id
+              value: temperature-1
+          - countPerTick: {}
+          tickMs: 10000
     accessControl:
       aws.greengrass.ipc.pubsub:
-        "<<COMPONENTFULLNAME>>:pubsub:1":
+        <<COMPONENTFULLNAME>>:pubsub:1:
           policyDescription: Allows access to publish/subscribe to all local topics.
           operations:
-            - "aws.greengrass#PublishToTopic"
-            - "aws.greengrass#SubscribeToTopic"
+          - aws.greengrass#PublishToTopic
+          - aws.greengrass#SubscribeToTopic
           resources:
-            - "*"
+          - '*'
       aws.greengrass.ipc.mqttproxy:
-        "<<COMPONENTFULLNAME>>:northbound:1":
+        <<COMPONENTFULLNAME>>:northbound:1:
           policyDescription: Allows access to publish/subscribe to all topics on IoT Core.
           operations:
-            - "aws.greengrass#PublishToIoTCore"
-            - "aws.greengrass#SubscribeToIoTCore"
+          - aws.greengrass#PublishToIoTCore
+          - aws.greengrass#SubscribeToIoTCore
           resources:
-            - "*"
+          - '*'
       aws.greengrass.ShadowManager:
-        "<<COMPONENTFULLNAME>>:shadow:1":
+        <<COMPONENTFULLNAME>>:shadow:1:
           policyDescription: Allows access to thing shadows.
           operations:
-            - "aws.greengrass#GetThingShadow"
-            - "aws.greengrass#UpdateThingShadow"
-            - "aws.greengrass#DeleteThingShadow"
+          - aws.greengrass#GetThingShadow
+          - aws.greengrass#UpdateThingShadow
+          - aws.greengrass#DeleteThingShadow
           resources:
-            - "*"
+          - '*'
 Manifests:
-  - Platform:
-      os: linux
-    Artifacts:
-      - URI: "s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<BINNAME>>"
-    Lifecycle:
-      # Make the artifact executable (binaries aren't executable by default, and an
-      # artifact `Permissions` block is rejected by CreateComponentVersion). Robust
-      # for non-root run-as users and local `greengrass-cli` deployments alike.
-      Install:
-        Script: "chmod +x {artifacts:path}/<<BINNAME>>"
-      # Runs on the GREENGRASS platform (IPC transport), reading config from the deployment (GG_CONFIG).
-      Run:
-        Script: "{artifacts:path}/<<BINNAME>> --platform GREENGRASS -c GG_CONFIG"
+- Platform:
+    os: linux
+  Artifacts:
+  - URI: s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<BINNAME>>
+  Lifecycle:
+    Install:
+      Script: chmod +x {artifacts:path}/<<BINNAME>>
+    Run:
+      Script: '{artifacts:path}/<<BINNAME>> --platform GREENGRASS -c GG_CONFIG'

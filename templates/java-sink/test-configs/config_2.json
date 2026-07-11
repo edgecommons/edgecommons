@@ -1,0 +1,65 @@
+{
+  "logging": {
+    "level": "DEBUG",
+    "java_format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n"
+  },
+  "hierarchy": {
+    "levels": ["site", "device"]
+  },
+  "identity": {
+    "site": "factory-1"
+  },
+  "heartbeat": {
+    "enabled": true,
+    "intervalSecs": 5,
+    "destination": "local",
+    "measures": {
+      "cpu": true,
+      "memory": true
+    }
+  },
+  "metricEmission": {
+    "target": "log",
+    "targetConfig": {
+      "logFileName": "{ComponentFullName}.metric.log"
+    }
+  },
+  "tags": {
+    "site": "factory-1"
+  },
+  "component": {
+    "global": {
+      "defaults": {
+        "retry": {
+          "baseDelayMs": 500,
+          "maxDelayMs": 60000,
+          "giveUpAfterMs": 900000
+        },
+        "maxQueue": 64
+      }
+    },
+    "instances": [
+      {
+        "id": "readings",
+        "subscribe": "ecv1/+/+/+/data/#",
+        "destination": {
+          "type": "local",
+          "path": "./out/readings"
+        }
+      },
+      {
+        "id": "alarms",
+        "subscribe": "ecv1/+/+/+/evt/critical/#",
+        "destination": {
+          "type": "local",
+          "path": "./out/alarms"
+        },
+        "retry": {
+          "baseDelayMs": 250,
+          "giveUpAfterMs": 60000
+        },
+        "maxQueue": 1024
+      }
+    ]
+  }
+}

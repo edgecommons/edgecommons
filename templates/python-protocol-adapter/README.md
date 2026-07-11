@@ -29,7 +29,7 @@ implementations.
 
 ```bash
 pip install -e . -r requirements.txt
-python main.py --platform HOST --transport MQTT ./standalone-messaging.json \
+python main.py --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
        -c FILE test-configs/<<COMPONENTNAME>>.json -t my-thing
 ```
 

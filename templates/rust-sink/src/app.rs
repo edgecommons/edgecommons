@@ -150,6 +150,10 @@ impl App {
         let config = gg.config();
         let metrics = gg.metrics();
 
+        // `component.global.defaults` applies to every instance that does not override it.
+        // A knob the schema promises and the code ignores is worse than no knob at all.
+        let defaults = config.global().get("defaults").cloned().unwrap_or_default();
+
         metrics.define_metric(
             MetricBuilder::create(METRIC_NAME)
                 .with_config(&config)
@@ -168,7 +172,10 @@ impl App {
                 .ok_or_else(|| anyhow::anyhow!("no config"))
                 .and_then(|v| Ok(serde_json::from_value::<SinkConfig>(v.clone())?))
             {
-                Ok(sink) => sinks.push(sink),
+                Ok(mut sink) => {
+                    apply_defaults(&mut sink, &defaults);
+                    sinks.push(sink);
+                }
                 Err(e) => tracing::warn!("skipping malformed sink `{id}`: {e}"),
             }
         }
@@ -445,5 +452,26 @@ mod tests {
         let b = key_for("archive", "ecv1/gw/x/main/data/temp", &msg);
         assert_eq!(a, b, "the same message must always resolve to the same key");
         assert!(a.starts_with("archive/temp/"));
+    }
+}
+
+/// Apply `component.global.defaults` to a sink that did not set the key itself.
+///
+/// The schema promises this knob; a knob the code ignores is worse than no knob at all.
+fn apply_defaults(sink: &mut SinkConfig, defaults: &serde_json::Value) {
+    if sink.max_queue == default_max_queue() {
+        if let Some(v) = defaults.get("maxQueue").and_then(serde_json::Value::as_u64) {
+            sink.max_queue = usize::try_from(v).unwrap_or_else(|_| default_max_queue());
+        }
+    }
+    let untouched = sink.retry.base_delay_ms == default_base_ms()
+        && sink.retry.max_delay_ms == default_max_ms()
+        && sink.retry.give_up_after_ms == default_give_up_ms();
+    if untouched {
+        if let Some(r) = defaults.get("retry") {
+            if let Ok(r) = serde_json::from_value::<RetryConfig>(r.clone()) {
+                sink.retry = r;
+            }
+        }
     }
 }

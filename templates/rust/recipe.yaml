@@ -40,7 +40,8 @@ ComponentConfiguration:
       component:
         global:
           publish_interval: 3
-        instances: []
+        instances:
+        - id: main
     accessControl:
       aws.greengrass.ipc.pubsub:
         "<<COMPONENTFULLNAME>>:pubsub:1":

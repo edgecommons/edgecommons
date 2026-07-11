@@ -11,9 +11,43 @@ metadata:
 data:
   config.json: |-
     {
-      "component": "<<COMPONENTFULLNAME>>",
-      "messaging": {
-        "local": { "type": "mqtt", "host": "emqx.default.svc.cluster.local", "port": 1883, "clientId": "<<COMPONENTNAME>>" }
+      "component": {
+        "global": {
+          "defaults": {
+            "pollIntervalMs": 5000
+          },
+          "timeouts": {
+            "connectMs": 5000,
+            "reconnectBackoffMinMs": 1000,
+            "reconnectBackoffMaxMs": 60000
+          },
+          "healthThresholds": {
+            "staleSignalSecs": 60
+          }
+        },
+        "instances": [
+          {
+            "id": "device-1",
+            "adapter": "sim",
+            "connection": {
+              "endpoint": "sim://device-1"
+            },
+            "pollIntervalMs": 5000,
+            "writes": {
+              "allow": []
+            }
+          }
+        ]
       },
-      "logging": { "level": "INFO" }
+      "messaging": {
+        "local": {
+          "type": "mqtt",
+          "host": "emqx.default.svc.cluster.local",
+          "port": 1883,
+          "clientId": "<<COMPONENTNAME>>"
+        }
+      },
+      "logging": {
+        "level": "INFO"
+      }
     }

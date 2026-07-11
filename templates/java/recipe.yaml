@@ -40,7 +40,9 @@ ComponentConfiguration:
         targetConfig:
           logFileName: "/greengrass/v2/logs/{ComponentFullName}.metric.log"
       component:
-        global: {}
+        global:
+          publish_interval: 3
+          message: Hello world config_2!
         instances: []
     accessControl:
       aws.greengrass.ipc.pubsub:

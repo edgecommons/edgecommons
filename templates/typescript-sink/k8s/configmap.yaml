@@ -1,0 +1,57 @@
+# Component config for Kubernetes, mounted as a DIRECTORY at /etc/edgecommons so the CONFIGMAP
+# source watches the kubelet ..data swap and hot-reloads in-process (no restart). config.json
+# carries BOTH the component config AND the messaging block (in-cluster broker via Service DNS).
+# Edit this and `kubectl apply -f k8s/` to drive a hot reload. Point host at your broker Service.
+#
+# `component` is the component-config subtree (`{global, instances}`), and `instances[]` is ONE SINK
+# PER ENTRY (see config.schema.json): what it consumes, where that goes, and how hard it tries.
+# NOTE the Deployment mounts a read-only root filesystem: a `local` destination must land under a
+# writable volume (the `tmp` emptyDir below, or a PVC you add) — or point the destination at a real
+# object store instead.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: <<COMPONENTNAME>>-config
+  labels:
+    app.kubernetes.io/name: <<COMPONENTNAME>>
+data:
+  config.json: |-
+    {
+      "messaging": {
+        "local": {
+          "type": "mqtt",
+          "host": "emqx.default.svc.cluster.local",
+          "port": 1883,
+          "clientId": "<<COMPONENTNAME>>"
+        }
+      },
+      "logging": {
+        "level": "INFO"
+      },
+      "component": {
+        "global": {
+          "defaults": {
+            "retry": {
+              "baseDelayMs": 1000,
+              "giveUpAfterMs": 3600000
+            },
+            "maxQueue": 256
+          }
+        },
+        "instances": [
+          {
+            "id": "archive",
+            "subscribe": "ecv1/+/+/+/data/#",
+            "destination": {
+              "type": "local",
+              "path": "./out"
+            },
+            "retry": {
+              "baseDelayMs": 1000,
+              "maxDelayMs": 900000,
+              "giveUpAfterMs": 3600000
+            }
+          }
+        ]
+      }
+    }

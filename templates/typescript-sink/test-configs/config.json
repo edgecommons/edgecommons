@@ -1,0 +1,29 @@
+{
+  "logging": { "level": "DEBUG", "ts_format": "{timestamp} [{level}] {logger}: {message}" },
+  "hierarchy": { "levels": ["site", "device"] },
+  "identity": { "site": "factory-1" },
+  "heartbeat": {
+    "enabled": true,
+    "intervalSecs": 5,
+    "measures": { "cpu": true, "memory": true },
+    "destination": "local"
+  },
+  "metricEmission": { "target": "log", "namespace": "edgecommons" },
+  "tags": { "site": "factory-1" },
+  "component": {
+    "global": {
+      "defaults": {
+        "retry": { "baseDelayMs": 1000, "giveUpAfterMs": 3600000 },
+        "maxQueue": 256
+      }
+    },
+    "instances": [
+      {
+        "id": "archive",
+        "subscribe": "ecv1/+/+/+/data/#",
+        "destination": { "type": "local", "path": "./out" },
+        "retry": { "baseDelayMs": 1000, "maxDelayMs": 900000, "giveUpAfterMs": 3600000 }
+      }
+    ]
+  }
+}
