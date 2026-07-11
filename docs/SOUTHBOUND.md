@@ -328,24 +328,26 @@ Optional: `reconnects`, `writeErrors`, `signalsSubscribed`. Emit on connect/disc
 There is no component "kind" concept today — the CLI keys templates by language only. Tier-1 ships a
 `templates/java-protocol-adapter/` directory (mirror of `templates/java/` with a modernized,
 Builder + `CountDownLatch` lifecycle skeleton, an OPC UA-ready `pom.xml`, and a `recipe.yaml` /
-`test-configs` seeding the §4 convention). Scaffold it with the existing `--template-url` flag (no CLI
-change required):
+`test-configs` seeding the §4 convention). The **`protocol-adapter` kind** is a first-class scaffold
+axis — `-k/--kind` selects the archetype, `-l/--language` the language:
 
 ```bash
-edgecommons create-component -l JAVA -u ./templates/java-protocol-adapter \
+edgecommons component new -l JAVA -k protocol-adapter \
   -n com.example.MyAdapter --platforms GREENGRASS,HOST
 ```
 
-A `templates/python-protocol-adapter/` mirror ships too — a Builder + per-instance worker-thread
-skeleton with `recipe.yaml`, `Dockerfile`, and `k8s/` — scaffolded the same way:
+A Python mirror ships too — a Builder + per-instance worker-thread skeleton with `recipe.yaml`,
+`Dockerfile`, and `k8s/`:
 
 ```bash
-edgecommons create-component -l PYTHON -u ./templates/python-protocol-adapter \
+edgecommons component new -l PYTHON -k protocol-adapter \
   -n com.example.MyAdapter --platforms GREENGRASS,HOST,KUBERNETES
 ```
 
-A first-class `--kind {component|protocol-adapter}` flag (resolving `templates/<lang>-<kind>`) is a
-small, optional CLI follow-up once the pattern is proven.
+Both scaffolds ship a `config.schema.json` modelling the southbound adapter's own configuration
+(`connection`, `subscriptions`, per-signal rules), so `edgecommons component validate` checks an
+adapter's config against the contract in §4 rather than merely against the library envelope.
+Run `edgecommons template list` for the full language × kind matrix.
 
 ## 7. Reference adapter
 

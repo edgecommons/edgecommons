@@ -3,15 +3,20 @@ on:
   workflow_dispatch:
   push:
     branches: ["main"]
-    paths: ["cli/**", "templates/**", ".github/workflows/cli.yml"]
+    paths: ["cli/**", "templates/**", "schema/**", "libs/rust/Cargo.toml", ".github/workflows/cli.yml"]
   pull_request:
-    paths: ["cli/**", "templates/**", ".github/workflows/cli.yml"]
+    paths: ["cli/**", "templates/**", "schema/**", "libs/rust/Cargo.toml", ".github/workflows/cli.yml"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
+  # Build, lint, test, and gate coverage. The Python CLI had no lint, no type-check, and no
+  # coverage gate at all, while the four libraries are all held to 90%.
   test:
     runs-on: ubuntu-latest
     defaults:
@@ -19,8 +24,129 @@ jobs:
         working-directory: cli
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt, llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Coverage gate (90%, matching the four libraries)
+        run: cargo llvm-cov --fail-under-lines 90
+
+  # The acceptance gate is not "the Rust tests pass" — it is that a component scaffolded by
+  # this binary actually BUILDS, in every language. This is the gate that would have caught the
+  # scaffold defects the previous CLI shipped with.
+  scaffold-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: RUST
+            kind: service
+          - language: PYTHON
+            kind: service
+          - language: TYPESCRIPT
+            kind: service
+          - language: JAVA
+            kind: service
+          - language: PYTHON
+            kind: protocol-adapter
+          - language: JAVA
+            kind: protocol-adapter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+
+      - name: Build the CLI
+        run: cargo build --release --manifest-path cli/Cargo.toml
+
+      - name: Scaffold
+        run: |
+          ./cli/target/release/edgecommons component new \
+            -n com.example.Gated -l ${{ matrix.language }} -k ${{ matrix.kind }} \
+            -p /tmp/scaffold --yes
+
+      - name: Validate the scaffold
+        run: ./cli/target/release/edgecommons component validate -p /tmp/scaffold/Gated
+
+      # --- Build it, for real, in its own language -------------------------------------
+      - uses: actions/setup-java@v4
+        if: matrix.language == 'JAVA'
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Install the Java library into the local repo
+        if: matrix.language == 'JAVA'
+        run: mvn -q -B -DskipTests install
+        working-directory: libs/java
+      - name: Build (Java)
+        if: matrix.language == 'JAVA'
+        run: mvn -q -B -DskipTests compile
+        working-directory: /tmp/scaffold/Gated
+
+      - name: Build (Rust)
+        if: matrix.language == 'RUST'
+        run: cargo build
+        working-directory: /tmp/scaffold/Gated
+
+      - uses: actions/setup-node@v4
+        if: matrix.language == 'TYPESCRIPT'
+        with:
+          node-version: "22"
+      - name: Build the TypeScript library
+        if: matrix.language == 'TYPESCRIPT'
+        run: npm ci && npm run build
+        working-directory: libs/ts
+      - name: Build (TypeScript)
+        if: matrix.language == 'TYPESCRIPT'
+        run: npm install && npm run build
+        working-directory: /tmp/scaffold/Gated
+
       - uses: actions/setup-python@v5
+        if: matrix.language == 'PYTHON'
         with:
           python-version: "3.12"
-      - run: pip install -e ".[test]"
-      - run: python -m pytest
+      - name: Build (Python)
+        if: matrix.language == 'PYTHON'
+        run: |
+          python -m compileall -q .
+          pip install -r requirements.txt
+        working-directory: /tmp/scaffold/Gated
+
+  # A HOST-only scaffold must carry no Greengrass artifacts, and a Greengrass one must carry
+  # them. The previous CLI emitted a Greengrass recipe into every scaffold regardless.
+  platform-packs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+      - run: cargo build --release --manifest-path cli/Cargo.toml
+
+      - name: HOST-only scaffold carries no Greengrass artifacts
+        run: |
+          ./cli/target/release/edgecommons component new -n com.example.HostOnly -l RUST \
+            --platforms HOST -p /tmp/packs --yes
+          test ! -f /tmp/packs/HostOnly/recipe.yaml
+          test ! -f /tmp/packs/HostOnly/gdk-config.json
+          test ! -d /tmp/packs/HostOnly/k8s
+          test -f /tmp/packs/HostOnly/compose.yaml
+          test -f /tmp/packs/HostOnly/supervisor/component.conf
+          test -f /tmp/packs/HostOnly/config.schema.json
+
+      - name: Greengrass scaffold carries the recipe
+        run: |
+          ./cli/target/release/edgecommons component new -n com.example.GgOnly -l RUST \
+            --platforms GREENGRASS -p /tmp/packs --yes
+          test -f /tmp/packs/GgOnly/recipe.yaml
+          test -f /tmp/packs/GgOnly/gdk-config.json

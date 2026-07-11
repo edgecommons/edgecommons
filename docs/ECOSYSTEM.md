@@ -77,10 +77,10 @@ edgecommons (GitHub org)
    path is the standard quirk of the special `.github` repo; move them to a dedicated
    `edgecommons/ci` repo if it bothers you.)
 4. **Component registry** (`edgecommons/registry`) — a machine-readable catalog consumed by the CLI
-   (`edgecommons list-components`, later `edgecommons add <name>`) and rendered as a "Components" page on
+   (`edgecommons registry list`) and rendered as a "Components" page on
    the docs site. This is what makes the ecosystem *browsable and installable* rather than a folder
    of repos. Staged in `ecosystem/staging/registry/`.
-5. **Convention** — new components are born via `edgecommons create-component`, pushed to the org under
+5. **Convention** — new components are born via `edgecommons component new`, pushed to the org under
    the naming rules, and added to the registry via a PR.
 
 ## The registry
@@ -108,7 +108,7 @@ authentication via `gh`; the docs site reads it with a token at build time. (Fli
 public later if you want tokenless reads — the CLI's URL/path override already supports that.)
 
 **Consumers:**
-- CLI: `edgecommons list-components [--language …] [--category …] [--json] [--source URL|path]`.
+- CLI: `edgecommons registry list [--language …] [--category …] [--json] [--source path]`.
   Default: fetch the private catalog via `gh api` (authenticated). `--source`/`$EDGECOMMONS_REGISTRY_URL`
   override with a URL or local path. Implemented in `cli/edgecommons_cli/commands/list_components.py`.
 - Docs site: a build-time fetch of `components.json` → a "Components" reference page.
@@ -146,8 +146,7 @@ public later if you want tokenless reads — the CLI's URL/path override already
 ### Phase 2 — Stand up the registry ✅ (done 2026-06-29)
 - Created `edgecommons/registry` (private) from `ecosystem/staging/registry/` (catalog + schema +
   validation workflow + CONTRIBUTING); `validate-registry` CI green.
-- Shipped the CLI `list-components` command (reads the private catalog via `gh`); add `edgecommons
-  add <name>` later.
+- Shipped the CLI `registry list` command (reads the private catalog via `gh`).
 - Add the docs-site "Components" page that renders the catalog.
 
 ### Phase 3 — Migrate the two adapters
@@ -160,7 +159,7 @@ For `gg-opcua-adapter` → `opcua-adapter` and `gg-modbus-adapter` → `modbus-a
   (OPC UA), per the monorepo validation matrix.
 
 ### Phase 4 — Make it self-perpetuating
-- Update `create-component` + docs so a new component flows: scaffold → push to org → registry PR →
+- Update `component new` + docs so a new component flows: scaffold → push to org → registry PR →
   CI inherited automatically.
 - Optionally flag `templates/*` as GitHub **template repositories** (secondary click-to-use path).
 

@@ -54,7 +54,10 @@ pub fn validate_project(root: &Path, only: Option<&Path>) -> Report {
         .and_then(|t| serde_json::from_str(&t).ok());
 
     if component_schema.is_none() {
-        let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let name = root
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
         r.push(schema::no_component_schema(&name));
     }
 
@@ -64,15 +67,22 @@ pub fn validate_project(root: &Path, only: Option<&Path>) -> Report {
     };
 
     for cfg_path in configs {
-        let Ok(text) = std::fs::read_to_string(&cfg_path) else { continue };
+        let Ok(text) = std::fs::read_to_string(&cfg_path) else {
+            continue;
+        };
         let source = cfg_path.display().to_string();
         match serde_json::from_str::<Value>(&text) {
             Ok(cfg) => {
-                r.extend(validate_config(&cfg, component_schema.as_ref(), None, &source).diagnostics);
+                r.extend(
+                    validate_config(&cfg, component_schema.as_ref(), None, &source).diagnostics,
+                );
             }
             Err(e) => r.push(
-                ec_diag::Diagnostic::error(ec_diag::EC1001_SCHEMA, format!("config is not valid JSON: {e}"))
-                    .with_file(&cfg_path),
+                ec_diag::Diagnostic::error(
+                    ec_diag::EC1001_SCHEMA,
+                    format!("config is not valid JSON: {e}"),
+                )
+                .with_file(&cfg_path),
             ),
         }
     }
@@ -87,7 +97,9 @@ pub fn validate_project(root: &Path, only: Option<&Path>) -> Report {
 /// configs, which are a transport document rather than a component config.
 fn discover_configs(root: &Path) -> Vec<std::path::PathBuf> {
     let dir = root.join("test-configs");
-    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
     entries
         .filter_map(Result::ok)
         .map(|e| e.path())
@@ -187,7 +199,11 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let root = d.path().join("Thing");
         std::fs::create_dir_all(root.join("test-configs")).unwrap();
-        std::fs::write(root.join("test-configs/standalone-messaging.json"), r#"{"endpoint":"x"}"#).unwrap();
+        std::fs::write(
+            root.join("test-configs/standalone-messaging.json"),
+            r#"{"endpoint":"x"}"#,
+        )
+        .unwrap();
         let found = discover_configs(&root);
         assert!(found.is_empty(), "{found:?}");
     }

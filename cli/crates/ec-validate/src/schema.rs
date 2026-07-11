@@ -21,7 +21,8 @@ use serde_json::Value;
 /// Embedding is what keeps `component validate` offline (P2). A CI gate asserts this copy
 /// matches `schema/edgecommons-config-schema.json`, mirroring the existing `sync-schema.sh
 /// --check` drift gate the four libraries already use.
-pub const CANONICAL_SCHEMA: &str = include_str!("../../../../schema/edgecommons-config-schema.json");
+pub const CANONICAL_SCHEMA: &str =
+    include_str!("../../../../schema/edgecommons-config-schema.json");
 
 /// The name a component gives its own config schema.
 pub const COMPONENT_SCHEMA_NAME: &str = "config.schema.json";
@@ -30,7 +31,8 @@ pub const COMPONENT_SCHEMA_NAME: &str = "config.schema.json";
 #[must_use]
 pub fn validate_envelope(config: &Value, source: &str) -> Report {
     let mut report = Report::new();
-    let schema: Value = serde_json::from_str(CANONICAL_SCHEMA).expect("embedded canonical schema must parse");
+    let schema: Value =
+        serde_json::from_str(CANONICAL_SCHEMA).expect("embedded canonical schema must parse");
 
     let validator = match jsonschema::validator_for(&schema) {
         Ok(v) => v,
@@ -60,7 +62,11 @@ pub fn validate_envelope(config: &Value, source: &str) -> Report {
 /// component publishes none, the caller gets [`no_component_schema`] instead — a **warning**,
 /// not an error, saying so out loud rather than implying coverage that does not exist.
 #[must_use]
-pub fn validate_component_section(config: &Value, component_schema: &Value, source: &str) -> Report {
+pub fn validate_component_section(
+    config: &Value,
+    component_schema: &Value,
+    source: &str,
+) -> Report {
     let mut report = Report::new();
 
     let validator = match jsonschema::validator_for(component_schema) {
@@ -105,7 +111,9 @@ pub fn validate_component_section(config: &Value, component_schema: &Value, sour
 pub fn no_component_schema(component: &str) -> Diagnostic {
     Diagnostic::warning(
         ec_diag::EC1003_NO_COMPONENT_SCHEMA,
-        format!("`{component}` publishes no {COMPONENT_SCHEMA_NAME}, so its own config is not validated"),
+        format!(
+            "`{component}` publishes no {COMPONENT_SCHEMA_NAME}, so its own config is not validated"
+        ),
     )
     .with_help(format!(
         "add a {COMPONENT_SCHEMA_NAME} describing what goes under `component.global` — \
@@ -157,7 +165,11 @@ mod tests {
             "component": { "token": "x", "global": { "totally": "made up", "pipelnie": [] } }
         });
         let r = validate_envelope(&cfg, "config.json");
-        assert_eq!(r.error_count(), 0, "the envelope schema is blind to component config — by design");
+        assert_eq!(
+            r.error_count(),
+            0,
+            "the envelope schema is blind to component config — by design"
+        );
     }
 
     #[test]
@@ -176,7 +188,12 @@ mod tests {
         assert_eq!(r.diagnostics[0].code, ec_diag::EC1002_COMPONENT_SCHEMA);
         // The diagnostic must point at the offending key, not at the document.
         assert!(
-            r.diagnostics[0].locus.as_ref().unwrap().to_string().starts_with("/component/global"),
+            r.diagnostics[0]
+                .locus
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .starts_with("/component/global"),
             "{:?}",
             r.diagnostics[0].locus
         );

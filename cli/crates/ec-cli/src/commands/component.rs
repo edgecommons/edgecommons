@@ -4,7 +4,9 @@ use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
 use ec_diag::{Fatal, Outcome, Report};
-use ec_scaffold::generate::{DepSource, Inputs, default_library_subdir, generate_embedded, short_name};
+use ec_scaffold::generate::{
+    DepSource, Inputs, default_library_subdir, generate_embedded, short_name,
+};
 use ec_scaffold::manifest::{Kind, Language, Platform};
 use ec_scaffold::{catalog, discover};
 
@@ -30,8 +32,15 @@ pub fn new(args: &NewArgs, quiet: bool, assume_yes: bool) -> Outcome {
 
     let full_name = match &args.name {
         Some(n) => n.clone(),
-        None if interactive => prompt("Fully-qualified component name (e.g. com.example.MyComponent)", None)?,
-        None => return Err(Fatal::Usage("a component name is required: pass -n/--name".into())),
+        None if interactive => prompt(
+            "Fully-qualified component name (e.g. com.example.MyComponent)",
+            None,
+        )?,
+        None => {
+            return Err(Fatal::Usage(
+                "a component name is required: pass -n/--name".into(),
+            ));
+        }
     };
     if full_name.trim().is_empty() {
         return Err(Fatal::Usage("the component name must not be empty".into()));
@@ -62,7 +71,10 @@ pub fn new(args: &NewArgs, quiet: bool, assume_yes: bool) -> Outcome {
     // this CLI was built from, so the common case needs no flag.
     let library_path = match (dep_source, default_library_subdir(language)) {
         (DepSource::Local, Some(subdir)) => {
-            let p = args.library_path.clone().unwrap_or_else(|| repo_root().join(subdir));
+            let p = args
+                .library_path
+                .clone()
+                .unwrap_or_else(|| repo_root().join(subdir));
             if !p.is_dir() {
                 return Err(Fatal::Usage(format!(
                     "{} components with --dep-source local need the edgecommons library, but `{}` \
@@ -78,7 +90,10 @@ pub fn new(args: &NewArgs, quiet: bool, assume_yes: bool) -> Outcome {
 
     let inputs = Inputs {
         full_name: full_name.clone(),
-        description: args.description.clone().unwrap_or_else(|| format!("The {} component.", short_name(&full_name))),
+        description: args
+            .description
+            .clone()
+            .unwrap_or_else(|| format!("The {} component.", short_name(&full_name))),
         author: args.author.clone().unwrap_or_default(),
         platforms: platforms.clone(),
         dep_source,
@@ -96,7 +111,11 @@ pub fn new(args: &NewArgs, quiet: bool, assume_yes: bool) -> Outcome {
             language.as_str().to_lowercase(),
             kind.as_str(),
             short_name(&full_name),
-            platforms.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", ")
+            platforms
+                .iter()
+                .map(|p| p.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
 
@@ -123,12 +142,20 @@ pub fn template_list(json: bool) -> Outcome {
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rows).unwrap_or_default()
+        );
     } else {
         println!("Templates ({}):\n", templates.len());
         let width = templates.iter().map(|t| t.id().len()).max().unwrap_or(10);
         for t in &templates {
-            println!("  {:<width$}  {}", t.id(), t.manifest.description, width = width);
+            println!(
+                "  {:<width$}  {}",
+                t.id(),
+                t.manifest.description,
+                width = width
+            );
         }
         println!("\nScaffold one with: edgecommons component new -l <LANG> -k <KIND> -n <name>");
     }
@@ -167,7 +194,12 @@ pub fn template_show(id: &str, json: bool) -> Outcome {
         println!("{}  —  {}\n", t.id(), t.manifest.description);
         println!(
             "  platforms: {}",
-            t.manifest.platforms.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", ")
+            t.manifest
+                .platforms
+                .iter()
+                .map(|p| p.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         for (platform, paths) in &t.manifest.packs {
             println!("  {} pack: {}", platform.as_str(), paths.join(", "));

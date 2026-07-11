@@ -308,7 +308,7 @@ Maven, TS→GH Packages npm (`@mbreissi`), Python→git-tag (consumers `pip git+
 **Sequencing & cost.** Decision (2026-06-26): **hold all CI** — do every file/wiring change locally, validate
 via the Dockerfile `local` mode + `kind`, and run `release.yml` only on an explicit later go (conserves the
 ~Actions budget). The interactive-CLI follow-on (a `prompts` + conditional-files extension to
-`edgecommons-template.json`) **has since been built**: `create-component`'s `--platforms`/`-i` wizard and
+`edgecommons-template.json`) **has since been built**: `component new`'s `--platforms` and interactive wizard and
 `--dep-source` flag (`cli/edgecommons_cli/commands/create_component.py`) gate manifest `conditional` blocks
 so the `Dockerfile`/`k8s/` artifacts emit **only when the user targets Kubernetes** and the dependency
 source (registry vs local) is chosen at scaffold time (e.g. `templates/rust/edgecommons-template.json`'s

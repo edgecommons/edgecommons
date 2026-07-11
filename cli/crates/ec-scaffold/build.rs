@@ -14,7 +14,8 @@
 use std::path::PathBuf;
 
 fn main() {
-    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let manifest_dir =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     // cli/crates/ec-scaffold -> cli/crates -> cli -> <repo root>
     let repo_root = manifest_dir
         .parent()
@@ -24,7 +25,10 @@ fn main() {
 
     let lib_manifest = repo_root.join("libs").join("rust").join("Cargo.toml");
     println!("cargo:rerun-if-changed={}", lib_manifest.display());
-    println!("cargo:rerun-if-changed={}", repo_root.join("templates").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        repo_root.join("templates").display()
+    );
 
     let text = std::fs::read_to_string(&lib_manifest).unwrap_or_else(|e| {
         panic!(
@@ -35,9 +39,8 @@ fn main() {
         )
     });
 
-    let version = parse_package_version(&text).unwrap_or_else(|| {
-        panic!("no [package] version found in {}", lib_manifest.display())
-    });
+    let version = parse_package_version(&text)
+        .unwrap_or_else(|| panic!("no [package] version found in {}", lib_manifest.display()));
 
     println!("cargo:rustc-env=EC_LIBRARY_VERSION={version}");
 }

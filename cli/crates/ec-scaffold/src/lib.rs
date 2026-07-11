@@ -8,6 +8,7 @@
 pub mod catalog;
 pub mod generate;
 pub mod manifest;
+pub mod upgrade;
 
 pub use catalog::{Template, discover, find, matrix};
 pub use generate::{DepSource, Inputs, generate_embedded};

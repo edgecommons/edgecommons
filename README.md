@@ -58,7 +58,7 @@ HOST → FILE, KUBERNETES → CONFIGMAP), `--platform <PLATFORM>`, `--transport 
 
 | Path | What it is |
 |------|-----------|
-| `cli/` | Scaffolding CLI (`edgecommons` / `edgecommons-cli`): generate, validate, build, publish, deploy, and upgrade components. |
+| `cli/` | The `edgecommons` CLI (Rust): scaffold, validate, upgrade/version, package, and release components. |
 | `schema/` | **Single source of truth** for the config JSON schema (`edgecommons-config-schema.json`) + `sync-schema.{sh,ps1}` that copy it into each library (CI fails on drift). |
 | `test-infra/` | Shared integration-test infra: EMQX broker (`compose.yaml`, plaintext + mutual-TLS), TLS cert generation, and the cross-language **interop** harness (`interop/`). |
 | `vault-test-vectors/` | Shared credentials/vault encryption conformance vectors used by all four languages. |
@@ -91,9 +91,11 @@ HOST → FILE, KUBERNETES → CONFIGMAP), `--platform <PLATFORM>`, `--transport 
 Build a new component with the CLI (see `cli/README.md` for the full reference):
 
 ```bash
-pipx install ./cli                           # or: python -m pip install ./cli
-edgecommons doctor                             # check prerequisites (git, gdk, cargo, mvn, python3, aws)
-edgecommons create-component -n com.example.MyComponent -l PYTHON   # JAVA|PYTHON|RUST|TYPESCRIPT
+cd cli && cargo build --release              # -> cli/target/release/edgecommons
+edgecommons doctor                           # check prerequisites for the platforms you target
+edgecommons template list                    # the language x kind matrix
+edgecommons component new -n com.example.MyComponent -l PYTHON      # JAVA|PYTHON|RUST|TYPESCRIPT
+edgecommons component validate -p MyComponent
 ```
 
 Run a component locally on a bare **HOST** against a local MQTT broker:

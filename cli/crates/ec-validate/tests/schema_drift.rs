@@ -38,16 +38,21 @@ fn the_canonical_schema_still_leaves_component_config_unvalidated() {
     // schema validates the *envelope*, and is deliberately blind to what a component puts
     // under `component.global`. If this ever changes, the per-component schema story needs
     // revisiting — so assert the premise rather than trusting a memory of it.
-    let schema: serde_json::Value = serde_json::from_str(ec_validate::schema::CANONICAL_SCHEMA).unwrap();
+    let schema: serde_json::Value =
+        serde_json::from_str(ec_validate::schema::CANONICAL_SCHEMA).unwrap();
 
-    let top_strict = schema.get("additionalProperties").and_then(serde_json::Value::as_bool);
+    let top_strict = schema
+        .get("additionalProperties")
+        .and_then(serde_json::Value::as_bool);
     assert_eq!(top_strict, Some(false), "the top level must remain strict");
 
     let global = schema
         .pointer("/properties/component/properties/global")
         .expect("component.global must exist");
     assert_eq!(
-        global.get("additionalProperties").and_then(serde_json::Value::as_bool),
+        global
+            .get("additionalProperties")
+            .and_then(serde_json::Value::as_bool),
         Some(true),
         "component.global is open by design — the component's own config.schema.json is what closes it"
     );
