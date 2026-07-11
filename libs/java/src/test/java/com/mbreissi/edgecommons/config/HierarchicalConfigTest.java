@@ -206,6 +206,23 @@ class HierarchicalConfigTest {
         }
 
         @Override
+        public void subscribeAcknowledged(String topicFilter,
+                                           BiConsumer<String, Message> callback,
+                                           int maxConcurrency,
+                                           int maxMessages,
+                                           java.time.Duration timeout) {
+            if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+                throw new IllegalArgumentException("timeout must be positive");
+            }
+            this.callback = callback;
+        }
+
+        @Override
+        public void unsubscribe(String topicFilter) {
+            this.callback = null;
+        }
+
+        @Override
         public ReplyFuture request(String topic, Message request) {
             ReplyFuture future = new ReplyFuture("reply-topic");
             future.complete(MessageBuilder.create("Config", "1.0")

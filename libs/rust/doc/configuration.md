@@ -31,6 +31,31 @@ class seam. It is disabled by default; native capture observes `tracing` events.
 Validation fails **closed**: an invalid document is a hard error at startup, and an
 invalid hot-reloaded document is rejected with the previous snapshot kept.
 
+## Pre-commit component validation
+
+Register synchronous application validators on the builder. They run after schema validation for
+both `Initial` and `Reload`, before the one atomic snapshot swap. Each callback receives owned copies
+of the candidate and redacted prior snapshot; rejection, failure, or deadline expiry preserves the
+exact prior generation and skips applied-config listeners.
+
+```rust
+use edgecommons::prelude::*;
+use std::time::Duration;
+
+let builder = EdgeCommonsBuilder::new("com.example.Camera")
+    .initial_ready(false)
+    .configuration_validator("camera", |candidate, redacted_current, phase| {
+        let _ = (candidate, redacted_current, phase);
+        Ok(ConfigurationValidationResult::accept())
+    })?
+    .configuration_validation_timeout(Duration::from_secs(5))?;
+```
+
+The timeout is one overall generation deadline (default 5 seconds, maximum 60). At most four
+validator callbacks run process-wide. A callback that ignores timeout retains its worker permit
+until it exits, preventing repeated reloads from accumulating threads. Inspect
+`gg.config_generation()` and `gg.last_candidate_validation_errors()` for lifecycle diagnostics.
+
 ## Reading config
 
 ```rust
@@ -80,8 +105,8 @@ for id in cfg.instance_ids() {
 ## Hot reload
 
 The `FILE` source watches the file (via `notify`) and emits updates. On change the
-library validates the new document, builds a fresh `Config`, swaps it atomically, and
-then notifies registered listeners:
+library schema-validates and runs candidate validators, builds a fresh `Config`, swaps it atomically,
+and only then notifies registered listeners:
 
 ```rust
 use edgecommons::config::ConfigurationChangeListener;

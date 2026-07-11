@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { Config } from "../src/config/model";
 import { EdgeCommonsError } from "../src/errors";
 import { AppFacade } from "../src/facades/app_facade";
+import { Message, MessageBuilder } from "../src/message";
 import { Channel } from "../src/facades/channel";
 import { Qos } from "../src/messaging/types";
 import { Uns } from "../src/uns";
@@ -68,5 +69,68 @@ describe("AppFacade", () => {
       throw new Error("iot core down");
     };
     await expect(facade.publish("CloudEvent", "cloud", { k: "v" }, Channel.NORTHBOUND)).resolves.toBeUndefined();
+  });
+
+  it("prepare captures topic, envelope, and defensive exact bytes", () => {
+    const { facade } = makeFacade();
+    const prepared = facade.prepare("ImageCaptured", "image/captured", { captureId: "cap-1" });
+    const original = prepared.encodedBytes;
+    const mutated = prepared.encodedBytes;
+    mutated[0] ^= 0x7f;
+
+    expect(prepared.topic).toBe("ecv1/gw-01/opcua-adapter/main/app/image/captured");
+    expect(prepared.encodedBytes.equals(original)).toBe(true);
+    const decoded = Message.fromBytes(original);
+    expect(prepared.message.header.uuid).toBe(decoded.header.uuid);
+    expect(decoded.getBody()).toEqual({ captureId: "cap-1" });
+  });
+
+  it("prepareCorrelated accepts a received request or explicit correlation id", () => {
+    const { facade } = makeFacade();
+    const request = MessageBuilder.create("sb/capture", "1.0")
+      .withCorrelationId("corr-request")
+      .withPayload({})
+      .build();
+    expect(
+      facade.prepareCorrelated("ImageCaptured", "image/captured", {}, request).message.header.correlation_id,
+    ).toBe("corr-request");
+    expect(
+      facade.prepareCorrelated("ImageCaptured", "image/captured", {}, "corr-explicit").message.header.correlation_id,
+    ).toBe("corr-explicit");
+    expect(() => facade.prepareCorrelated("X", "x", {}, "")).toThrow(EdgeCommonsError);
+    expect(() => facade.prepareCorrelated("X", "x", {}, Message.fromObject({}))).toThrow(EdgeCommonsError);
+  });
+
+  it("confirmed prepared publish uses exact bytes, QoS 1, and routing", async () => {
+    const { facade, messaging } = makeFacade();
+    const prepared = facade.prepareCorrelated("ImageCaptured", "image/captured", {}, "corr-1");
+    const exact = prepared.encodedBytes;
+    prepared.message.header.correlation_id = "mutated-view";
+
+    await facade.publishConfirmed(prepared, 250);
+    expect(messaging.published[0]).toMatchObject({
+      kind: "publishConfirmed",
+      topic: prepared.topic,
+      qos: Qos.AtLeastOnce,
+      timeoutMs: 250,
+    });
+    expect(messaging.published[0].encodedBytes!.equals(exact)).toBe(true);
+
+    messaging.published.length = 0;
+    await facade.publishConfirmed(prepared, 300, Channel.NORTHBOUND);
+    expect(messaging.published[0]).toMatchObject({
+      kind: "publishNorthboundConfirmed",
+      qos: Qos.AtLeastOnce,
+      timeoutMs: 300,
+    });
+    expect(messaging.published[0].encodedBytes!.equals(exact)).toBe(true);
+  });
+
+  it("confirmed prepared publish rejects unsupported services and stream routing", async () => {
+    const { facade, messaging } = makeFacade();
+    const prepared = facade.prepare("X", "x", {});
+    messaging.publishConfirmed = undefined;
+    await expect(facade.publishConfirmed(prepared, 100)).rejects.toMatchObject({ reason: "unsupported" });
+    await expect(facade.publishConfirmed(prepared, 100, Channel.stream("hot"))).rejects.toThrow(EdgeCommonsError);
   });
 });

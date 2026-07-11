@@ -13,7 +13,15 @@ import mqtt, { MqttClient } from "mqtt";
 import { EdgeCommonsError } from "../errors";
 import { logger } from "../logging";
 import { BrokerConfig, MessagingConfig, resolvedHost } from "./config";
-import { Destination, MessagingProvider, Qos, RawSubscription } from "./types";
+import {
+  Destination,
+  MAX_IN_FLIGHT_CONFIRMED_PUBLISHES,
+  MessagingProvider,
+  PublishConfirmationError,
+  Qos,
+  RawSubscription,
+  validateConfirmedPublish,
+} from "./types";
 
 interface Sub {
   filter: string;
@@ -72,6 +80,8 @@ class BrokerChannel {
 
 /** STANDALONE-mode dual-broker MQTT provider. */
 export class StandaloneMqttProvider implements MessagingProvider {
+  private confirmedInFlight = 0;
+
   private constructor(
     private readonly local: BrokerChannel,
     private readonly iot?: BrokerChannel,
@@ -106,6 +116,95 @@ export class StandaloneMqttProvider implements MessagingProvider {
         err ? reject(EdgeCommonsError.messaging(`publish to ${topic} failed: ${err}`)) : resolve(),
       );
     });
+  }
+
+  /**
+   * Strict MQTT publication. mqtt.js invokes the QoS-1 publish callback only after the matching
+   * PUBACK; close/offline/error before that callback is ambiguous and therefore rejects.
+   */
+  async publishBytesConfirmed(
+    topic: string,
+    payload: Buffer,
+    dest: Destination,
+    qos: Qos,
+    timeoutMs: number,
+  ): Promise<void> {
+    validateConfirmedPublish(qos, timeoutMs);
+    const ch = this.channel(dest);
+    if (this.confirmedInFlight >= MAX_IN_FLIGHT_CONFIRMED_PUBLISHES) {
+      throw new PublishConfirmationError(
+        "backpressure",
+        `confirmed publish capacity (${MAX_IN_FLIGHT_CONFIRMED_PUBLISHES}) is exhausted`,
+      );
+    }
+    if (ch.client.connected === false) {
+      throw new PublishConfirmationError(
+        "transport",
+        `confirmed publish on '${topic}' cannot start while MQTT is disconnected`,
+      );
+    }
+
+    this.confirmedInFlight++;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const finish = (error?: PublishConfirmationError): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          ch.client.removeListener("close", onDisconnect);
+          ch.client.removeListener("offline", onDisconnect);
+          ch.client.removeListener("error", onError);
+          if (error) reject(error);
+          else resolve();
+        };
+        const onDisconnect = (): void =>
+          finish(
+            new PublishConfirmationError(
+              "transport",
+              `MQTT disconnected before PUBACK for confirmed publish on '${topic}'`,
+            ),
+          );
+        const onError = (error: Error): void =>
+          finish(
+            new PublishConfirmationError(
+              "transport",
+              `MQTT failed before PUBACK for confirmed publish on '${topic}': ${error.message}`,
+              { cause: error },
+            ),
+          );
+        const timer = setTimeout(
+          () =>
+            finish(
+              new PublishConfirmationError(
+                "timeout",
+                `MQTT PUBACK was not observed within ${timeoutMs} ms for '${topic}'`,
+              ),
+            ),
+          timeoutMs,
+        );
+        if (typeof timer.unref === "function") timer.unref();
+
+        ch.client.once("close", onDisconnect);
+        ch.client.once("offline", onDisconnect);
+        ch.client.once("error", onError);
+        ch.client.publish(topic, Buffer.from(payload), { qos: 1 }, (error?: Error | null) => {
+          if (error) {
+            finish(
+              new PublishConfirmationError(
+                "transport",
+                `MQTT publish failed before PUBACK on '${topic}': ${error.message}`,
+                { cause: error },
+              ),
+            );
+          } else {
+            finish();
+          }
+        });
+      });
+    } finally {
+      this.confirmedInFlight--;
+    }
   }
 
   subscribeRaw(

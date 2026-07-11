@@ -23,6 +23,7 @@ final class FileConfigProvider extends ConfigProvider implements FileWatcher.Fil
     String configFilePath;
 
     final FileWatcher configFileWatcher;
+    private boolean started;
 
     FileConfigProvider(ConfigManager configManager, String configFilePath)
     {
@@ -30,13 +31,25 @@ final class FileConfigProvider extends ConfigProvider implements FileWatcher.Fil
         this.configFilePath = configFilePath;
         this.configFileWatcher = new FileWatcher(configFilePath, this);
         configFileWatcher.setDaemon(true);
-        configFileWatcher.start();
+    }
+
+    @Override
+    public synchronized void start()
+    {
+        if (!started)
+        {
+            configFileWatcher.start();
+            started = true;
+        }
     }
 
     @Override
     public void close()
     {
-        configFileWatcher.stopThread();
+        if (started)
+        {
+            configFileWatcher.stopThread();
+        }
     }
 
     @Override

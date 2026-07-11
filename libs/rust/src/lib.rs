@@ -59,7 +59,9 @@ pub use error::{EdgeCommonsError, Result};
 pub use instance::EdgeCommonsInstance;
 
 use std::ffi::OsString;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use serde_json::Value;
@@ -75,6 +77,8 @@ pub struct EdgeCommons {
     component_name: String,
     args: ParsedArgs,
     config: Arc<ArcSwap<Config>>,
+    /// Generation/error state shared by every provider-driven and command-driven activation.
+    config_lifecycle: Arc<ConfigLifecycle>,
     messaging: Option<Arc<dyn messaging::MessagingService>>,
     logs: Arc<dyn logs::LogService>,
     metrics: Arc<dyn metrics::MetricService>,
@@ -151,6 +155,36 @@ pub struct EdgeCommons {
 /// Shared, mutable set of config-change listeners.
 type ConfigListeners = Arc<std::sync::Mutex<Vec<Arc<dyn config::ConfigurationChangeListener>>>>;
 
+/// Shared pre-commit lifecycle state. The short commit lock is never held across `.await`.
+struct ConfigLifecycle {
+    validators: Arc<Vec<config::candidate::NamedValidator>>,
+    validation_timeout: Duration,
+    generation: AtomicU64,
+    last_errors: Mutex<Vec<config::ConfigurationValidationError>>,
+    commit_lock: Mutex<()>,
+}
+
+impl ConfigLifecycle {
+    fn new(
+        validators: Arc<Vec<config::candidate::NamedValidator>>,
+        validation_timeout: Duration,
+    ) -> Self {
+        Self {
+            validators,
+            validation_timeout,
+            generation: AtomicU64::new(1),
+            last_errors: Mutex::new(Vec::new()),
+            commit_lock: Mutex::new(()),
+        }
+    }
+
+    fn set_errors(&self, errors: Vec<config::ConfigurationValidationError>) {
+        if let Ok(mut current) = self.last_errors.lock() {
+            *current = errors;
+        }
+    }
+}
+
 /// Aborts a background task when dropped (RAII).
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
 
@@ -191,6 +225,20 @@ impl EdgeCommons {
     /// the live snapshot, which is replaced atomically on hot reload.
     pub fn config(&self) -> Arc<Config> {
         self.config.load_full()
+    }
+
+    /// Monotonic accepted configuration generation (`1` is the initial snapshot).
+    pub fn config_generation(&self) -> u64 {
+        self.config_lifecycle.generation.load(Ordering::Acquire)
+    }
+
+    /// Stable failures from the most recently rejected candidate, or an empty snapshot.
+    pub fn last_candidate_validation_errors(&self) -> Vec<config::ConfigurationValidationError> {
+        self.config_lifecycle
+            .last_errors
+            .lock()
+            .map(|errors| errors.clone())
+            .unwrap_or_default()
     }
 
     /// The messaging service for this component.
@@ -395,7 +443,13 @@ pub struct EdgeCommonsBuilder {
     component_name: String,
     argv: Option<Vec<OsString>>,
     receive_own_messages: bool,
+    initial_ready: bool,
+    configuration_validators: Vec<config::candidate::NamedValidator>,
+    configuration_validation_timeout: Duration,
+    command_configurers: Vec<CommandConfigurer>,
 }
+
+type CommandConfigurer = Arc<dyn Fn(&commands::CommandInbox) -> Result<()> + Send + Sync>;
 
 impl EdgeCommonsBuilder {
     /// Start building a component runtime with the given full component name.
@@ -405,6 +459,10 @@ impl EdgeCommonsBuilder {
             argv: None,
             // Default matches Java/Python (`receiveOwnMessages = true`).
             receive_own_messages: true,
+            initial_ready: true,
+            configuration_validators: Vec::new(),
+            configuration_validation_timeout: config::DEFAULT_CANDIDATE_VALIDATION_TIMEOUT,
+            command_configurers: Vec::new(),
         }
     }
 
@@ -422,6 +480,75 @@ impl EdgeCommonsBuilder {
     /// upstream feature request to add `ReceiveMode` to the SDK.
     pub fn receive_own_messages(mut self, receive_own_messages: bool) -> Self {
         self.receive_own_messages = receive_own_messages;
+        self
+    }
+
+    /// Seed the application readiness gate before any externally observable service starts.
+    ///
+    /// The default is `true` for compatibility. Components with required startup work use
+    /// `initial_ready(false)` and call [`EdgeCommons::set_ready`] only after that work succeeds.
+    #[must_use]
+    pub fn initial_ready(mut self, ready: bool) -> Self {
+        self.initial_ready = ready;
+        self
+    }
+
+    /// Register one synchronous pre-commit validator.
+    ///
+    /// Callbacks may run concurrently under their shared generation deadline. Rejection diagnostics
+    /// are collected in registration order, so validators must be side-effect free.
+    ///
+    /// # Errors
+    /// Returns [`EdgeCommonsError::Config`] for an invalid or duplicate registration name.
+    pub fn configuration_validator<F>(
+        mut self,
+        name: impl Into<String>,
+        validator: F,
+    ) -> Result<Self>
+    where
+        F: config::ConfigurationCandidateValidator,
+    {
+        let name = name.into();
+        if !config::candidate::valid_validator_name(&name) {
+            return Err(EdgeCommonsError::Config(
+                "configuration validator name must match ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+                    .to_string(),
+            ));
+        }
+        if self
+            .configuration_validators
+            .iter()
+            .any(|registered| registered.name == name)
+        {
+            return Err(EdgeCommonsError::Config(format!(
+                "configuration validator '{name}' is already registered"
+            )));
+        }
+        self.configuration_validators
+            .push(config::candidate::NamedValidator {
+                name,
+                validator: Arc::new(validator),
+            });
+        Ok(self)
+    }
+
+    /// Set the overall deadline shared by one generation's validators.
+    ///
+    /// # Errors
+    /// The timeout must be positive and no greater than 60 seconds.
+    pub fn configuration_validation_timeout(mut self, timeout: Duration) -> Result<Self> {
+        self.configuration_validation_timeout =
+            config::candidate::require_validation_timeout(timeout)?;
+        Ok(self)
+    }
+
+    /// Install application command handlers before acknowledged inbox subscription begins.
+    #[must_use]
+    pub fn configure_commands<F>(mut self, configurer: F) -> Self
+    where
+        F: Fn(&commands::CommandInbox) -> Result<()> + Send + Sync + 'static,
+    {
+        self.command_configurers.push(Arc::new(configurer));
         self
     }
 
@@ -486,7 +613,36 @@ impl EdgeCommonsBuilder {
             ));
         let raw = source.load().await?;
         config::validation::validate(&raw)?;
+        let configuration_validators = Arc::new(self.configuration_validators.clone());
+        let initial_validators = configuration_validators.clone();
+        let initial_candidate = raw.clone();
+        let validation_timeout = self.configuration_validation_timeout;
+        let initial_errors = tokio::task::spawn_blocking(move || {
+            config::candidate::validate_candidate(
+                initial_validators.as_slice(),
+                &initial_candidate,
+                None,
+                config::ConfigurationValidationPhase::Initial,
+                validation_timeout,
+            )
+        })
+        .await
+        .map_err(|error| {
+            EdgeCommonsError::Validation(format!(
+                "initial candidate validation task failed: {error}"
+            ))
+        })?;
+        if !initial_errors.is_empty() {
+            return Err(EdgeCommonsError::Validation(format!(
+                "initial configuration rejected: {}",
+                format_validation_errors(&initial_errors)
+            )));
+        }
         let cfg = Config::from_value(self.component_name.clone(), thing_name.clone(), raw)?;
+        let config_lifecycle = Arc::new(ConfigLifecycle::new(
+            configuration_validators,
+            self.configuration_validation_timeout,
+        ));
 
         // UNS late-binds (§1.5 init order — messaging exists BEFORE config): the
         // request() deadline default (messaging.requestTimeoutSeconds, §5/D-U5;
@@ -673,7 +829,8 @@ impl EdgeCommonsBuilder {
         // endpoint and the SIGTERM watcher. `ready` defaults to true and messaging-connected is
         // queried live, so a component is ready as soon as the broker connects unless the app gates
         // it via `set_ready(false)`.
-        let health_state = health::HealthState::new(messaging.clone());
+        let health_state =
+            health::HealthState::new_with_initial(messaging.clone(), self.initial_ready, false);
 
         // The health server is enabled by: explicit config `health.enabled` ▸ the platform-profile
         // default (on for KUBERNETES) ▸ off (precedence FR-RT-3). The resolved platform is known
@@ -777,12 +934,14 @@ impl EdgeCommonsBuilder {
                 let source = source.clone();
                 let config = config.clone();
                 let listeners = listeners.clone();
+                let lifecycle = config_lifecycle.clone();
                 let component_name = self.component_name.clone();
                 let thing_name = thing_name.clone();
                 Arc::new(move || {
                     let source = source.clone();
                     let config = config.clone();
                     let listeners = listeners.clone();
+                    let lifecycle = lifecycle.clone();
                     let component_name = component_name.clone();
                     let thing_name = thing_name.clone();
                     Box::pin(async move {
@@ -790,6 +949,7 @@ impl EdgeCommonsBuilder {
                             source.as_ref(),
                             &config,
                             &listeners,
+                            &lifecycle,
                             &component_name,
                             &thing_name,
                         )
@@ -801,14 +961,30 @@ impl EdgeCommonsBuilder {
                 let config = config.clone();
                 Arc::new(move || Some(config::effective::redact(&config.load_full().raw)))
             };
-            let inbox = commands::CommandInbox::new(
+            let health_for_commands = health_state.clone();
+            let startup_observer: commands::StartupObserver = Arc::new(move |state| {
+                health_for_commands
+                    .set_command_plane_ready(state == commands::CommandInboxStartupState::Active);
+            });
+            let inbox = commands::CommandInbox::new_with_startup_observer(
                 messaging_svc.clone(),
                 config.clone(),
                 uptime_secs,
                 reload_action,
                 redacted_config,
+                startup_observer,
             );
-            inbox.clone().start().await;
+            for configurer in &self.command_configurers {
+                configurer(inbox.as_ref())?;
+            }
+            let status = inbox.clone().start().await;
+            if status.state != commands::CommandInboxStartupState::Active {
+                tracing::error!(
+                    state = ?status.state,
+                    error = %status.error,
+                    "command inbox is not active after startup"
+                );
+            }
             Some(inbox)
         } else {
             None
@@ -819,6 +995,7 @@ impl EdgeCommonsBuilder {
                 updates,
                 config.clone(),
                 listeners.clone(),
+                config_lifecycle.clone(),
                 self.component_name.clone(),
                 thing_name,
             )
@@ -828,6 +1005,7 @@ impl EdgeCommonsBuilder {
             component_name: self.component_name,
             args: parsed,
             config,
+            config_lifecycle,
             messaging,
             logs,
             metrics,
@@ -863,12 +1041,21 @@ fn spawn_config_reload(
     mut updates: tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>,
     config: Arc<ArcSwap<Config>>,
     listeners: ConfigListeners,
+    lifecycle: Arc<ConfigLifecycle>,
     component_name: String,
     thing_name: String,
 ) -> AbortOnDrop {
     AbortOnDrop(tokio::spawn(async move {
         while let Some(raw) = updates.recv().await {
-            apply_reloaded_config(raw, &config, &listeners, &component_name, &thing_name).await;
+            apply_reloaded_config(
+                raw,
+                &config,
+                &listeners,
+                &lifecycle,
+                &component_name,
+                &thing_name,
+            )
+            .await;
         }
     }))
 }
@@ -887,28 +1074,118 @@ async fn apply_reloaded_config(
     raw: serde_json::Value,
     config: &Arc<ArcSwap<Config>>,
     listeners: &ConfigListeners,
+    lifecycle: &Arc<ConfigLifecycle>,
     component_name: &str,
     thing_name: &str,
 ) -> bool {
+    if config::candidate::in_validator_callback() {
+        tracing::warn!(
+            "a configuration validator attempted a nested update; validators must be side-effect free"
+        );
+        return false;
+    }
     if let Err(e) = config::validation::validate(&raw) {
+        lifecycle.set_errors(vec![config::ConfigurationValidationError {
+            validator: "schema".to_string(),
+            code: "CONFIG_VALIDATION_FAILED".to_string(),
+            message: config::candidate::sanitize(&e.to_string()),
+        }]);
         tracing::warn!(error = %e, "reloaded config failed validation; keeping previous");
         return false;
     }
-    match Config::from_value(component_name.to_string(), thing_name.to_string(), raw) {
-        Ok(new_config) => {
-            let snapshot = Arc::new(new_config);
-            config.store(snapshot.clone());
-            tracing::info!("configuration reloaded");
-            let current = listeners.lock().map(|l| l.clone()).unwrap_or_default();
-            for listener in current {
-                let _ = listener.on_configuration_change(snapshot.clone()).await;
+
+    // Optimistic validation avoids holding a lock across the blocking callback deadline or async
+    // listener notifications. If another reload commits first, validate again against that exact
+    // newly-redacted prior before attempting the one atomic swap.
+    loop {
+        let prior = config.load_full();
+        let redacted_prior = config::effective::redact(&prior.raw);
+        let validators = lifecycle.validators.clone();
+        let candidate = raw.clone();
+        let timeout = lifecycle.validation_timeout;
+        let errors = match tokio::task::spawn_blocking(move || {
+            config::candidate::validate_candidate(
+                validators.as_slice(),
+                &candidate,
+                Some(&redacted_prior),
+                config::ConfigurationValidationPhase::Reload,
+                timeout,
+            )
+        })
+        .await
+        {
+            Ok(errors) => errors,
+            Err(error) => vec![config::ConfigurationValidationError {
+                validator: "runtime".to_string(),
+                code: "VALIDATOR_FAILED".to_string(),
+                message: config::candidate::sanitize(&error.to_string()),
+            }],
+        };
+        if !errors.is_empty() {
+            tracing::warn!(
+                errors = %format_validation_errors(&errors),
+                generation = lifecycle.generation.load(Ordering::Acquire),
+                "configuration candidate rejected; keeping previous"
+            );
+            lifecycle.set_errors(errors);
+            return false;
+        }
+
+        let new_config = match Config::from_value(
+            component_name.to_string(),
+            thing_name.to_string(),
+            raw.clone(),
+        ) {
+            Ok(config) => config,
+            Err(error) => {
+                lifecycle.set_errors(vec![config::ConfigurationValidationError {
+                    validator: "configuration".to_string(),
+                    code: "CONFIG_PREPARATION_FAILED".to_string(),
+                    message: config::candidate::sanitize(&error.to_string()),
+                }]);
+                tracing::warn!(
+                    error = %error,
+                    "reloaded config could not be parsed; keeping previous"
+                );
+                return false;
             }
-            true
+        };
+
+        let snapshot = Arc::new(new_config);
+        let committed = match lifecycle.commit_lock.lock() {
+            Ok(_commit) => {
+                let current = config.load_full();
+                if Arc::ptr_eq(&current, &prior) {
+                    config.store(snapshot.clone());
+                    lifecycle.generation.fetch_add(1, Ordering::AcqRel);
+                    lifecycle.set_errors(Vec::new());
+                    true
+                } else {
+                    false
+                }
+            }
+            Err(_) => {
+                lifecycle.set_errors(vec![config::ConfigurationValidationError {
+                    validator: "runtime".to_string(),
+                    code: "CONFIG_COMMIT_FAILED".to_string(),
+                    message: "configuration commit lock is poisoned".to_string(),
+                }]);
+                return false;
+            }
+        };
+        if !committed {
+            continue;
         }
-        Err(e) => {
-            tracing::warn!(error = %e, "reloaded config could not be parsed; keeping previous");
-            false
+
+        tracing::info!(
+            generation = lifecycle.generation.load(Ordering::Acquire),
+            "configuration reloaded"
+        );
+        let current = listeners.lock().map(|l| l.clone()).unwrap_or_default();
+        for listener in current {
+            let _ = listener.on_configuration_change(snapshot.clone()).await;
         }
+        return true;
     }
 }
 
@@ -924,11 +1201,22 @@ async fn reload_from_provider(
     source: &dyn config::source::ConfigSource,
     config: &Arc<ArcSwap<Config>>,
     listeners: &ConfigListeners,
+    lifecycle: &Arc<ConfigLifecycle>,
     component_name: &str,
     thing_name: &str,
 ) -> bool {
     match source.load().await {
-        Ok(raw) => apply_reloaded_config(raw, config, listeners, component_name, thing_name).await,
+        Ok(raw) => {
+            apply_reloaded_config(
+                raw,
+                config,
+                listeners,
+                lifecycle,
+                component_name,
+                thing_name,
+            )
+            .await
+        }
         Err(e) => {
             tracing::warn!(
                 error = %e,
@@ -938,6 +1226,14 @@ async fn reload_from_provider(
             false
         }
     }
+}
+
+fn format_validation_errors(errors: &[config::ConfigurationValidationError]) -> String {
+    errors
+        .iter()
+        .map(|error| format!("{}:{}: {}", error.validator, error.code, error.message))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// Spawn the SIGTERM/Ctrl-C watcher (FR-HB-2).
@@ -1094,11 +1390,20 @@ async fn init_messaging(
 /// Common imports for component authors.
 pub mod prelude {
     pub use crate::cli::{ConfigSourceSpec, ParsedArgs};
-    pub use crate::commands::{CommandError, CommandHandler, CommandInbox, command_handler};
-    pub use crate::config::ConfigurationChangeListener;
+    pub use crate::commands::{
+        CommandError, CommandHandler, CommandInbox, CommandInboxStartupState,
+        CommandInboxStartupStatus, CommandOutcome, DeferredReplyRegistry, DeferredReplyToken,
+        OutcomeCommandHandler, POST_ACCEPT_CONTINUATION_CAPACITY, PostAcceptContinuation,
+        command_handler, outcome_handler,
+    };
     pub use crate::config::model::Config;
+    pub use crate::config::{
+        ConfigurationCandidateValidator, ConfigurationChangeListener, ConfigurationValidationError,
+        ConfigurationValidationPhase, ConfigurationValidationResult,
+    };
     pub use crate::facades::{
-        AppFacade, Channel, DataFacade, EventsFacade, Quality, Sample, Severity, SignalUpdate,
+        AppCorrelation, AppFacade, Channel, DataFacade, EventsFacade, PreparedAppMessage, Quality,
+        Sample, Severity, SignalUpdate,
     };
     pub use crate::heartbeat::{InstanceConnectivity, InstanceConnectivityProvider};
     pub use crate::logs::{LogLevel, LogRecord, LogService, LogStats};
@@ -1198,6 +1503,26 @@ mod reload_tests {
         Arc::new(std::sync::Mutex::new(Vec::new()))
     }
 
+    fn lifecycle() -> Arc<ConfigLifecycle> {
+        Arc::new(ConfigLifecycle::new(
+            Arc::new(Vec::new()),
+            config::DEFAULT_CANDIDATE_VALIDATION_TIMEOUT,
+        ))
+    }
+
+    fn lifecycle_with<F>(name: &str, validator: F) -> Arc<ConfigLifecycle>
+    where
+        F: config::ConfigurationCandidateValidator,
+    {
+        Arc::new(ConfigLifecycle::new(
+            Arc::new(vec![config::candidate::NamedValidator {
+                name: name.to_string(),
+                validator: Arc::new(validator),
+            }]),
+            Duration::from_secs(1),
+        ))
+    }
+
     struct CountingListener(Arc<AtomicUsize>);
 
     #[async_trait]
@@ -1208,15 +1533,61 @@ mod reload_tests {
         }
     }
 
+    #[test]
+    fn builder_captures_initial_readiness_validators_timeout_and_command_configurers() {
+        let builder = EdgeCommonsBuilder::new("C")
+            .initial_ready(false)
+            .configuration_validator(
+                "camera",
+                |_: Value, _: Option<Value>, phase: config::ConfigurationValidationPhase| {
+                    assert!(matches!(
+                        phase,
+                        config::ConfigurationValidationPhase::Initial
+                            | config::ConfigurationValidationPhase::Reload
+                    ));
+                    Ok(config::ConfigurationValidationResult::accept())
+                },
+            )
+            .unwrap()
+            .configuration_validation_timeout(Duration::from_secs(3))
+            .unwrap()
+            .configure_commands(|inbox| {
+                inbox.register("capture", commands::command_handler(|_| async { Ok(None) }))
+            });
+
+        assert!(!builder.initial_ready);
+        assert_eq!(builder.configuration_validators.len(), 1);
+        assert_eq!(
+            builder.configuration_validation_timeout,
+            Duration::from_secs(3)
+        );
+        assert_eq!(builder.command_configurers.len(), 1);
+
+        assert!(
+            EdgeCommonsBuilder::new("C")
+                .configuration_validator("bad/name", |_: Value, _: Option<Value>, _| {
+                    Ok(config::ConfigurationValidationResult::accept())
+                },)
+                .is_err()
+        );
+        assert!(
+            EdgeCommonsBuilder::new("C")
+                .configuration_validation_timeout(Duration::from_secs(61))
+                .is_err()
+        );
+    }
+
     #[tokio::test]
     async fn apply_reloaded_config_rejects_schema_invalid_and_keeps_previous() {
         let original = Arc::new(Config::from_value("C", "t", json!({ "component": {} })).unwrap());
         let config = Arc::new(ArcSwap::from(original.clone()));
+        let lifecycle = lifecycle();
         // No "component" key: fails the schema's `required: [component]`.
         let applied = apply_reloaded_config(
             json!({ "metricEmission": { "target": "nope" } }),
             &config,
             &empty_listeners(),
+            &lifecycle,
             "C",
             "t",
         )
@@ -1234,6 +1605,7 @@ mod reload_tests {
         let config = Arc::new(ArcSwap::from_pointee(original));
         let notified = Arc::new(AtomicUsize::new(0));
         let listeners = empty_listeners();
+        let lifecycle = lifecycle();
         listeners
             .lock()
             .unwrap()
@@ -1243,6 +1615,7 @@ mod reload_tests {
             json!({ "component": { "global": { "v": 2 } } }),
             &config,
             &listeners,
+            &lifecycle,
             "C",
             "t",
         )
@@ -1271,8 +1644,10 @@ mod reload_tests {
         let source = FakeSource::new(vec![Err(EdgeCommonsError::Config(
             "broker down".to_string(),
         ))]);
+        let lifecycle = lifecycle();
 
-        let ok = reload_from_provider(&source, &config, &empty_listeners(), "C", "t").await;
+        let ok =
+            reload_from_provider(&source, &config, &empty_listeners(), &lifecycle, "C", "t").await;
 
         assert!(!ok);
         assert!(Arc::ptr_eq(&config.load_full(), &original));
@@ -1284,8 +1659,10 @@ mod reload_tests {
         let config = Arc::new(ArcSwap::from(original.clone()));
         // Fetches successfully, but the document fails schema validation (no "component").
         let source = FakeSource::new(vec![Ok(json!({ "metricEmission": { "target": "nope" } }))]);
+        let lifecycle = lifecycle();
 
-        let ok = reload_from_provider(&source, &config, &empty_listeners(), "C", "t").await;
+        let ok =
+            reload_from_provider(&source, &config, &empty_listeners(), &lifecycle, "C", "t").await;
 
         assert!(!ok);
         assert!(Arc::ptr_eq(&config.load_full(), &original));
@@ -1297,12 +1674,103 @@ mod reload_tests {
             Config::from_value("C", "t", json!({ "component": { "global": { "v": 1 } } })).unwrap();
         let config = Arc::new(ArcSwap::from_pointee(original));
         let source = FakeSource::new(vec![Ok(json!({ "component": { "global": { "v": 99 } } }))]);
+        let lifecycle = lifecycle();
 
-        let ok = reload_from_provider(&source, &config, &empty_listeners(), "C", "t").await;
+        let ok =
+            reload_from_provider(&source, &config, &empty_listeners(), &lifecycle, "C", "t").await;
 
         assert!(ok);
         // Same fullConfig-staleness guarantee as above, exercised through the reload-config
         // command's actual entry point (re-fetch -> validate -> apply -> notify).
         assert_eq!(config.load_full().raw["component"]["global"]["v"], 99);
+    }
+
+    #[tokio::test]
+    async fn validator_rejection_keeps_exact_prior_generation_and_skips_listeners() {
+        let original = Arc::new(
+            Config::from_value(
+                "C",
+                "t",
+                json!({
+                    "component": { "global": { "v": 1 } },
+                    "messaging": { "local": { "credentials": {
+                        "username": "camera", "password": "secret"
+                    } } }
+                }),
+            )
+            .unwrap(),
+        );
+        let config = Arc::new(ArcSwap::from(original.clone()));
+        let notified = Arc::new(AtomicUsize::new(0));
+        let listeners = empty_listeners();
+        listeners
+            .lock()
+            .unwrap()
+            .push(Arc::new(CountingListener(notified.clone())) as _);
+        let saw_redacted = Arc::new(AtomicUsize::new(0));
+        let saw_redacted_validator = saw_redacted.clone();
+        let lifecycle = lifecycle_with(
+            "camera",
+            move |mut candidate: Value, prior: Option<Value>, phase| {
+                assert_eq!(phase, config::ConfigurationValidationPhase::Reload);
+                assert_eq!(prior.unwrap()["messaging"]["local"]["credentials"], "***");
+                saw_redacted_validator.fetch_add(1, Ordering::SeqCst);
+                candidate["component"]["global"]["v"] = json!(999);
+                Ok(config::ConfigurationValidationResult::reject(
+                    "CAMERA_INVALID",
+                    "invalid camera",
+                ))
+            },
+        );
+
+        let applied = apply_reloaded_config(
+            json!({ "component": { "global": { "v": 2 } } }),
+            &config,
+            &listeners,
+            &lifecycle,
+            "C",
+            "t",
+        )
+        .await;
+
+        assert!(!applied);
+        assert!(Arc::ptr_eq(&config.load_full(), &original));
+        assert_eq!(lifecycle.generation.load(Ordering::SeqCst), 1);
+        assert_eq!(notified.load(Ordering::SeqCst), 0);
+        assert_eq!(saw_redacted.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            lifecycle.last_errors.lock().unwrap()[0].code,
+            "CAMERA_INVALID"
+        );
+    }
+
+    #[tokio::test]
+    async fn schema_validation_precedes_candidate_callback() {
+        let original = Arc::new(Config::from_value("C", "t", json!({ "component": {} })).unwrap());
+        let config = Arc::new(ArcSwap::from(original.clone()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_validator = calls.clone();
+        let lifecycle = lifecycle_with("camera", move |_: Value, _: Option<Value>, _| {
+            calls_validator.fetch_add(1, Ordering::SeqCst);
+            Ok(config::ConfigurationValidationResult::accept())
+        });
+
+        assert!(
+            !apply_reloaded_config(
+                json!({ "notComponent": true }),
+                &config,
+                &empty_listeners(),
+                &lifecycle,
+                "C",
+                "t",
+            )
+            .await
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(Arc::ptr_eq(&config.load_full(), &original));
+        assert_eq!(
+            lifecycle.last_errors.lock().unwrap()[0].code,
+            "CONFIG_VALIDATION_FAILED"
+        );
     }
 }

@@ -3,7 +3,9 @@ import os
 import re
 import time
 import copy
-from typing import Dict, Any, Optional
+import threading
+from dataclasses import dataclass
+from typing import Dict, Any, Mapping, Optional, Tuple
 
 from edgecommons.messaging.identity import HierEntry, MessageIdentity
 from edgecommons.platform.resolver import (
@@ -22,6 +24,17 @@ from edgecommons.config.manager.hierarchical_config import (
     deep_merge_layers,
     parse_config_component_payload,
     HierarchicalConfigError,
+)
+from edgecommons.config.candidate_validation import (
+    DEFAULT_CANDIDATE_VALIDATION_TIMEOUT_SECS,
+    ConfigurationCandidateRejected,
+    ConfigurationCandidateValidator,
+    ConfigurationValidationError,
+    ConfigurationValidationPhase,
+    in_validator_callback,
+    normalize_validators,
+    require_validation_timeout,
+    validate_candidate,
 )
 
 logger = logging.getLogger("ConfigManager")
@@ -55,6 +68,34 @@ _HIERARCHY_LEVEL_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 
 
+_IN_APPLIED_LISTENER = threading.local()
+
+
+@dataclass(frozen=True)
+class _ConfigSnapshot:
+    """One accepted generation; installed with one reference assignment."""
+
+    generation: int
+    raw_config: Dict[str, Any]
+    component_layer: Dict[str, Any]
+    base_layer: Optional[Dict[str, Any]]
+    base_source: Optional[str]
+    tag_config: TagConfiguration
+    heartbeat_config: HeartbeatConfiguration
+    health_config: HealthConfiguration
+    metric_config: MetricConfiguration
+    logging_config: EnhancedLoggingConfiguration
+    component_config: Dict[str, Any]
+    global_config: Dict[str, Any]
+    instances: Dict[str, Dict[str, Any]]
+    streaming_config: Optional[Dict[str, Any]]
+    credentials_config: Optional[Dict[str, Any]]
+    parameters_config: Optional[Dict[str, Any]]
+    topic_include_root: bool
+    messaging_request_timeout_seconds: float
+    component_identity: Optional[MessageIdentity]
+
+
 def _identity_error(detail: str) -> ValueError:
     """The uniform fail-fast identity-resolution startup error."""
     return ValueError(f"Component identity resolution failed: {detail}")
@@ -67,6 +108,10 @@ class ConfigManager:
         thing_name: str = None,
         validate_config: bool = True,
         platform=None,
+        candidate_validators: Optional[
+            Mapping[str, ConfigurationCandidateValidator]
+        ] = None,
+        validation_timeout_secs: float = DEFAULT_CANDIDATE_VALIDATION_TIMEOUT_SECS,
     ):
         if not component_name:
             raise ValueError("Component name cannot be None or empty")
@@ -75,6 +120,16 @@ class ConfigManager:
         # resolver/builder). Threaded in BEFORE init() so _apply_config can apply the platform's
         # default logging format (json on KUBERNETES) when the config omits one (FR-RT-3 / FR-LOG-1).
         self._platform = platform
+        self._transition_lock = threading.Lock()
+        self._snapshot_lock = threading.RLock()
+        self._snapshot: Optional[_ConfigSnapshot] = None
+        self._candidate_validators = normalize_validators(candidate_validators)
+        self._candidate_validation_timeout = require_validation_timeout(
+            validation_timeout_secs
+        )
+        self._last_candidate_validation_errors: Tuple[
+            ConfigurationValidationError, ...
+        ] = ()
         self._tag_config = None
         self._heartbeat_config = None
         self._health_config = None
@@ -124,21 +179,19 @@ class ConfigManager:
 
     def init(self):
         try:
-            component_layer, base_layer, base_source, config = (
-                self._load_effective_configuration()
-            )
-
-            # Validate configuration if enabled
-            if self._validate_config:
-                self._validate_configuration(config)
-
-            self._apply_config(config)
-
-            # Resolve the component's UNS identity ONCE, from this component's own
-            # effective config (top-level `hierarchy` + `identity`), fail-fast on any
-            # inconsistency (UNS-CANONICAL-DESIGN §1.5).
-            self._component_identity = self._resolve_component_identity(config)
-            self._commit_layers(component_layer, base_layer, base_source)
+            component_layer, base_layer, base_source, config = self._load_effective_configuration()
+            with self._transition_lock:
+                accepted = self._activate_candidate(
+                    component_layer,
+                    base_layer,
+                    base_source,
+                    config,
+                    ConfigurationValidationPhase.INITIAL,
+                )
+            if not accepted:
+                raise ConfigurationCandidateRejected(
+                    self._last_candidate_validation_errors
+                )
 
             logger.info("Configuration manager initialized successfully")
 
@@ -146,21 +199,146 @@ class ConfigManager:
             logger.error(f"Failed to initialize configuration manager: {e}")
             raise
 
-    def _apply_config(self, config: dict):
-        # Retain the raw effective config verbatim: the source for identity resolution
-        # and the effective-config (cfg) publisher (UNS-CANONICAL-DESIGN §4.3).
-        self._raw_config = config
+    def _prepare_snapshot(
+        self,
+        component_layer: Dict[str, Any],
+        base_layer: Optional[Dict[str, Any]],
+        base_source: Optional[str],
+        config: dict,
+        generation: int,
+        resolve_identity: bool = True,
+    ) -> _ConfigSnapshot:
+        """Parse a complete candidate off-side without touching live state."""
 
-        # UNS topic options + the request() deadline default (re-parsed on hot reload).
-        self._topic_include_root = self._parse_topic_include_root(config)
-        # D-U25: includeRoot needs a level ABOVE the device to prepend — with a
-        # single-level hierarchy (the zero-config ["device"] default) hier[0] IS the
-        # device, so the setting is a no-op in Uns (prepending would duplicate the
-        # device). Tell the user once.
+        raw_config = copy.deepcopy(config)
+        component_config = copy.deepcopy(
+            raw_config.get("component", {"global": {}, "instances": []})
+        )
+        if not isinstance(component_config, dict):
+            raise ValueError("component configuration must be an object")
+        global_config = copy.deepcopy(component_config.get("global", {}))
+        instances = {}
+        for instance in component_config.get("instances", []):
+            instances[instance["id"]] = copy.deepcopy(instance)
+
+        topic_include_root = self._parse_topic_include_root(raw_config)
+        tag_config = TagConfiguration(raw_config.get("tags"))
+        logging_config = EnhancedLoggingConfiguration(
+            raw_config.get("logging"),
+            platform_default_format=profile_logging_format(self._platform),
+            correlation=self._logging_correlation(),
+        )
+        return _ConfigSnapshot(
+            generation=generation,
+            raw_config=raw_config,
+            component_layer=copy.deepcopy(component_layer),
+            base_layer=copy.deepcopy(base_layer),
+            base_source=base_source,
+            tag_config=tag_config,
+            heartbeat_config=HeartbeatConfiguration(raw_config.get("heartbeat")),
+            health_config=HealthConfiguration(raw_config.get("health")),
+            metric_config=MetricConfiguration(raw_config.get("metricEmission")),
+            logging_config=logging_config,
+            component_config=component_config,
+            global_config=global_config,
+            instances=instances,
+            streaming_config=copy.deepcopy(raw_config.get("streaming")),
+            credentials_config=copy.deepcopy(raw_config.get("credentials")),
+            parameters_config=copy.deepcopy(raw_config.get("parameters")),
+            topic_include_root=topic_include_root,
+            messaging_request_timeout_seconds=(
+                self._parse_messaging_request_timeout_seconds(raw_config)
+            ),
+            component_identity=(
+                self._resolve_component_identity(raw_config)
+                if resolve_identity
+                else self._component_identity
+            ),
+        )
+
+    def _activate_candidate(
+        self,
+        component_layer: Dict[str, Any],
+        base_layer: Optional[Dict[str, Any]],
+        base_source: Optional[str],
+        config: dict,
+        phase: ConfigurationValidationPhase,
+    ) -> bool:
+        """Schema-check, validate and atomically install one generation."""
+
+        if self._validate_config:
+            self._validate_configuration(config)
+        current = self._snapshot
+        generation = 1 if current is None else current.generation + 1
+        prepared = self._prepare_snapshot(
+            component_layer,
+            base_layer,
+            base_source,
+            config,
+            generation,
+            resolve_identity=(phase is ConfigurationValidationPhase.INITIAL),
+        )
+
+        redacted_current = None
+        if current is not None:
+            # Local import avoids a module cycle at import time.
+            from edgecommons.config.effective_config_publisher import redact
+
+            redacted_current = redact(current.raw_config)
+        errors = validate_candidate(
+            self._candidate_validators,
+            prepared.raw_config,
+            redacted_current,
+            phase,
+            self._candidate_validation_timeout,
+        )
+        self._last_candidate_validation_errors = errors
+        if errors:
+            logger.warning(
+                "Configuration candidate rejected in generation %d: %s",
+                generation,
+                "; ".join(
+                    f"{error.validator}:{error.code}: {error.message}"
+                    for error in errors
+                ),
+            )
+            return False
+
+        self._install_snapshot(prepared)
+        return True
+
+    def _install_snapshot(self, snapshot: _ConfigSnapshot) -> None:
+        """Publish a prepared generation with one atomic snapshot swap."""
+
+        with self._snapshot_lock:
+            self._snapshot = snapshot
+            # Preserve private compatibility fields for older subclasses/tests. Public readers
+            # use the snapshot reference and therefore never observe a torn generation.
+            self._raw_config = snapshot.raw_config
+            self._tag_config = snapshot.tag_config
+            self._heartbeat_config = snapshot.heartbeat_config
+            self._health_config = snapshot.health_config
+            self._metric_config = snapshot.metric_config
+            self._logging_config = snapshot.logging_config
+            self._component_config = snapshot.component_config
+            self._global_config = snapshot.global_config
+            self._instances = snapshot.instances
+            self._streaming_config = snapshot.streaming_config
+            self._credentials_config = snapshot.credentials_config
+            self._parameters_config = snapshot.parameters_config
+            self._topic_include_root = snapshot.topic_include_root
+            self._messaging_request_timeout_seconds = (
+                snapshot.messaging_request_timeout_seconds
+            )
+            self._component_identity = snapshot.component_identity
+            self._latest_component_layer = snapshot.component_layer
+            self._latest_base_layer = snapshot.base_layer
+            self._latest_base_source = snapshot.base_source
+
         if (
-            self._topic_include_root
+            snapshot.topic_include_root
             and not self._warned_include_root_single_level
-            and self._hierarchy_level_count(config) == 1
+            and self._hierarchy_level_count(snapshot.raw_config) == 1
         ):
             self._warned_include_root_single_level = True
             logger.warning(
@@ -170,65 +348,36 @@ class ConfigManager:
                 " rootless. Declare a multi-level hierarchy.levels or remove"
                 " topic.includeRoot."
             )
-        self._messaging_request_timeout_seconds = (
-            self._parse_messaging_request_timeout_seconds(config)
+
+        # Logging changes only after the generation is current. A logging sink failure must not
+        # roll back or misreport an otherwise accepted atomic generation.
+        try:
+            snapshot.logging_config.configure_logging(self)
+            logging.Formatter.converter = time.gmtime
+        except Exception as exc:  # noqa: BLE001 - accepted config remains accepted
+            logger.error("Failed to reconfigure logging for accepted config: %s", exc)
+
+    def _apply_config(self, config: dict):
+        """Legacy internal test seam; install without candidate callbacks/listeners.
+
+        Runtime paths use :meth:`_activate_candidate`. This helper retains its historical
+        behavior of leaving the already-resolved identity unchanged.
+        """
+
+        current = self._snapshot
+        generation = 1 if current is None else current.generation + 1
+        prepared = self._prepare_snapshot(
+            config, None, None, config, generation, resolve_identity=False
         )
-
-        # Log file path templates may use tags, so tag_config must exist before
-        # logging setup. Template precedence itself lives in resolve_template().
-        tag_json = config.get("tags")
-        self._tag_config = TagConfiguration(tag_json)
-
-        logging_json = config.get("logging")
-        # FR-RT-3 / FR-LOG-1: the platform-profile default logging format (json on KUBERNETES) is
-        # the middle precedence tier — applied only when the config omits `python_format`.
-        platform_default_format = profile_logging_format(self._platform)
-        self._logging_config = EnhancedLoggingConfiguration(
-            logging_json,
-            platform_default_format=platform_default_format,
-            correlation=self._logging_correlation(),
-        )
-        # configure_logging wires the console handler (text or, under the `json` token, the
-        # stdout-JSON layout). Off the JSON sink and when logging.fileLogging.enabled it also wires a
-        # size-rotated RotatingFileHandler (maxFileSize / backupCount); under the JSON sink in-process
-        # rotation is intentionally skipped (FR-LOG-2 — the cluster log agent owns rotation). It
-        # clears existing handlers first, so a config hot-reload reconfigures cleanly without leaking.
-        self._logging_config.configure_logging(self)
-        logging.Formatter.converter = time.gmtime
-
-        heartbeat_json = config.get("heartbeat")
-        self._heartbeat_config = HeartbeatConfiguration(heartbeat_json)
-
-        # Health server config (Phase 1c health slice). Always constructed (schema-aligned defaults)
-        # so EdgeCommons._init_health can read port/paths even when the section is absent; `enabled`
-        # stays None to let the platform-profile default decide (on for KUBERNETES, FR-RT-3).
-        health_json = config.get("health")
-        self._health_config = HealthConfiguration(health_json)
-
-        metric_json = config.get("metricEmission")
-        self._metric_config = MetricConfiguration(metric_json)
-
-        self._component_config = config.get("component", {"global": {}, "instances": []})
-        self._global_config = self._component_config.get("global", {})
-        self._gen_instances_map()
-
-        # Retain the raw `streaming` section verbatim (no typed parsing in Python — the native
-        # edgestreamlog core owns the streaming schema). Kept so get_full_config() exposes it to
-        # EdgeCommons._init_streaming(); without this the section is dropped and streaming never opens.
-        self._streaming_config = config.get("streaming")
-        # Likewise retain the raw `credentials` section so EdgeCommons._init_credentials() can find it.
-        self._credentials_config = config.get("credentials")
-        # And the raw `parameters` section so EdgeCommons._init_parameters() can find it.
-        self._parameters_config = config.get("parameters")
+        self._install_snapshot(prepared)
 
     def _gen_instances_map(self):
-        # Rebuild from scratch so a hot reload that removes an instance does not
-        # leave a stale entry behind.
-        self._instances = {}
-        if "instances" in self._component_config:
-            for instance in self._component_config["instances"]:
-                self._instances[instance["id"]] = instance
-                logger.debug(f"loaded config for {self._instances[instance['id']]}")
+        """Compatibility helper retained for older subclasses."""
+
+        self._instances = {
+            instance["id"]: instance
+            for instance in self._component_config.get("instances", [])
+        }
 
     def _logging_correlation(self) -> Dict[str, str]:
         """Best-effort correlation fields for the stdout-JSON sink (FR-LOG-3).
@@ -252,30 +401,30 @@ class ConfigManager:
         return correlation
 
     def configuration_changed(self, new_config: dict) -> bool:
+        if in_validator_callback():
+            logger.warning("Configuration activation requested from a candidate validator; rejected")
+            return False
+        if getattr(_IN_APPLIED_LISTENER, "active", False):
+            logger.warning("Re-entrant configuration activation from an applied listener; rejected")
+            return False
         try:
-            logger.debug("Processing configuration change")
-            component_layer, base_layer, base_source, effective_config = (
-                self._effective_from_source_payload(new_config)
-            )
-            
-            # Validate new configuration if enabled
-            if self._validate_config:
-                self._validate_configuration(effective_config)
-
-            component_identity = self._resolve_component_identity(effective_config)
-                
-            # Apply the new configuration
-            self._apply_config(effective_config)
-            self._component_identity = component_identity
-            self._commit_layers(component_layer, base_layer, base_source)
-            
-            # Notify listeners only if not initializing
-            if not self._initializing:
-                self._notify_configuration_changed(effective_config)
-                
+            with self._transition_lock:
+                logger.debug("Processing configuration change")
+                component_layer, base_layer, base_source, effective_config = (
+                    self._effective_from_source_payload(new_config)
+                )
+                if not self._activate_candidate(
+                    component_layer,
+                    base_layer,
+                    base_source,
+                    effective_config,
+                    ConfigurationValidationPhase.RELOAD,
+                ):
+                    return False
+                if not self._initializing:
+                    self._notify_configuration_changed(effective_config)
             logger.info("Configuration change processed successfully")
             return True
-            
         except Exception as e:
             logger.error(f"Failed to process configuration change: {e}")
             return False
@@ -296,6 +445,9 @@ class ConfigManager:
             ``False`` when the fetch failed / returned nothing, or the document was
             schema-invalid (the previous configuration is kept)
         """
+        if in_validator_callback() or getattr(_IN_APPLIED_LISTENER, "active", False):
+            logger.warning("Re-entrant provider reload requested from a configuration callback; rejected")
+            return False
         try:
             source_payload = self._load_configuration()
         except Exception as e:
@@ -310,29 +462,7 @@ class ConfigManager:
                 " configuration - keeping the previous configuration"
             )
             return False
-        try:
-            component_layer, base_layer, base_source, new_config = (
-                self._effective_from_source_payload(source_payload)
-            )
-        except Exception as e:
-            logger.warning(
-                f"reload-config: hierarchical config merge from the '{self._config_source}'"
-                f" source failed: {e}"
-            )
-            return False
-        try:
-            if self._validate_config:
-                self._validate_configuration(new_config)
-            component_identity = self._resolve_component_identity(new_config)
-            self._apply_config(new_config)
-            self._component_identity = component_identity
-            self._commit_layers(component_layer, base_layer, base_source)
-            if not self._initializing:
-                self._notify_configuration_changed(new_config)
-            return True
-        except Exception as e:
-            logger.error(f"Failed to process configuration reload: {e}")
-            return False
+        return self.configuration_changed(source_payload)
 
     @staticmethod
     def _parse_topic_include_root(config: dict) -> bool:
@@ -386,7 +516,8 @@ class ConfigManager:
         the first hierarchy value (``site``) between the ``ecv1`` root and the device —
         the top-level ``topic.includeRoot`` setting, default ``False``. Note that
         ``Uns`` applies it only when the hierarchy is multi-level (D-U25)."""
-        return self._topic_include_root
+        snapshot = self._snapshot
+        return False if snapshot is None else snapshot.topic_include_root
 
     def get_messaging_request_timeout(self) -> float:
         """The default ``request()`` deadline resolved from
@@ -394,11 +525,13 @@ class ConfigManager:
         seconds; ``0`` when disabled. ``EdgeCommons`` late-binds this onto the messaging
         client right after this manager is constructed; an explicit per-call timeout on
         ``request()`` always wins over this default."""
-        return (
-            0.0
-            if self._messaging_request_timeout_seconds <= 0
-            else self._messaging_request_timeout_seconds
+        snapshot = self._snapshot
+        value = (
+            DEFAULT_REQUEST_TIMEOUT_SECONDS
+            if snapshot is None
+            else snapshot.messaging_request_timeout_seconds
         )
+        return 0.0 if value <= 0 else value
 
     def get_component_identity(self) -> Optional[MessageIdentity]:
         """The component's resolved UNS identity (instance ``"main"``), resolved once
@@ -419,7 +552,8 @@ class ConfigManager:
         :returns: the resolved identity, or ``None`` when this manager was constructed
             without ``init()`` (test/subclass bring-up — no config was resolved)
         """
-        return self._component_identity
+        snapshot = self._snapshot
+        return None if snapshot is None else copy.deepcopy(snapshot.component_identity)
 
     def _resolve_component_identity(self, config: dict) -> MessageIdentity:
         """Resolves the component identity from the applied config (see
@@ -554,9 +688,11 @@ class ConfigManager:
         effective-config (``cfg``) publisher redacts + announces (UNS-CANONICAL-DESIGN
         §4.3). Distinct from :meth:`get_full_config`, which reconstructs a normalized
         view from the typed config models."""
-        return self._raw_config
+        snapshot = self._snapshot
+        return None if snapshot is None else copy.deepcopy(snapshot.raw_config)
 
     def resolve_template(self, template: str) -> str:
+        snapshot = self._snapshot
         ret_val = template
         if "{ThingName}" in template:
             ret_val = ret_val.replace("{ThingName}", _sanitize(self._thing_name))
@@ -564,12 +700,18 @@ class ConfigManager:
             ret_val = ret_val.replace("{ComponentName}", _sanitize(self._component_name))
         if "{ComponentFullName}" in template:
             ret_val = ret_val.replace("{ComponentFullName}", _sanitize(self._component_full_name))
-        if self._component_identity is not None:
-            for entry in self._component_identity.hier:
+        component_identity = (
+            self._component_identity
+            if snapshot is None
+            else snapshot.component_identity
+        )
+        if component_identity is not None:
+            for entry in component_identity.hier:
                 identity_template = "{" + entry.level + "}"
                 if identity_template in ret_val:
                     ret_val = ret_val.replace(identity_template, _sanitize(entry.value))
-        tag_dict = {} if self._tag_config is None else self._tag_config.to_dict()
+        tag_config = self._tag_config if snapshot is None else snapshot.tag_config
+        tag_dict = {} if tag_config is None else tag_config.to_dict()
         for k in tag_dict.keys():
             key_template = "{" + k + "}"
             if key_template in ret_val:
@@ -640,27 +782,36 @@ class ConfigManager:
         )
 
     def get_global_config(self) -> dict:
-        return self._global_config
+        snapshot = self._snapshot
+        return {} if snapshot is None else copy.deepcopy(snapshot.global_config)
 
     def get_instance_ids(self) -> list:
-        return [*self._instances]
+        snapshot = self._snapshot
+        return [] if snapshot is None else list(snapshot.instances)
 
     def get_instance_config(self, inst_id) -> dict:
-        return self._instances[inst_id]
+        snapshot = self._snapshot
+        if snapshot is None:
+            raise KeyError(inst_id)
+        return copy.deepcopy(snapshot.instances[inst_id])
 
     def get_tag_config(self) -> TagConfiguration:
-        return self._tag_config
+        snapshot = self._snapshot
+        return self._tag_config if snapshot is None else snapshot.tag_config
 
     def get_heartbeat_config(self) -> HeartbeatConfiguration:
-        return self._heartbeat_config
+        snapshot = self._snapshot
+        return self._heartbeat_config if snapshot is None else snapshot.heartbeat_config
 
     def get_health_config(self) -> HealthConfiguration:
         """The parsed ``health`` config section (Phase 1c). Never ``None`` after init — defaults to a
         schema-aligned :class:`HealthConfiguration` with ``enabled=None`` when the section is absent."""
-        return self._health_config
+        snapshot = self._snapshot
+        return self._health_config if snapshot is None else snapshot.health_config
 
     def get_metric_config(self) -> MetricConfiguration:
-        return self._metric_config
+        snapshot = self._snapshot
+        return self._metric_config if snapshot is None else snapshot.metric_config
 
     def get_platform(self):
         """The resolved :class:`~edgecommons.platform.platform.Platform` (or ``None`` when constructed
@@ -675,7 +826,8 @@ class ConfigManager:
         return self._platform
 
     def get_logging_config(self) -> EnhancedLoggingConfiguration:
-        return self._logging_config
+        snapshot = self._snapshot
+        return self._logging_config if snapshot is None else snapshot.logging_config
 
     def get_thing_name(self) -> str:
         return self._thing_name
@@ -737,14 +889,16 @@ class ConfigManager:
         for listener in self._change_listeners:
             try:
                 if listener is not None:
-                    result = listener.on_configuration_change(new_config)
+                    _IN_APPLIED_LISTENER.active = True
+                    result = listener.on_configuration_change(copy.deepcopy(new_config))
                     if not result:
                         logger.warning(f"Listener {listener} returned False for configuration change")
                 else:
                     logger.error("Configuration change listener is None")
-                    
             except Exception as e:
                 logger.error(f"Error notifying configuration change listener {listener}: {e}")
+            finally:
+                _IN_APPLIED_LISTENER.active = False
                 
     def remove_config_change_listener(self, listener: ConfigurationChangeListener) -> None:
         """Removes a configuration change listener."""
@@ -759,7 +913,21 @@ class ConfigManager:
             
     def get_full_config(self) -> Dict[str, Any]:
         """Returns the accepted effective configuration snapshot."""
-        return copy.deepcopy(self._raw_config) if self._raw_config is not None else {}
+        snapshot = self._snapshot
+        return copy.deepcopy(snapshot.raw_config) if snapshot is not None else {}
+
+    def get_generation(self) -> int:
+        """The accepted configuration generation (zero before the initial commit)."""
+
+        snapshot = self._snapshot
+        return 0 if snapshot is None else snapshot.generation
+
+    def get_last_candidate_validation_errors(
+        self,
+    ) -> Tuple[ConfigurationValidationError, ...]:
+        """Stable errors from the most recent rejected candidate, else an empty tuple."""
+
+        return tuple(self._last_candidate_validation_errors)
         
     def is_validation_enabled(self) -> bool:
         """Returns whether configuration validation is enabled."""

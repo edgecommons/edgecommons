@@ -33,6 +33,10 @@ interface LayerCandidate {
 export class LayeredConfigCoordinator {
   private latestEffective?: JsonObject;
   private sourceWatch?: ConfigWatch;
+  // Serialize source updates so a slow asynchronous validator cannot commit an older generation
+  // after a later candidate. Rejections are contained in the individual result and never poison
+  // the following update.
+  private updateTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly opts: LayeredConfigCoordinatorOptions) {}
 
@@ -43,7 +47,9 @@ export class LayeredConfigCoordinator {
     return cloneJson(candidate.effective);
   }
 
-  async reloadFromProvider(applyEffective: (effective: JsonObject) => boolean): Promise<boolean> {
+  async reloadFromProvider(
+    applyEffective: (effective: JsonObject) => boolean | Promise<boolean>,
+  ): Promise<boolean> {
     let raw: unknown;
     try {
       raw = await this.opts.source.load();
@@ -56,14 +62,32 @@ export class LayeredConfigCoordinator {
     return this.applySourceUpdate(raw, applyEffective);
   }
 
-  async watch(applyEffective: (effective: JsonObject) => boolean): Promise<ConfigWatch | undefined> {
+  async watch(
+    applyEffective: (effective: JsonObject) => boolean | Promise<boolean>,
+  ): Promise<ConfigWatch | undefined> {
     this.sourceWatch = await this.opts.source.watch((raw) => {
       void this.applySourceUpdate(raw, applyEffective);
     });
     return this.sourceWatch;
   }
 
-  private applySourceUpdate(raw: unknown, applyEffective: (effective: JsonObject) => boolean): boolean {
+  private applySourceUpdate(
+    raw: unknown,
+    applyEffective: (effective: JsonObject) => boolean | Promise<boolean>,
+  ): Promise<boolean> {
+    const run = async (): Promise<boolean> => this.applySourceUpdateNow(raw, applyEffective);
+    const result = this.updateTail.then(run, run);
+    this.updateTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private async applySourceUpdateNow(
+    raw: unknown,
+    applyEffective: (effective: JsonObject) => boolean | Promise<boolean>,
+  ): Promise<boolean> {
     let candidate: LayerCandidate;
     try {
       candidate = this.candidateFromSource(raw);
@@ -71,7 +95,7 @@ export class LayeredConfigCoordinator {
       logger.warn(`reloaded config rejected; keeping previous: ${String(e)}`);
       return false;
     }
-    if (!applyEffective(candidate.effective)) {
+    if (!(await applyEffective(candidate.effective))) {
       return false;
     }
     this.commit(candidate);

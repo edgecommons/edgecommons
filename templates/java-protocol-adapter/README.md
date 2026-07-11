@@ -31,6 +31,9 @@ markers in `src/main/java/.../<<COMPONENTNAME>>.java`.
   `heartbeat: {enabled, intervalSecs, measures, destination}` to tune).
 - Relies on the library's SIGTERM/SIGINT hook for graceful shutdown (no manual hook;
   `main()` blocks on a latch).
+- Starts with `initialReady(false)` and releases the application gate only after all configured
+  workers are launched. Connected messaging and an acknowledged `ACTIVE` command inbox remain
+  mandatory readiness conditions.
 
 It is **protocol-agnostic on purpose** — no protocol SDK is bundled. The placeholder worker emits a
 synthetic value so the scaffold runs end-to-end; replace it with your protocol logic.

@@ -257,6 +257,15 @@ impl DefaultLogService {
         config: Arc<ArcSwap<Config>>,
         reserved: Option<Arc<dyn ReservedMessaging>>,
     ) -> Result<Arc<Self>> {
+        let service = Self::start_unregistered(config, reserved)?;
+        capture_service().store(Some(service.clone()));
+        Ok(service)
+    }
+
+    fn start_unregistered(
+        config: Arc<ArcSwap<Config>>,
+        reserved: Option<Arc<dyn ReservedMessaging>>,
+    ) -> Result<Arc<Self>> {
         let settings = LogPublishSettings::from_config(&config.load_full())?;
         let service = Arc::new(Self {
             config,
@@ -275,8 +284,15 @@ impl DefaultLogService {
         if let Ok(mut slot) = service.worker.lock() {
             *slot = Some(handle);
         }
-        capture_service().store(Some(service.clone()));
         Ok(service)
+    }
+
+    #[cfg(test)]
+    fn start_for_isolated_capture_test(
+        config: Arc<ArcSwap<Config>>,
+        reserved: Option<Arc<dyn ReservedMessaging>>,
+    ) -> Result<Arc<Self>> {
+        Self::start_unregistered(config, reserved)
     }
 
     fn capture(&self, record: LogRecord) {
@@ -459,12 +475,28 @@ impl ConfigurationChangeListener for DefaultLogService {
 }
 
 /// Tracing layer that captures native Rust tracing events into the log bus.
-#[derive(Debug, Default)]
-pub struct LogCaptureLayer;
+#[derive(Default)]
+pub struct LogCaptureLayer {
+    #[cfg(test)]
+    service: Option<Arc<DefaultLogService>>,
+}
+
+impl std::fmt::Debug for LogCaptureLayer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LogCaptureLayer").finish()
+    }
+}
 
 impl LogCaptureLayer {
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    #[cfg(test)]
+    fn for_isolated_capture_test(service: Arc<DefaultLogService>) -> Self {
+        Self {
+            service: Some(service),
+        }
     }
 }
 
@@ -476,7 +508,17 @@ where
         if is_log_publishing_task() {
             return;
         }
+        #[cfg(test)]
+        let service = self
+            .service
+            .clone()
+            .or_else(|| capture_service().load_full());
+        #[cfg(not(test))]
         let Some(service) = capture_service().load_full() else {
+            return;
+        };
+        #[cfg(test)]
+        let Some(service) = service else {
             return;
         };
         let level = match *event.metadata().level() {
@@ -706,18 +748,8 @@ mod tests {
     use crate::testutil::RecordingMessaging;
     use async_trait::async_trait;
     use serde_json::json;
-    use std::sync::OnceLock;
     use std::time::Duration;
     use tracing_subscriber::prelude::*;
-
-    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn test_lock() -> std::sync::MutexGuard<'static, ()> {
-        TEST_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-    }
 
     fn config(raw: Value) -> Arc<ArcSwap<Config>> {
         Arc::new(ArcSwap::from_pointee(
@@ -733,9 +765,8 @@ mod tests {
 
     #[tokio::test]
     async fn explicit_publish_uses_reserved_log_topic_and_body_schema() {
-        let _guard = test_lock();
         let messaging = connected_messaging();
-        let service = DefaultLogService::start(
+        let service = DefaultLogService::start_for_isolated_capture_test(
             config(json!({ "logging": { "publish": { "enabled": true } } })),
             Some(messaging.clone() as Arc<dyn ReservedMessaging>),
         )
@@ -770,9 +801,8 @@ mod tests {
 
     #[tokio::test]
     async fn northbound_destination_uses_reserved_northbound_path() {
-        let _guard = test_lock();
         let messaging = connected_messaging();
-        let service = DefaultLogService::start(
+        let service = DefaultLogService::start_for_isolated_capture_test(
             config(json!({ "logging": { "publish": { "destination": "northbound" } } })),
             Some(messaging.clone() as Arc<dyn ReservedMessaging>),
         )
@@ -790,9 +820,8 @@ mod tests {
 
     #[tokio::test]
     async fn disconnected_transport_counts_failure_without_reserved_publish() {
-        let _guard = test_lock();
         let messaging = RecordingMessaging::new();
-        let service = DefaultLogService::start(
+        let service = DefaultLogService::start_for_isolated_capture_test(
             config(json!({ "logging": { "publish": { "enabled": true } } })),
             Some(messaging.clone() as Arc<dyn ReservedMessaging>),
         )
@@ -809,9 +838,8 @@ mod tests {
 
     #[tokio::test]
     async fn redaction_applies_extra_patterns() {
-        let _guard = test_lock();
         let messaging = connected_messaging();
-        let service = DefaultLogService::start(
+        let service = DefaultLogService::start_for_isolated_capture_test(
             config(json!({ "logging": { "publish": { "redaction": {
                 "extraPatterns": ["token=[A-Za-z0-9]+"]
             } } } })),
@@ -834,9 +862,8 @@ mod tests {
 
     #[tokio::test]
     async fn truncation_marks_record_and_preserves_required_fields() {
-        let _guard = test_lock();
         let messaging = connected_messaging();
-        let service = DefaultLogService::start(
+        let service = DefaultLogService::start_for_isolated_capture_test(
             config(json!({ "logging": { "publish": { "maxRecordBytes": 180 } } })),
             Some(messaging.clone() as Arc<dyn ReservedMessaging>),
         )
@@ -853,9 +880,8 @@ mod tests {
 
     #[tokio::test]
     async fn queue_drop_oldest_is_nonblocking_and_reports_dropped() {
-        let _guard = test_lock();
         let messaging = connected_messaging();
-        let service = DefaultLogService::start(
+        let service = DefaultLogService::start_for_isolated_capture_test(
             config(json!({ "logging": { "publish": { "queue": { "maxRecords": 1 } } } })),
             Some(messaging.clone() as Arc<dyn ReservedMessaging>),
         )
@@ -883,9 +909,8 @@ mod tests {
 
     #[tokio::test]
     async fn capture_layer_builds_record_when_enabled() {
-        let _guard = test_lock();
         let messaging = connected_messaging();
-        let service = DefaultLogService::start(
+        let service = DefaultLogService::start_for_isolated_capture_test(
             config(json!({ "logging": { "publish": {
                 "enabled": true,
                 "minLevel": "DEBUG"
@@ -893,10 +918,9 @@ mod tests {
             Some(messaging as Arc<dyn ReservedMessaging>),
         )
         .unwrap();
-        let layer = LogCaptureLayer::new();
         let subscriber = tracing_subscriber::registry()
             .with(tracing_subscriber::EnvFilter::new("trace"))
-            .with(layer);
+            .with(LogCaptureLayer::for_isolated_capture_test(service.clone()));
         tracing::subscriber::with_default(subscriber, || {
             tracing::info!(answer = 42_u64, "hello");
         });
@@ -930,12 +954,11 @@ mod tests {
 
     #[tokio::test]
     async fn capture_layer_suppresses_events_emitted_by_log_publisher() {
-        let _guard = test_lock();
         let inner = connected_messaging();
         let reserved = Arc::new(LoggingReserved {
             inner: inner.clone(),
         });
-        let service = DefaultLogService::start(
+        let service = DefaultLogService::start_for_isolated_capture_test(
             config(json!({ "logging": { "publish": {
                 "enabled": true,
                 "minLevel": "TRACE"
@@ -945,7 +968,7 @@ mod tests {
         .unwrap();
         let subscriber = tracing_subscriber::registry()
             .with(tracing_subscriber::EnvFilter::new("trace"))
-            .with(LogCaptureLayer::new());
+            .with(LogCaptureLayer::for_isolated_capture_test(service.clone()));
 
         let _subscriber = tracing::subscriber::set_default(subscriber);
         service

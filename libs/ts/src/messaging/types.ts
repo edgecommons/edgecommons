@@ -24,6 +24,45 @@ export enum Qos {
   ExactlyOnce = "exactlyOnce",
 }
 
+/** Hard bound on transport operations concurrently waiting for delivery acknowledgement. */
+export const MAX_IN_FLIGHT_CONFIRMED_PUBLISHES = 1024;
+
+/** Why strict publication could not prove positive transport acknowledgement. */
+export type PublishConfirmationReason =
+  | "timeout"
+  | "transport"
+  | "backpressure"
+  | "unsupported"
+  | "invalidEnvelope";
+
+/**
+ * Strict confirmed-publish failure. The caller must treat delivery as unsuccessful or ambiguous
+ * and may retry the exact same encoded envelope.
+ */
+export class PublishConfirmationError extends Error {
+  constructor(
+    readonly reason: PublishConfirmationReason,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(message);
+    this.name = "PublishConfirmationError";
+    if (options && "cause" in options) {
+      (this as Error & { cause?: unknown }).cause = options.cause;
+    }
+  }
+}
+
+/** Validate the shared QoS-1 + bounded-timeout contract. */
+export function validateConfirmedPublish(qos: Qos, timeoutMs: number): void {
+  if (qos !== Qos.AtLeastOnce) {
+    throw new Error("confirmed publish requires explicit QoS 1 (AtLeastOnce)");
+  }
+  if (!Number.isFinite(timeoutMs) || !Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("confirmed publish timeoutMs must be a positive integer");
+  }
+}
+
 /** A handler invoked for each message delivered to a subscription. */
 export type MessageHandler = (topic: string, message: Message) => void | Promise<void>;
 
@@ -40,6 +79,18 @@ export interface RawSubscription {
 export interface MessagingProvider {
   /** Publish raw bytes to `topic` on `dest` at `qos`. */
   publishBytes(topic: string, payload: Buffer, dest: Destination, qos: Qos): Promise<void>;
+  /**
+   * Strict raw transport publication. MQTT resolves only after PUBACK; Greengrass resolves only
+   * after successful IPC operation completion. Optional for source compatibility with custom
+   * providers; callers must throw `unsupported` when absent rather than using `publishBytes`.
+   */
+  publishBytesConfirmed?(
+    topic: string,
+    payload: Buffer,
+    dest: Destination,
+    qos: Qos,
+    timeoutMs: number,
+  ): Promise<void>;
   /** Subscribe to `filter` on `dest`; deliver each `(topic, payload)` to `onMessage`. */
   subscribeRaw(
     filter: string,
@@ -130,6 +181,20 @@ export class ReservedTopicError extends Error {
 export interface IMessagingService {
   publish(topic: string, msg: Message): Promise<void>;
   publishNorthbound(topic: string, msg: Message, qos?: Qos): Promise<void>;
+  /** Strict local publish of a Message or exact encoded envelope bytes. */
+  publishConfirmed?(
+    topic: string,
+    msgOrEncoded: Message | Buffer,
+    qos: Qos,
+    timeoutMs: number,
+  ): Promise<void>;
+  /** Strict northbound publish of a Message or exact encoded envelope bytes. */
+  publishNorthboundConfirmed?(
+    topic: string,
+    msgOrEncoded: Message | Buffer,
+    qos: Qos,
+    timeoutMs: number,
+  ): Promise<void>;
   publishRaw(topic: string, payload: unknown): Promise<void>;
   publishNorthboundRaw(topic: string, payload: unknown, qos?: Qos): Promise<void>;
 
@@ -162,6 +227,12 @@ export interface IMessagingService {
 
   reply(request: Message, reply: Message): Promise<void>;
   replyNorthbound(request: Message, reply: Message): Promise<void>;
+  /** Strict guarded reply used by the deferred registry's bounded retry loop. */
+  replyConfirmed?(request: Message, reply: Message, timeoutMs: number): Promise<void>;
+  /** Strict guarded northbound reply counterpart. */
+  replyNorthboundConfirmed?(request: Message, reply: Message, timeoutMs: number): Promise<void>;
+  /** Validate and guard a received request's reply target without publishing. */
+  validateReplyTarget?(request: Message): void;
 
   cancelRequest(reply: ReplyFuture): void;
   cancelRequestNorthbound(reply: ReplyFuture): void;

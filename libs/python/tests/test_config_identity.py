@@ -182,7 +182,8 @@ class TestEffectiveConfigRetention:
         cfg = {"component": {}, "hierarchy": {"levels": ["device"]},
                "messaging": {"requestTimeoutSeconds": 5}}
         m = _Manager(cfg)
-        assert m.get_effective_config() is cfg
+        assert m.get_effective_config() == cfg
+        assert m.get_effective_config() is not cfg
 
     def test_hot_reload_refreshes_flags_not_identity(self):
         m = _Manager({"component": {}})
@@ -192,7 +193,7 @@ class TestEffectiveConfigRetention:
         assert m.is_topic_include_root() is True
         assert m.get_messaging_request_timeout() == 3.0
         # identity is resolved ONCE at init (§1.5), not re-resolved on reload
-        assert m.get_component_identity() is ident
+        assert m.get_component_identity() == ident
 
     def test_sanitize_is_public_static(self):
         # D-U26: the sanitizer is the normative UNS channel-token sanitizer.

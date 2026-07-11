@@ -63,12 +63,14 @@
  * sources are Promise-based), unlike Java's synchronous `ConfigManager.reloadFromProvider()`.
  */
 import { createHash } from "crypto";
+import { performance } from "perf_hooks";
 
 import type { Config } from "./config/model";
 import { logger } from "./logging";
 import type { Message } from "./message";
 import { MessageBuilder } from "./message";
 import type { IMessagingService } from "./messaging/types";
+import { PublishConfirmationError } from "./messaging/types";
 import { Uns, UnsClass, checkToken } from "./uns";
 
 /** A verb handler's result: the verb-specific result object, or empty (`null`/`undefined`). */
@@ -96,6 +98,182 @@ export type CommandResult = Record<string, unknown> | null | undefined;
  *          synchronously or via a `Promise`
  */
 export type CommandHandler = (request: Message) => CommandResult | Promise<CommandResult>;
+
+/** Observable state of one inbox-owned deferred reply. */
+export enum DeferredReplyState {
+  Provisional = "PROVISIONAL",
+  Open = "OPEN",
+  Settling = "SETTLING",
+  Settled = "SETTLED",
+  Discarded = "DISCARDED",
+  Expired = "EXPIRED",
+  CancelledOnShutdown = "CANCELLED_ON_SHUTDOWN",
+}
+
+/** Observable lifecycle of the command inbox. */
+export enum CommandInboxState {
+  Starting = "STARTING",
+  Active = "ACTIVE",
+  Failed = "FAILED",
+  Stopped = "STOPPED",
+}
+
+/** Result of asking an open token to settle. */
+export enum SettlementResult {
+  Accepted = "ACCEPTED",
+  AlreadySettled = "ALREADY_SETTLED",
+  Expired = "EXPIRED",
+  CancelledOnShutdown = "CANCELLED_ON_SHUTDOWN",
+  NotOpen = "NOT_OPEN",
+}
+
+/** Immediate standard command success. */
+export interface ImmediateSuccess {
+  readonly kind: "immediateSuccess";
+  readonly result?: CommandResult;
+}
+
+/** Immediate standard coded command error. */
+export interface ImmediateError {
+  readonly kind: "immediateError";
+  readonly code: string;
+  readonly message: string;
+}
+
+/** Deferred settlement through an activated, inbox-issued opaque token. */
+export interface Deferred {
+  readonly kind: "deferred";
+  readonly token: DeferredReply;
+  /** Work the inbox starts only after it accepts this exact OPEN token. */
+  readonly postAcceptContinuation?: PostAcceptContinuation;
+}
+
+/** Asynchronous work owned by the inbox after a deferred token is accepted. */
+export type PostAcceptContinuation = () => void | Promise<void>;
+
+/** Tagged explicit outcome of an {@link OutcomeCommandHandler}. */
+export type CommandOutcome = ImmediateSuccess | ImmediateError | Deferred;
+
+/** Factories for the tagged command outcomes. */
+export const CommandOutcomes = {
+  success(result?: CommandResult): ImmediateSuccess {
+    return { kind: "immediateSuccess", result };
+  },
+  error(code: string, message: string): ImmediateError {
+    if (!code) throw new Error("immediate error code must be non-empty");
+    return { kind: "immediateError", code, message: message ?? "" };
+  },
+  deferred(token: DeferredReply): Deferred {
+    if (!(token instanceof DeferredReply)) throw new Error("deferred outcome requires an inbox-issued token");
+    return { kind: "deferred", token };
+  },
+  /**
+   * Returns a deferred result whose continuation begins only after the inbox validates the exact
+   * activated token for this delivery. The closure must settle its captured token through the
+   * guarded API; it never receives a raw reply topic.
+   */
+  deferredWithContinuation(token: DeferredReply, postAcceptContinuation: PostAcceptContinuation): Deferred {
+    if (!(token instanceof DeferredReply)) throw new Error("deferred outcome requires an inbox-issued token");
+    if (typeof postAcceptContinuation !== "function") {
+      throw new Error("post-accept continuation must be a function");
+    }
+    return { kind: "deferred", token, postAcceptContinuation };
+  },
+} as const;
+
+/** Explicit-outcome command handler; may be synchronous or asynchronous. */
+export type OutcomeCommandHandler = (request: Message) => CommandOutcome | Promise<CommandOutcome>;
+
+interface DeferredEntry {
+  readonly id: symbol;
+  readonly verb: string;
+  readonly correlationId: string;
+  readonly replyTo: string;
+  readonly requestUuid: string;
+  readonly requestMetadata: Message;
+  readonly expiresAtMs: number;
+  state: DeferredReplyState;
+  activated: boolean;
+  cleaned: boolean;
+  attempts: number;
+  reply?: Message;
+  expirationTimer?: NodeJS.Timeout;
+  retryTimer?: NodeJS.Timeout;
+}
+
+/**
+ * Opaque inbox-issued deferred-reply handle. It exposes lifecycle operations but neither the
+ * retained reply topic nor a caller-controlled publish capability.
+ */
+export class DeferredReply {
+  private constructor(
+    private readonly owner: CommandInbox,
+    private readonly entry: DeferredEntry,
+  ) {}
+
+  /** @internal */
+  static _create(owner: CommandInbox, entry: DeferredEntry): DeferredReply {
+    return new DeferredReply(owner, entry);
+  }
+
+  /** Activate only after application durable acceptance commits. */
+  activate(): boolean {
+    return this.owner._activateDeferred(this.entry);
+  }
+
+  /** Discard a still-provisional token after durable acceptance fails. */
+  discard(): boolean {
+    return this.owner._discardDeferred(this.entry);
+  }
+
+  /** Begin one standard success settlement. */
+  settleSuccess(result?: CommandResult): SettlementResult {
+    return this.owner._settleDeferred(this.entry, successBody(result));
+  }
+
+  /** Begin one standard coded error settlement. */
+  settleError(code: string, message: string): SettlementResult {
+    if (!code) throw new Error("deferred error code must be non-empty");
+    return this.owner._settleDeferred(this.entry, errorBody(code, message));
+  }
+
+  /** Current state, including terminal state after registry cleanup. */
+  state(): DeferredReplyState {
+    return this.entry.state;
+  }
+
+  /** @internal */
+  _validFor(owner: CommandInbox, request: Message, verb: string): boolean {
+    if (this.owner !== owner || !this.entry.activated) return false;
+    if (![DeferredReplyState.Open, DeferredReplyState.Settling, DeferredReplyState.Settled].includes(this.entry.state)) {
+      return false;
+    }
+    return this.entry.verb === verb &&
+      this.entry.replyTo === request.getReplyTo() &&
+      this.entry.correlationId === request.getCorrelationId() &&
+      this.entry.requestUuid === request.header.uuid;
+  }
+
+  /** @internal */
+  _discardIfProvisional(owner: CommandInbox): void {
+    if (this.owner === owner && this.entry.state === DeferredReplyState.Provisional) {
+      this.discard();
+    }
+  }
+}
+
+/** Bounded deferred-registry counters for health/metrics. */
+export interface DeferredReplySnapshot {
+  readonly capacity: number;
+  readonly active: number;
+  readonly provisioned: number;
+  readonly settled: number;
+  readonly discarded: number;
+  readonly expired: number;
+  readonly openExpired: number;
+  readonly cancelledOnShutdown: number;
+  readonly capacityRejected: number;
+}
 
 /**
  * A coded command failure (DESIGN-uns §9.5): thrown by a {@link CommandHandler} to produce a
@@ -133,6 +311,21 @@ function errorBody(code: string, message: string): Record<string, unknown> {
   return { ok: false, error: { code, message: message ?? "" } };
 }
 
+/** The standard success wrapper, snapshotting caller-owned result data before async retry. */
+function successBody(result: CommandResult): Record<string, unknown> {
+  return { ok: true, result: result == null ? {} : cloneCommandValue(result) };
+}
+
+function cloneCommandValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cloneCommandValue);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, cloneCommandValue(item)]),
+    );
+  }
+  return value;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -157,6 +350,59 @@ function digestDescribePayload(commands: Record<string, unknown>[], panels: Reco
   return `sha256:${createHash("sha256").update(input).digest("hex")}`;
 }
 
+function settlementResultFor(state: DeferredReplyState): SettlementResult {
+  switch (state) {
+    case DeferredReplyState.Settling:
+    case DeferredReplyState.Settled:
+      return SettlementResult.AlreadySettled;
+    case DeferredReplyState.Expired:
+      return SettlementResult.Expired;
+    case DeferredReplyState.CancelledOnShutdown:
+      return SettlementResult.CancelledOnShutdown;
+    case DeferredReplyState.Provisional:
+    case DeferredReplyState.Open:
+    case DeferredReplyState.Discarded:
+      return SettlementResult.NotOpen;
+  }
+}
+
+function isDeferredTerminal(state: DeferredReplyState): boolean {
+  return state === DeferredReplyState.Settled ||
+    state === DeferredReplyState.Discarded ||
+    state === DeferredReplyState.Expired ||
+    state === DeferredReplyState.CancelledOnShutdown;
+}
+
+/**
+ * Bounds one transport subscription acknowledgement without treating an elapsed timer as a
+ * successful subscription. The caller owns cleanup because the public transport API has no
+ * cancellation primitive for a subscribe already in progress.
+ */
+function awaitSubscriptionAcknowledgement(subscription: Promise<void>, timeoutMs: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("command inbox subscription acknowledgement timed out"));
+    }, timeoutMs);
+    subscription.then(
+      () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export class CommandInbox {
   /** The liveness/echo built-in verb. */
   static readonly PING = "ping";
@@ -176,6 +422,26 @@ export class CommandInbox {
   static readonly ERR_RELOAD_FAILED = "RELOAD_FAILED";
   /** Error code: {@link CommandInbox.GET_CONFIGURATION} found no effective configuration to return. */
   static readonly ERR_NO_CONFIG = "NO_CONFIG";
+  /** Error code: a deferred command was sent without a guarded reply target. */
+  static readonly ERR_REPLY_REQUIRED = "REPLY_REQUIRED";
+  /** Error code: bounded deferred-reply capacity is exhausted. */
+  static readonly ERR_DEFERRED_REPLY_CAPACITY = "RESOURCE_LIMIT";
+  /** Maximum inbox-owned post-accept continuations that may be in flight. */
+  static readonly MAX_POST_ACCEPT_CONTINUATIONS = 256;
+  /** Error attempted for open deferred replies during shutdown. */
+  static readonly ERR_COMPONENT_STOPPING = "COMPONENT_STOPPING";
+  /** Hard bound on active provisional/open/settling deferred replies. */
+  static readonly MAX_DEFERRED_REPLIES = 1024;
+  /** Bounded wait for the selected transport to acknowledge the inbox subscription. */
+  static readonly DEFAULT_START_TIMEOUT_MS = 10_000;
+  /** Hard bound for deliveries received after a subscribe request but before ACTIVE. */
+  static readonly MAX_PENDING_STARTUP_DELIVERIES = 256;
+  /** Camera-design upper bound (31 minutes) for one deferred reply lifetime. */
+  static readonly MAX_DEFERRED_REPLY_LIFETIME_MS = 1_860_000;
+  private static readonly DEFERRED_ATTEMPT_TIMEOUT_MS = 5_000;
+  private static readonly DEFERRED_RETRY_INITIAL_MS = 100;
+  private static readonly DEFERRED_RETRY_MAX_MS = 1_000;
+  private static readonly DEFERRED_SHUTDOWN_TIMEOUT_MS = 1_000;
   /**
    * The `set-config` push verb — delegated: the `CONFIG_COMPONENT` config source maintains its
    * own subscription for it on the same inbox path, so the inbox must never dispatch or
@@ -194,6 +460,8 @@ export class CommandInbox {
 
   /** verb -> handler; built-ins seeded at construction, custom verbs via {@link register}. */
   private readonly handlers = new Map<string, CommandHandler>();
+  /** verb -> explicit-outcome handler; custom verbs via {@link registerOutcome}. */
+  private readonly outcomeHandlers = new Map<string, OutcomeCommandHandler>();
   /** panel id -> descriptor; panel descriptors are carried verbatim for `describe`. */
   private readonly panelViews = new Map<string, Record<string, unknown>>();
   /** The subscribed inbox filter (`…/cmd/#`); undefined until {@link start} builds it. */
@@ -202,6 +470,21 @@ export class CommandInbox {
   private inboxPrefix?: string;
   private started = false;
   private closed = false;
+  /** The single in-flight startup attempt, shared by concurrent callers. */
+  private startPromise?: Promise<void>;
+  /** Deliveries retained until the selected transport acknowledges the subscription. */
+  private activationPending: Array<{ topic: string; message: Message }> = [];
+  private readonly deferredEntries = new Map<symbol, DeferredEntry>();
+  private deferredProvisioned = 0;
+  private deferredSettled = 0;
+  private deferredDiscarded = 0;
+  private deferredExpired = 0;
+  private deferredOpenExpired = 0;
+  private deferredCancelledOnShutdown = 0;
+  private deferredCapacityRejected = 0;
+  private postAcceptOutstanding = 0;
+  private inboxState = CommandInboxState.Stopped;
+  private inboxStartupError?: string;
 
   /**
    * Creates the inbox and registers the built-in verbs. The verb **actions** are injected
@@ -227,6 +510,7 @@ export class CommandInbox {
     uptimeSecs: () => number,
     configReload: () => boolean | Promise<boolean>,
     redactedConfig: () => Record<string, unknown> | undefined,
+    private readonly stateListener?: (state: CommandInboxState) => void,
   ) {
     // ping -> the state keepalive's RUNNING body shape: proves the component is not just alive
     // (the keepalive does that) but RESPONSIVE to addressed commands.
@@ -259,6 +543,33 @@ export class CommandInbox {
     });
   }
 
+  /** Current startup state; ACTIVE means the exact transport filter was acknowledged. */
+  state(): CommandInboxState {
+    return this.inboxState;
+  }
+
+  /** Sanitized stable error available only while the inbox is FAILED. */
+  startupError(): string | undefined {
+    return this.inboxState === CommandInboxState.Failed ? this.inboxStartupError : undefined;
+  }
+
+  /** @internal Used when a builder command configurator rejects before subscription. */
+  failStartup(): void {
+    if (this.closed || this.inboxState === CommandInboxState.Active) return;
+    this.transition(CommandInboxState.Failed, "COMMAND_INBOX_CONFIGURATION_FAILED");
+  }
+
+  private transition(state: CommandInboxState, error?: string): void {
+    this.inboxState = state;
+    this.inboxStartupError = state === CommandInboxState.Failed ? error : undefined;
+    try {
+      this.stateListener?.(state);
+    } catch (e) {
+      // Health observation cannot affect the command-plane lifecycle.
+      logger.debug(`command inbox state listener failed: ${errMsg(e)}`);
+    }
+  }
+
   /**
    * Registers a custom verb handler — the minimal `commands()` registration seam. The verb is
    * one or more `/`-separated channel tokens (`"restart-pipeline"`, `"sb/status"`), each
@@ -275,6 +586,19 @@ export class CommandInbox {
    * @throws UnsValidationError when a verb token violates the §2.2 token rule
    */
   register(verb: string, handler: CommandHandler): void {
+    this.validateCustomVerbRegistration(verb);
+    this.handlers.set(verb, handler);
+    logger.debug(`command verb '${verb}' registered`);
+  }
+
+  /** Register an explicit-outcome handler without changing the legacy {@link register} API. */
+  registerOutcome(verb: string, handler: OutcomeCommandHandler): void {
+    this.validateCustomVerbRegistration(verb);
+    this.outcomeHandlers.set(verb, handler);
+    logger.debug(`outcome command verb '${verb}' registered`);
+  }
+
+  private validateCustomVerbRegistration(verb: string): void {
     for (const token of verb.split("/")) {
       checkToken(token, "verb token");
     }
@@ -284,11 +608,9 @@ export class CommandInbox {
     if (CommandInbox.DELEGATED_VERBS.has(verb)) {
       throw new Error(`verb '${verb}' is owned by another library subsystem and cannot be registered`);
     }
-    if (this.handlers.has(verb)) {
+    if (this.handlers.has(verb) || this.outcomeHandlers.has(verb)) {
       throw new Error(`verb '${verb}' is already registered - unregister it first to replace the handler`);
     }
-    this.handlers.set(verb, handler);
-    logger.debug(`command verb '${verb}' registered`);
   }
 
   /**
@@ -302,14 +624,93 @@ export class CommandInbox {
     if (CommandInbox.BUILT_IN_VERBS.has(verb)) {
       throw new Error(`verb '${verb}' is a built-in verb and cannot be unregistered`);
     }
-    if (this.handlers.delete(verb)) {
+    if (this.handlers.delete(verb) || this.outcomeHandlers.delete(verb)) {
       logger.debug(`command verb '${verb}' unregistered`);
     }
   }
 
   /** The currently registered verbs (built-ins + custom) — a snapshot copy. */
   verbs(): Set<string> {
-    return new Set(this.handlers.keys());
+    return new Set([...this.handlers.keys(), ...this.outcomeHandlers.keys()]);
+  }
+
+  /**
+   * Provision an opaque PROVISIONAL reply token before durable acceptance. Activate it only after
+   * the durable insert commits, or discard it on failure.
+   */
+  defer(request: Message, lifetimeMs: number): DeferredReply {
+    if (this.closed) {
+      throw new CommandException(CommandInbox.ERR_COMPONENT_STOPPING, "the command inbox is stopping");
+    }
+    const replyTo = request?.getReplyTo();
+    if (!replyTo) {
+      throw new CommandException(CommandInbox.ERR_REPLY_REQUIRED, "deferred commands require a non-empty reply_to");
+    }
+    if (!Number.isInteger(lifetimeMs) || lifetimeMs < 1 || lifetimeMs > CommandInbox.MAX_DEFERRED_REPLY_LIFETIME_MS) {
+      throw new Error(
+        `deferred reply lifetimeMs must be between 1 and ${CommandInbox.MAX_DEFERRED_REPLY_LIFETIME_MS}`,
+      );
+    }
+    const verb = request.header?.name;
+    const correlationId = request.header?.correlation_id;
+    const requestUuid = request.header?.uuid;
+    if (!verb) throw new Error("deferred request requires a non-empty verb");
+    if (!correlationId) throw new Error("deferred request requires a non-empty correlation id");
+    if (!requestUuid) throw new Error("deferred request requires a non-empty message uuid");
+
+    const validateTarget = this.messaging.validateReplyTarget;
+    if (typeof validateTarget !== "function") {
+      throw new PublishConfirmationError(
+        "unsupported",
+        "messaging service cannot guard deferred reply targets",
+      );
+    }
+    validateTarget.call(this.messaging, request);
+    if (this.deferredEntries.size >= CommandInbox.MAX_DEFERRED_REPLIES) {
+      this.deferredCapacityRejected++;
+      throw new CommandException(
+        CommandInbox.ERR_DEFERRED_REPLY_CAPACITY,
+        "deferred reply registry capacity is exhausted",
+      );
+    }
+
+    const id = Symbol("deferred-reply");
+    const entry: DeferredEntry = {
+      id,
+      verb,
+      correlationId,
+      replyTo,
+      requestUuid,
+      requestMetadata: MessageBuilder.create(verb, CommandInbox.CMD_MESSAGE_VERSION)
+        .withCorrelationId(correlationId)
+        .withReplyTo(replyTo)
+        .build(),
+      expiresAtMs: performance.now() + lifetimeMs,
+      state: DeferredReplyState.Provisional,
+      activated: false,
+      cleaned: false,
+      attempts: 0,
+    };
+    entry.expirationTimer = setTimeout(() => this.expireDeferred(entry), lifetimeMs);
+    if (typeof entry.expirationTimer.unref === "function") entry.expirationTimer.unref();
+    this.deferredEntries.set(id, entry);
+    this.deferredProvisioned++;
+    return DeferredReply._create(this, entry);
+  }
+
+  /** Current bounded deferred-registry counters. */
+  deferredReplySnapshot(): DeferredReplySnapshot {
+    return {
+      capacity: CommandInbox.MAX_DEFERRED_REPLIES,
+      active: this.deferredEntries.size,
+      provisioned: this.deferredProvisioned,
+      settled: this.deferredSettled,
+      discarded: this.deferredDiscarded,
+      expired: this.deferredExpired,
+      openExpired: this.deferredOpenExpired,
+      cancelledOnShutdown: this.deferredCancelledOnShutdown,
+      capacityRejected: this.deferredCapacityRejected,
+    };
   }
 
   /**
@@ -346,7 +747,7 @@ export class CommandInbox {
   private describe(): Record<string, unknown> {
     const config = this.configProvider();
     const identity = config.componentIdentity;
-    const commands = [...this.handlers.keys()].sort().map((verb) => ({
+    const commands = [...this.verbs()].sort().map((verb) => ({
       verb,
       builtIn: CommandInbox.BUILT_IN_VERBS.has(verb),
     }));
@@ -371,13 +772,33 @@ export class CommandInbox {
   /**
    * Builds the own-inbox wildcard (`ecv1/{device}/{component}/main/cmd/#`, through the topic
    * builder under this component's identity + root mode) and subscribes it on the PRIMARY
-   * connection. Best-effort and idempotent: on any subscription failure the inbox logs a WARN
-   * and disables itself; the component must come up regardless.
+   * connection. Startup is single-flight and bounded: `ACTIVE` is published only after the
+   * selected transport has acknowledged the exact filter. A failed attempt remains `FAILED`
+   * with a sanitized error and any late acknowledgement is immediately unsubscribed.
+   *
+   * @param timeoutMs bounded acknowledgement wait (default 10 seconds)
    */
-  async start(): Promise<void> {
-    if (this.started || this.closed) {
-      return;
+  start(timeoutMs = CommandInbox.DEFAULT_START_TIMEOUT_MS): Promise<void> {
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
+      throw new Error("command inbox start timeoutMs must be an integer between 1 and 300000");
     }
+    if (this.started || this.closed || this.inboxState === CommandInboxState.Failed) {
+      return Promise.resolve();
+    }
+    if (this.startPromise !== undefined) {
+      return this.startPromise;
+    }
+
+    const attempt = this.startAttempt(timeoutMs);
+    const tracked = attempt.finally(() => {
+      if (this.startPromise === tracked) this.startPromise = undefined;
+    });
+    this.startPromise = tracked;
+    return tracked;
+  }
+
+  private async startAttempt(timeoutMs: number): Promise<void> {
+    this.transition(CommandInboxState.Starting);
     try {
       const config = this.configProvider();
       const identity = config.componentIdentity;
@@ -393,13 +814,71 @@ export class CommandInbox {
       });
       this.inboxFilter = filter;
       // ".../cmd/#" -> ".../cmd/" - the verb is the topic's remainder after this prefix.
-      // Assigned BEFORE subscribing so a delivery racing the subscribe call sees it.
+      // Assigned BEFORE subscribing so a delivery racing the subscribe call is retained until
+      // the acknowledgement transitions this inbox to ACTIVE.
       this.inboxPrefix = filter.slice(0, filter.length - 1);
-      await this.messaging.subscribe(filter, (topic, message) => this.handle(topic, message));
+      const subscription = this.messaging.subscribe(
+        filter,
+        (topic, message) => this.receiveDuringActivation(topic, message),
+      );
+      // A transport call cannot be cancelled through the public messaging interface. If it
+      // eventually succeeds after this start attempt timed out or close() won the race, remove
+      // the late subscription without allowing it to resurrect the inbox state.
+      void subscription.then(
+        () => {
+          if (this.closed || this.inboxState !== CommandInboxState.Starting) {
+            void this.messaging.unsubscribe(filter).catch(() => undefined);
+          }
+        },
+        () => undefined,
+      );
+      await awaitSubscriptionAcknowledgement(subscription, timeoutMs);
+      if (this.closed || this.inboxState !== CommandInboxState.Starting) {
+        await this.messaging.unsubscribe(filter).catch(() => undefined);
+        this.activationPending = [];
+        return;
+      }
       this.started = true;
-      logger.info(`command inbox subscribed on '${filter}' (verbs: ${[...this.handlers.keys()].join(", ")})`);
+      this.transition(CommandInboxState.Active);
+      this.drainActivationPending();
+      logger.info(`command inbox subscribed on '${filter}' (verbs: ${[...this.verbs()].join(", ")})`);
     } catch (e) {
-      logger.warn(`failed to start the command inbox (continuing without it): ${errMsg(e)}`);
+      // Be defensive about providers that complete subscription work before reporting a local
+      // failure: a failed start must never leave a partially live command plane behind.
+      if (this.inboxFilter) await this.messaging.unsubscribe(this.inboxFilter).catch(() => undefined);
+      this.started = false;
+      this.activationPending = [];
+      if (this.closed) {
+        return;
+      }
+      this.transition(CommandInboxState.Failed, "COMMAND_INBOX_SUBSCRIPTION_FAILED");
+      logger.warn("command inbox failed to start; command plane is unavailable");
+      logger.debug(`command inbox startup detail: ${errMsg(e)}`);
+    }
+  }
+
+  /** Retain startup-racing deliveries; only ACTIVE inboxes may dispatch command work. */
+  private receiveDuringActivation(topic: string, message: Message): void | Promise<void> {
+    if (this.closed) return;
+    if (this.inboxState === CommandInboxState.Starting) {
+      if (this.activationPending.length >= CommandInbox.MAX_PENDING_STARTUP_DELIVERIES) {
+        logger.warn("command inbox dropped a delivery while startup acknowledgement was pending");
+        return;
+      }
+      this.activationPending.push({ topic, message });
+      return;
+    }
+    if (this.inboxState === CommandInboxState.Active) {
+      return this.handle(topic, message);
+    }
+  }
+
+  /** Dispatch retained deliveries only after the ACTIVE state is externally visible. */
+  private drainActivationPending(): void {
+    const pending = this.activationPending;
+    this.activationPending = [];
+    for (const { topic, message } of pending) {
+      void this.handle(topic, message);
     }
   }
 
@@ -410,7 +889,7 @@ export class CommandInbox {
    */
   private async handle(topic: string, message: Message): Promise<void> {
     try {
-      if (this.closed) {
+      if (this.closed || this.inboxState !== CommandInboxState.Active) {
         return;
       }
       if (!this.inboxPrefix || !topic || !topic.startsWith(this.inboxPrefix)) {
@@ -442,8 +921,9 @@ export class CommandInbox {
   private async dispatch(verb: string, request: Message): Promise<void> {
     const replyTo = request.getReplyTo();
     const wantsReply = replyTo !== undefined && replyTo !== "";
+    const outcomeHandler = this.outcomeHandlers.get(verb);
     const handler = this.handlers.get(verb);
-    if (!handler) {
+    if (!handler && !outcomeHandler) {
       if (wantsReply) {
         logger.debug(`unknown verb '${verb}' - sending ${CommandInbox.ERR_UNKNOWN_VERB} error reply`);
         await this.sendReply(
@@ -456,9 +936,13 @@ export class CommandInbox {
       }
       return;
     }
+    if (outcomeHandler) {
+      await this.dispatchOutcome(verb, request, wantsReply, outcomeHandler);
+      return;
+    }
     let result: CommandResult;
     try {
-      result = await handler(request);
+      result = await handler!(request);
     } catch (e) {
       if (e instanceof CommandException) {
         if (wantsReply) {
@@ -474,9 +958,242 @@ export class CommandInbox {
       return;
     }
     if (wantsReply) {
-      const body = { ok: true, result: result ?? {} };
-      await this.sendReply(request, verb, body);
+      await this.sendReply(request, verb, successBody(result));
     }
+  }
+
+  private async dispatchOutcome(
+    verb: string,
+    request: Message,
+    wantsReply: boolean,
+    handler: OutcomeCommandHandler,
+  ): Promise<void> {
+    let outcome: CommandOutcome;
+    try {
+      outcome = await handler(request);
+      if (!outcome || typeof outcome !== "object" || !("kind" in outcome)) {
+        throw new Error("outcome handler returned an invalid outcome");
+      }
+    } catch (e) {
+      if (e instanceof CommandException) {
+        await this.handleOutcomeError(verb, request, wantsReply, e.code, e.message);
+      } else {
+        await this.handleOutcomeError(verb, request, wantsReply, CommandInbox.ERR_HANDLER_ERROR, errMsg(e));
+      }
+      return;
+    }
+
+    switch (outcome.kind) {
+      case "immediateSuccess":
+        if (wantsReply) await this.sendReply(request, verb, successBody(outcome.result));
+        return;
+      case "immediateError":
+        await this.handleOutcomeError(verb, request, wantsReply, outcome.code, outcome.message);
+        return;
+      case "deferred":
+        if (outcome.token instanceof DeferredReply && outcome.token._validFor(this, request, verb)) {
+          if (outcome.postAcceptContinuation !== undefined) {
+            // Legacy deferred outcomes may already be settling when they return. A continuation
+            // is stricter: it can start only after this inbox accepts a currently OPEN token.
+            if (outcome.token.state() !== DeferredReplyState.Open) {
+              await this.handleOutcomeError(
+                verb,
+                request,
+                wantsReply,
+                CommandInbox.ERR_HANDLER_ERROR,
+                "post-accept continuation requires an open deferred token",
+              );
+              return;
+            }
+            this.startPostAcceptContinuation(outcome.token, outcome.postAcceptContinuation);
+          }
+          // Returning now releases the normal subscription-dispatch concurrency permit; the job
+          // lifetime is represented only by the bounded deferred registry.
+          return;
+        }
+        if (outcome.token instanceof DeferredReply) outcome.token._discardIfProvisional(this);
+        await this.handleOutcomeError(
+          verb,
+          request,
+          wantsReply,
+          CommandInbox.ERR_HANDLER_ERROR,
+          "handler returned an invalid, inactive, or foreign deferred token",
+        );
+        return;
+      default:
+        await this.handleOutcomeError(
+          verb,
+          request,
+          wantsReply,
+          CommandInbox.ERR_HANDLER_ERROR,
+          "handler returned an unknown command outcome",
+        );
+    }
+  }
+
+  /**
+   * Schedules application work only after the dispatcher accepted the exact OPEN token. The
+   * small bound prevents command traffic from becoming unbounded in-memory work; rejected or
+   * failed continuations settle through the ordinary guarded error path instead of leaking an
+   * open deferred reply.
+   */
+  private startPostAcceptContinuation(token: DeferredReply, continuation: PostAcceptContinuation): void {
+    if (this.closed || this.postAcceptOutstanding >= CommandInbox.MAX_POST_ACCEPT_CONTINUATIONS) {
+      logger.warn("post-accept deferred continuation capacity exhausted");
+      token.settleError(
+        CommandInbox.ERR_HANDLER_ERROR,
+        "the deferred command continuation could not be started",
+      );
+      return;
+    }
+
+    this.postAcceptOutstanding++;
+    void Promise.resolve()
+      .then(continuation)
+      .catch((error: unknown) => {
+        logger.warn(`post-accept deferred continuation failed: ${errMsg(error)}`);
+        token.settleError(
+          CommandInbox.ERR_HANDLER_ERROR,
+          "the deferred command continuation failed",
+        );
+      })
+      .finally(() => {
+        this.postAcceptOutstanding--;
+      });
+  }
+
+  private async handleOutcomeError(
+    verb: string,
+    request: Message,
+    wantsReply: boolean,
+    code: string,
+    message: string,
+  ): Promise<void> {
+    if (wantsReply) {
+      await this.sendReply(request, verb, errorBody(code, message));
+    } else {
+      logger.warn(`fire-and-forget outcome verb '${verb}' failed (${code}): ${message}`);
+    }
+  }
+
+  /** @internal */
+  _activateDeferred(entry: DeferredEntry): boolean {
+    if (entry.state !== DeferredReplyState.Provisional) return false;
+    entry.state = DeferredReplyState.Open;
+    entry.activated = true;
+    return true;
+  }
+
+  /** @internal */
+  _discardDeferred(entry: DeferredEntry): boolean {
+    if (entry.state !== DeferredReplyState.Provisional) return false;
+    entry.state = DeferredReplyState.Discarded;
+    this.deferredDiscarded++;
+    this.cleanupDeferred(entry);
+    return true;
+  }
+
+  /** @internal */
+  _settleDeferred(entry: DeferredEntry, body: Record<string, unknown>): SettlementResult {
+    if (entry.state !== DeferredReplyState.Open) return settlementResultFor(entry.state);
+    const reply = MessageBuilder.create(entry.verb, CommandInbox.CMD_MESSAGE_VERSION)
+      .withCommand(cloneCommandValue(body) as Record<string, unknown>)
+      .withConfig(this.configProvider())
+      .build();
+    // JavaScript executes this check+transition synchronously on one event-loop turn, providing
+    // the CAS-style single winner before any await/yield point.
+    if (entry.state !== DeferredReplyState.Open) return settlementResultFor(entry.state);
+    entry.state = DeferredReplyState.Settling;
+    entry.reply = reply;
+    this.scheduleDeferredAttempt(entry, 0);
+    return SettlementResult.Accepted;
+  }
+
+  private scheduleDeferredAttempt(entry: DeferredEntry, delayMs: number): void {
+    if (entry.state !== DeferredReplyState.Settling) return;
+    entry.retryTimer = setTimeout(() => void this.publishDeferredAttempt(entry), Math.max(0, delayMs));
+    if (typeof entry.retryTimer.unref === "function") entry.retryTimer.unref();
+  }
+
+  private async publishDeferredAttempt(entry: DeferredEntry): Promise<void> {
+    if (entry.state !== DeferredReplyState.Settling || !entry.reply) return;
+    let remaining = entry.expiresAtMs - performance.now();
+    if (remaining <= 0) {
+      this.expireSettlingDeferred(entry);
+      return;
+    }
+    const attemptTimeout = Math.max(1, Math.min(CommandInbox.DEFERRED_ATTEMPT_TIMEOUT_MS, remaining));
+    entry.attempts++;
+    try {
+      const confirmed = this.messaging.replyConfirmed;
+      if (typeof confirmed !== "function") {
+        throw new PublishConfirmationError("unsupported", "messaging service does not support confirmed reply");
+      }
+      await confirmed.call(this.messaging, entry.requestMetadata, entry.reply, attemptTimeout);
+      if (entry.state === DeferredReplyState.Settling) {
+        entry.state = DeferredReplyState.Settled;
+        this.deferredSettled++;
+        this.cleanupDeferred(entry);
+      }
+    } catch (e) {
+      if (entry.state !== DeferredReplyState.Settling) return;
+      remaining = entry.expiresAtMs - performance.now();
+      if (remaining <= 0) {
+        this.expireSettlingDeferred(entry);
+        return;
+      }
+      const retryMs = Math.min(
+        CommandInbox.DEFERRED_RETRY_MAX_MS,
+        CommandInbox.DEFERRED_RETRY_INITIAL_MS * 2 ** Math.min(10, entry.attempts - 1),
+        Math.max(1, remaining),
+      );
+      logger.debug(
+        `deferred reply attempt ${entry.attempts} for verb '${entry.verb}' failed; retrying in ${retryMs} ms: ${errMsg(e)}`,
+      );
+      this.scheduleDeferredAttempt(entry, retryMs);
+    }
+  }
+
+  private expireDeferred(entry: DeferredEntry): void {
+    if (entry.state === DeferredReplyState.Provisional) {
+      entry.state = DeferredReplyState.Expired;
+      this.deferredExpired++;
+      this.cleanupDeferred(entry);
+    } else if (entry.state === DeferredReplyState.Open) {
+      entry.state = DeferredReplyState.Expired;
+      this.recordOpenExpiration(entry);
+    }
+    // SETTLING owns the final result: its strict publish timeout is bounded by expiresAtMs.
+  }
+
+  private expireSettlingDeferred(entry: DeferredEntry): void {
+    if (entry.state !== DeferredReplyState.Settling) return;
+    entry.state = DeferredReplyState.Expired;
+    this.recordOpenExpiration(entry);
+  }
+
+  private recordOpenExpiration(entry: DeferredEntry): void {
+    this.deferredExpired++;
+    this.deferredOpenExpired++;
+    logger.warn(
+      `DEFERRED_REPLY_EXPIRED: open deferred reply for verb '${entry.verb}' expired after ${entry.attempts} confirmed publication attempt(s)`,
+    );
+    this.cleanupDeferred(entry);
+  }
+
+  private cancelDeferredOnShutdown(entry: DeferredEntry): void {
+    if (isDeferredTerminal(entry.state)) return;
+    entry.state = DeferredReplyState.CancelledOnShutdown;
+    this.deferredCancelledOnShutdown++;
+    this.cleanupDeferred(entry);
+  }
+
+  private cleanupDeferred(entry: DeferredEntry): void {
+    if (entry.cleaned) return;
+    entry.cleaned = true;
+    this.deferredEntries.delete(entry.id);
+    if (entry.expirationTimer) clearTimeout(entry.expirationTimer);
+    if (entry.retryTimer) clearTimeout(entry.retryTimer);
   }
 
   /**
@@ -507,12 +1224,73 @@ export class CommandInbox {
       return;
     }
     this.closed = true;
-    if (this.started && this.inboxFilter) {
+    this.activationPending = [];
+
+    const stopping: Promise<void>[] = [];
+    for (const entry of [...this.deferredEntries.values()]) {
+      if (entry.state === DeferredReplyState.Open) {
+        entry.state = DeferredReplyState.Settling;
+        stopping.push(this.attemptStoppingReply(entry));
+      } else {
+        this.cancelDeferredOnShutdown(entry);
+      }
+    }
+    if (stopping.length > 0) {
+      let shutdownTimer: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          Promise.allSettled(stopping),
+          new Promise<void>((resolve) => {
+            shutdownTimer = setTimeout(resolve, CommandInbox.DEFERRED_SHUTDOWN_TIMEOUT_MS);
+          }),
+        ]);
+      } finally {
+        if (shutdownTimer) clearTimeout(shutdownTimer);
+      }
+    }
+    for (const entry of [...this.deferredEntries.values()]) {
+      this.cancelDeferredOnShutdown(entry);
+    }
+
+    if (this.inboxFilter) {
       try {
         await this.messaging.unsubscribe(this.inboxFilter);
       } catch (e) {
         logger.debug(`command-inbox unsubscribe of '${this.inboxFilter}' failed: ${errMsg(e)}`);
       }
+    }
+    this.started = false;
+    this.transition(CommandInboxState.Stopped);
+  }
+
+  private async attemptStoppingReply(entry: DeferredEntry): Promise<void> {
+    try {
+      const confirmed = this.messaging.replyConfirmed;
+      if (typeof confirmed !== "function") {
+        throw new PublishConfirmationError("unsupported", "messaging service does not support confirmed reply");
+      }
+      const remaining = entry.expiresAtMs - performance.now();
+      if (remaining > 0) {
+        const reply = MessageBuilder.create(entry.verb, CommandInbox.CMD_MESSAGE_VERSION)
+          .withCommand(
+            errorBody(
+              CommandInbox.ERR_COMPONENT_STOPPING,
+              "the component stopped before the deferred command could reply",
+            ),
+          )
+          .withConfig(this.configProvider())
+          .build();
+        await confirmed.call(
+          this.messaging,
+          entry.requestMetadata,
+          reply,
+          Math.max(1, Math.min(CommandInbox.DEFERRED_SHUTDOWN_TIMEOUT_MS, remaining)),
+        );
+      }
+    } catch (e) {
+      logger.debug(`deferred COMPONENT_STOPPING reply for verb '${entry.verb}' failed: ${errMsg(e)}`);
+    } finally {
+      this.cancelDeferredOnShutdown(entry);
     }
   }
 }

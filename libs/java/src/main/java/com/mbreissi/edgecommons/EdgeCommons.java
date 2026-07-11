@@ -7,6 +7,7 @@ package com.mbreissi.edgecommons;
 import com.mbreissi.edgecommons.commands.CommandInbox;
 import com.mbreissi.edgecommons.config.ConfigManager;
 import com.mbreissi.edgecommons.config.ConfigManagerFactory;
+import com.mbreissi.edgecommons.config.ConfigurationCandidateValidator;
 import com.mbreissi.edgecommons.config.EffectiveConfigPublisher;
 import com.mbreissi.edgecommons.config.HealthConfiguration;
 import com.mbreissi.edgecommons.facades.AppFacade;
@@ -46,10 +47,13 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 
 public class EdgeCommons
@@ -118,7 +122,7 @@ public class EdgeCommons
      * App-settable readiness gate (FR-HB-2), defaulting to {@code true}: a component is ready as soon
      * as messaging connects, but an app can gate readiness on its own required subscriptions by
      * calling {@link #setReady(boolean) setReady(false)} early and {@code setReady(true)} once ready.
-     * Part of {@code readyz = connected && readyFlag && !shuttingDown}.
+     * Part of {@code readyz = connected && readyFlag && commandInboxActive && !shuttingDown}.
      */
     private volatile boolean readyFlag = true;
     /**
@@ -192,6 +196,19 @@ public class EdgeCommons
      */
     void init(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages)
     {
+        init(componentName, args, appOptions, receiveOwnMessages, true, Map.of(),
+                ConfigManager.DEFAULT_CANDIDATE_VALIDATION_TIMEOUT, List.of());
+    }
+
+    void init(String componentName, String[] args, Options appOptions, boolean receiveOwnMessages,
+              boolean initialReady,
+              Map<String, ConfigurationCandidateValidator> configurationValidators,
+              Duration configurationValidationTimeout,
+              List<Consumer<CommandInbox>> commandConfigurers)
+    {
+        // Set this before parsing, connecting, loading configuration, or starting any externally
+        // observable endpoint. initialReady(false) can therefore never flicker true during startup.
+        readyFlag = initialReady;
         try {
             ParsedCommandLine parsedCommandLine = EdgeCommons.processArgs(componentName, args, appOptions);
 
@@ -202,7 +219,8 @@ public class EdgeCommons
                     .build();
 
             // Initialize the config manager (passing messaging for IPC-backed config sources).
-            configManager = ConfigManagerFactory.create(componentName, parsedCommandLine, messagingClient);
+            configManager = ConfigManagerFactory.create(componentName, parsedCommandLine,
+                    messagingClient, configurationValidators, configurationValidationTimeout);
 
             // UNS-CANONICAL-DESIGN §5 / D-U5 (§1.5 init order): late-bind the request() default
             // deadline from messaging.requestTimeoutSeconds now that the ConfigManager exists.
@@ -281,7 +299,15 @@ public class EdgeCommons
             commandInbox = new CommandInbox(configManager, messagingClient,
                     heartbeat::getUptimeSecs, configManager::reloadFromProvider,
                     effectiveConfigPublisher::redactedEffectiveConfig);
-            commandInbox.start();
+            for (Consumer<CommandInbox> configurer : commandConfigurers) {
+                configurer.accept(commandInbox);
+            }
+            CommandInbox.StartupStatus commandStatus = commandInbox.start(
+                    CommandInbox.DEFAULT_START_TIMEOUT);
+            if (commandStatus.state() != CommandInbox.StartupState.ACTIVE) {
+                LOGGER.error("Command inbox is not active after startup: state={}, error={}",
+                        commandStatus.state(), commandStatus.error());
+            }
 
             // FR-HB-1: start the HTTP health endpoint (default-on for KUBERNETES; opt-in elsewhere),
             // and FR-HB-2: wire SIGTERM/SIGINT to the graceful, idempotent shutdown so a kubelet (or
@@ -612,8 +638,9 @@ public class EdgeCommons
      * a component is reported ready by {@code /readyz} as soon as messaging connects. An app that must
      * not receive traffic until its own required subscriptions are established should call
      * {@code setReady(false)} early (e.g. before subscribing) and {@code setReady(true)} once ready.
-     * It contributes to the readiness predicate {@code connected && readyFlag && !shuttingDown}; it
-     * cannot force readiness while messaging is disconnected or during shutdown.
+     * It contributes to the readiness predicate
+     * {@code connected && readyFlag && commandInboxActive && !shuttingDown}; it cannot force
+     * readiness while messaging is disconnected, the command plane is not active, or during shutdown.
      *
      * @param ready the new application readiness state
      */
@@ -649,7 +676,7 @@ public class EdgeCommons
 
     /**
      * Readiness signal for {@code GET /readyz} and {@code GET /startupz} (FR-HB-2):
-     * {@code messagingConnected() && readyFlag && !shuttingDown}. Returns {@code false} (probe 503)
+     * {@code messagingConnected() && readyFlag && commandInboxActive && !shuttingDown}. Returns {@code false} (probe 503)
      * during startup before messaging connects, when the app has gated readiness via
      * {@link #setReady(boolean)}, and immediately on shutdown/SIGTERM.
      *
@@ -657,7 +684,11 @@ public class EdgeCommons
      */
     boolean isReadyz()
     {
-        return messagingConnected() && readyFlag && !shuttingDown;
+        CommandInbox inbox = commandInbox;
+        CommandInbox.StartupStatus commandStatus = inbox == null ? null : inbox.startupStatus();
+        boolean commandsActive = inbox == null || (commandStatus != null
+                && commandStatus.state() == CommandInbox.StartupState.ACTIVE);
+        return messagingConnected() && readyFlag && !shuttingDown && commandsActive;
     }
 
     /**

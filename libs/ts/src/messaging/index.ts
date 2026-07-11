@@ -19,7 +19,9 @@ export {
   Qos,
   ReplyFuture,
   RequestTimeoutError,
+  PublishConfirmationError,
   ReservedTopicError,
+  MAX_IN_FLIGHT_CONFIRMED_PUBLISHES,
   REPLY_TOPIC_PREFIX,
 } from "./types";
 export type {
@@ -27,6 +29,7 @@ export type {
   MessagingProvider,
   IMessagingService,
   RawSubscription,
+  PublishConfirmationReason,
 } from "./types";
 export { DefaultMessagingService } from "./service";
 export { StandaloneMqttProvider, topicMatches } from "./standalone-provider";

@@ -59,6 +59,10 @@ class MessagingProviderConcreteTest {
         @Override public void replyNorthbound(Message request, Message reply) { }
         @Override public Object getNativeLocalClient() { return null; }
         @Override public Object getNativeNorthboundClient() { return null; }
+
+        long acknowledgedTimeoutMillis(java.time.Duration timeout) {
+            return subscriptionTimeoutMillis(timeout);
+        }
     }
 
     @Test
@@ -89,6 +93,31 @@ class MessagingProviderConcreteTest {
         // A provider that does not report connectivity is treated as not-connected (not-ready).
         RecordingProvider p = new RecordingProvider();
         assertFalse(p.connected());
+    }
+
+    @Test
+    void unsupportedProviderThrowsForConfirmedPublishInsteadOfDelegating() {
+        RecordingProvider p = new RecordingProvider();
+        byte[] bytes = {1, 2, 3};
+        assertThrows(UnsupportedOperationException.class,
+                () -> p.publishConfirmed("t", bytes, Qos.AT_LEAST_ONCE,
+                        java.time.Duration.ofSeconds(1)));
+        assertThrows(UnsupportedOperationException.class,
+                () -> p.publishNorthboundConfirmed("t", bytes, Qos.AT_LEAST_ONCE,
+                        java.time.Duration.ofSeconds(1)));
+    }
+
+    @Test
+    void unsupportedProviderThrowsForAcknowledgedSubscribeAndDeadlineIsStrict() {
+        RecordingProvider p = new RecordingProvider();
+        assertThrows(UnsupportedOperationException.class,
+                () -> p.subscribeAcknowledged("t", (topic, message) -> { },
+                        1, 16, java.time.Duration.ofSeconds(1)));
+        assertEquals(1, p.acknowledgedTimeoutMillis(java.time.Duration.ofMillis(1)));
+        assertThrows(IllegalArgumentException.class,
+                () -> p.acknowledgedTimeoutMillis(java.time.Duration.ZERO));
+        assertThrows(IllegalArgumentException.class,
+                () -> p.acknowledgedTimeoutMillis(java.time.Duration.ofNanos(1)));
     }
 
     @Test

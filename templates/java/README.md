@@ -32,7 +32,7 @@ facades** (`docs/platform/DESIGN-class-facades.md`) rather than hand-built topic
 | Metric (`loopTicks`: `tickCount` counter + `uptimeSecs` gauge) | `gg.getMetrics()` | `ecv1/{device}/{component}/main/metric/loopTicks` (target-dependent; `messaging` target shown) |
 | Data signal (`demo-signal`: a sine-wave reading) | `gg.getData().signal("demo-signal").addSample(value).publish()` | `ecv1/{device}/{component}/main/data/demo-signal` |
 | Event (`sample-event`, severity + context) | `gg.getEvents().emit(Severity.INFO, "sample-event", message, context)` | `ecv1/{device}/{component}/main/evt/info/sample-event` |
-| Custom command verb (`set-greeting`) | `gg.getCommands().register("set-greeting", ...)` | `ecv1/{device}/{component}/main/cmd/set-greeting` |
+| Custom command verb (`set-greeting`) | `EdgeCommonsBuilder.configureCommands(...)` | `ecv1/{device}/{component}/main/cmd/set-greeting` |
 
 Subscribe `ecv1/+/+/+/metric/#`, `ecv1/+/+/+/data/#` and `ecv1/+/+/+/evt/#` to see them (metrics
 only publish over MQTT when `metricEmission.target` is `messaging`; the default `log` target
@@ -45,6 +45,11 @@ Invoke the custom verb with a request/reply tool (e.g. MQTTX) by publishing
 `{"header":{"name":"set-greeting","version":"1.0"},"body":{"greeting":"Hi there"}}` to
 `ecv1/{device}/{component}/main/cmd/set-greeting`; the next `app` status publish reflects the new
 greeting. Replace all four with your own metrics/signals/events/verbs.
+
+The scaffold uses `initialReady(false)` and `configureCommands(...)`: the custom verb is installed
+before the inbox can become `ACTIVE`, and the application gate is released only after required
+metrics and handlers exist. Keep this ordering when adding component startup work; readiness also
+requires connected messaging and an acknowledged command-inbox subscription.
 
 ### Building against the unreleased library (local-dev only)
 

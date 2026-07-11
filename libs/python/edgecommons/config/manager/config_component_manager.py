@@ -58,8 +58,16 @@ class ConfigComponentManager(ConfigManager):
         thing_name: str,
         component_name: str,
         platform=None,
+        candidate_validators=None,
+        validation_timeout_secs=5.0,
     ):
-        super().__init__(component_name, thing_name, platform=platform)
+        super().__init__(
+            component_name,
+            thing_name,
+            platform=platform,
+            candidate_validators=candidate_validators,
+            validation_timeout_secs=validation_timeout_secs,
+        )
         # Mint the UNS tokens locally (identity is not resolved yet): device =
         # sanitized resolved thing name, component = sanitized short name, mirroring
         # the {ThingName}/{ComponentName} template semantics and §1.5 steps 4-5.
@@ -79,7 +87,22 @@ class ConfigComponentManager(ConfigManager):
         )
         self._config_provider_family = "CONFIG_COMPONENT"
         self.init()
-        MessagingClient.subscribe(self._set_config_topic, self.load_and_apply_config)
+        # Push delivery is externally observable provider activity, so it begins only
+        # after the INITIAL generation committed and requires positive acknowledgement.
+        MessagingClient.subscribe_acknowledged(
+            self._set_config_topic,
+            self.load_and_apply_config,
+            timeout_secs=10.0,
+        )
+        self._push_subscription_started = True
+
+    def close(self) -> None:
+        if getattr(self, "_push_subscription_started", False):
+            try:
+                MessagingClient.unsubscribe(self._set_config_topic)
+            except Exception as exc:  # noqa: BLE001 - shutdown remains best effort
+                logger.debug("Failed to unsubscribe CONFIG_COMPONENT push: %s", exc)
+            self._push_subscription_started = False
 
     def _load_configuration(self) -> dict:
         # This bootstrap request carries the framework-owned request() deadline

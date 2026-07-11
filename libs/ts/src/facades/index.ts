@@ -7,7 +7,7 @@
  */
 export { DataFacade, DATA_MESSAGE_NAME, DATA_MESSAGE_VERSION, QUALITY_UNSPECIFIED } from "./data_facade";
 export { EventsFacade, EVT_MESSAGE_NAME, EVT_MESSAGE_VERSION } from "./events_facade";
-export { AppFacade, APP_MESSAGE_VERSION } from "./app_facade";
+export { AppFacade, PreparedAppMessage, APP_MESSAGE_VERSION } from "./app_facade";
 
 export { Quality, qualityFromWire } from "./quality";
 export { Severity, severityFromWire } from "./severity";

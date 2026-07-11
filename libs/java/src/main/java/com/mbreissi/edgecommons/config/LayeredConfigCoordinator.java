@@ -32,8 +32,6 @@ final class LayeredConfigCoordinator {
     private final String[] configArgs;
     private final String requestedComponent;
 
-    private JsonObject latestEffective;
-
     LayeredConfigCoordinator(ConfigProvider componentProvider, ParsedCommandLine cmdLine,
                              MessagingClient messagingClient, String thingName) {
         this.componentProvider = componentProvider;
@@ -45,21 +43,18 @@ final class LayeredConfigCoordinator {
 
     JsonObject loadEffective() {
         EffectiveCandidate candidate = buildCandidate(componentProvider.loadConfiguration());
-        accept(candidate);
         return candidate.effective();
     }
 
     JsonObject reloadEffectiveFromProvider() {
         EffectiveCandidate candidate = buildCandidate(componentProvider.loadConfiguration());
         validate(candidate.effective());
-        accept(candidate);
         return candidate.effective();
     }
 
     JsonObject applyProviderPayload(JsonObject rawPayload) {
         EffectiveCandidate candidate = buildCandidate(rawPayload);
         validate(candidate.effective());
-        accept(candidate);
         return candidate.effective();
     }
 
@@ -71,10 +66,6 @@ final class LayeredConfigCoordinator {
         // No resources are owned by the coordinator after the hierarchical replacement.
     }
 
-    private void accept(EffectiveCandidate candidate) {
-        latestEffective = candidate.effective();
-    }
-
     private EffectiveCandidate buildCandidate(JsonObject rawPayload) {
         if (rawPayload == null) {
             throw new HierarchicalConfigException("CONFIG_EMPTY", "Configuration source returned no document");
@@ -84,7 +75,7 @@ final class LayeredConfigCoordinator {
         }
         LineagePayload payload = parseLineagePayload(rawPayload);
         JsonObject effective = DeepMerge.merge(payload.layers());
-        LOGGER.info("hierarchical config lineage bundle applied: component={}, catalogVersion={}, layers={}",
+        LOGGER.info("hierarchical config lineage candidate resolved: component={}, catalogVersion={}, layers={}",
                 payload.component(), payload.catalogVersion(), payload.layers().size());
         return new EffectiveCandidate(effective);
     }

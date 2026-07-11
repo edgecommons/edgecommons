@@ -74,6 +74,7 @@ final class ConfigMapConfigProvider extends ConfigProvider implements FileWatche
     private final String key;
     private final Path configFile;
     private final DirectoryWatcher watcher;
+    private boolean started;
 
     /**
      * Creates a ConfigMap config provider.
@@ -95,7 +96,14 @@ final class ConfigMapConfigProvider extends ConfigProvider implements FileWatche
         warnIfSubPathMount();
         this.watcher = new DirectoryWatcher(this.mountDir, this);
         this.watcher.setDaemon(true);
-        this.watcher.start();
+    }
+
+    @Override
+    public synchronized void start() {
+        if (!started) {
+            this.watcher.start();
+            started = true;
+        }
     }
 
     /**
@@ -130,7 +138,9 @@ final class ConfigMapConfigProvider extends ConfigProvider implements FileWatche
 
     @Override
     public void close() {
-        watcher.stopThread();
+        if (started) {
+            watcher.stopThread();
+        }
     }
 
     /**

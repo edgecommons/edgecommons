@@ -35,6 +35,7 @@
 //! ## Related Modules
 //! - [`model`], [`validation`], [`template`], [`source`].
 
+pub mod candidate;
 pub(crate) mod effective;
 pub(crate) mod identity;
 pub(crate) mod layered;
@@ -43,6 +44,11 @@ pub mod source;
 pub mod template;
 pub mod validation;
 
+pub use candidate::{
+    ConfigurationCandidateValidator, ConfigurationValidationError, ConfigurationValidationPhase,
+    ConfigurationValidationResult, DEFAULT_CANDIDATE_VALIDATION_TIMEOUT,
+    MAX_CANDIDATE_VALIDATION_TIMEOUT,
+};
 pub use model::Config;
 
 use std::sync::Arc;

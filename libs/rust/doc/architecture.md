@@ -52,6 +52,11 @@ async fn main() -> edgecommons::Result<()> {
 Services are exposed as trait objects (`Arc<dyn _>`) — the testable seam. Inject
 fakes in tests rather than driving process-global state.
 
+Components with required startup work construct with `initial_ready(false)`, install commands through
+`configure_commands` before the acknowledged inbox subscription, and call `set_ready(true)` only after
+their application gates succeed. Readiness also follows the live command-plane state, so `Failed` or
+`Stopped` cannot remain ready.
+
 ## Subsystems
 
 | Subsystem | Module | Guide |
@@ -59,6 +64,7 @@ fakes in tests rather than driving process-global state.
 | CLI contract | `cli` | [command-line-options.md](command-line-options.md) |
 | Configuration (sources, hot-reload, validation, templating, UNS `hierarchy`/`identity`) | `config` | [configuration.md](configuration.md) |
 | Messaging (providers + service, request/reply w/ deadline, reserved-class guard) | `messaging` | [messaging.md](messaging.md) |
+| Commands (legacy handlers plus explicit deferred outcomes) | `commands` | [commands.md](commands.md) |
 | UNS (topic builder/validator, `gg.uns()` / `gg.instance(id)`) | `uns`, `instance` | [messaging.md](messaging.md); design: [`DESIGN-uns.md`](../../../docs/platform/DESIGN-uns.md) |
 | Metrics (EMF + targets) | `metrics` | [metric-emission.md](metric-emission.md) |
 | Heartbeat (UNS `state` keepalive + `sys` measures metric) | `heartbeat` | [heartbeat.md](heartbeat.md) |

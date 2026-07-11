@@ -18,7 +18,7 @@ Obtain bound instances from ``gg.instance(id).data()/events()/app()`` (primary,
 per-instance) or the ``main``-instance convenience ``gg.data()/events()/app()``. Mirrors
 the Java canonical ``com.mbreissi.edgecommons.facades`` package.
 """
-from .app_facade import AppFacade
+from .app_facade import AppFacade, PreparedAppMessage
 from .channel import Channel
 from .data_facade import DataFacade
 from .events_facade import EventsFacade
@@ -29,6 +29,7 @@ from .stream_sink import StreamSink
 
 __all__ = [
     "AppFacade",
+    "PreparedAppMessage",
     "Channel",
     "DataFacade",
     "EventsFacade",

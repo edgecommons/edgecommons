@@ -76,7 +76,10 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
     }
 
     public <<COMPONENTNAME>>(String[] args) {
-        edgeCommons = EdgeCommonsBuilder.create("<<COMPONENTFULLNAME>>").withArgs(args).build();
+        edgeCommons = EdgeCommonsBuilder.create("<<COMPONENTFULLNAME>>")
+                .withArgs(args)
+                .initialReady(false)
+                .build();
         config = edgeCommons.getConfigManager();
         messaging = edgeCommons.getMessaging();
         metrics = edgeCommons.getMetrics();
@@ -96,6 +99,10 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
             worker.setDaemon(true);
             worker.start();
         }
+
+        // Required workers have been launched. Messaging connectivity and the command-inbox
+        // acknowledgement remain mandatory parts of the runtime readiness predicate.
+        edgeCommons.setReady(true);
 
         // Block until shutdown. The library's signal hook closes everything and the JVM exits 0.
         try {

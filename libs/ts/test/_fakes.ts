@@ -20,8 +20,10 @@ import {
   Qos,
   RawSubscription,
   ReplyFuture,
+  ReservedTopicError,
 } from "../src/messaging/types";
 import { topicMatches } from "../src/messaging/standalone-provider";
+import { reservedClassOf } from "../src/uns";
 
 /** A recorded publish call. */
 export interface PublishRecord {
@@ -33,11 +35,17 @@ export interface PublishRecord {
     | "publishReserved"
     | "publishReservedNorthbound"
     | "reply"
-    | "replyNorthbound";
+    | "replyNorthbound"
+    | "publishConfirmed"
+    | "publishNorthboundConfirmed"
+    | "replyConfirmed"
+    | "replyNorthboundConfirmed";
   topic: string;
   message?: Message;
   payload?: unknown;
   qos?: Qos;
+  timeoutMs?: number;
+  encodedBytes?: Buffer;
 }
 
 /**
@@ -59,6 +67,38 @@ export class RecordingMessagingService implements IMessagingService {
   }
   async publishNorthbound(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
     this.published.push({ kind: "publishNorthbound", topic, message: msg, qos });
+  }
+  async publishConfirmed(
+    topic: string,
+    msgOrEncoded: Message | Buffer,
+    qos: Qos,
+    timeoutMs: number,
+  ): Promise<void> {
+    const encodedBytes = Buffer.isBuffer(msgOrEncoded) ? Buffer.from(msgOrEncoded) : msgOrEncoded.toBytes();
+    this.published.push({
+      kind: "publishConfirmed",
+      topic,
+      message: Msg.fromBytes(encodedBytes),
+      encodedBytes,
+      qos,
+      timeoutMs,
+    });
+  }
+  async publishNorthboundConfirmed(
+    topic: string,
+    msgOrEncoded: Message | Buffer,
+    qos: Qos,
+    timeoutMs: number,
+  ): Promise<void> {
+    const encodedBytes = Buffer.isBuffer(msgOrEncoded) ? Buffer.from(msgOrEncoded) : msgOrEncoded.toBytes();
+    this.published.push({
+      kind: "publishNorthboundConfirmed",
+      topic,
+      message: Msg.fromBytes(encodedBytes),
+      encodedBytes,
+      qos,
+      timeoutMs,
+    });
   }
   async publishRaw(topic: string, payload: unknown): Promise<void> {
     this.published.push({ kind: "publishRaw", topic, payload });
@@ -124,6 +164,38 @@ export class RecordingMessagingService implements IMessagingService {
     reply.header.correlation_id = request.getCorrelationId();
     this.published.push({ kind: "replyNorthbound", topic: request.getReplyTo() ?? "", message: reply });
   }
+  validateReplyTarget(request: Message): void {
+    const replyTo = request.getReplyTo();
+    if (!replyTo) throw new Error("request requires a non-empty reply_to");
+    const reserved = reservedClassOf(replyTo, false);
+    if (reserved !== undefined) throw new ReservedTopicError(replyTo, reserved);
+  }
+  async replyConfirmed(request: Message, reply: Message, timeoutMs: number): Promise<void> {
+    this.validateReplyTarget(request);
+    reply.header.correlation_id = request.getCorrelationId();
+    const encodedBytes = reply.toBytes();
+    this.published.push({
+      kind: "replyConfirmed",
+      topic: request.getReplyTo()!,
+      message: Msg.fromBytes(encodedBytes),
+      encodedBytes,
+      qos: Qos.AtLeastOnce,
+      timeoutMs,
+    });
+  }
+  async replyNorthboundConfirmed(request: Message, reply: Message, timeoutMs: number): Promise<void> {
+    this.validateReplyTarget(request);
+    reply.header.correlation_id = request.getCorrelationId();
+    const encodedBytes = reply.toBytes();
+    this.published.push({
+      kind: "replyNorthboundConfirmed",
+      topic: request.getReplyTo()!,
+      message: Msg.fromBytes(encodedBytes),
+      encodedBytes,
+      qos: Qos.AtLeastOnce,
+      timeoutMs,
+    });
+  }
   cancelRequest(reply: ReplyFuture): void {
     reply.cancel();
   }
@@ -162,6 +234,16 @@ export class FakeMessagingProvider implements MessagingProvider {
         s.onMessage(topic, payload);
       }
     }
+  }
+
+  async publishBytesConfirmed(
+    topic: string,
+    payload: Buffer,
+    dest: Destination,
+    qos: Qos,
+    _timeoutMs: number,
+  ): Promise<void> {
+    await this.publishBytes(topic, Buffer.from(payload), dest, qos);
   }
 
   async subscribeRaw(

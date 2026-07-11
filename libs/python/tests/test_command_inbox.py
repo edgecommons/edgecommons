@@ -86,6 +86,16 @@ class FakeMessaging:
     def subscribe(self, topic, callback, max_concurrency=None, max_messages=None):
         self._callbacks[topic] = callback
 
+    def subscribe_acknowledged(
+        self,
+        topic,
+        callback,
+        max_concurrency=None,
+        max_messages=None,
+        timeout_secs=10.0,
+    ):
+        self.subscribe(topic, callback, max_concurrency, max_messages)
+
     def unsubscribe(self, topic):
         self._callbacks.pop(topic, None)
 
@@ -198,10 +208,16 @@ def test_close_is_idempotent_and_start_after_close_is_a_noop(h):
 
 
 def test_start_failure_disables_the_inbox_without_raising(h):
-    def boom_subscribe(topic, callback, max_concurrency=None, max_messages=None):
+    def boom_subscribe(
+        topic,
+        callback,
+        max_concurrency=None,
+        max_messages=None,
+        timeout_secs=10.0,
+    ):
         raise RuntimeError("broker unavailable")
 
-    h.messaging.subscribe = boom_subscribe
+    h.messaging.subscribe_acknowledged = boom_subscribe
     h.inbox.start()  # must not raise; the inbox self-disables
     assert not h.messaging.subscribed_topics()
 

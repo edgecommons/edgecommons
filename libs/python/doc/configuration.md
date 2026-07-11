@@ -10,6 +10,7 @@ Key features include:
 - Runtime configuration change notifications
 - Separation of framework and application configuration
 - Instance-based configuration for multi-instance components
+- Side-effect-free pre-commit validators with atomic generation activation
 
 ## 2. Configuration Sources
 
@@ -144,16 +145,15 @@ When processing instance configurations, additional variables are available:
 ### Accessing Configuration in Code
 
 ```python
-from edgecommons.builders import EdgeCommonsBuilder
-from edgecommons.interfaces import IConfigurationService
+from edgecommons import EdgeCommonsBuilder
 
 # Initialize EdgeCommons
 edgecommons = EdgeCommonsBuilder.create("com.example.MyComponent") \
     .with_args(args) \
     .build()
 
-# Get the configuration service
-config_service = edgecommons.get_service(IConfigurationService)
+# Get the concrete configuration manager
+config_service = edgecommons.get_config_manager()
 
 # Access global configuration
 global_config = config_service.get_global_config()
@@ -183,6 +183,45 @@ class MyConfigListener(ConfigurationChangeListener):
 # Register listener
 config_service.add_config_change_listener(MyConfigListener())
 ```
+
+Applied listeners run only after an accepted generation is current. They receive a defensive copy;
+a listener cannot recursively apply another generation from inside its callback.
+
+### Pre-commit candidate validation
+
+Register component-specific validators on `EdgeCommonsBuilder`, before the selected config provider
+loads or starts a watcher/subscription:
+
+```python
+from edgecommons import (
+    ConfigurationValidationPhase,
+    ConfigurationValidationResult,
+    EdgeCommonsBuilder,
+)
+
+def validate_cameras(candidate, redacted_current, phase):
+    instances = candidate.get("component", {}).get("instances", [])
+    if not any(instance.get("enabled", True) for instance in instances):
+        return ConfigurationValidationResult.reject(
+            "NO_ENABLED_CAMERA", "at least one enabled camera is required"
+        )
+    return ConfigurationValidationResult.accept()
+
+gg = (
+    EdgeCommonsBuilder.create("com.example.CameraAdapter")
+    .configuration_validator("camera", validate_cameras)
+    .configuration_validation_timeout(5.0)
+    .build()
+)
+```
+
+For every `INITIAL` load and `RELOAD`, the canonical schema is checked first. Validators then receive
+independent deep copies of the candidate and the redacted prior generation (`None` for `INITIAL`). The
+deadline is one overall deadline for all validators: 5 seconds by default and at most 60 seconds.
+Rejection, timeout, or failure retains the exact prior generation and invokes neither applied listeners
+nor effective-config publication. Successful activation installs one complete snapshot atomically;
+`get_generation()` starts at 1 and increments only for accepted generations. Stable errors from the
+last rejection are available through `get_last_candidate_validation_errors()`.
 
 ### Template Resolution
 

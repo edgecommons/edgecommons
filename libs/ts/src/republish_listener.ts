@@ -243,7 +243,7 @@ export class RepublishListener {
     command.triggered = true;
     command.lastAcceptedMs = now;
     const delayMillis = this.jitter(RepublishListener.JITTER_WINDOW_MS);
-    logger.info(`'${command.verb}' broadcast accepted - re-announcing in ${delayMillis} ms`);
+    logger.debug(`'${command.verb}' broadcast accepted - re-announcing in ${delayMillis} ms`);
     this.delayer(() => this.fire(command), delayMillis);
   }
 

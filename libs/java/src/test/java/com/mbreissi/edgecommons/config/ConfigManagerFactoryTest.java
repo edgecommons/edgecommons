@@ -10,6 +10,9 @@ import org.junit.jupiter.api.Test;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.time.Duration;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -72,6 +75,23 @@ class ConfigManagerFactoryTest {
         ConfigurationException ex = assertThrows(ConfigurationException.class,
                 () -> ConfigManagerFactory.create("com.test.Comp", fileCmdLine(config, "t")));
         assertTrue(ex.getMessage().toLowerCase().contains("validation"));
+    }
+
+    @Test
+    void schemaValidationRunsBeforeInitialComponentValidators() throws Exception {
+        File config = writeTempConfig("""
+                {"logging":{"level":"INFO"}}""");
+        AtomicBoolean validatorCalled = new AtomicBoolean();
+
+        assertThrows(ConfigurationException.class, () -> ConfigManagerFactory.create(
+                "com.test.Comp", fileCmdLine(config, "t"), null,
+                Map.of("camera", (candidate, current, phase) -> {
+                    validatorCalled.set(true);
+                    return ConfigurationCandidateValidator.Result.accept();
+                }), Duration.ofSeconds(1)));
+
+        assertFalse(validatorCalled.get(),
+                "schema-invalid candidates must never reach component validators");
     }
 
     @Test

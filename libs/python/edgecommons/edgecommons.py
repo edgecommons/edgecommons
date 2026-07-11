@@ -16,7 +16,7 @@ import sys
 import threading
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional, List
+from typing import Callable, Dict, List, Optional
 from edgecommons.config.manager.config_manager import ConfigManager
 from edgecommons.config.manager.config_manager_builder import ConfigManagerBuilder
 from edgecommons.platform import (
@@ -48,7 +48,11 @@ class EdgeCommons:
 
     def __init__(self, component_name: str, args: List[str], 
                  app_options: Optional[argparse.ArgumentParser] = None,
-                 receive_own_messages: bool = True):
+                 receive_own_messages: bool = True,
+                 initial_ready: bool = True,
+                 configuration_validators: Optional[Dict[str, Callable]] = None,
+                 configuration_validation_timeout: float = 5.0,
+                 command_configurers: Optional[List[Callable]] = None):
         """
         Initialize EdgeCommons with enhanced features.
         
@@ -65,6 +69,12 @@ class EdgeCommons:
             raise ValueError("Component name cannot be None or empty")
             
         self._component_name = component_name
+        # Set before parsing, connecting, loading configuration, or starting any
+        # externally observable endpoint: initial_ready(False) can never flicker true.
+        self._initial_ready = bool(initial_ready)
+        self._configuration_validators = dict(configuration_validators or {})
+        self._configuration_validation_timeout = configuration_validation_timeout
+        self._command_configurers = list(command_configurers or [])
         self._config_manager: Optional[ConfigManager] = None
         self._heartbeat = None
         # The library-owned cfg publisher (UNS-CANONICAL-DESIGN §4.3): announces the
@@ -238,6 +248,10 @@ class EdgeCommons:
                 self._config_manager.reload_from_provider,
                 self._effective_config_publisher.redacted_effective_config,
             )
+            # The complete component command surface is installed before the transport
+            # subscription can acknowledge and make dispatch externally reachable.
+            for configurer in self._command_configurers:
+                configurer(self._command_inbox)
             self._command_inbox.start()
 
             logger.info("EdgeCommons initialized successfully")
@@ -434,7 +448,12 @@ class EdgeCommons:
             parsed_args: Parsed command line arguments
         """
         # Use config manager builder to create appropriate manager
-        self._config_manager = ConfigManagerBuilder.build(parsed_args, component_name)
+        self._config_manager = ConfigManagerBuilder.build(
+            parsed_args,
+            component_name,
+            candidate_validators=self._configuration_validators,
+            validation_timeout_secs=self._configuration_validation_timeout,
+        )
         
     def _init_messaging(self, parsed_args: argparse.Namespace, receive_own_messages: bool) -> None:
         """
@@ -612,7 +631,11 @@ class EdgeCommons:
 
         # Readiness queries the live messaging connection on each check; if messaging is not wired
         # MessagingClient.connected() returns False (not ready).
-        self._readiness = ReadinessState(lambda: MessagingClient.connected())
+        self._readiness = ReadinessState(
+            lambda: MessagingClient.connected(),
+            initial_ready=getattr(self, "_initial_ready", True),
+            required_ready_fn=self._command_plane_active,
+        )
 
         health_config = self._config_manager.get_health_config()
         platform = getattr(parsed_args, "platform", None)
@@ -648,6 +671,20 @@ class EdgeCommons:
         """
         if self._readiness is not None:
             self._readiness.set_ready(ready)
+
+    def _command_plane_active(self) -> bool:
+        """Whether the acknowledged command-inbox generation is dispatch-capable."""
+
+        if not hasattr(self, "_command_inbox"):
+            # Bare-object test/subclass bring-up predating command lifecycle wiring.
+            return True
+        inbox = self._command_inbox
+        if inbox is None:
+            return False
+        try:
+            return inbox.startup_status().state.value == "ACTIVE"
+        except Exception:  # noqa: BLE001 - readiness fails closed
+            return False
 
     def _install_signal_handlers(self) -> None:
         """Wire SIGTERM **and SIGINT** to the graceful-shutdown path (FR-HB-2).

@@ -20,7 +20,7 @@ equivalents for four-way parity.
 import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable
+from typing import Callable, Optional
 
 from edgecommons.config.health_config import HealthConfiguration
 
@@ -44,14 +44,20 @@ class ReadinessState:
     Liveness does **not** consult this object — it is unconditionally alive while the handler runs.
     """
 
-    def __init__(self, connected_fn: Callable[[], bool]):
+    def __init__(
+        self,
+        connected_fn: Callable[[], bool],
+        initial_ready: bool = True,
+        required_ready_fn: Optional[Callable[[], bool]] = None,
+    ):
         """
         Args:
             connected_fn: a zero-arg callable returning the messaging layer's connected state. It is
                 invoked on every readiness check (outside the lock) and must be cheap and non-blocking.
         """
         self._connected_fn = connected_fn
-        self._ready_flag = True
+        self._required_ready_fn = required_ready_fn
+        self._ready_flag = bool(initial_ready)
         self._shutting_down = False
         self._lock = threading.Lock()
 
@@ -78,7 +84,13 @@ class ReadinessState:
         # Query the messaging connection outside the lock so a slow/odd accessor can never deadlock
         # readiness checks; treat any error as "not connected" (fail closed -> 503).
         try:
-            return bool(self._connected_fn())
+            connected = bool(self._connected_fn())
+            required = (
+                True
+                if self._required_ready_fn is None
+                else bool(self._required_ready_fn())
+            )
+            return connected and required
         except Exception as e:  # noqa: BLE001 - readiness must never raise out of the handler
             logger.debug("readiness connected() check failed; treating as not connected: %s", e)
             return False

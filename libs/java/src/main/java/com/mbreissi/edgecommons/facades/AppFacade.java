@@ -15,6 +15,7 @@ import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.time.Duration;
 import java.util.Objects;
 
 /**
@@ -43,6 +44,39 @@ public final class AppFacade {
     private final String instanceId;
     private final Uns uns;
     private final MessagingClient messaging;
+
+    /**
+     * Immutable prepared application publication. The encoded bytes are captured once with the
+     * message UUID/timestamp and are defensively copied, allowing a durable outbox to retry the
+     * exact envelope rather than reconstructing it.
+     */
+    public static final class PreparedAppMessage {
+        private final String topic;
+        private final Message message;
+        private final byte[] encodedBytes;
+
+        private PreparedAppMessage(String topic, Message message, byte[] encodedBytes) {
+            this.topic = Objects.requireNonNull(topic, "topic must not be null");
+            this.message = Objects.requireNonNull(message, "message must not be null");
+            this.encodedBytes = Objects.requireNonNull(
+                    encodedBytes, "encodedBytes must not be null").clone();
+        }
+
+        /** The facade-generated {@code app/{channel}} topic. */
+        public String topic() {
+            return topic;
+        }
+
+        /** The prepared envelope (including its stable UUID, timestamp, identity, and body). */
+        public Message message() {
+            return Message.fromBytes(encodedBytes);
+        }
+
+        /** Exact serialized envelope bytes; each call returns a defensive copy. */
+        public byte[] encodedBytes() {
+            return encodedBytes.clone();
+        }
+    }
 
     /**
      * Library-internal constructor (see class javadoc).
@@ -81,28 +115,100 @@ public final class AppFacade {
      * @throws IllegalArgumentException when {@code routing} is a {@code stream} channel
      */
     public void publish(String name, String channel, JsonObject body, Channel routing) {
+        publish(prepare(name, channel, body), routing);
+    }
+
+    /**
+     * Constructs an application message without publishing it. The returned bytes and envelope
+     * are one immutable publication attempt suitable for durable outbox storage.
+     */
+    public PreparedAppMessage prepare(String name, String channel, JsonObject body) {
+        return prepareInternal(name, channel, body, null);
+    }
+
+    /**
+     * Prepares an application message carrying a received request's conversation correlation.
+     *
+     * @throws IllegalArgumentException when the request/header/correlation is absent
+     */
+    public PreparedAppMessage prepareCorrelated(String name, String channel, JsonObject body,
+                                                Message request) {
+        if (request == null || request.getHeader() == null) {
+            throw new IllegalArgumentException(
+                    "correlated app message requires a request with a header");
+        }
+        return prepareCorrelated(
+                name, channel, body, request.getHeader().getCorrelationId());
+    }
+
+    /**
+     * Prepares an application message with an explicit existing conversation correlation. The
+     * correlation joins observations; it is not treated as an idempotency key.
+     */
+    public PreparedAppMessage prepareCorrelated(String name, String channel, JsonObject body,
+                                                String correlationId) {
+        if (correlationId == null || correlationId.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "correlated app message requires a non-empty correlation id");
+        }
+        return prepareInternal(name, channel, body, correlationId);
+    }
+
+    private PreparedAppMessage prepareInternal(String name, String channel, JsonObject body,
+                                               String correlationId) {
         if (name == null || name.isEmpty()) {
             throw new IllegalArgumentException("app publish requires a non-empty header name");
         }
         if (channel == null || channel.isEmpty()) {
             throw new IllegalArgumentException("app publish requires a non-empty channel");
         }
-        rejectStream(routing);
         String topic = uns.topic(UnsClass.APP, channelToken(channel));
-        Message msg = MessageBuilder.create(name, APP_MESSAGE_VERSION)
+        MessageBuilder builder = MessageBuilder.create(name, APP_MESSAGE_VERSION)
                 .withConfig(configManager)
                 .withInstance(instanceId)
-                .withPayload(body)
-                .build();
+                .withPayload(body);
+        if (correlationId != null) {
+            builder.withCorrelationId(correlationId);
+        }
+        Message msg = builder.build();
+        return new PreparedAppMessage(topic, msg, msg.toBytes());
+    }
+
+    /** Publishes a previously prepared envelope through the existing immediate path. */
+    public void publish(PreparedAppMessage prepared, Channel routing) {
+        Objects.requireNonNull(prepared, "prepared must not be null");
+        rejectStream(routing);
         if (routing != null && routing.kind() == Channel.Kind.NORTHBOUND) {
             try {
-                messaging.publishNorthbound(topic, msg, Qos.AT_LEAST_ONCE);
+                messaging.publishNorthbound(
+                        prepared.topic(), prepared.message(), Qos.AT_LEAST_ONCE);
             } catch (Exception e) {
                 LOGGER.warn("Northbound app publish on '{}' failed (local readiness unaffected): {}",
-                        topic, e.toString());
+                        prepared.topic(), e.toString());
             }
         } else {
-            messaging.publish(topic, msg);
+            messaging.publish(prepared.topic(), prepared.message());
+        }
+    }
+
+    /** Publishes a prepared envelope locally and waits for explicit QoS-1 confirmation. */
+    public void publishConfirmed(PreparedAppMessage prepared, Duration timeout) {
+        publishConfirmed(prepared, null, timeout);
+    }
+
+    /**
+     * Publishes the exact bytes of a prepared envelope and waits for positive local/northbound
+     * acknowledgement. Failures propagate so a durable outbox can leave the record pending.
+     */
+    public void publishConfirmed(PreparedAppMessage prepared, Channel routing, Duration timeout) {
+        Objects.requireNonNull(prepared, "prepared must not be null");
+        rejectStream(routing);
+        if (routing != null && routing.kind() == Channel.Kind.NORTHBOUND) {
+            messaging.publishNorthboundConfirmed(prepared.topic(), prepared.encodedBytes(),
+                    Qos.AT_LEAST_ONCE, timeout);
+        } else {
+            messaging.publishConfirmed(prepared.topic(), prepared.encodedBytes(),
+                    Qos.AT_LEAST_ONCE, timeout);
         }
     }
 

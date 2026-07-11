@@ -21,16 +21,32 @@ import * as path from "path";
 
 const hoisted = vi.hoisted(() => ({
   connectCalls: [] as { url: string; options: Record<string, unknown> }[],
+  clients: [] as Array<EventEmitter & Record<string, unknown>>,
+  publishCalls: [] as Array<{ topic: string; payload: Buffer; options: Record<string, unknown> }>,
+  publishCallbacks: [] as Array<(error?: Error | null) => void>,
+  deferPublishAck: false,
 }));
 
 vi.mock("mqtt", () => {
   const connect = (url: string, options: Record<string, unknown>): EventEmitter => {
     hoisted.connectCalls.push({ url, options });
     const client = new EventEmitter() as EventEmitter & Record<string, unknown>;
-    client.publish = (_t: string, _p: unknown, _o: unknown, cb?: (e?: Error) => void): void => cb?.();
+    client.connected = true;
+    client.publish = (
+      topic: string,
+      payload: Buffer,
+      publishOptions: Record<string, unknown>,
+      cb?: (e?: Error | null) => void,
+    ): void => {
+      hoisted.publishCalls.push({ topic, payload: Buffer.from(payload), options: publishOptions });
+      if (!cb) return;
+      if (hoisted.deferPublishAck) hoisted.publishCallbacks.push(cb);
+      else cb();
+    };
     client.subscribe = (_f: string, _o: unknown, cb?: (e?: Error) => void): void => cb?.();
     client.unsubscribe = (_f: string, cb?: () => void): void => cb?.();
     client.end = (_force?: unknown, _o?: unknown, cb?: () => void): void => cb?.();
+    hoisted.clients.push(client);
     // Emit CONNACK asynchronously so connectBroker's once("connect") handler is registered first.
     setImmediate(() => client.emit("connect"));
     return client;
@@ -53,6 +69,10 @@ function tmpFile(name: string, contents: string): string {
 
 beforeEach(() => {
   hoisted.connectCalls.length = 0;
+  hoisted.clients.length = 0;
+  hoisted.publishCalls.length = 0;
+  hoisted.publishCallbacks.length = 0;
+  hoisted.deferPublishAck = false;
 });
 
 afterEach(() => {
@@ -221,6 +241,98 @@ describe("FR-MSG-2: Kubernetes Service-DNS broker host", () => {
     // client cert is not loaded. Previously TS used mqtts here (caPath || certPath).
     expect(hoisted.connectCalls[0].url).toBe("mqtt://localhost:1883");
     expect(hoisted.connectCalls[0].options.cert).toBeUndefined();
+    await provider.disconnect();
+  });
+});
+
+describe("strict MQTT publish confirmation", () => {
+  async function connectedProvider(): Promise<StandaloneMqttProvider> {
+    const cfg = await loadMessagingConfig(
+      tmpFile(
+        "confirmed.json",
+        JSON.stringify({ messaging: { local: { host: "localhost", port: 1883, clientId: "confirmed" } } }),
+      ),
+    );
+    return StandaloneMqttProvider.connect(cfg);
+  }
+
+  it("does not resolve until mqtt.js reports the QoS-1 PUBACK callback and preserves exact bytes", async () => {
+    hoisted.deferPublishAck = true;
+    const provider = await connectedProvider();
+    const exact = Buffer.from([0, 1, 2, 255]);
+    let settled = false;
+    const pending = provider
+      .publishBytesConfirmed("camera/reply", exact, Destination.Local, Qos.AtLeastOnce, 1_000)
+      .then(() => {
+        settled = true;
+      });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(settled).toBe(false);
+    expect(hoisted.publishCalls).toHaveLength(1);
+    expect(hoisted.publishCalls[0]).toMatchObject({ topic: "camera/reply", options: { qos: 1 } });
+    expect(hoisted.publishCalls[0].payload.equals(exact)).toBe(true);
+    hoisted.publishCallbacks.shift()?.();
+    await pending;
+    expect(settled).toBe(true);
+    await provider.disconnect();
+  });
+
+  it("rejects disconnect-before-PUBACK as ambiguous even if a late callback arrives", async () => {
+    hoisted.deferPublishAck = true;
+    const provider = await connectedProvider();
+    const pending = provider.publishBytesConfirmed(
+      "camera/reply",
+      Buffer.from("payload"),
+      Destination.Local,
+      Qos.AtLeastOnce,
+      1_000,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    hoisted.clients[0].emit("close");
+
+    await expect(pending).rejects.toMatchObject({ reason: "transport" });
+    expect(() => hoisted.publishCallbacks.shift()?.()).not.toThrow();
+    await provider.disconnect();
+  });
+
+  it("rejects timeout, disconnected start, non-QoS1, and immediate publish errors", async () => {
+    hoisted.deferPublishAck = true;
+    const provider = await connectedProvider();
+    await expect(
+      provider.publishBytesConfirmed("t", Buffer.from("x"), Destination.Local, Qos.AtLeastOnce, 20),
+    ).rejects.toMatchObject({ reason: "timeout" });
+    // Exercise the late-PUBACK callback after timeout: it must be harmless and must not be
+    // mistaken for the callback belonging to the next operation.
+    expect(() => hoisted.publishCallbacks.shift()?.()).not.toThrow();
+
+    hoisted.clients[0].connected = false;
+    await expect(
+      provider.publishBytesConfirmed("t", Buffer.from("x"), Destination.Local, Qos.AtLeastOnce, 20),
+    ).rejects.toMatchObject({ reason: "transport" });
+    await expect(
+      provider.publishBytesConfirmed("t", Buffer.from("x"), Destination.Local, Qos.AtMostOnce, 20),
+    ).rejects.toThrow(/QoS 1/);
+
+    hoisted.clients[0].connected = true;
+    const failed = provider.publishBytesConfirmed(
+      "t",
+      Buffer.from("x"),
+      Destination.Local,
+      Qos.AtLeastOnce,
+      1_000,
+    );
+    hoisted.publishCallbacks.shift()?.(new Error("broker rejected publish"));
+    await expect(failed).rejects.toMatchObject({ reason: "transport" });
+    await provider.disconnect();
+  });
+
+  it("rejects immediately when the bounded confirmed-publish capacity is exhausted", async () => {
+    const provider = await connectedProvider();
+    (provider as unknown as { confirmedInFlight: number }).confirmedInFlight = 1024;
+    await expect(
+      provider.publishBytesConfirmed("t", Buffer.from("x"), Destination.Local, Qos.AtLeastOnce, 100),
+    ).rejects.toMatchObject({ reason: "backpressure" });
     await provider.disconnect();
   });
 });

@@ -1727,7 +1727,7 @@ impl RepublishListener {
             return;
         }
         let delay_millis = (listener.jitter)(JITTER_WINDOW_MS);
-        tracing::info!(
+        tracing::debug!(
             verb = verb_name,
             delay_millis,
             "broadcast accepted; re-announcing"

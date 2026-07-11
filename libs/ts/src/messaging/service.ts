@@ -18,12 +18,14 @@ import {
   IMessagingService,
   MessageHandler,
   MessagingProvider,
+  PublishConfirmationError,
   Qos,
   RawSubscription,
   ReplyFuture,
   RequestTimeoutError,
   ReservedTopicError,
   REPLY_TOPIC_PREFIX,
+  validateConfirmedPublish,
 } from "./types";
 
 /**
@@ -180,6 +182,79 @@ export class DefaultMessagingService implements IMessagingService {
   async publishNorthbound(topic: string, msg: Message, qos: Qos = Qos.AtLeastOnce): Promise<void> {
     this.checkReservedTopic(topic);
     await this.provider.publishBytes(topic, msg.toBytes(), Destination.Northbound, qos);
+  }
+
+  /** Strict local publish; exact bytes are parsed and validated before the provider sees them. */
+  async publishConfirmed(
+    topic: string,
+    msgOrEncoded: Message | Buffer,
+    qos: Qos,
+    timeoutMs: number,
+  ): Promise<void> {
+    this.checkReservedTopic(topic);
+    await this.confirmedPublish(topic, msgOrEncoded, Destination.Local, qos, timeoutMs);
+  }
+
+  /** Strict northbound counterpart of {@link publishConfirmed}. */
+  async publishNorthboundConfirmed(
+    topic: string,
+    msgOrEncoded: Message | Buffer,
+    qos: Qos,
+    timeoutMs: number,
+  ): Promise<void> {
+    this.checkReservedTopic(topic);
+    await this.confirmedPublish(topic, msgOrEncoded, Destination.Northbound, qos, timeoutMs);
+  }
+
+  private async confirmedPublish(
+    topic: string,
+    msgOrEncoded: Message | Buffer,
+    dest: Destination,
+    qos: Qos,
+    timeoutMs: number,
+  ): Promise<void> {
+    validateConfirmedPublish(qos, timeoutMs);
+    const payload = this.validateEncodedEnvelope(
+      Buffer.isBuffer(msgOrEncoded) ? Buffer.from(msgOrEncoded) : msgOrEncoded.toBytes(),
+    );
+    const confirmed = this.provider.publishBytesConfirmed;
+    if (typeof confirmed !== "function") {
+      throw new PublishConfirmationError(
+        "unsupported",
+        `${this.provider.constructor.name} does not support confirmed publish`,
+      );
+    }
+    await confirmed.call(this.provider, topic, payload, dest, qos, timeoutMs);
+  }
+
+  /** Parse and validate an EdgeCommons envelope while returning the caller's exact bytes. */
+  private validateEncodedEnvelope(payload: Buffer): Buffer {
+    let decoded: Message;
+    try {
+      decoded = Message.fromBytes(payload);
+    } catch (e) {
+      throw new PublishConfirmationError(
+        "invalidEnvelope",
+        "confirmed publish requires a valid encoded EdgeCommons envelope",
+        { cause: e },
+      );
+    }
+    const header = decoded.header;
+    if (
+      decoded.isRaw() ||
+      !header ||
+      !header.name ||
+      !header.version ||
+      !header.timestamp ||
+      !header.correlation_id ||
+      !header.uuid
+    ) {
+      throw new PublishConfirmationError(
+        "invalidEnvelope",
+        "confirmed publish requires an EdgeCommons envelope with a complete header",
+      );
+    }
+    return payload;
   }
 
   async publishRaw(topic: string, payload: unknown): Promise<void> {
@@ -358,6 +433,29 @@ export class DefaultMessagingService implements IMessagingService {
   async reply(request: Message, reply: Message): Promise<void> {
     this.checkReservedTopic(request.getReplyTo());
     await this.sendReply(request, reply, Destination.Local, this.publishQos(Destination.Local));
+  }
+
+  /** Validate a request's reply target through the same guard used by reply publication. */
+  validateReplyTarget(request: Message): void {
+    const replyTo = request?.getReplyTo();
+    if (!replyTo) {
+      throw new Error("request requires a non-empty reply_to");
+    }
+    this.checkReservedTopic(replyTo);
+  }
+
+  /** Guarded local reply that waits for strict QoS-1 transport confirmation. */
+  async replyConfirmed(request: Message, reply: Message, timeoutMs: number): Promise<void> {
+    this.validateReplyTarget(request);
+    reply.header.correlation_id = request.getCorrelationId();
+    await this.publishConfirmed(request.getReplyTo()!, reply, Qos.AtLeastOnce, timeoutMs);
+  }
+
+  /** Guarded northbound strict reply counterpart. */
+  async replyNorthboundConfirmed(request: Message, reply: Message, timeoutMs: number): Promise<void> {
+    this.validateReplyTarget(request);
+    reply.header.correlation_id = request.getCorrelationId();
+    await this.publishNorthboundConfirmed(request.getReplyTo()!, reply, Qos.AtLeastOnce, timeoutMs);
   }
 
   /** Northbound variant of {@link reply} — the request's `reply_to` topic is guarded the same way. */

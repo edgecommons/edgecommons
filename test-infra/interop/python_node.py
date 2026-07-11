@@ -38,12 +38,15 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 
 from edgecommons.messaging.messaging_config import MessagingConfiguration
 from edgecommons.messaging.providers.standalone_provider import StandaloneProvider
+from edgecommons.messaging.qos import Qos
 from edgecommons.messaging.message import _binary_marker
 from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.messaging.identity import MessageIdentity
+from edgecommons.command_inbox import CommandOutcome
 from edgecommons.uns import Uns, UnsClass
 from edgecommons import EdgeCommons, LogRecord
 
@@ -87,6 +90,27 @@ def _provider(suffix):
 
 def _log_component_token():
     return f"interop-log-{LANG}"
+
+
+def _write_command_runtime_config(component_token):
+    """Create the minimal real runtime config used by the deferred-command responder."""
+    cfg = {
+        "component": {"token": component_token},
+        "messaging": {
+            "local": {
+                "type": "mqtt",
+                "host": HOST,
+                "port": PORT,
+                "clientId": f"interop-{LANG}-deferred-runtime-{os.getpid()}",
+            },
+            "requestTimeoutSeconds": 4,
+        },
+        "heartbeat": {"enabled": False},
+        "health": {"enabled": False},
+    }
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(cfg, f)
+        return f.name
 
 
 def _write_log_runtime_config():
@@ -348,6 +372,169 @@ def run_typed_pub(topic, body_hex):
         prov.publish(topic, msg)
         time.sleep(0.5)
         return 0
+    finally:
+        prov.disconnect()
+
+
+def run_deferred_responder(component_token):
+    """Serve a real command inbox whose reply is deferred until acceptance is explicit.
+
+    The marker models a completed durable insert in this wire-only harness.  Keeping that
+    state transition immediately before ``activate`` makes the activation ordering observable
+    in every language without pretending that a timer is durable work.
+    """
+    path = _write_command_runtime_config(component_token)
+    gg = None
+    try:
+        gg = EdgeCommons(
+            f"com.mbreissi.edgecommons.interop.{LANG}.DeferredResponder",
+            _log_runtime_args(path),
+        )
+        inbox = gg.get_commands()
+        if inbox is None:
+            raise RuntimeError("runtime did not expose command inbox")
+
+        def deferred_handler(request):
+            token = inbox.defer(request, 4)
+            accepted = {
+                "durablyAccepted": True,
+                "token": request.get_body().get("token"),
+            }
+            if not accepted["durablyAccepted"]:
+                token.discard()
+                return CommandOutcome.error("ACCEPTANCE_FAILED", "work was not accepted")
+            if not token.activate():
+                return CommandOutcome.error("ACTIVATION_FAILED", "deferred token was not open")
+
+            def settle_after_acceptance():
+                token.settle_success({
+                    "token": accepted["token"],
+                    "responder": LANG,
+                    "durablyAccepted": accepted["durablyAccepted"],
+                })
+
+            return CommandOutcome.deferred_with_continuation(token, settle_after_acceptance)
+
+        inbox.register_outcome("deferred", deferred_handler)
+        print("READY", flush=True)
+        while True:
+            time.sleep(1)
+    finally:
+        if gg is not None:
+            gg.shutdown()
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def run_deferred_request(topic, token):
+    """Send one command and retain the reply subscription long enough to reject duplicates."""
+    prov = _provider("deferredreq")
+    received = []
+    received_lock = threading.Lock()
+    first_reply = threading.Event()
+    reply_topic = f"interop/deferred/reply/{LANG}/{uuid.uuid4().hex}"
+    try:
+        def on_reply(_topic, reply):
+            with received_lock:
+                received.append({
+                    "correlation": reply.get_correlation_id(),
+                    "body": reply.get_body(),
+                })
+            first_reply.set()
+
+        prov.subscribe(reply_topic, on_reply)
+        request = (
+            MessageBuilder.create("deferred", "1.0")
+            .with_payload({"token": token, "from": LANG})
+            .with_reply_to(reply_topic)
+            .with_tags({})
+            .build()
+        )
+        correlation = request.get_correlation_id()
+        prov.publish(topic, request)
+        if not first_reply.wait(8):
+            print(json.dumps({"ok": False, "error": "timeout"}), flush=True)
+            return 1
+        # The command inbox must settle exactly once.  Retain the subscription rather than
+        # treating the first arrival as proof that a buggy double-settlement cannot follow.
+        time.sleep(0.75)
+        with received_lock:
+            replies = list(received)
+        first = replies[0]
+        body = first["body"]
+        result = body.get("result") if isinstance(body, dict) else None
+        ok = (
+            len(replies) == 1
+            and first["correlation"] == correlation
+            and isinstance(body, dict)
+            and body.get("ok") is True
+            and isinstance(result, dict)
+            and result.get("token") == token
+            and result.get("durablyAccepted") is True
+            and bool(result.get("responder"))
+        )
+        print(json.dumps({
+            "ok": ok,
+            "reply_count": len(replies),
+            "correlation_match": first["correlation"] == correlation,
+            "reply_body": body,
+        }), flush=True)
+        return 0 if ok else 1
+    finally:
+        prov.disconnect()
+
+
+def run_confirmed_sub(topic, token):
+    """Receive one strict-publication envelope and reject a second payload."""
+    prov = _provider("confirmedsub")
+    received = []
+    received_lock = threading.Lock()
+    first_message = threading.Event()
+    try:
+        def on_message(_topic, message):
+            with received_lock:
+                received.append(message.get_body())
+            first_message.set()
+
+        prov.subscribe(topic, on_message)
+        print("READY", flush=True)
+        if not first_message.wait(8):
+            print(json.dumps({"ok": False, "error": "timeout"}), flush=True)
+            return 1
+        time.sleep(0.75)
+        with received_lock:
+            messages = list(received)
+        body = messages[0]
+        ok = (
+            len(messages) == 1
+            and isinstance(body, dict)
+            and body.get("token") == token
+            and bool(body.get("from"))
+        )
+        print(json.dumps({"ok": ok, "message_count": len(messages), "body": body}), flush=True)
+        return 0 if ok else 1
+    finally:
+        prov.disconnect()
+
+
+def run_confirmed_pub(topic, token):
+    """Return success only after the provider's QoS1 PUBACK wait completes."""
+    prov = _provider("confirmedpub")
+    try:
+        message = (
+            MessageBuilder.create("InteropConfirmed", "1.0")
+            .with_payload({"token": token, "from": LANG})
+            .with_tags({})
+            .build()
+        )
+        prov.publish_confirmed(topic, message.to_bytes(), Qos.AT_LEAST_ONCE, 5)
+        print(json.dumps({"ok": True, "confirmed": True, "qos": 1}), flush=True)
+        return 0
+    except Exception as exc:  # pragma: no cover - exercised by the broker-backed harness
+        print(json.dumps({"ok": False, "error": type(exc).__name__}), flush=True)
+        return 1
     finally:
         prov.disconnect()
 
@@ -844,6 +1031,14 @@ if __name__ == "__main__":
         run_responder(sys.argv[2])
     elif role == "request":
         sys.exit(run_request(sys.argv[2], sys.argv[3]))
+    elif role == "deferred-responder":
+        run_deferred_responder(sys.argv[2])
+    elif role == "deferred-request":
+        sys.exit(run_deferred_request(sys.argv[2], sys.argv[3]))
+    elif role == "confirmed-sub":
+        sys.exit(run_confirmed_sub(sys.argv[2], sys.argv[3]))
+    elif role == "confirmed-pub":
+        sys.exit(run_confirmed_pub(sys.argv[2], sys.argv[3]))
     elif role == "raw-sub":
         sys.exit(run_raw_sub(sys.argv[2], sys.argv[3]))
     elif role == "raw-pub":

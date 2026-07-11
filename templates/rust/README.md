@@ -42,7 +42,7 @@ edge-console reads/drives (DESIGN-uns §7/§9), through the **app-usable class f
 | Metric (`loopTicks`: `tickCount` counter + `uptimeSecs` gauge) | `gg.metrics()` | `ecv1/{device}/{component}/main/metric/loopTicks` (target-dependent; `messaging` target shown) |
 | Data signal (`demo-signal`: a sine-wave reading) | `gg.data().publish_value("demo-signal", value).await?` | `ecv1/{device}/{component}/main/data/demo-signal` |
 | Event (`sample-event`, severity + context) | `gg.events().emit(Severity::Info, "sample-event", message, context).await?` | `ecv1/{device}/{component}/main/evt/info/sample-event` |
-| Custom command verb (`set-greeting`) | `gg.commands().register("set-greeting", ...)` | `ecv1/{device}/{component}/main/cmd/set-greeting` |
+| Custom command verb (`set-greeting`) | `EdgeCommonsBuilder::configure_commands(...)` | `ecv1/{device}/{component}/main/cmd/set-greeting` |
 
 Subscribe `ecv1/+/+/+/metric/#`, `ecv1/+/+/+/data/#` and `ecv1/+/+/+/evt/#` to see them (metrics
 only publish over MQTT when `metricEmission.target` is `messaging`; the default `log` target

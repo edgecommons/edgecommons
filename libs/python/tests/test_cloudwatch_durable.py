@@ -14,6 +14,9 @@ The native ``edgestreamlog_native`` wheel must be installed (built from libs/rus
 maturin). Tests that need it skip cleanly when it is absent.
 """
 import json
+from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -400,6 +403,97 @@ class TestDurableIntegration:
             assert s.disk_bytes <= 256 * 1024 + 65536, "disk stays bounded by the budget (+1 segment)"
             assert client.total_datums() == 0
             svc.close()
+
+    def test_disconnected_callback_close_releases_gil_and_preserves_backlog(self):
+        """A callback export worker may be waiting for the GIL when ``close`` joins it.
+
+        Execute the contention sequence in a child process so a regression fails promptly instead
+        of hanging the full suite.  The first callback always reports a disconnected CloudWatch
+        sink, so close must not send or commit its backlog.  Reopening the same directory proves
+        the close released the native worker and preserves the buffered records for recovery.
+        """
+        script = r'''
+import json
+import sys
+import time
+
+from edgecommons.streaming.service import StreamService
+
+root = sys.argv[1]
+stream = "metrics-cw"
+config = json.dumps({"streams": [{
+    "name": stream,
+    "sink": {"type": "callback"},
+    "buffer": {
+        "type": "disk",
+        "path": root,
+        "segmentBytes": 65536,
+        "maxDiskBytes": 1048576,
+        "onFull": "dropOldest",
+        "fsync": "perBatch",
+    },
+    "delivery": {
+        "maxRetries": -1,
+        "pollIntervalMs": 1,
+        "backoffBaseMs": 1,
+        "backoffMaxMs": 10,
+    },
+    "batch": {"maxRecords": 1000, "maxBytes": 65536, "maxLatencyMs": 1},
+}]})
+
+sent = []
+disconnected = True
+
+def callback(records):
+    if disconnected:
+        return ("failed", "simulated CloudWatch disconnect")
+    sent.extend(records)
+    return None
+
+service = StreamService.open_with_callback(config, callback)
+handle = service.stream(stream)
+for offset in range(5):
+    handle.append("App/NS", offset, str(offset).encode())
+handle.flush()
+
+# Keep the main interpreter thread holding the GIL long enough for the export worker to reach
+# Python::attach.  Calling close while it is waiting reproduces the former join/GIL deadlock.
+old_interval = sys.getswitchinterval()
+try:
+    sys.setswitchinterval(1.0)
+    until = time.monotonic() + 0.20
+    while time.monotonic() < until:
+        pass
+    service.close()
+finally:
+    sys.setswitchinterval(old_interval)
+
+assert service._svc is None, "close must release the native service before returning"
+assert sent == [], "a disconnected close must neither send nor drain the durable backlog"
+
+# Opening the same path is also evidence that the previous export worker has stopped and released
+# its store; the recovered records must drain only after the callback starts accepting them.
+disconnected = False
+reopened = StreamService.open_with_callback(config, callback)
+deadline = time.monotonic() + 2.0
+while len(sent) < 5 and time.monotonic() < deadline:
+    time.sleep(0.01)
+assert len(sent) == 5, "the closed disconnected backlog must recover and drain on reopen"
+reopened.close()
+'''
+        with tempfile.TemporaryDirectory() as d:
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-c", script, d],
+                    cwd=str(Path(__file__).resolve().parents[1]),
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                pytest.fail(f"durable disconnected close deadlocked: {exc}")
+        assert result.returncode == 0, result.stdout + result.stderr
 
 
 # --------------------------------------------------------------------------- target durable path

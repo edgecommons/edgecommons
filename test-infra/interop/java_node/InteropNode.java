@@ -1,4 +1,6 @@
 import com.mbreissi.edgecommons.EdgeCommons;
+import com.mbreissi.edgecommons.commands.CommandInbox;
+import com.mbreissi.edgecommons.commands.CommandOutcome;
 import com.mbreissi.edgecommons.logging.LogRecord;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
@@ -7,6 +9,7 @@ import com.mbreissi.edgecommons.messaging.MessagingClient;
 import com.mbreissi.edgecommons.messaging.MessagingConfiguration;
 import com.mbreissi.edgecommons.messaging.MessagingProvider;
 import com.mbreissi.edgecommons.messaging.MessageTags;
+import com.mbreissi.edgecommons.messaging.Qos;
 import com.mbreissi.edgecommons.messaging.ReservedTopicException;
 import com.mbreissi.edgecommons.messaging.proto.MessageBodyCase;
 import com.mbreissi.edgecommons.messaging.providers.greengrass.GreengrassMessagingProvider;
@@ -63,6 +66,35 @@ public class InteropNode {
 
     static String logComponentToken() {
         return "interop-log-" + LANG;
+    }
+
+    static Path writeCommandRuntimeConfig(String componentToken) throws Exception {
+        JsonObject cfg = new JsonObject();
+        JsonObject component = new JsonObject();
+        component.addProperty("token", componentToken);
+        cfg.add("component", component);
+
+        JsonObject local = new JsonObject();
+        local.addProperty("type", "mqtt");
+        local.addProperty("host", host());
+        local.addProperty("port", Integer.parseInt(port()));
+        local.addProperty("clientId", "interop-" + LANG + "-deferred-runtime-"
+                + ProcessHandle.current().pid());
+        JsonObject messaging = new JsonObject();
+        messaging.add("local", local);
+        messaging.addProperty("requestTimeoutSeconds", 4);
+        cfg.add("messaging", messaging);
+
+        JsonObject heartbeat = new JsonObject();
+        heartbeat.addProperty("enabled", false);
+        cfg.add("heartbeat", heartbeat);
+        JsonObject health = new JsonObject();
+        health.addProperty("enabled", false);
+        cfg.add("health", health);
+
+        Path path = Files.createTempFile("edgecommons-deferred-" + LANG + "-", ".json");
+        Files.writeString(path, GSON.toJson(cfg), StandardCharsets.UTF_8);
+        return path;
     }
 
     static Path writeLogRuntimeConfig() throws Exception {
@@ -311,6 +343,173 @@ public class InteropNode {
                 out.addProperty("error", e.getClass().getSimpleName());
                 System.out.println(out);
                 System.exit(1);
+            }
+        } else if (role.equals("deferred-responder")) {
+            String componentToken = args[1];
+            Path path = writeCommandRuntimeConfig(componentToken);
+            EdgeCommons gg = null;
+            try {
+                gg = new EdgeCommons(
+                        "com.mbreissi.edgecommons.interop." + LANG + ".DeferredResponder",
+                        logRuntimeArgs(path));
+                CommandInbox inbox = gg.getCommands();
+                if (inbox == null) {
+                    throw new IllegalStateException("runtime did not expose command inbox");
+                }
+                inbox.registerOutcome("deferred", request -> {
+                    CommandInbox.DeferredReply deferred = inbox.defer(request, Duration.ofSeconds(4));
+                    JsonObject acceptance = new JsonObject();
+                    acceptance.addProperty("durablyAccepted", true);
+                    acceptance.addProperty("token", asElement(request.getBody())
+                            .getAsJsonObject().get("token").getAsString());
+                    // The harness's accepted record is the durable-accept boundary. It is
+                    // committed before activation; no elapsed-time surrogate is involved.
+                    if (!acceptance.get("durablyAccepted").getAsBoolean()) {
+                        deferred.discard();
+                        return CommandOutcome.error("ACCEPTANCE_FAILED", "work was not accepted");
+                    }
+                    if (!deferred.activate()) {
+                        return CommandOutcome.error("ACTIVATION_FAILED", "deferred token was not open");
+                    }
+                    return CommandOutcome.deferredWithContinuation(deferred, () -> {
+                        JsonObject result = new JsonObject();
+                        result.addProperty("token", acceptance.get("token").getAsString());
+                        result.addProperty("responder", LANG);
+                        result.addProperty("durablyAccepted", true);
+                        deferred.settleSuccess(result);
+                    });
+                });
+                System.out.println("READY");
+                System.out.flush();
+                Thread.sleep(Long.MAX_VALUE);
+            } finally {
+                if (gg != null) {
+                    gg.shutdown();
+                }
+                Files.deleteIfExists(path);
+            }
+        } else if (role.equals("deferred-request")) {
+            String topic = args[1];
+            String token = args[2];
+            StandaloneMessagingProvider prov = provider("deferredreq");
+            String replyTopic = "interop/deferred/reply/" + LANG + "/"
+                    + java.util.UUID.randomUUID();
+            java.util.List<Message> replies = java.util.Collections.synchronizedList(
+                    new java.util.ArrayList<>());
+            CountDownLatch firstReply = new CountDownLatch(1);
+            try {
+                prov.subscribe(replyTopic, (t, reply) -> {
+                    replies.add(reply);
+                    firstReply.countDown();
+                }, 1);
+                JsonObject body = new JsonObject();
+                body.addProperty("token", token);
+                body.addProperty("from", LANG);
+                Message request = MessageBuilder.create("deferred", "1.0")
+                        .withPayload(body).withReplyTo(replyTopic).build();
+                String correlation = request.getCorrelationId();
+                prov.publish(topic, request);
+                JsonObject out = new JsonObject();
+                if (!firstReply.await(8, TimeUnit.SECONDS)) {
+                    out.addProperty("ok", false);
+                    out.addProperty("error", "timeout");
+                    System.out.println(out);
+                    System.exit(1);
+                }
+                // Retain the reply subscription long enough to expose a duplicate settlement.
+                Thread.sleep(750);
+                Message reply;
+                int replyCount;
+                synchronized (replies) {
+                    replyCount = replies.size();
+                    reply = replies.get(0);
+                }
+                boolean correlationMatch = correlation != null
+                        && correlation.equals(reply.getCorrelationId());
+                JsonElement replyBody = asElement(reply.getBody());
+                JsonObject result = replyBody.isJsonObject()
+                        && replyBody.getAsJsonObject().has("result")
+                        ? replyBody.getAsJsonObject().getAsJsonObject("result") : null;
+                boolean ok = replyCount == 1 && correlationMatch && replyBody.isJsonObject()
+                        && replyBody.getAsJsonObject().has("ok")
+                        && replyBody.getAsJsonObject().get("ok").getAsBoolean()
+                        && result != null && token.equals(result.get("token").getAsString())
+                        && result.get("durablyAccepted").getAsBoolean()
+                        && result.has("responder");
+                out.addProperty("ok", ok);
+                out.addProperty("reply_count", replyCount);
+                out.addProperty("correlation_match", correlationMatch);
+                out.add("reply_body", replyBody);
+                System.out.println(out);
+                System.exit(ok ? 0 : 1);
+            } finally {
+                prov.close();
+            }
+        } else if (role.equals("confirmed-sub")) {
+            String topic = args[1];
+            String token = args[2];
+            StandaloneMessagingProvider prov = provider("confirmedsub");
+            java.util.List<Message> messages = java.util.Collections.synchronizedList(
+                    new java.util.ArrayList<>());
+            CountDownLatch firstMessage = new CountDownLatch(1);
+            try {
+                prov.subscribe(topic, (t, message) -> {
+                    messages.add(message);
+                    firstMessage.countDown();
+                }, 1);
+                System.out.println("READY");
+                System.out.flush();
+                JsonObject out = new JsonObject();
+                if (!firstMessage.await(8, TimeUnit.SECONDS)) {
+                    out.addProperty("ok", false);
+                    out.addProperty("error", "timeout");
+                    System.out.println(out);
+                    System.exit(1);
+                }
+                Thread.sleep(750);
+                Message message;
+                int messageCount;
+                synchronized (messages) {
+                    messageCount = messages.size();
+                    message = messages.get(0);
+                }
+                JsonElement body = asElement(message.getBody());
+                boolean ok = messageCount == 1 && body.isJsonObject()
+                        && token.equals(body.getAsJsonObject().get("token").getAsString())
+                        && body.getAsJsonObject().has("from");
+                out.addProperty("ok", ok);
+                out.addProperty("message_count", messageCount);
+                out.add("body", body);
+                System.out.println(out);
+                System.exit(ok ? 0 : 1);
+            } finally {
+                prov.close();
+            }
+        } else if (role.equals("confirmed-pub")) {
+            String topic = args[1];
+            String token = args[2];
+            StandaloneMessagingProvider prov = provider("confirmedpub");
+            JsonObject out = new JsonObject();
+            try {
+                JsonObject body = new JsonObject();
+                body.addProperty("token", token);
+                body.addProperty("from", LANG);
+                Message message = MessageBuilder.create("InteropConfirmed", "1.0")
+                        .withPayload(body).build();
+                // This method returns only after the standalone MQTT client has received PUBACK.
+                prov.publishConfirmed(topic, message.toBytes(), Qos.AT_LEAST_ONCE,
+                        Duration.ofSeconds(5));
+                out.addProperty("ok", true);
+                out.addProperty("confirmed", true);
+                out.addProperty("qos", 1);
+                System.out.println(out);
+            } catch (Exception e) {
+                out.addProperty("ok", false);
+                out.addProperty("error", e.getClass().getSimpleName());
+                System.out.println(out);
+                System.exit(1);
+            } finally {
+                prov.close();
             }
         } else if (role.equals("raw-sub")) {
             String topic = args[1];
