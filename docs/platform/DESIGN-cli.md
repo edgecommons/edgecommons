@@ -243,9 +243,22 @@ Three layers, run in order, all feeding one diagnostic stream:
 
 ### 6.1 Layer 1 — schema
 
-The canonical `schema/edgecommons-config-schema.json` is **embedded at compile time** (offline, P2) and
-enforced with a Rust JSON Schema validator. Drift between the embedded copy and `schema/` is a CI gate,
-exactly as the existing `sync-schema.sh --check` gate works for the four libraries.
+Two schemas, because one of them does not exist yet and its absence is a live hole.
+
+**(a) The library envelope.** The canonical `schema/edgecommons-config-schema.json` is **embedded at compile
+time** (offline, P2) and enforced with a Rust JSON Schema validator. Drift between the embedded copy and
+`schema/` is a CI gate, exactly as the existing `sync-schema.sh --check` gate works for the four libraries.
+
+**(b) The component's own config — unvalidated today.** The canonical schema is strict at the top level
+(`additionalProperties: false`), but **`component.global` is `additionalProperties: true` with zero declared
+properties**, and **no component repo ships a config schema**. So a component's own configuration — the part
+an author most often gets wrong — is validated by *nothing*, at any stage, today.
+
+The fix is a **per-component, per-version config schema**, published as a release artifact in the RM-013
+release descriptor. `component validate` uses the schema in the component's own repo; `deployment validate`
+uses the schema published by the **exact version being deployed**, which is also what makes the two-stream
+compatibility guard exact rather than a declared version floor (§8.5.5). Where a component publishes no
+schema, both verbs **warn and say so** rather than implying coverage they do not have.
 
 ### 6.2 Layer 2 — semantic rules
 
@@ -519,16 +532,43 @@ already has a **restart** group — this is what populates it. `deployment plan`
 config change, whether it is picked up live or forces a restart, and an operator sees the blast radius
 *before* applying rather than discovering it in production.
 
-### 8.5.5 The compatibility guard (proposed — not yet decided)
+### 8.5.5 The compatibility guard — derive, don't declare (OQ-6, decided 2026-07-11)
 
-Two-stream buys independence, and independence has one sharp edge that must be closed or it will bite in
-production: **nothing stops a config release from shipping config that the deployed binary cannot parse.**
+Two-stream buys independence, and independence has one sharp edge: **nothing stops a config release from
+shipping config that the deployed binary cannot parse.** With six delivery paths (§8.5.3) this is not a
+Greengrass concern — a config release can reach a stale binary on any platform.
 
-Proposal: a config release **declares the minimum artifact version it requires**
-(`requiresArtifact: ">= 0.3.0"`), and `deployment validate` enforces it against the artifact stream's
-current pin, refusing to promote a config release ahead of the binary that understands it. This is the
-one place the two streams must *see* each other, and it is cheap — a single field and one check. Flagged
-here as a proposal because it was not part of the decision.
+The obvious guard is a declared floor: the config release states `requiresArtifact: ">= 0.3.0"` and
+`validate` enforces it against the artifact stream's pin. That works, but it is an **assertion a human must
+remember to maintain**. An author who adds a config key and forgets to raise the floor ships the bug the
+guard existed to prevent, and the granularity is coarse — a whole component, not the offending key.
+
+**The decision is to derive compatibility instead of declaring it.** `deployment validate` checks the
+effective config against **the config schema published by the exact component version being deployed**:
+
+1. The **release descriptor** (RM-013, §7.3) carries a **`configSchema`** — the schema *that version*
+   accepts.
+2. **`deployment lock`** fetches it alongside the digest and commits it with the lock, so `validate` stays
+   offline (§8.7, P2). The schema is an input to the render hash like any other.
+3. **`deployment validate`** validates the effective config against it. A key that only exists in 0.4.0
+   fails precisely against a pinned 0.3.1 — *"`pipeline.window` is not accepted by telemetry-processor
+   0.3.1"* — rather than a coarse "your floor says 0.3.0, so this is fine."
+
+`requiresArtifact` **survives as a fallback**, not the primary mechanism, for the two cases a schema cannot
+carry: a key whose *meaning* changed while its shape did not, and a component that does not yet publish a
+schema. Where neither a schema nor a floor is available, `validate` **warns** and names the reason —
+consistent with RM-013's degradation rule.
+
+**This closes a hole that exists today, independent of deployments.** The canonical schema is strict at the
+top level, but `component.global` is `additionalProperties: true` with **zero declared properties** — so a
+component's own config is validated against *nothing*, and no component repo ships a schema. Today a typo in
+a `telemetry-processor` pipeline is caught by no tool at any stage. The same per-version schema therefore
+pays twice: it powers this guard, **and** it gives `component validate` (§6) real component-config
+validation, which is the capability an author actually wants.
+
+**The cost, stated plainly:** every component repo must author and publish a config schema. That is eight
+repos of new work, and it belongs to **RM-013**, not to the CLI. Until a component publishes one, its config
+is unvalidated and `validate` says so out loud rather than implying coverage it does not have.
 
 ### 8.6 Deviation to acknowledge: `deploy --target` is removed in v1
 
@@ -550,7 +590,8 @@ A definition **pins a component version**; a **lock file records the resolved di
 aspiration:
 
 - `deployment lock` is the **one** verb that reaches the network. It resolves each pinned version against
-  the release index (§9.1) and writes the digests into a lock file **committed to Git**.
+  the release index (§9.1) and writes the digests into a lock file **committed to Git** — **together with
+  each pinned version's published config schema** (§8.5.5), so the compatibility check is offline too.
 - `validate`, `render`, `plan`, and `diff` are then **pure functions over files already in Git**. An
   air-gapped site needs a definition, a lock, and a Git bundle — nothing else.
 - Determinism (§8.3) follows for free: every hash input is committed, so a render is reproducible from
@@ -705,6 +746,7 @@ test. This register — not the current pytest suite — is the behavioral oracl
 | D-CLI-12 | **`deployment lock` is the only networked verb.** | Makes RM-012's "no server and no network" literal for `validate\|render\|plan\|diff`, and puts every hash input in Git, which is what §8.3's determinism actually requires. |
 | D-CLI-13 | **Stream separation is a *model* invariant, not a *transport* one.** The model, releases, evidence, drift, and rollback keep config and artifact distinct; a platform adapter **may coalesce** them into one native deployment when that suits the command (§8.5.2). | Greengrass does not actually fuse the two — its *tooling* does. Forbidding a combined deployment would impose a restriction the platform never had, while fusing the *model* would import the coupling RM-002 rejects. Separate where it buys reasoning; combine where it buys an apply. |
 | D-CLI-14 | **Restart impact is a first-class field of the plan** — computed per component, per config change, **from that component's config source**. | A pure config update does not reliably restart a component; dynamic config/hot reload is what addresses that, and **whether it applies is a property of the config source, not the platform** (`FILE`/`CONFIGMAP` are watched, `ENV` is not, a GG `configurationUpdate` is not reliably one). The deck's `diff` already has a **restart** consequence group; this populates it. |
+| D-CLI-16 | **Config/artifact compatibility is *derived*, not declared.** Components publish a **per-version config schema** in the release descriptor; `lock` commits it; `validate` checks the effective config against the schema of the **exact version being deployed**. `requiresArtifact >= X` survives only as a fallback (§8.5.5). | A declared floor is an assertion a human must remember to bump, and it is coarse. A schema check is automatic and names the offending key. It also closes a hole that exists today: `component.global` is `additionalProperties: true` with no declared properties, so component config is validated by nothing at any stage. |
 | D-CLI-15 | **`config-component` is preferred, not required.** The config stream is **provider-agnostic**: one model, one `layered.rs` computation, and a **delivery adapter per config source** (§8.5.3) — catalog push, config-only deployment, ConfigMap, staged file, env, or shadow. | Customers may use the native Greengrass config source or any supported provider; the deployment system must not make one component mandatory. Also agrees with REVIEW #6, which already preferred rendering Git content into the existing file/ConfigMap sources over building `GitCatalogSource` first. |
 
 ---
@@ -714,9 +756,14 @@ test. This register — not the current pytest suite — is the behavioral oracl
 - **OQ-1 — RESOLVED 2026-07-11 (REVIEW #2).** Two-stream; do not fuse. See §8.5.
 - **OQ-2 — RESOLVED 2026-07-11 (REVIEW #3).** Greengrass deploys **per-thing only**; thing groups are not
   used. See §8.5.1. The definition schema is now unblocked for P4.
-- **OQ-6 — NEW: the two-stream compatibility guard (§8.5.3).** Should a config release declare
-  `requiresArtifact >= X`, enforced by `deployment validate`? Without it, two-stream permits pushing config
-  the deployed binary cannot parse. Proposed, not decided.
+- **OQ-6 — RESOLVED 2026-07-11.** Yes to a compatibility guard, but **derived, not declared**: validate the
+  effective config against the config schema published by the exact component version being deployed
+  (§8.5.5, D-CLI-16). `requiresArtifact >= X` is kept only as a fallback. The prerequisite — components must
+  publish a per-version config schema — is scoped to **RM-013**.
+- **OQ-7 — NEW: should the *libraries* validate component config at startup** against the component's own
+  schema, not just the CLI at deploy time? It would catch a hand-edited on-device config that never passed
+  through the Studio. This **is** a four-language parity change (unlike everything else here), so it is a
+  core-library decision, not a CLI one.
 - **OQ-3 — RESOLVED.** Component pins had no catalog to resolve against. Answer: the three-layer registry
   (§9.1) plus `deployment lock` (§8.7), with the underlying prerequisite — components do not release at
   all — scoped as **RM-013**. Until that lands, unverifiable pins warn rather than block.
