@@ -21,6 +21,10 @@ export default defineConfig({
 				'./src/styles/edgecommons.css',
 			],
 			title: 'EdgeCommons',
+			// public/favicon.svg is the brand mark, vendored from brand/logos/favicon.svg by
+			// `npm run sync` in brand/. Stated explicitly rather than relying on Starlight's
+			// implicit /favicon.svg default, so the brand dependency is visible here.
+			favicon: '/favicon.svg',
 			description:
 				'EdgeCommons — one library in four languages (Java, Python, Rust, TypeScript) for building edge components that run on AWS IoT Greengrass, Docker, or Kubernetes.',
 			social: [
