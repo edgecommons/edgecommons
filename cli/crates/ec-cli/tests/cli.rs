@@ -289,6 +289,153 @@ fn registry_dep_source_pins_a_version_that_exists() {
     );
 }
 
+/// A minimal but real template on disk: manifest v2 plus one substituted file.
+fn custom_template(dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(
+        dir.join("edgecommons-template.json"),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "id": "rust/sink",
+            "language": "RUST",
+            "kind": "sink",
+            "description": "A custom sink template.",
+            "platforms": ["HOST"],
+            "substitutions": { "README.md": ["COMPONENTNAME", "DESCRIPTION"] },
+            "packs": { "HOST": ["README.md"] }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("README.md"),
+        "# <<COMPONENTNAME>>
+
+<<DESCRIPTION>>
+",
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_template_directory_can_be_used_instead_of_the_embedded_one() {
+    let d = tempfile::tempdir().unwrap();
+    let tpl = d.path().join("my-template");
+    custom_template(&tpl);
+
+    // The template's own manifest declares its language and kind -- `sink`, which the embedded
+    // catalog has no template for. A template is a template wherever it comes from.
+    let o = run(
+        &[
+            "component",
+            "new",
+            "-n",
+            "com.example.Custom",
+            "--template-dir",
+            tpl.to_str().unwrap(),
+            "--yes",
+        ],
+        d.path(),
+    );
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+
+    let readme = std::fs::read_to_string(d.path().join("Custom/README.md")).unwrap();
+    assert!(readme.contains("# Custom"), "{readme}");
+    assert!(
+        !readme.contains("<<"),
+        "tokens must be substituted: {readme}"
+    );
+    assert!(!d.path().join("Custom/edgecommons-template.json").exists());
+}
+
+#[test]
+fn a_directory_that_is_not_a_template_is_a_usage_error() {
+    let d = tempfile::tempdir().unwrap();
+    let empty = d.path().join("not-a-template");
+    std::fs::create_dir_all(&empty).unwrap();
+    let o = run(
+        &[
+            "component",
+            "new",
+            "-n",
+            "com.example.X",
+            "--template-dir",
+            empty.to_str().unwrap(),
+            "--yes",
+        ],
+        d.path(),
+    );
+    assert_eq!(code(&o), 2);
+    assert!(stderr(&o).contains("not a template"), "{}", stderr(&o));
+}
+
+#[test]
+fn a_template_can_be_cloned_from_git() {
+    let d = tempfile::tempdir().unwrap();
+    let origin = d.path().join("origin");
+    custom_template(&origin);
+
+    // A real git repository over a file:// URL -- the clone path is exercised, not mocked.
+    for args in [
+        vec!["init", "-q"],
+        vec!["add", "-A"],
+        vec![
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "t",
+        ],
+    ] {
+        let ok = Command::new("git")
+            .args(&args)
+            .current_dir(&origin)
+            .status()
+            .expect("git");
+        assert!(ok.success(), "git {args:?}");
+    }
+
+    let url = format!("file://{}", origin.display().to_string().replace('\\', "/"));
+    let o = run(
+        &[
+            "component",
+            "new",
+            "-n",
+            "com.example.Cloned",
+            "--template-git",
+            &url,
+            "--yes",
+        ],
+        d.path(),
+    );
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let readme = std::fs::read_to_string(d.path().join("Cloned/README.md")).unwrap();
+    assert!(readme.contains("# Cloned"), "{readme}");
+    // The template's git history is not part of the template.
+    assert!(!d.path().join("Cloned/.git").exists());
+}
+
+#[test]
+fn a_clone_that_fails_is_an_environment_error() {
+    let d = tempfile::tempdir().unwrap();
+    let o = run(
+        &[
+            "component",
+            "new",
+            "-n",
+            "com.example.X",
+            "--template-git",
+            "file:///no/such/repo",
+            "--yes",
+        ],
+        d.path(),
+    );
+    assert_eq!(code(&o), 3, "a failed clone is an environment failure");
+}
+
 // --- component validate ------------------------------------------------------------------
 
 #[test]
@@ -855,4 +1002,77 @@ fn the_unbuilt_verbs_say_so_rather_than_crashing() {
             );
         }
     }
+}
+
+// --- remaining error paths ----------------------------------------------------------------
+
+#[test]
+fn a_greengrass_package_without_gdk_is_an_environment_error() {
+    let d = tempfile::tempdir().unwrap();
+    assert_eq!(
+        code(&scaffold(
+            d.path(),
+            "com.example.GgPkg",
+            "RUST",
+            &["--platforms", "GREENGRASS"]
+        )),
+        0
+    );
+    // gdk is an external tool. If it is present this build genuinely can package; if it is not,
+    // the failure must name the tool rather than being obscure. Either outcome is correct --
+    // what is not correct is a crash or a silent success.
+    let o = run(&["component", "package", "-p", "GgPkg"], d.path());
+    match code(&o) {
+        0 => {}
+        3 => assert!(stderr(&o).contains("gdk"), "{}", stderr(&o)),
+        other => panic!("unexpected exit {other}: {}", stderr(&o)),
+    }
+}
+
+#[test]
+fn an_http_registry_source_is_reported_rather_than_silently_ignored() {
+    let d = tempfile::tempdir().unwrap();
+    let o = run(
+        &[
+            "registry",
+            "list",
+            "--source",
+            "https://example.com/components.json",
+        ],
+        d.path(),
+    );
+    assert_eq!(code(&o), 3, "this build has no HTTP client; it must say so");
+    assert!(stderr(&o).contains("HTTP"), "{}", stderr(&o));
+}
+
+#[test]
+fn validate_can_target_a_single_config_file() {
+    let d = tempfile::tempdir().unwrap();
+    assert_eq!(code(&scaffold(d.path(), "com.example.One", "RUST", &[])), 0);
+    let cfg = d.path().join("One/test-configs/config.json");
+    let o = run(
+        &[
+            "component",
+            "validate",
+            "-p",
+            "One",
+            "-c",
+            cfg.to_str().unwrap(),
+        ],
+        d.path(),
+    );
+    assert_eq!(code(&o), 0, "{}", stdout(&o));
+}
+
+#[test]
+fn upgrade_of_a_project_with_no_dependency_manifest_warns() {
+    let d = tempfile::tempdir().unwrap();
+    let empty = d.path().join("Bare");
+    std::fs::create_dir_all(&empty).unwrap();
+    let o = run(
+        &["component", "upgrade", "-p", "Bare", "--to", "1.0.0"],
+        d.path(),
+    );
+    assert_eq!(code(&o), 0, "nothing to bump is not a failure");
+    assert!(stdout(&o).contains("EC4004"), "{}", stdout(&o));
 }
