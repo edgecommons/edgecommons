@@ -217,7 +217,23 @@ and **HOST, a first-class platform, gets no artifacts at all**. Packs make all t
 HOST pack (compose + a supervisord program block) is deliberately shaped to match the Studio's HOST
 renderer output, so a hand-scaffolded component and a Studio-rendered one agree.
 
-### 5.6 Token set
+### 5.6 Every template ships a `config.schema.json`
+
+A scaffolded component **declares the shape of its own config from day one**. The template emits a
+`config.schema.json` (seeded with the component's example config) plus the wiring that hands it to the
+library, because that one artifact is consumed in three places:
+
+| Consumer | When | Effect |
+|---|---|---|
+| `component validate` (§6.1) | Authoring | The author's own config is actually checked — today nothing checks it. |
+| `deployment validate` (§8.5.5) | Deploy | The effective config is checked against the schema of the **pinned version**, which is what makes the compatibility guard exact. |
+| The **runtime** (RM-014) | Startup + hot reload | Fail fast at startup; reject-and-keep-last-good on reload. |
+
+This is why the schema is a first-class scaffold artifact rather than an optional extra: it is the single
+thing that closes the component-config validation hole at all three stages at once. A component that opts
+out simply ships no schema, and every stage says so rather than implying coverage it does not have.
+
+### 5.7 Token set
 
 `COMPONENTFULLNAME`, `COMPONENTNAME`, `PACKAGE`, `PACKAGEPATH`, `MAINCLASSNAME`, `JARNAME`, `BINNAME`,
 `DESCRIPTION`, `AUTHOR`, `EDGECOMMONS_VERSION`, `EDGECOMMONS_DEP`, plus the Greengrass-only `BUCKET` and
@@ -713,7 +729,7 @@ test. This register — not the current pytest suite — is the behavioral oracl
 
 | # | Defect | Evidence | Fixed by |
 |---|---|---|---|
-| DEF-1 | `--dep-source registry` + Rust emits a Cargo dep on git tag `rust-lib/v0.1.0`, **which does not exist** (repo has `v0.1.1`, `v0.2.0`; libs are at 0.2.0). | `create_component.py:78` | §5.6 (version resolved from the workspace), §10 |
+| DEF-1 | `--dep-source registry` + Rust emits a Cargo dep on git tag `rust-lib/v0.1.0`, **which does not exist** (repo has `v0.1.1`, `v0.2.0`; libs are at 0.2.0). | `create_component.py:78` | §5.7 (version resolved from the workspace), §10 |
 | DEF-2 | The generated **Python Greengrass component fails its install lifecycle on device** — the recipe installs `greengrass_commons-0.0.10038883-py3-none-any.whl`, a pre-rebrand wheel that is never produced. | `templates/python/recipe.yaml:79`, `templates/python-protocol-adapter/recipe.yaml:59` | Template fix + §10 |
 | DEF-3 | `upgrade` is a **silent no-op for every TypeScript component** (scoped key vs bare key). | `upgrade.py:123` vs `templates/typescript/package.json:14` | §7 |
 | DEF-4 | `upgrade` **corrupts Python components** — rewrites the `git+https` form to `edgecommons==X`. | `upgrade.py:85-86` | §7 |
@@ -760,10 +776,11 @@ test. This register — not the current pytest suite — is the behavioral oracl
   effective config against the config schema published by the exact component version being deployed
   (§8.5.5, D-CLI-16). `requiresArtifact >= X` is kept only as a fallback. The prerequisite — components must
   publish a per-version config schema — is scoped to **RM-013**.
-- **OQ-7 — NEW: should the *libraries* validate component config at startup** against the component's own
-  schema, not just the CLI at deploy time? It would catch a hand-edited on-device config that never passed
-  through the Studio. This **is** a four-language parity change (unlike everything else here), so it is a
-  core-library decision, not a CLI one.
+- **OQ-7 — RESOLVED 2026-07-11: yes.** The four libraries validate the component's own config against its
+  schema **at startup (fail fast) and on hot reload (reject, keep last good)**. Scoped as **RM-014** — it is
+  a four-language parity change and needs a core-library design doc of its own. The consequence for this
+  document is in §5.6: **templates ship a `config.schema.json` and its wiring by default**, so a scaffolded
+  component is validated from day one.
 - **OQ-3 — RESOLVED.** Component pins had no catalog to resolve against. Answer: the three-layer registry
   (§9.1) plus `deployment lock` (§8.7), with the underlying prerequisite — components do not release at
   all — scoped as **RM-013**. Until that lands, unverifiable pins warn rather than block.
