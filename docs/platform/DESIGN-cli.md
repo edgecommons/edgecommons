@@ -105,7 +105,7 @@ edgecommons
 │   ├── render        model → native artifacts + the normalized plan
 │   ├── plan          the normalized plan JSON alone
 │   ├── diff          this render vs a release ref, grouped by consequence
-│   └── release       [DEFERRED — blocked, see §8.5]
+│   └── release       promote a stream: --stream artifact|config (§8.5)
 ├── studio
 │   └── serve         the server shell around the same kernel (seam only in v1)
 ├── doctor            platform-aware prerequisite check
@@ -383,7 +383,7 @@ plan | diff` must do the entire model→artifact job **with no server and no net
 | `render --env <e> --target <t>` | definition, env, target | Native artifacts for the target **plus** the normalized plan. Writes to a render path; nothing is committed. |
 | `plan` | definition, env, target | The normalized plan JSON alone — the common currency for validation, policy, CI, and the UI. |
 | `diff --against <release-ref>` | a Git ref | The delta grouped **by consequence**: restart, storage, network, identity, permission, config, artifact, apply-order. |
-| `release` | — | **Deferred; see §8.5.** |
+| `release --stream artifact\|config` | definition + lock + the stream being promoted | Promotes **one stream**; writes a release manifest and a `ReleaseLock` that *correlates* the artifact and config streams without fusing them (§8.5). |
 
 ### 8.2 The hexagonal core and the five ports
 
@@ -423,21 +423,57 @@ The same kernel behind an `axum` server with the SPA embedded. In v1 this is a *
 subcommand exists, the ports are wired, the server is not built. Nothing in the kernel may assume a
 server exists.
 
-### 8.5 `release` is blocked — deliberately
+### 8.5 `release` — two streams, not one (REVIEW #2, decided 2026-07-11)
 
-`deployment release` is named in RM-012's five-verb rule but is the least specified verb in the deck (it
-is dropped from the deck's own Tier-0 command list), and **it cannot be implemented until two open
-decisions land**:
+**Decision: do not fuse.** A release is **two independently versioned, independently reconciled streams**:
 
-- **REVIEW #2 — the release object's shape.** RM-002 explicitly refines the model to *two independently
-  versioned, independently reconciled streams* (artifact version; config), each with its own drift signal
-  and rollback target. The deck's `ReleaseLock` is a fused, atomic unit — precisely the Greengrass model
-  RM-002 says bites users. Until this is settled, `release` has no output object.
-- **REVIEW #3 — Greengrass thing-group granularity.** This constrains the *model the CLI parses*, not a
-  renderer detail, and REVIEW.md says it must be decided in slice 1.
+| Stream | What it promotes | Reconciled by |
+|---|---|---|
+| **Artifact** | A component's binary/image at a pinned version + digest (§8.7). | A platform deployment — on Greengrass, a per-thing deployment with a new `componentVersion`. |
+| **Config** | The effective config / catalog content. | A **ConfigComponent catalog push** — *not* a component deployment. |
 
-v1 therefore ships `validate | render | plan | diff`. `release` is registered as a subcommand that exits
-`2` with a pointer to these decisions, rather than being quietly absent.
+The `ReleaseLock` is a **correlation and evidence envelope over both — not an atomic apply unit.** It
+records what was in effect together; it does not force the two to move together. A config change ships
+without reshipping the artifact, and the reverse. Each stream carries its **own drift signal and its own
+rollback target**, which the deck's four-way drift taxonomy already accommodates.
+
+`deployment release --stream artifact|config` promotes one stream; the lock correlates them.
+
+### 8.5.1 Greengrass: per-thing deployments only (REVIEW #3, decided 2026-07-11)
+
+**Thing groups are not used.** IIoT edge devices each carry a unique configuration, and Greengrass fuses
+config and binary into a single deployment — so a thing group, whose members necessarily share one
+deployment document, **cannot express per-device config**. Grouping is the wrong primitive for this fleet.
+
+Consequences, all of them simplifying:
+
+- A definition's `nodes[]` map **1:1 onto Greengrass deployments**; `targetArn` is a thing ARN. The
+  thing-group **union-semantics problem disappears entirely**, and with it the modeling constraint that
+  REVIEW.md named as the second load-bearing risk.
+- The plan carries **one apply record per node**, and partial failure is per-node — which is precisely
+  what the deck's staged, selectable rollout wants. Per-thing is a feature here, not a tax.
+- N devices means N deployments. That is an operational cost (N API calls, N revisions), not a
+  correctness one, and it is the honest price of per-device configuration.
+
+**This is exactly why the config stream cannot be a Greengrass deployment.** Greengrass fuses config and
+binary; the two-stream decision requires a config path that does not reship the artifact. That path
+already exists and is the reason `config-component` was built:
+
+1. **Primary — the ConfigComponent catalog push.** The config stream promotes by publishing a new catalog
+   lineage; the deployed component picks it up. No Greengrass deployment, no artifact reship.
+2. **Fallback — a config-only Greengrass deployment**: an unchanged `componentVersion` with a new
+   `configurationUpdate`, for components not sourced from the catalog. Still per-thing.
+
+### 8.5.2 The compatibility guard (proposed — not yet decided)
+
+Two-stream buys independence, and independence has one sharp edge that must be closed or it will bite in
+production: **nothing stops a config release from shipping config that the deployed binary cannot parse.**
+
+Proposal: a config release **declares the minimum artifact version it requires**
+(`requiresArtifact: ">= 0.3.0"`), and `deployment validate` enforces it against the artifact stream's
+current pin, refusing to promote a config release ahead of the binary that understands it. This is the
+one place the two streams must *see* each other, and it is cheap — a single field and one check. Flagged
+here as a proposal because it was not part of the decision.
 
 ### 8.6 Deviation to acknowledge: `deploy --target` is removed in v1
 
@@ -558,8 +594,8 @@ a Java or TypeScript component stops requiring a Python runtime.
 | **P2** | `ec-validate`: schema + semantic + artifact lint; `component validate`. | Every defect in §12 that is a validation defect has a regression test. |
 | **P3** | `registry list\|show\|versions`; `component upgrade` (all four dep forms), `component version`, `component package`, `component release` (descriptor only, §7.3). | Both dep-sources build in all four languages. **The Python `cli/` is deleted, and every doc that describes it is updated in the same change.** `component release` is usable by RM-013's release workflow. |
 | **P4** | `ec-deploy`: the model, `validate\|lock\|render\|plan\|diff`, the five port traits, local adapters, the **HOST renderer first** (per REVIEW.md's slice-1 amendment). | `bottling-company-test/sites/dallas-site` is regenerated byte-for-byte from a definition. |
-| **P5** | The Greengrass and Kubernetes renderers; the `studio serve` seam. | — |
-| **P6** | `release`, once REVIEW #2 and #3 land. | — |
+| **P5** | The Greengrass (per-thing) and Kubernetes renderers; the `studio serve` seam. | — |
+| **P6** | `deployment release` — both streams (§8.5). **No longer blocked**; REVIEW #2/#3 landed 2026-07-11. Gated instead on RM-013, since an artifact-stream release needs artifacts that exist. | An artifact release and a config release promote independently, each with its own rollback target. |
 
 New templates (`rust/protocol-adapter`, `*/processor`, `*/sink`) are template work that can land any time
 after P1 with no CLI change — that is the point of §5.
@@ -606,7 +642,7 @@ test. This register — not the current pytest suite — is the behavioral oracl
 | D-CLI-4 | **Templates are language × kind**, discovered from manifests; kinds are `service`, `protocol-adapter`, `processor`, `sink`. | Two archetype templates already exist and are orphaned; the vocabulary matches the registry's categories. Adding a template needs no CLI change. |
 | D-CLI-5 | **Lives in `core/cli/`, replacing the Python tree.** | Templates, the canonical schema, and `libs/rust` (which the CLI must *call*, per P4) are all path-reachable; the `cli/v*` release prefix already exists. |
 | D-CLI-6 | **The validation engine is built once and shared** by `component validate` and `deployment validate`. | The Studio requires effective-config validation; the component author wants the same thing. Two implementations would drift. |
-| D-CLI-7 | **`release` is deferred, and says so at runtime.** | Blocked on REVIEW #2 (fused vs two-stream) and #3 (thing-group granularity). Shipping a guess would bake in the model RM-002 explicitly rejects. |
+| D-CLI-7 | **`release` promotes two independent streams** (artifact, config); the `ReleaseLock` correlates them and does not fuse them. **Greengrass deploys per-thing only.** | REVIEW #2 and #3, decided 2026-07-11. Fusing is the Greengrass coupling RM-002 rejects; thing groups cannot express the per-device config that IIoT edges require. Unblocks the verb — it is no longer deferred (§8.5). |
 | D-CLI-8 | **`deploy --target` (cloud apply) is dropped in v1**; `component package [--publish]` keeps the build/publish half. | Apply belongs behind the Runner/Targets ports. The dropped command cannot run on a fresh scaffold today (DEF-6). Its version-lock gate is preserved in `deployment` validation. |
 | D-CLI-9 | **The port order is pulled forward** relative to the deck's slice 3. | `deployment validate` needs a validation engine that does not exist; building it first is strictly cheaper. |
 | D-CLI-10 | **The CLI produces; the runner publishes.** `component release` builds, digests, and emits a descriptor — it never tags, uploads, or pushes. | A release cut from a laptop with credentials has no provenance and no attestation. Generalizes D-CLI-8: deterministic and credential-free belongs in the tool; credentialed and world-mutating belongs behind a port. CI runs the same binary. |
@@ -617,10 +653,12 @@ test. This register — not the current pytest suite — is the behavioral oracl
 
 ## 14. Open questions
 
-- **OQ-1 — REVIEW #2 (release object: fused `ReleaseLock` vs RM-002's two-stream model).** Blocks
-  `release`. RM-002's refinement is explicit and, in my reading, correct; the deck has not absorbed it.
-- **OQ-2 — REVIEW #3 (Greengrass thing-group granularity).** Constrains the model the CLI parses, so it
-  must be settled before P4 freezes the definition schema.
+- **OQ-1 — RESOLVED 2026-07-11 (REVIEW #2).** Two-stream; do not fuse. See §8.5.
+- **OQ-2 — RESOLVED 2026-07-11 (REVIEW #3).** Greengrass deploys **per-thing only**; thing groups are not
+  used. See §8.5.1. The definition schema is now unblocked for P4.
+- **OQ-6 — NEW: the two-stream compatibility guard (§8.5.2).** Should a config release declare
+  `requiresArtifact >= X`, enforced by `deployment validate`? Without it, two-stream permits pushing config
+  the deployed binary cannot parse. Proposed, not decided.
 - **OQ-3 — RESOLVED.** Component pins had no catalog to resolve against. Answer: the three-layer registry
   (§9.1) plus `deployment lock` (§8.7), with the underlying prerequisite — components do not release at
   all — scoped as **RM-013**. Until that lands, unverifiable pins warn rather than block.
