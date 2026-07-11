@@ -429,8 +429,8 @@ server exists.
 
 | Stream | What it promotes | Reconciled by |
 |---|---|---|
-| **Artifact** | A component's binary/image at a pinned version + digest (§8.7). | A platform deployment — on Greengrass, a per-thing deployment with a new `componentVersion`. |
-| **Config** | The effective config / catalog content. | A **ConfigComponent catalog push** — *not* a component deployment. |
+| **Artifact** | A component's binary/image at a pinned version + digest (§8.7). | A platform deployment — on Greengrass, a per-thing deployment carrying a new `componentVersion`. |
+| **Config** | The effective config / catalog content. | A ConfigComponent catalog push, **or** a config-only platform deployment. The adapter chooses (§8.5.2). |
 
 The `ReleaseLock` is a **correlation and evidence envelope over both — not an atomic apply unit.** It
 records what was in effect together; it does not force the two to move together. A config change ships
@@ -441,9 +441,9 @@ rollback target**, which the deck's four-way drift taxonomy already accommodates
 
 ### 8.5.1 Greengrass: per-thing deployments only (REVIEW #3, decided 2026-07-11)
 
-**Thing groups are not used.** IIoT edge devices each carry a unique configuration, and Greengrass fuses
-config and binary into a single deployment — so a thing group, whose members necessarily share one
-deployment document, **cannot express per-device config**. Grouping is the wrong primitive for this fleet.
+**Thing groups are not used.** IIoT edge devices each carry a **unique configuration**, and the members of
+a thing group necessarily share **one deployment document** — so a group cannot express per-device config.
+Grouping is the wrong primitive for this fleet, whatever else a deployment carries.
 
 Consequences, all of them simplifying:
 
@@ -455,16 +455,46 @@ Consequences, all of them simplifying:
 - N devices means N deployments. That is an operational cost (N API calls, N revisions), not a
   correctness one, and it is the honest price of per-device configuration.
 
-**This is exactly why the config stream cannot be a Greengrass deployment.** Greengrass fuses config and
-binary; the two-stream decision requires a config path that does not reship the artifact. That path
-already exists and is the reason `config-component` was built:
+### 8.5.2 Separation is a model invariant, not a transport one
 
-1. **Primary — the ConfigComponent catalog push.** The config stream promotes by publishing a new catalog
-   lineage; the deployed component picks it up. No Greengrass deployment, no artifact reship.
-2. **Fallback — a config-only Greengrass deployment**: an unchanged `componentVersion` with a new
-   `configurationUpdate`, for components not sourced from the catalog. Still per-thing.
+Greengrass does **not** technically fuse config and binary. A deployment can carry a new
+`configurationUpdate` against an unchanged `componentVersion` (config-only), or a new `componentVersion`
+retaining the existing config (binary-only). **It is the tooling and the UI that combine them**, not the
+mechanism.
 
-### 8.5.2 The compatibility guard (proposed — not yet decided)
+The rule that follows:
+
+> **The model, the release streams, the evidence, the drift signals, and the rollback targets keep config
+> and artifact strictly distinct. The platform adapter MAY coalesce them into a single native deployment
+> when that is the right thing for a given command.**
+
+So a command that promotes both streams at once is free to become **one** Greengrass deployment carrying
+both a new `componentVersion` and a new `configurationUpdate` — while the release objects above it remain
+two independently versioned streams with two rollback targets. This is where the `ReleaseLock`'s
+correlation envelope earns its keep: a coalesced apply record references *both* stream releases, so the
+audit trail still says which config and which artifact were in effect, and either can still be rolled back
+alone (the adapter emits a deployment that reverts one and retains the other — the capability Greengrass
+already has).
+
+Two delivery paths for the config stream on Greengrass, and the adapter picks per command:
+
+1. **The ConfigComponent catalog push** — publish a new catalog lineage; the deployed component picks it
+   up. No Greengrass deployment at all, and no artifact reship.
+2. **A config-only Greengrass deployment** — unchanged `componentVersion`, new `configurationUpdate`.
+   Still per-thing.
+
+**The restart caveat, which is why this is not merely cosmetic.** A pure config update does **not reliably
+restart the component**. That is precisely the problem EdgeCommons' **dynamic config (hot reload)** exists
+to solve — a component sourcing config through the library picks a change up live. So a config release's
+*actual* effect depends on whether the target component hot-reloads or requires a restart, and the
+renderer must not pretend otherwise.
+
+Concretely: **restart impact is a first-class field of the plan**, per component per config change. The
+deck's `diff` already groups changes by consequence and already has a **restart** group — this is what
+populates it. `deployment plan` therefore states, for each config change, whether it is picked up live or
+forces a restart, and an operator sees the blast radius *before* applying rather than discovering it.
+
+### 8.5.3 The compatibility guard (proposed — not yet decided)
 
 Two-stream buys independence, and independence has one sharp edge that must be closed or it will bite in
 production: **nothing stops a config release from shipping config that the deployed binary cannot parse.**
@@ -642,12 +672,14 @@ test. This register — not the current pytest suite — is the behavioral oracl
 | D-CLI-4 | **Templates are language × kind**, discovered from manifests; kinds are `service`, `protocol-adapter`, `processor`, `sink`. | Two archetype templates already exist and are orphaned; the vocabulary matches the registry's categories. Adding a template needs no CLI change. |
 | D-CLI-5 | **Lives in `core/cli/`, replacing the Python tree.** | Templates, the canonical schema, and `libs/rust` (which the CLI must *call*, per P4) are all path-reachable; the `cli/v*` release prefix already exists. |
 | D-CLI-6 | **The validation engine is built once and shared** by `component validate` and `deployment validate`. | The Studio requires effective-config validation; the component author wants the same thing. Two implementations would drift. |
-| D-CLI-7 | **`release` promotes two independent streams** (artifact, config); the `ReleaseLock` correlates them and does not fuse them. **Greengrass deploys per-thing only.** | REVIEW #2 and #3, decided 2026-07-11. Fusing is the Greengrass coupling RM-002 rejects; thing groups cannot express the per-device config that IIoT edges require. Unblocks the verb — it is no longer deferred (§8.5). |
+| D-CLI-7 | **`release` promotes two independent streams** (artifact, config); the `ReleaseLock` correlates them and does not fuse them. **Greengrass deploys per-thing only.** | REVIEW #2 and #3, decided 2026-07-11. Fusing the two in the *model* is the Greengrass-tooling coupling RM-002 rejects; thing groups cannot express the per-device config that IIoT edges require. Unblocks the verb — it is no longer deferred (§8.5). See D-CLI-13 for what the *adapter* may still combine. |
 | D-CLI-8 | **`deploy --target` (cloud apply) is dropped in v1**; `component package [--publish]` keeps the build/publish half. | Apply belongs behind the Runner/Targets ports. The dropped command cannot run on a fresh scaffold today (DEF-6). Its version-lock gate is preserved in `deployment` validation. |
 | D-CLI-9 | **The port order is pulled forward** relative to the deck's slice 3. | `deployment validate` needs a validation engine that does not exist; building it first is strictly cheaper. |
 | D-CLI-10 | **The CLI produces; the runner publishes.** `component release` builds, digests, and emits a descriptor — it never tags, uploads, or pushes. | A release cut from a laptop with credentials has no provenance and no attestation. Generalizes D-CLI-8: deterministic and credential-free belongs in the tool; credentialed and world-mutating belongs behind a port. CI runs the same binary. |
 | D-CLI-11 | **The registry splits into discovery / release index / pin+lock** (§9.1); `version` and `digest` are *not* added to the catalog entry. | Per-release data in a hand-edited catalog is stale by the second release, cannot express historical pins, and a single digest is meaningless across three platforms. |
 | D-CLI-12 | **`deployment lock` is the only networked verb.** | Makes RM-012's "no server and no network" literal for `validate\|render\|plan\|diff`, and puts every hash input in Git, which is what §8.3's determinism actually requires. |
+| D-CLI-13 | **Stream separation is a *model* invariant, not a *transport* one.** The model, releases, evidence, drift, and rollback keep config and artifact distinct; a platform adapter **may coalesce** them into one native deployment when that suits the command (§8.5.2). | Greengrass does not actually fuse the two — its *tooling* does. Forbidding a combined deployment would impose a restriction the platform never had, while fusing the *model* would import the coupling RM-002 rejects. Separate where it buys reasoning; combine where it buys an apply. |
+| D-CLI-14 | **Restart impact is a first-class field of the plan**, per component per config change. | A pure config update does not reliably restart a component — the reason EdgeCommons has dynamic config/hot reload. The deck's `diff` already groups by consequence and already has a **restart** group; this populates it, so an operator sees the blast radius before applying. |
 
 ---
 
@@ -656,7 +688,7 @@ test. This register — not the current pytest suite — is the behavioral oracl
 - **OQ-1 — RESOLVED 2026-07-11 (REVIEW #2).** Two-stream; do not fuse. See §8.5.
 - **OQ-2 — RESOLVED 2026-07-11 (REVIEW #3).** Greengrass deploys **per-thing only**; thing groups are not
   used. See §8.5.1. The definition schema is now unblocked for P4.
-- **OQ-6 — NEW: the two-stream compatibility guard (§8.5.2).** Should a config release declare
+- **OQ-6 — NEW: the two-stream compatibility guard (§8.5.3).** Should a config release declare
   `requiresArtifact >= X`, enforced by `deployment validate`? Without it, two-stream permits pushing config
   the deployed binary cannot parse. Proposed, not decided.
 - **OQ-3 — RESOLVED.** Component pins had no catalog to resolve against. Answer: the three-layer registry
