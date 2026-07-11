@@ -1,0 +1,538 @@
+# Design — the `edgecommons` CLI (Rust, greenfield)
+
+> Companion to [DESIGN-core.md](DESIGN-core.md) / [DESIGN-packaging.md](DESIGN-packaging.md).
+> **Status: PROPOSED.** A greenfield Rust replacement for the Python `cli/`. Defines the whole binary:
+> the component surface (scaffold, validate, upgrade, package), the template model, the validation
+> engine, the registry surface, `doctor`, and — at **contract level** — the deployment verbs and the
+> five ports that make the binary the Deployment Studio kernel. Renderer internals stay in the
+> Deployment Studio design deck.
+>
+> **Supersedes** `cli/` (Python, 7 commands, ~1,300 LOC). That tree is deleted at the end of Phase 3.
+>
+> **Sources (re-read, not recalled):** `roadmap/ROADMAP.md` **RM-012** (Accepted) and RM-002;
+> the Deployment Studio deck ch. 12 and `REVIEW.md` decisions #1/#9/#2/#3; the CLI feature/requirements
+> review of 2026-07-11; and the current `cli/` + `templates/` sources.
+
+---
+
+## 1. Why greenfield, and not a port
+
+RM-012 already decided the *language*: the deployment kernel must be Rust, so the binary exists either
+way, and keeping a Python CLI in front of it would force users to install two runtimes plus a
+trampoline. This document takes the next step and decides the *shape*, because a faithful port would
+carry three things forward that we do not want:
+
+1. **A Greengrass-era product.** The CLI's defaults, prerequisites, artifacts, and its only deploy path
+   all assume Greengrass. Platform neutrality (PN-1) is the differentiator; the front door contradicts it.
+2. **A reflective plugin framework.** `cli.py` discovers command classes with `importlib` +
+   `inspect.getmembers`, validates a JSON descriptor per command with `jsonschema`, and swallows
+   registration failures through `warnings.warn` — 160 lines of meta-machinery to register seven static
+   commands. `clap`'s derive API is the whole of it in Rust.
+3. **Ten shipped defects.** RM-012 names the existing pytest suite as "the oracle for the rewrite". It
+   cannot be: the suite is green while the defects in §12 are live, because the code paths that are
+   broken are exactly the ones with no tests. **The oracle is this specification plus the
+   scaffold→build→run gate (§10), and the defect register in §12 becomes regression tests.**
+
+### 1.1 What survives the rewrite
+
+Two properties are load-bearing and non-negotiable (RM-012 states both):
+
+- **Templates are embedded in the binary, so scaffolding works offline.** Today `setup.py` copies
+  `templates/` into the wheel at build time; the Rust binary embeds them at compile time.
+- **The interactive wizard and conditional (platform-gated) artifact generation are ported as
+  *behavior*, not redesigned.** They are the most-tested part of the current CLI and they work.
+
+One idea is promoted rather than preserved: **the template manifest**. The deck asks us to "reuse the
+template manifest idea for deployment renderers and output packs" — so §5 generalizes it into a single
+*output pack* concept that spans scaffolding templates and, later, deployment renderers.
+
+---
+
+## 2. Scope
+
+**In scope.** The single static binary: `component`, `template`, `registry`, `doctor`, `completions`;
+the `deployment` verbs' command contract, the hexagonal core, and the five ports as compiling seams; the
+`studio serve` seam.
+
+**Out of scope.** Renderer internals (HOST supervisord / Kubernetes / Greengrass output packs), the plan
+JSON's full field list, the Studio UI, and release/evidence governance — all owned by the Deployment
+Studio deck. This document defines *where they plug in* and *what the CLI guarantees them*, so the two
+can be built independently and meet at the port boundary.
+
+---
+
+## 3. Principles
+
+| # | Principle | Consequence |
+|---|---|---|
+| P1 | **One static binary, no daemon.** | `component`, `deployment`, and `studio serve` are subcommands of one artifact. Scaffolding a Java component needs no Python and no JVM. |
+| P2 | **Offline by construction.** | Templates and the canonical config schema are compiled in. `component new` and `deployment validate\|render\|plan\|diff` never touch the network. A CLI plus a Git bundle on removable media is a complete workflow. |
+| P3 | **No cloud SDK above the port boundary.** | The Greengrass adapter may link the AWS SDK; nothing else may. Today's CLI already satisfies this by shelling out to `gdk`/`aws`; keep it that way. |
+| P4 | **Call `layered.rs`; never reimplement the merge.** | Effective config is computed by `core/libs/rust`'s `config/layered.rs` — the same code the runtime executes — so determinism is *structural*, not asserted. Same for `uns.rs` topic validation. |
+| P5 | **Determinism is a build gate, not a claim.** | Byte-stable serialization rules (§8.3) with golden-file suites. Every render is reproducible from (definition commit, renderer version, inputs). |
+| P6 | **Machine-readable by default.** | Every verb supports `--json`. One diagnostic model (§6.4) drives both human and JSON output. The plan JSON is the common currency between CLI, CI, policy, and UI. |
+| P7 | **Not bound by four-language parity.** | The CLI is a tool, not the core library (`config-component` is the precedent). Parity is triggered only if a change reaches the wire or the config schema. |
+
+---
+
+## 4. Command surface
+
+The current surface is flat and inconsistent (`create-component` vs `list-components`), and it collides
+with the Studio: `edgecommons validate` (recipe lint) versus `edgecommons deployment validate` (config
+schema) is a trap. The new surface is **noun–verb**. The rename is free exactly once — the CLI is
+unpublished, installed with `pipx install .` from a checkout, with no user base to break (RM-012). We
+take that window now; there are **no aliases** to the old names.
+
+```
+edgecommons
+├── component
+│   ├── new           scaffold a component (language × kind × platforms)
+│   ├── validate      config schema + semantic rules + artifact lint
+│   ├── upgrade       move a component to a given edgecommons version
+│   └── package       build deployable artifacts for the selected platform(s)
+├── template
+│   ├── list          the language × kind matrix, from the embedded manifests
+│   └── show <id>     one template's manifest: platforms, tokens, emitted files
+├── registry
+│   ├── list          the ecosystem catalog (filters, --json)
+│   └── show <name>   one catalog entry
+├── deployment        ── contract in §8; hexagonal core behind it
+│   ├── validate      deployment model + every rendered effective config
+│   ├── render        model → native artifacts + the normalized plan
+│   ├── plan          the normalized plan JSON alone
+│   ├── diff          this render vs a release ref, grouped by consequence
+│   └── release       [DEFERRED — blocked, see §8.5]
+├── studio
+│   └── serve         the server shell around the same kernel (seam only in v1)
+├── doctor            platform-aware prerequisite check
+└── completions <shell>
+```
+
+### 4.1 Migration from the current surface
+
+| Today | Becomes | Note |
+|---|---|---|
+| `create-component` | `component new` | Wizard + conditional generation preserved (§5.4). |
+| `validate` | `component validate` | **Massively widened** — today it is recipe lint only (§6). |
+| `upgrade` | `component upgrade` | All four dependency forms actually work (§7). |
+| `deploy` (gdk build/publish) | `component package [--publish]` | The build/publish half. |
+| `deploy --target <arn>` | **removed in v1** | The apply half. See the deviation in §8.6. |
+| `list-templates` | `template list` | Now manifest-driven, not a hardcoded dict. |
+| `list-components` | `registry list` | Behavior preserved, filters corrected (§9). |
+| `doctor` | `doctor` | Platform-aware, non-zero exit, version checks (§9). |
+| *(none)* | `component validate`, `template show`, `registry show`, `deployment *`, `studio serve`, `completions` | New. |
+| `edgecommons add <name>` | **never existed** | Promised twice in `docs/ECOSYSTEM.md`; delete the promise (§12, DEF-11). |
+
+### 4.2 Global conventions
+
+- **Global flags:** `--json`, `-q/--quiet`, `-v/--verbose` (repeatable), `--no-color`, `--yes`
+  (non-interactive; never prompt), `--version`.
+- **Exit codes:** `0` success · `1` findings (validation failed, lint errors) · `2` usage error ·
+  `3` environment error (a required external tool is missing) · `4` internal error. `doctor` returns `3`
+  when a prerequisite for a *selected* platform is missing — today it always returns `0`.
+- **TTY behavior:** interactive prompting is auto-enabled when required inputs are absent **and** stdin
+  is a TTY **and** `--yes` is absent. Otherwise a missing required input is a usage error (`2`). This
+  preserves today's rule (a wizard when `-n` is omitted on a terminal) while making CI failure explicit.
+- **No network in `component new`.** `--template-git <url>` is the sole opt-in exception.
+
+---
+
+## 5. The template model (manifest v2)
+
+### 5.1 Two axes, not one
+
+Template selection today is one-dimensional (language) and hardcoded in a Python dict. The ecosystem is
+two-dimensional. Evidence: `templates/java-protocol-adapter/` and `templates/python-protocol-adapter/`
+already exist, complete with manifests, and are **unreachable** from the CLI; the roadmap wants a
+`processor` scaffold; the camera-adapter work needed a Rust protocol-adapter.
+
+A template is identified by **`<language>/<kind>`**:
+
+| | `service` | `protocol-adapter` | `processor` | `sink` |
+|---|---|---|---|---|
+| **java** | ✅ exists | ✅ exists (unreachable today) | — | — |
+| **python** | ✅ exists | ✅ exists (unreachable today) | — | — |
+| **rust** | ✅ exists | — | — | — |
+| **typescript** | ✅ exists | — | — | — |
+
+`service` is the plain baseline (today's four templates). The other three mirror the registry's own
+category vocabulary (`adapter`, `processor`, `sink`), so a scaffolded component and its catalog entry
+speak the same word. Empty cells are not CLI work — they are template work, and adding one requires
+**no CLI change**, which is the manifest-driven promise the current code makes and does not keep.
+
+### 5.2 Discovery
+
+Templates are discovered by scanning the embedded template tree and reading each manifest. There is no
+registry of templates in code. `template list` renders what it finds; `component new` resolves
+`--language`/`--kind` against it. A template that ships without a valid manifest is a **build failure**
+of the CLI, not a runtime warning (today a bad command class merely warns and disappears).
+
+### 5.3 Manifest schema
+
+```jsonc
+{
+  "schemaVersion": 2,
+  "id": "rust/service",              // must equal <language>/<kind> and the directory path
+  "language": "RUST",                // JAVA | PYTHON | RUST | TYPESCRIPT
+  "kind": "service",                 // service | protocol-adapter | processor | sink
+  "description": "Rust component built on the edgecommons Rust library.",
+  "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],   // what this template can emit
+  "requires": ["EDGECOMMONS_DEP"],   // tokens that must resolve non-empty
+  "substitutions": {                 // file -> tokens; replaces <<TOKEN>>
+    "Cargo.toml": ["BINNAME", "DESCRIPTION", "EDGECOMMONS_DEP"]
+  },
+  "renames": [                       // {TOKEN} interpolation in paths
+    { "from": "src/main/java/com/mbreissi/testcomponent", "to": "src/main/java/{PACKAGEPATH}" }
+  ],
+  "packs": {                         // NEW: platform-gated artifact groups (see 5.5)
+    "GREENGRASS": ["recipe.yaml", "gdk-config.json"],
+    "HOST":       ["compose.yaml", "supervisor/component.conf"],
+    "KUBERNETES": ["Dockerfile", "k8s/"]
+  },
+  "conditional": [                   // retained: arbitrary flag-gated paths
+    { "when": "dep:registry", "paths": [".npmrc"] }
+  ]
+}
+```
+
+Flag namespaces for `conditional`: `platform:<P>`, `dep:<local|registry>`, `kind:<K>`. The manifest is
+itself validated against an embedded JSON Schema at CLI build time, so manifest drift cannot ship.
+
+### 5.4 Generation pipeline
+
+Behavior-preserving with respect to today's `_apply_manifest`, in this order: resolve inputs (wizard or
+flags) → copy the embedded tree → prune packs and unmet conditionals → substitute `<<TOKEN>>` → apply
+renames → prune empty dirs → **verify no `<<...>>` survives** (a hard error today; keep it) → run the
+artifact lint from §6.3 over what was emitted.
+
+### 5.5 Platform packs fix a real asymmetry
+
+Today only Kubernetes artifacts are platform-gated. Greengrass artifacts (`recipe.yaml`,
+`gdk-config.json`) are emitted **unconditionally** — a HOST-only scaffold still gets a Greengrass recipe —
+and **HOST, a first-class platform, gets no artifacts at all**. Packs make all three symmetric, and the
+HOST pack (compose + a supervisord program block) is deliberately shaped to match the Studio's HOST
+renderer output, so a hand-scaffolded component and a Studio-rendered one agree.
+
+### 5.6 Token set
+
+`COMPONENTFULLNAME`, `COMPONENTNAME`, `PACKAGE`, `PACKAGEPATH`, `MAINCLASSNAME`, `JARNAME`, `BINNAME`,
+`DESCRIPTION`, `AUTHOR`, `EDGECOMMONS_VERSION`, `EDGECOMMONS_DEP`, plus the Greengrass-only `BUCKET` and
+`REGION`, which are **prompted and substituted only when the GREENGRASS pack is selected**. The AWS-era
+defaults (`author = "Amazon Web Services"`, `bucket = "greengrass-component-artifacts-us-east-1"`,
+`description = "This is a Greengrass v2 component"`) are deleted.
+
+**`EDGECOMMONS_VERSION` has exactly one source of truth**: it is resolved at CLI build time from the
+workspace (`libs/rust/Cargo.toml`), never hand-maintained in a constant. That constant is how the
+current CLI emits a Cargo dependency on the git tag `rust-lib/v0.1.0`, **which does not exist** (DEF-1).
+
+---
+
+## 6. The validation engine
+
+This is the largest new capability, and the one both audiences want. Today `edgecommons validate` is a
+regex pass over recipe *text* — the YAML is never parsed — and the CLI **cannot validate a component
+config against the canonical schema at all**, even though `jsonschema` is a declared dependency that no
+command uses. The Studio requires exactly this capability ("validate the rendered effective config, not
+only the deployment source shape"), so it is built once, here, and reused by `deployment validate`.
+
+Three layers, run in order, all feeding one diagnostic stream:
+
+### 6.1 Layer 1 — schema
+
+The canonical `schema/edgecommons-config-schema.json` is **embedded at compile time** (offline, P2) and
+enforced with a Rust JSON Schema validator. Drift between the embedded copy and `schema/` is a CI gate,
+exactly as the existing `sync-schema.sh --check` gate works for the four libraries.
+
+### 6.2 Layer 2 — semantic rules
+
+The rules JSON Schema cannot express. Each has a stable code and a `--fix` hint where one exists:
+
+| Code | Rule |
+|---|---|
+| `EC2001` | `--transport IPC` is valid only on `--platform GREENGRASS`. |
+| `EC2002` | A supervisord/HOST render requires `--platform HOST`. |
+| `EC2003` | A Kubernetes ConfigMap mount must not use `subPath`. |
+| `EC2004` | A hierarchical config lineage must be acyclic and ordered. |
+| `EC2005` | Secret **values** are forbidden anywhere in a definition or config; only `secret://` references. |
+| `EC2006` | A raw publish to a reserved UNS class (`state`, `metric`, `cfg`, `log`) is rejected — validated via `uns.rs`, not a local regex. |
+| `EC2007` | A component bootstrapping from `CONFIG_COMPONENT` may not depend recursively on `CONFIG_COMPONENT` for its own bootstrap config. |
+| `EC2008` | UNS identity/topic tokens must satisfy the char-set and the IoT-Core 7-slash depth guard (`uns.rs`). |
+
+### 6.3 Layer 3 — artifact lint
+
+Emitted/on-disk artifacts, **parsed, not regexed**:
+
+- **Greengrass recipe** (YAML-parsed): the three existing hard checks (`{COMPONENT_NAME}` placeholder,
+  artifact `Permissions:` block, unsubstituted `<<...>>`) **plus `RequiresPrivilege: true`**, which
+  exists today as `lint_least_privilege` but was never wired into `validate` (DEF-9).
+- **`gdk-config.json`**: parsed and checked — not looked at at all today.
+- **Kubernetes manifests**: parsed; `subPath` guard (`EC2003`).
+- **HOST**: supervisord INI section uniqueness.
+
+### 6.4 One diagnostic model
+
+```rust
+pub struct Diagnostic {
+    pub code: Code,          // EC1xxx schema · EC2xxx semantic · EC3xxx artifact · EC4xxx template · EC5xxx deployment
+    pub severity: Severity,  // Error | Warning
+    pub file: Option<PathBuf>,
+    pub locus: Option<Locus>,// line/col, or a JSON Pointer into the config
+    pub message: String,
+    pub help: Option<String>,
+}
+```
+
+Rendered human-readable by default and as a stable array under `--json`. `component validate` and
+`deployment validate` differ only in *what they collect*, never in how they report. Warnings do not
+change the exit code; errors yield `1`.
+
+---
+
+## 7. `component upgrade`, done correctly
+
+Today `upgrade` is a set of regexes that are wrong for three of the four languages: it silently no-ops on
+every TypeScript component (the template emits the scoped key `@edgecommons/edgecommons`; the regex looks
+for the bare key), it **corrupts** Python components (rewriting the real `edgecommons @ git+https://…`
+form into `edgecommons==X`), and it cannot bump the git-tag Cargo dependency that the CLI itself emits.
+
+The rewrite manipulates each manifest with a **real parser** for its format, and it is specified against
+the dependency forms the CLI actually generates — one table, shared by `component new` and
+`component upgrade`, so the two can never disagree again:
+
+| Language | `--dep-source local` | `--dep-source registry` | Upgrade acts on |
+|---|---|---|---|
+| Java | `pom.xml`, `<version>` from the workspace | same, published GitHub Packages coordinate | `pom.xml` (XML-parsed, property-aware) |
+| Python | `-e ../libs/python` | `edgecommons @ git+https://…@python-lib/vX.Y.Z#subdirectory=libs/python` | `requirements.txt` (form-preserving) |
+| Rust | `path = "../libs/rust"` | `git = "…", tag = "rust-lib/vX.Y.Z"` | `Cargo.toml` (TOML-parsed; **git-tag form supported**) |
+| TypeScript | `file:../libs/ts` | `^X.Y.Z` under `@edgecommons/edgecommons` | `package.json` (**scoped key**) |
+
+`--dep-source registry` must produce a component that **resolves and builds** for all four languages —
+the acceptance gate in §10 enforces it. Path dependencies are reported as "nothing to bump", never
+silently rewritten. `--dry-run` prints the diff.
+
+---
+
+## 8. The deployment surface, at contract level
+
+RM-012: *"The CLI is the product; the server is a shell around it."* `deployment validate | render |
+plan | diff` must do the entire model→artifact job **with no server and no network**.
+
+### 8.1 Verbs
+
+| Verb | In | Out |
+|---|---|---|
+| `validate <definition>` | a deployment definition (folder or file) | Two stages: the definition's own schema, then **every rendered effective config** against the strict config schema (§6.1) + semantic rules (§6.2). |
+| `render --env <e> --target <t>` | definition, env, target | Native artifacts for the target **plus** the normalized plan. Writes to a render path; nothing is committed. |
+| `plan` | definition, env, target | The normalized plan JSON alone — the common currency for validation, policy, CI, and the UI. |
+| `diff --against <release-ref>` | a Git ref | The delta grouped **by consequence**: restart, storage, network, identity, permission, config, artifact, apply-order. |
+| `release` | — | **Deferred; see §8.5.** |
+
+### 8.2 The hexagonal core and the five ports
+
+The kernel is a library crate with no I/O. Five ports, each a trait with a zero-cost local adapter, and
+**no cloud SDK linked above the port boundary** (P3):
+
+```rust
+pub trait GitPort      { /* definitions, layers, releases, evidence, approvals */ }
+pub trait IdentityPort { /* who authored, who approved, who may edit which layer */ }
+pub trait BlobPort     { /* artifacts, evidence bundles, render snapshots */ }
+pub trait RunnerPort   { /* executes an apply; holds target credentials — the Studio never does */ }
+pub trait TargetsPort  { /* the three control planes the renderers speak to */ }
+```
+
+Local adapters, which is what makes local development free: a local clone (Git), static dev users
+(Identity), the filesystem (Blob), a subprocess (Runner), and `kind` / `greengrass-cli` local deployment
+/ supervisord-in-containers (Targets).
+
+### 8.3 Determinism rules
+
+The deck asserts deterministic render; REVIEW.md flags that it is never operationalized, and names it a
+load-bearing risk. It is a build gate here:
+
+1. **Byte-stable serialization**: sorted keys, fixed indentation, LF endings, no locale-dependent
+   formatting, and **no timestamps or hostnames in rendered output** (they belong in the release
+   manifest, not the artifact).
+2. **Effective config comes from `layered.rs`** (P4) — not a second merge implementation.
+3. **Golden-file suites per renderer**, with `bottling-company-test/sites/dallas-site` as the first
+   oracle: regenerate its supervisord confs, per-line config JSONs, and ConfigComponent catalog from a
+   definition and compare **byte for byte**.
+4. **The renderer version is an input to every hash.** A renderer bump invalidates hashes by
+   construction, and that is a stated, tested behavior rather than a surprise.
+
+### 8.4 `studio serve`
+
+The same kernel behind an `axum` server with the SPA embedded. In v1 this is a **compiling seam**: the
+subcommand exists, the ports are wired, the server is not built. Nothing in the kernel may assume a
+server exists.
+
+### 8.5 `release` is blocked — deliberately
+
+`deployment release` is named in RM-012's five-verb rule but is the least specified verb in the deck (it
+is dropped from the deck's own Tier-0 command list), and **it cannot be implemented until two open
+decisions land**:
+
+- **REVIEW #2 — the release object's shape.** RM-002 explicitly refines the model to *two independently
+  versioned, independently reconciled streams* (artifact version; config), each with its own drift signal
+  and rollback target. The deck's `ReleaseLock` is a fused, atomic unit — precisely the Greengrass model
+  RM-002 says bites users. Until this is settled, `release` has no output object.
+- **REVIEW #3 — Greengrass thing-group granularity.** This constrains the *model the CLI parses*, not a
+  renderer detail, and REVIEW.md says it must be decided in slice 1.
+
+v1 therefore ships `validate | render | plan | diff`. `release` is registered as a subcommand that exits
+`2` with a pointer to these decisions, rather than being quietly absent.
+
+### 8.6 Deviation to acknowledge: `deploy --target` is removed in v1
+
+Today `edgecommons deploy --target <arn>` shells out to `aws greengrassv2 create-deployment`. That is an
+**apply**, and apply belongs behind the Runner/Targets ports — the deck is explicit that apply runs in a
+runner holding the target credentials, never in the Studio process. v1 keeps the build/publish half as
+`component package [--publish]` (still `gdk`, still a shell-out) and **drops the cloud-deployment half**
+until the Targets port lands.
+
+The practical cost is near zero and should be stated plainly: that command **cannot run on a freshly
+scaffolded component today anyway** — every template ships `"version": "NEXT_PATCH"` and `deploy`
+hard-rejects `NEXT_PATCH` (DEF-6). Its one genuinely valuable behavior — refusing to deploy an unlocked
+version — is not lost: it is the ancestor of the release-lock gate and moves into `deployment` validation.
+
+---
+
+## 9. `registry` and `doctor`
+
+**`registry list`** preserves today's behavior (the `gh`-authenticated read of the private
+`edgecommons/registry` catalog, `$EDGECOMMONS_REGISTRY_URL`, a local path, `--json`) and fixes the filter
+help, which advertises three of the six categories the schema actually defines. It validates the catalog
+against `registry.schema.json` rather than checking that a `components` key exists.
+
+**A gap this surfaces, which is not the CLI's to fix alone:** the Studio's deployment model pins
+`artifact: { version, digest }`, but `registry/components.json` has **no version, artifact, or digest
+field** (required keys are name/repo/language/category/description, `additionalProperties: false`).
+There is no catalog to resolve a pin from. Either definitions hand-pin forever, or the registry grows
+release coordinates. Raised as **OQ-3**.
+
+**`doctor`** becomes platform-aware and honest. It takes `--platform` (defaulting to all), checks only
+what the selected platforms need, **verifies versions** (Rust ≥ MSRV 1.85, Java 25, Node ≥ 18, `gdk`),
+adds the tools the current list omits — `gh` (which `registry list` requires), `docker`, `kubectl`,
+`helm` — and **exits non-zero when something required is missing**. Today it always exits `0`, which
+makes it useless in CI.
+
+---
+
+## 10. Testing and acceptance gates
+
+The acceptance gate is the org's standing one, not "the Rust tests pass":
+
+| Gate | What it is |
+|---|---|
+| **Scaffold → build → run** | Every template in the matrix (§5.1), for **both** dep-sources, scaffolded, compiled, and run across the testable deployment options. This is the gate that would have caught DEF-1, DEF-2, and DEF-3. |
+| **Golden files** | Template output and (later) renderer output, byte-compared. |
+| **Determinism** | Render twice, compare bytes; render with a bumped renderer version, assert the hash changes. |
+| **Defect regressions** | One test per row of §12. |
+| **Coverage** | ≥ 90% line, matching the four libraries. The Python CLI has **no coverage gate at all** today, and its CI runs `pytest` on Python 3.12 only. |
+| **Schema drift** | The embedded config schema matches `schema/edgecommons-config-schema.json`. |
+
+Note the historical evidence for why the matrix gate matters: TypeScript generation is never tested
+today, and `_bump_package_json` has no test at all — which is exactly why both are broken.
+
+---
+
+## 11. Architecture and delivery
+
+### 11.1 Crate layout
+
+A Cargo workspace under `cli/`, replacing the Python tree in place (`core/cli/`), where the templates,
+the canonical schema, and `libs/rust` are all path-reachable.
+
+| Crate | Responsibility | May depend on |
+|---|---|---|
+| `ec-cli` (bin) | `clap` derive, output rendering, exit codes. Thin. | all below |
+| `ec-diag` | The diagnostic model + human/JSON renderers. | — |
+| `ec-scaffold` | Embedded templates, manifest v2, generation pipeline, wizard. | `ec-diag` |
+| `ec-validate` | Embedded schema, semantic rules, artifact lint. | `ec-diag`, `edgecommons` (`uns.rs`, `config/layered.rs`) |
+| `ec-deploy` | The hexagonal kernel: model, renderers, plan, the five port traits. **No I/O.** | `ec-validate`, `edgecommons` |
+| `ec-adapters` | Local adapters + `gdk`/`greengrass-cli`/`kubectl`/`docker` shell-outs. **The only crate that may link a cloud SDK, and only in the Greengrass adapter.** | `ec-deploy` |
+| `ec-studio` | The `axum` server shell. Seam only in v1. | `ec-deploy` |
+
+Rust edition 2024, MSRV 1.85 — matching `libs/rust`.
+
+### 11.2 Distribution
+
+The CLI is finally **published**: today `release.yml`'s `cli/v*` tag prefix only builds a dist and
+uploads it as a workflow artifact, so there is no install path but a checkout. Ship static binaries per
+OS/arch from the existing tag prefix, plus `cargo install`. This is the payoff RM-012 names — scaffolding
+a Java or TypeScript component stops requiring a Python runtime.
+
+### 11.3 Phases
+
+| Phase | Delivers | Done when |
+|---|---|---|
+| **P0** | Workspace, `clap` skeleton, `ec-diag`, `doctor`, `completions`. | `doctor` is platform-aware and exits non-zero. |
+| **P1** | `ec-scaffold`: manifest v2, embedded templates, packs, wizard, `component new`, `template list\|show`. | The scaffold→build→run matrix is green for the four existing `service` templates on all platforms. |
+| **P2** | `ec-validate`: schema + semantic + artifact lint; `component validate`. | Every defect in §12 that is a validation defect has a regression test. |
+| **P3** | `registry list\|show`; `component upgrade` (all four dep forms); `component package`. | Both dep-sources build in all four languages. **The Python `cli/` is deleted, and every doc that describes it is updated in the same change.** |
+| **P4** | `ec-deploy`: the model, `validate\|render\|plan\|diff`, the five port traits, local adapters, the **HOST renderer first** (per REVIEW.md's slice-1 amendment). | `bottling-company-test/sites/dallas-site` is regenerated byte-for-byte from a definition. |
+| **P5** | The Greengrass and Kubernetes renderers; the `studio serve` seam. | — |
+| **P6** | `release`, once REVIEW #2 and #3 land. | — |
+
+New templates (`rust/protocol-adapter`, `*/processor`, `*/sink`) are template work that can land any time
+after P1 with no CLI change — that is the point of §5.
+
+### 11.4 Sequencing note
+
+The Studio deck places the Python→Rust port in **slice 3**, after the deployment model and the HOST
+renderer. This plan pulls it forward: P0–P3 deliver a correct, publishable component CLI first, and P4
+then builds the deployment kernel on top of a validation engine that already exists. The alternative —
+building `deployment validate` against a CLI that cannot validate a config — means writing the validation
+engine anyway, just in a worse order.
+
+---
+
+## 12. Defect register — requirements harvested from bugs
+
+Every row is a live defect in the shipped Python CLI, verified against source. Each becomes a regression
+test. This register — not the current pytest suite — is the behavioral oracle.
+
+| # | Defect | Evidence | Fixed by |
+|---|---|---|---|
+| DEF-1 | `--dep-source registry` + Rust emits a Cargo dep on git tag `rust-lib/v0.1.0`, **which does not exist** (repo has `v0.1.1`, `v0.2.0`; libs are at 0.2.0). | `create_component.py:78` | §5.6 (version resolved from the workspace), §10 |
+| DEF-2 | The generated **Python Greengrass component fails its install lifecycle on device** — the recipe installs `greengrass_commons-0.0.10038883-py3-none-any.whl`, a pre-rebrand wheel that is never produced. | `templates/python/recipe.yaml:79`, `templates/python-protocol-adapter/recipe.yaml:59` | Template fix + §10 |
+| DEF-3 | `upgrade` is a **silent no-op for every TypeScript component** (scoped key vs bare key). | `upgrade.py:123` vs `templates/typescript/package.json:14` | §7 |
+| DEF-4 | `upgrade` **corrupts Python components** — rewrites the `git+https` form to `edgecommons==X`. | `upgrade.py:85-86` | §7 |
+| DEF-5 | `upgrade` cannot bump the git-tag Cargo dep that `create-component` itself emits. | `upgrade.py:100-115` | §7 |
+| DEF-6 | `deploy --target` **cannot run on a freshly scaffolded component**: every template ships `NEXT_PATCH`, which `deploy` hard-rejects. | `templates/*/gdk-config.json:5`, `deploy.py:96-100` | §8.6 |
+| DEF-7 | `jsonschema` is a declared runtime dependency **used by no command** — in a CLI whose biggest gap is that it cannot validate a config against the canonical schema. | `pyproject.toml:9` | §6 |
+| DEF-8 | Two complete templates (`java-protocol-adapter`, `python-protocol-adapter`) are **unreachable**: absent from the language dict and from the wheel bundle. | `create_component.py:46-51`, `setup.py:14` | §5.1, §5.2 |
+| DEF-9 | `lint_least_privilege` (the `RequiresPrivilege: true` check) exists but is **never wired into `validate`**. | `recipe_lint.py:25-40` | §6.3 |
+| DEF-10 | `doctor` never exits non-zero, checks no versions, and omits `gh` (which `list-components` requires), `docker`, `kubectl`, `helm`. | `doctor.py:7-16` | §9 |
+| DEF-11 | `edgecommons add <name>` is documented twice as a command; it does not exist. | `docs/ECOSYSTEM.md:80,149` | Delete the promise |
+| DEF-12 | Greengrass artifacts are emitted for HOST-only scaffolds; HOST gets no artifacts at all. | `templates/*/edgecommons-template.json` | §5.5 |
+
+---
+
+## 13. Decision register
+
+| # | Decision | Rationale |
+|---|---|---|
+| D-CLI-1 | **Greenfield, not a port.** | The port would carry a Greengrass-era product, a reflective plugin framework, and 12 defects. RM-012 already commits to the Rust binary. |
+| D-CLI-2 | **The defect register + the scaffold→build→run gate is the oracle — not the pytest suite.** | The suite is green while the code is broken; the broken paths are the untested ones. Corrects RM-012's stated approach. |
+| D-CLI-3 | **Noun–verb surface, clean break, no aliases.** | The CLI is unpublished with no user base (RM-012). The window is now. `validate` vs `deployment validate` is otherwise a permanent trap. |
+| D-CLI-4 | **Templates are language × kind**, discovered from manifests; kinds are `service`, `protocol-adapter`, `processor`, `sink`. | Two archetype templates already exist and are orphaned; the vocabulary matches the registry's categories. Adding a template needs no CLI change. |
+| D-CLI-5 | **Lives in `core/cli/`, replacing the Python tree.** | Templates, the canonical schema, and `libs/rust` (which the CLI must *call*, per P4) are all path-reachable; the `cli/v*` release prefix already exists. |
+| D-CLI-6 | **The validation engine is built once and shared** by `component validate` and `deployment validate`. | The Studio requires effective-config validation; the component author wants the same thing. Two implementations would drift. |
+| D-CLI-7 | **`release` is deferred, and says so at runtime.** | Blocked on REVIEW #2 (fused vs two-stream) and #3 (thing-group granularity). Shipping a guess would bake in the model RM-002 explicitly rejects. |
+| D-CLI-8 | **`deploy --target` (cloud apply) is dropped in v1**; `component package [--publish]` keeps the build/publish half. | Apply belongs behind the Runner/Targets ports. The dropped command cannot run on a fresh scaffold today (DEF-6). Its version-lock gate is preserved in `deployment` validation. |
+| D-CLI-9 | **The port order is pulled forward** relative to the deck's slice 3. | `deployment validate` needs a validation engine that does not exist; building it first is strictly cheaper. |
+
+---
+
+## 14. Open questions
+
+- **OQ-1 — REVIEW #2 (release object: fused `ReleaseLock` vs RM-002's two-stream model).** Blocks
+  `release`. RM-002's refinement is explicit and, in my reading, correct; the deck has not absorbed it.
+- **OQ-2 — REVIEW #3 (Greengrass thing-group granularity).** Constrains the model the CLI parses, so it
+  must be settled before P4 freezes the definition schema.
+- **OQ-3 — Component pins have no catalog.** The registry carries no version/digest, but the deployment
+  model pins both (§9). Extend `registry.schema.json`, or accept hand-pinned definitions?
+- **OQ-4 — `component package` for HOST/Kubernetes.** Should it shell out to `docker build`, or stay
+  Greengrass-only (`gdk`) and leave container builds to CI?
+- **OQ-5 — Policy and Sign.** The deck's pipeline has both as stages (Rego compiled to WASM, evaluated
+  in-process so it works offline), but neither has a CLI verb. `deployment policy` / `deployment sign`?
