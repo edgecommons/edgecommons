@@ -239,11 +239,18 @@ fn the_protocol_adapter_kind_is_reachable() {
 #[test]
 fn a_kind_with_no_template_is_a_usage_error_that_lists_what_exists() {
     let d = tempfile::tempdir().unwrap();
-    let o = scaffold(d.path(), "com.example.X", "RUST", &["-k", "sink"]);
+    // TypeScript has no processor template. (`rust/sink` and `rust/processor` now DO exist —
+    // which is the point: filling a cell of the matrix is template work, not CLI work.)
+    let o = scaffold(
+        d.path(),
+        "com.example.X",
+        "TYPESCRIPT",
+        &["-k", "processor"],
+    );
     assert_eq!(code(&o), 2);
     let e = stderr(&o);
     assert!(
-        e.contains("rust/service"),
+        e.contains("typescript/service"),
         "the error must list the templates that do exist:\n{e}"
     );
 }
