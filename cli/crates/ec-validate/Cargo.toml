@@ -1,0 +1,19 @@
+[package]
+name = "ec-validate"
+description = "The validation engine: canonical config schema, per-component schema, semantic rules, and parsed artifact lint."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ec-diag = { workspace = true }
+ec-deploy = { workspace = true }
+jsonschema = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

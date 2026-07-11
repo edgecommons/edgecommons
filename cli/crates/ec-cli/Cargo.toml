@@ -1,0 +1,27 @@
+[package]
+name = "ec-cli"
+description = "The edgecommons CLI: scaffold, validate, and deploy edgecommons components."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "edgecommons"
+path = "src/main.rs"
+
+[dependencies]
+ec-adapters = { workspace = true }
+ec-deploy = { workspace = true }
+ec-diag = { workspace = true }
+ec-scaffold = { workspace = true }
+ec-studio = { workspace = true }
+ec-validate = { workspace = true }
+
+clap = { workspace = true }
+clap_complete = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

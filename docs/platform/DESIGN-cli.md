@@ -132,8 +132,14 @@ edgecommons
 - **Global flags:** `--json`, `-q/--quiet`, `-v/--verbose` (repeatable), `--no-color`, `--yes`
   (non-interactive; never prompt), `--version`.
 - **Exit codes:** `0` success · `1` findings (validation failed, lint errors) · `2` usage error ·
-  `3` environment error (a required external tool is missing) · `4` internal error. `doctor` returns `3`
-  when a prerequisite for a *selected* platform is missing — today it always returns `0`.
+  `3` environment error (a required external tool is missing) · `4` internal error · `5` the verb is
+  declared but **not implemented in this build**. `doctor` returns `3` when a prerequisite for a *selected*
+  platform is missing — today it always returns `0`.
+
+  `5` exists because the surface is declared in full from Phase P0 while the verbs land across P1–P4
+  (§11.3). Without it, an unbuilt verb has to masquerade as a usage error or an internal crash, and CI
+  cannot distinguish *"this build cannot do that yet"* from *"you invoked it wrong."* It disappears from
+  the surface as the phases complete.
 - **TTY behavior:** interactive prompting is auto-enabled when required inputs are absent **and** stdin
   is a TTY **and** `--yes` is absent. Otherwise a missing required input is a usage error (`2`). This
   preserves today's rule (a wizard when `-n` is omitted on a terminal) while making CI failure explicit.

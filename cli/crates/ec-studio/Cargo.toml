@@ -1,0 +1,12 @@
+[package]
+name = "ec-studio"
+description = "The Deployment Studio server shell around the same kernel. A compiling seam in v1."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ec-deploy = { workspace = true }
+ec-diag = { workspace = true }
