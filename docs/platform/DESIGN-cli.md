@@ -88,16 +88,20 @@ edgecommons
 ├── component
 │   ├── new           scaffold a component (language × kind × platforms)
 │   ├── validate      config schema + semantic rules + artifact lint
-│   ├── upgrade       move a component to a given edgecommons version
-│   └── package       build deployable artifacts for the selected platform(s)
+│   ├── upgrade       move a component to a given *edgecommons* version
+│   ├── version       set the *component's own* version across its manifests
+│   ├── package       build deployable artifacts for the selected platform(s)
+│   └── release       build + digest + emit the release descriptor (never publishes — §7.3)
 ├── template
 │   ├── list          the language × kind matrix, from the embedded manifests
 │   └── show <id>     one template's manifest: platforms, tokens, emitted files
 ├── registry
 │   ├── list          the ecosystem catalog (filters, --json)
-│   └── show <name>   one catalog entry
+│   ├── show <name>   one catalog entry
+│   └── versions <n>  the published releases of a component, from the release index (§9.1)
 ├── deployment        ── contract in §8; hexagonal core behind it
 │   ├── validate      deployment model + every rendered effective config
+│   ├── lock          resolve pinned versions → digests; the one networked verb (§8.7)
 │   ├── render        model → native artifacts + the normalized plan
 │   ├── plan          the normalized plan JSON alone
 │   ├── diff          this render vs a release ref, grouped by consequence
@@ -120,7 +124,7 @@ edgecommons
 | `list-templates` | `template list` | Now manifest-driven, not a hardcoded dict. |
 | `list-components` | `registry list` | Behavior preserved, filters corrected (§9). |
 | `doctor` | `doctor` | Platform-aware, non-zero exit, version checks (§9). |
-| *(none)* | `component validate`, `template show`, `registry show`, `deployment *`, `studio serve`, `completions` | New. |
+| *(none)* | `component validate`, `component version`, `component release`, `template show`, `registry show\|versions`, `deployment *`, `studio serve`, `completions` | New. |
 | `edgecommons add <name>` | **never existed** | Promised twice in `docs/ECOSYSTEM.md`; delete the promise (§12, DEF-11). |
 
 ### 4.2 Global conventions
@@ -288,7 +292,9 @@ change the exit code; errors yield `1`.
 
 ---
 
-## 7. `component upgrade`, done correctly
+## 7. Dependency, version, and release
+
+### 7.1 `component upgrade`, done correctly
 
 Today `upgrade` is a set of regexes that are wrong for three of the four languages: it silently no-ops on
 every TypeScript component (the template emits the scoped key `@edgecommons/edgecommons`; the regex looks
@@ -310,6 +316,57 @@ the dependency forms the CLI actually generates — one table, shared by `compon
 the acceptance gate in §10 enforces it. Path dependencies are reported as "nothing to bump", never
 silently rewritten. `--dry-run` prints the diff.
 
+### 7.2 `component version` — a different verb from `upgrade`
+
+`upgrade` moves a component to a new **edgecommons library** version. `version` sets the **component's
+own** version, across whichever manifests declare it (`pom.xml`, `Cargo.toml`, `package.json`,
+`gdk-config.json`, the recipe). Conflating the two is a trap the current CLI avoids only by not having
+the second one.
+
+The stated version is authoritative: `component version --to 0.3.0`. The CLI validates that it is
+well-formed, monotonic, and not already published (against the release index, §9.1). It does **not**
+derive a version from commit messages — no auto-semver in v1.
+
+### 7.3 `component release` — the CLI produces; the runner publishes
+
+This is a principle, not a preference, and it is the same line drawn in §8.6 for cloud apply:
+
+> **Deterministic, credential-free work belongs in the CLI. Anything that needs a credential or mutates
+> the world belongs in a runner.**
+
+A release cut from a developer's laptop with publishing credentials has no provenance, no attestation,
+and no reproducibility — precisely what the supply-chain evidence gate exists to prevent, and a direct
+contradiction of the rule that the Runner port holds credentials and the tool never does.
+
+So `component release` **builds the artifacts, computes their digests, and emits a release descriptor** —
+and stops:
+
+```jsonc
+{
+  "component": "telemetry-processor",
+  "version": "0.3.0",
+  "sourceCommit": "…",
+  "artifacts": {
+    "GREENGRASS": { "componentVersion": "0.3.0", "archive": "…", "sha256": "…", "recipe": "recipe.yaml" },
+    "KUBERNETES": { "image": "ghcr.io/edgecommons/telemetry-processor", "digest": "sha256:…" },
+    "HOST":       { "archive": "…", "sha256": "…" }
+  },
+  "supplyChain": { "sbom": null, "signature": null, "provenance": null }   // fields designed now, populated as they land
+}
+```
+
+**Tagging, uploading, and opening the registry PR are the release *workflow's* job**, running the same
+binary in CI — which is exactly the deck's rule that "CI is just the same binary invoked in a job". A
+laptop dry-run therefore produces the exact bytes CI would, which is what makes the descriptor
+reviewable before it is real.
+
+Note the artifact coordinates are **per platform**. A single top-level digest would be meaningless: a
+Greengrass artifact archive, an OCI image, and a HOST binary are three different objects.
+
+This verb has a prerequisite the CLI cannot supply: **no EdgeCommons component publishes anything
+today** — zero releases, zero tags, zero packages across all eight repos, with CI that builds and tests
+but never packages. That is **RM-013**, and it is a separate initiative.
+
 ---
 
 ## 8. The deployment surface, at contract level
@@ -322,6 +379,7 @@ plan | diff` must do the entire model→artifact job **with no server and no net
 | Verb | In | Out |
 |---|---|---|
 | `validate <definition>` | a deployment definition (folder or file) | Two stages: the definition's own schema, then **every rendered effective config** against the strict config schema (§6.1) + semantic rules (§6.2). |
+| `lock` | definition + the release index | Resolves each pinned component version to an immutable digest and writes a lock file. **The only verb that touches the network** (§8.7). |
 | `render --env <e> --target <t>` | definition, env, target | Native artifacts for the target **plus** the normalized plan. Writes to a render path; nothing is committed. |
 | `plan` | definition, env, target | The normalized plan JSON alone — the common currency for validation, policy, CI, and the UI. |
 | `diff --against <release-ref>` | a Git ref | The delta grouped **by consequence**: restart, storage, network, identity, permission, config, artifact, apply-order. |
@@ -394,6 +452,24 @@ scaffolded component today anyway** — every template ships `"version": "NEXT_P
 hard-rejects `NEXT_PATCH` (DEF-6). Its one genuinely valuable behavior — refusing to deploy an unlocked
 version — is not lost: it is the ancestor of the release-lock gate and moves into `deployment` validation.
 
+### 8.7 Pins and the lock file — how "no network" becomes literally true
+
+A definition **pins a component version**; a **lock file records the resolved digest**. This is the
+`Cargo.lock` pattern, and it is what makes RM-012's "with no server and no network" a fact rather than an
+aspiration:
+
+- `deployment lock` is the **one** verb that reaches the network. It resolves each pinned version against
+  the release index (§9.1) and writes the digests into a lock file **committed to Git**.
+- `validate`, `render`, `plan`, and `diff` are then **pure functions over files already in Git**. An
+  air-gapped site needs a definition, a lock, and a Git bundle — nothing else.
+- Determinism (§8.3) follows for free: every hash input is committed, so a render is reproducible from
+  the definition commit plus the renderer version.
+
+**Degradation is explicit.** Until components actually publish (RM-013), a definition may hand-pin a
+version with no resolvable digest. `deployment validate` then emits a **warning**, not an error, naming
+the reason ("no release index published for `<component>`"). When the index appears, the identical code
+path begins enforcing. No redesign, no flag.
+
 ---
 
 ## 9. `registry` and `doctor`
@@ -403,11 +479,23 @@ version — is not lost: it is the ancestor of the release-lock gate and moves i
 help, which advertises three of the six categories the schema actually defines. It validates the catalog
 against `registry.schema.json` rather than checking that a `components` key exists.
 
-**A gap this surfaces, which is not the CLI's to fix alone:** the Studio's deployment model pins
-`artifact: { version, digest }`, but `registry/components.json` has **no version, artifact, or digest
-field** (required keys are name/repo/language/category/description, `additionalProperties: false`).
-There is no catalog to resolve a pin from. Either definitions hand-pin forever, or the registry grows
-release coordinates. Raised as **OQ-3**.
+### 9.1 The registry is three layers, not one
+
+The Studio's deployment model pins `artifact: { version, digest }`, and `registry/components.json` has
+**no version, artifact, or digest field**. The answer is *not* to add those fields to the catalog entry:
+that is mutable per-release data in a hand-edited file (stale by the second release), it can only express
+the *current* version while definitions pin arbitrary historical ones, and a single top-level digest is
+meaningless when a component ships a different artifact per platform.
+
+| Layer | What it is | Who writes it |
+|---|---|---|
+| **Discovery** — `components.json` | What exists: repo, language, category, platforms. Slow-moving. | Humans (unchanged) |
+| **Release index** — `releases/<component>.json` | Every published release: version, source commit, per-platform artifact coordinates + digests, supply-chain refs. | **CI only** — pushed by each component's release workflow; never hand-edited; schema-validated by registry CI |
+| **Pin + lock** | The definition pins a version; the lock file records the resolved digest (§8.7). | The definition author; `deployment lock` |
+
+`registry versions <component>` reads the index. This resolves the design's OQ-3 and is scoped as
+**RM-013**, because its true prerequisite is not a schema change — it is that **no EdgeCommons component
+publishes anything at all today** (zero releases, zero tags, zero packages across all eight repos).
 
 **`doctor`** becomes platform-aware and honest. It takes `--platform` (defaulting to all), checks only
 what the selected platforms need, **verifies versions** (Rust ≥ MSRV 1.85, Java 25, Node ≥ 18, `gdk`),
@@ -468,8 +556,8 @@ a Java or TypeScript component stops requiring a Python runtime.
 | **P0** | Workspace, `clap` skeleton, `ec-diag`, `doctor`, `completions`. | `doctor` is platform-aware and exits non-zero. |
 | **P1** | `ec-scaffold`: manifest v2, embedded templates, packs, wizard, `component new`, `template list\|show`. | The scaffold→build→run matrix is green for the four existing `service` templates on all platforms. |
 | **P2** | `ec-validate`: schema + semantic + artifact lint; `component validate`. | Every defect in §12 that is a validation defect has a regression test. |
-| **P3** | `registry list\|show`; `component upgrade` (all four dep forms); `component package`. | Both dep-sources build in all four languages. **The Python `cli/` is deleted, and every doc that describes it is updated in the same change.** |
-| **P4** | `ec-deploy`: the model, `validate\|render\|plan\|diff`, the five port traits, local adapters, the **HOST renderer first** (per REVIEW.md's slice-1 amendment). | `bottling-company-test/sites/dallas-site` is regenerated byte-for-byte from a definition. |
+| **P3** | `registry list\|show\|versions`; `component upgrade` (all four dep forms), `component version`, `component package`, `component release` (descriptor only, §7.3). | Both dep-sources build in all four languages. **The Python `cli/` is deleted, and every doc that describes it is updated in the same change.** `component release` is usable by RM-013's release workflow. |
+| **P4** | `ec-deploy`: the model, `validate\|lock\|render\|plan\|diff`, the five port traits, local adapters, the **HOST renderer first** (per REVIEW.md's slice-1 amendment). | `bottling-company-test/sites/dallas-site` is regenerated byte-for-byte from a definition. |
 | **P5** | The Greengrass and Kubernetes renderers; the `studio serve` seam. | — |
 | **P6** | `release`, once REVIEW #2 and #3 land. | — |
 
@@ -521,6 +609,9 @@ test. This register — not the current pytest suite — is the behavioral oracl
 | D-CLI-7 | **`release` is deferred, and says so at runtime.** | Blocked on REVIEW #2 (fused vs two-stream) and #3 (thing-group granularity). Shipping a guess would bake in the model RM-002 explicitly rejects. |
 | D-CLI-8 | **`deploy --target` (cloud apply) is dropped in v1**; `component package [--publish]` keeps the build/publish half. | Apply belongs behind the Runner/Targets ports. The dropped command cannot run on a fresh scaffold today (DEF-6). Its version-lock gate is preserved in `deployment` validation. |
 | D-CLI-9 | **The port order is pulled forward** relative to the deck's slice 3. | `deployment validate` needs a validation engine that does not exist; building it first is strictly cheaper. |
+| D-CLI-10 | **The CLI produces; the runner publishes.** `component release` builds, digests, and emits a descriptor — it never tags, uploads, or pushes. | A release cut from a laptop with credentials has no provenance and no attestation. Generalizes D-CLI-8: deterministic and credential-free belongs in the tool; credentialed and world-mutating belongs behind a port. CI runs the same binary. |
+| D-CLI-11 | **The registry splits into discovery / release index / pin+lock** (§9.1); `version` and `digest` are *not* added to the catalog entry. | Per-release data in a hand-edited catalog is stale by the second release, cannot express historical pins, and a single digest is meaningless across three platforms. |
+| D-CLI-12 | **`deployment lock` is the only networked verb.** | Makes RM-012's "no server and no network" literal for `validate\|render\|plan\|diff`, and puts every hash input in Git, which is what §8.3's determinism actually requires. |
 
 ---
 
@@ -530,9 +621,11 @@ test. This register — not the current pytest suite — is the behavioral oracl
   `release`. RM-002's refinement is explicit and, in my reading, correct; the deck has not absorbed it.
 - **OQ-2 — REVIEW #3 (Greengrass thing-group granularity).** Constrains the model the CLI parses, so it
   must be settled before P4 freezes the definition schema.
-- **OQ-3 — Component pins have no catalog.** The registry carries no version/digest, but the deployment
-  model pins both (§9). Extend `registry.schema.json`, or accept hand-pinned definitions?
+- **OQ-3 — RESOLVED.** Component pins had no catalog to resolve against. Answer: the three-layer registry
+  (§9.1) plus `deployment lock` (§8.7), with the underlying prerequisite — components do not release at
+  all — scoped as **RM-013**. Until that lands, unverifiable pins warn rather than block.
 - **OQ-4 — `component package` for HOST/Kubernetes.** Should it shell out to `docker build`, or stay
-  Greengrass-only (`gdk`) and leave container builds to CI?
+  Greengrass-only (`gdk`) and leave container builds to CI? (Interacts with RM-013: the org has never
+  published an image.)
 - **OQ-5 — Policy and Sign.** The deck's pipeline has both as stages (Rego compiled to WASM, evaluated
   in-process so it works offline), but neither has a CLI verb. `deployment policy` / `deployment sign`?
