@@ -79,50 +79,51 @@ testing, and — for packaging/deploying to Greengrass — the **GDK** (Greengra
 
 ## Install the scaffolding CLI
 
-The CLI is the Python package `edgecommons-cli`. It installs two identical console entry points,
-`edgecommons` and `edgecommons-cli`. Templates are bundled into the wheel, so an installed CLI
-scaffolds **offline**.
+`edgecommons` is a single static binary. Build and install it from the `cli/` workspace of the
+monorepo:
 
 <Tabs syncKey="os">
 <TabItem label="Linux">
 
   ```bash
-  pipx install ./cli              # recommended: isolated global `edgecommons`
-  # or:  python3 -m pip install ./cli
-  # or:  python3 -m pip install -e ./cli   # editable, for developing the CLI itself
+  cargo install --path cli/crates/ec-cli    # installs `edgecommons` onto your PATH
   ```
 
 </TabItem>
 <TabItem label="Windows">
 
   ```powershell
-  pipx install ./cli              # recommended: isolated global edgecommons
-  # or:  python -m pip install ./cli
-  # or:  python -m pip install -e ./cli    # editable, for developing the CLI itself
+  cargo install --path cli/crates/ec-cli    # installs `edgecommons` onto your PATH
   ```
 
 </TabItem>
 </Tabs>
 
+Building the CLI needs a `rustup` toolchain; running it needs nothing else. The component templates
+and the canonical config schema live inside the binary, so the CLI scaffolds and validates
+**offline**. Scaffolding a Java or TypeScript component needs nothing but the binary — the language
+toolchain is what *builds* the result, not what generates it.
+
 ### Verify your environment
 
-`edgecommons doctor` checks for the eight tools the CLI can use — `git`, `gdk`, `cargo`, `mvn`,
-`python3` (or `python`), `node`, `npm`, and `aws` — and prints `[ok] <name> -> <path>` or
-`[missing] <name>` for each. It reports status only and does **not** fail when a tool is missing, so
-a missing entry is only a problem if you need that tool for your language or workflow.
+`edgecommons doctor` checks the external tools the platforms you target need, reports the version of
+each, and **exits non-zero when a required tool is missing**. Narrow it with `--platforms` and
+`-l/--language` so it only checks what your workflow actually uses.
 
 <Tabs syncKey="os">
 <TabItem label="Linux">
 
   ```bash
-  edgecommons doctor
+  edgecommons doctor                          # everything, for all three platforms
+  edgecommons doctor --platforms HOST -l RUST # just what a Rust component on HOST needs
   ```
 
 </TabItem>
 <TabItem label="Windows">
 
   ```powershell
-  edgecommons doctor
+  edgecommons doctor                          # everything, for all three platforms
+  edgecommons doctor --platforms HOST -l RUST # just what a Rust component on HOST needs
   ```
 
 </TabItem>
@@ -130,24 +131,26 @@ a missing entry is only a problem if you need that tool for your language or wor
 
 ## Add the library to a project
 
-When you scaffold with `edgecommons create-component`, the dependency is written for you. The
+When you scaffold with `edgecommons component new`, the dependency is written for you. The
 `--dep-source` flag chooses between two forms:
 
-- **`local`** (the default) — a path dependency on a monorepo checkout of the library. Best for
+- **`local`** (the default) — a path/file dependency on a monorepo checkout of the library. Best for
   developing against the SDK in this repo, and it needs no registry access.
-- **`registry`** — the published artifact, resolved from a registry.
+- **`registry`** — the published artifact, resolved from GitHub Packages or a git tag.
 
 <Aside type="note">
-`--dep-source` and `--edgecommons-path` only affect the **Rust** and **TypeScript** templates (the
-ones with a parameterized dependency). The **Java** template always declares `com.mbreissi.edgecommons:edgecommons`
-and the **Python** template always lists `edgecommons`, so for those two languages you pick
-local-vs-registry by where the artifact actually resolves from (a local install vs a registry), not
-by a flag.
+`--dep-source` and `--library-path` shape the **Python**, **Rust**, and **TypeScript** dependency —
+the three whose declaration is a path or a git reference. With `local`, the path defaults to the
+monorepo the CLI was built from, so the common case needs no flag.
+
+**Java** always declares the Maven coordinate `com.mbreissi.edgecommons:edgecommons` at the library
+version, so you pick local-vs-registry by where that artifact resolves from (your `~/.m2` cache vs
+GitHub Packages), not by a flag.
 </Aside>
 
 The declarations below show what each form looks like if you are adding EdgeCommons to an existing
-project by hand. The current published version is `0.1.0` (the value the CLI substitutes for the
-`<<EDGECOMMONS_VERSION>>` token).
+project by hand. `edgecommons component new` substitutes the library version the CLI was built
+against.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
@@ -158,7 +161,7 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   <dependency>
     <groupId>com.mbreissi.edgecommons</groupId>
     <artifactId>edgecommons</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
   </dependency>
   ```
 
@@ -185,10 +188,14 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
 </TabItem>
 <TabItem label="Python">
 
-  Package `edgecommons`. A scaffolded component lists it (unpinned) in `requirements.txt`:
+  Package `edgecommons`. The dependency form is chosen by `--dep-source`; in `requirements.txt`:
 
   ```text
-  edgecommons
+  # local: an editable install of the monorepo checkout
+  -e ../libs/python
+
+  # registry: the published artifact via a git tag
+  edgecommons @ git+https://github.com/edgecommons/edgecommons@python-lib/v0.2.0#subdirectory=libs/python
   ```
 
   Install with:
@@ -208,10 +215,10 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   edgecommons = { path = "/abs/path/to/libs/rust", default-features = false }
 
   # registry: the published artifact via a git tag
-  # edgecommons = { git = "https://github.com/edgecommons/edgecommons", tag = "rust-lib/v0.1.0", default-features = false }
+  # edgecommons = { git = "https://github.com/edgecommons/edgecommons", tag = "rust-lib/v0.2.0", default-features = false }
   ```
 
-  For the `local` form, the CLI fills the path from `--edgecommons-path` (defaulting to the in-repo
+  For the `local` form, the CLI fills the path from `--library-path` (defaulting to the in-repo
   `libs/rust`). Off-by-default cargo features (`greengrass`, `cloudwatch`, `streaming`,
   `credentials`, `parameters`, …) are composed on top as your component needs them.
 
@@ -229,7 +236,7 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   }
   ```
 
-  For the `local` form above, the value is `file:<path>` (the CLI fills it from `--edgecommons-path`,
+  For the `local` form above, the value is `file:<path>` (the CLI fills it from `--library-path`,
   defaulting to the in-repo `libs/ts`). Install local path deps with `npm install --install-links` so
   the package is copied rather than symlinked.
 
@@ -240,7 +247,7 @@ project by hand. The current published version is `0.1.0` (the value the CLI sub
   ```json
   {
     "dependencies": {
-      "@edgecommons/edgecommons": "^0.1.0"
+      "@edgecommons/edgecommons": "^0.2.0"
     }
   }
   ```

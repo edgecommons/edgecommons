@@ -30,10 +30,9 @@ pub struct ServeOptions {
 /// Always returns [`Fatal::NotImplemented`] in this build, so that invoking the verb
 /// tells the truth rather than failing obscurely.
 pub fn serve(_opts: &ServeOptions) -> Result<(), Fatal> {
+    // No internal phase, roadmap id, or design-doc path in a user-facing message.
     Err(Fatal::NotImplemented(
-        "`studio serve` is not implemented in this build. The kernel it wraps is Phase P4; \
-         see docs/platform/DESIGN-cli.md §8.4."
-            .into(),
+        "`edgecommons studio serve` is not available in this build.".into(),
     ))
 }
 
@@ -49,6 +48,6 @@ mod tests {
         })
         .unwrap_err();
         assert_eq!(e.exit_code(), ec_diag::ExitCode::NotImplemented);
-        assert!(e.to_string().contains("DESIGN-cli.md"));
+        assert!(e.to_string().contains("not available"));
     }
 }

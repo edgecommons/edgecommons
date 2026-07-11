@@ -29,13 +29,20 @@ fn main() -> ProcExit {
     // confirms a clean result; the other verbs print their own output and stay quiet.
     let confirm_clean = matches!(cli.command, Command::Component(ComponentCmd::Validate(_)));
 
+    // `doctor` renders its own output. In `--json` mode it emits a single document carrying its
+    // tool table *and* its diagnostics — so `main` must not print a second JSON object after it.
+    let doctor = matches!(cli.command, Command::Doctor(_));
+
     match dispatch(&cli) {
         Ok(report) => {
-            emit(&report, json, cli.quiet, confirm_clean);
+            if !(doctor && json) {
+                emit(&report, json, cli.quiet, confirm_clean);
+            }
             // `doctor` maps a missing tool to an environment failure rather than a finding.
-            let code = match &cli.command {
-                Command::Doctor(_) => commands::doctor::exit_code(&report),
-                _ => report.exit_code(),
+            let code = if doctor {
+                commands::doctor::exit_code(&report)
+            } else {
+                report.exit_code()
             };
             to_proc_exit(code)
         }
@@ -83,6 +90,7 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
             Ok(ec_validate::validate_project(
                 &args.path,
                 args.config.as_deref(),
+                args.platform.map(to_deploy_platform),
             ))
         }
 
@@ -93,7 +101,7 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
                 println!(
                     "{}{}",
                     if args.dry_run { "[dry-run] " } else { "" },
-                    c.describe()
+                    c.describe(ec_scaffold::upgrade::Subject::Library)
                 );
             }
             Ok(report)
@@ -111,7 +119,7 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
                 println!(
                     "{}{}",
                     if args.dry_run { "[dry-run] " } else { "" },
-                    c.describe()
+                    c.describe(ec_scaffold::upgrade::Subject::Component)
                 );
             }
             Ok(Report::new())
@@ -124,11 +132,11 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
         }
 
         Command::Registry(RegistryCmd::List(args)) => commands::registry::list(args, cli.json),
-        Command::Registry(RegistryCmd::Show { name }) => {
-            commands::registry::show(name, None, cli.json)
+        Command::Registry(RegistryCmd::Show { name, source }) => {
+            commands::registry::show(name, source.as_deref(), cli.json)
         }
-        Command::Registry(RegistryCmd::Versions { name }) => {
-            commands::registry::versions(name, None)
+        Command::Registry(RegistryCmd::Versions { name, source }) => {
+            commands::registry::versions(name, source.as_deref())
         }
 
         // --- Phase P4 ---------------------------------------------------------------
@@ -139,7 +147,7 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
             | DeploymentCmd::Plan { .. }
             | DeploymentCmd::Diff { .. }
             | DeploymentCmd::Release { .. },
-        ) => Err(commands::not_implemented("deployment", "Phase P4", "§8")),
+        ) => Err(commands::not_implemented("deployment")),
 
         Command::Studio(StudioCmd::Serve { repo, bind }) => {
             ec_studio::serve(&ec_studio::ServeOptions {
@@ -160,6 +168,15 @@ fn emit(report: &Report, json: bool, quiet: bool, confirm_clean: bool) {
         println!("{}", report.render_json());
     } else if !quiet {
         print!("{}", report.render_human());
+    }
+}
+
+/// The CLI's platform enum, in the kernel's vocabulary.
+fn to_deploy_platform(p: crate::cli::Platform) -> ec_deploy::Platform {
+    match p {
+        crate::cli::Platform::Greengrass => ec_deploy::Platform::Greengrass,
+        crate::cli::Platform::Host => ec_deploy::Platform::Host,
+        crate::cli::Platform::Kubernetes => ec_deploy::Platform::Kubernetes,
     }
 }
 

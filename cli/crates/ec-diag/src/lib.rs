@@ -72,6 +72,12 @@ impl fmt::Display for Code {
     }
 }
 
+// --- Environment / toolchain (EC0xxx) ---------------------------------------------
+/// A required external tool is not on `PATH`.
+pub const EC0001_TOOL_MISSING: Code = Code("EC0001");
+/// An external tool is older than the minimum this CLI requires.
+pub const EC0002_TOOL_TOO_OLD: Code = Code("EC0002");
+
 // --- Schema (EC1xxx) --------------------------------------------------------------
 /// The config does not validate against the canonical edgecommons config schema.
 pub const EC1001_SCHEMA: Code = Code("EC1001");
@@ -121,6 +127,14 @@ pub const EC4001_MANIFEST_INVALID: Code = Code("EC4001");
 pub const EC4002_MANIFEST_MISSING_FILE: Code = Code("EC4002");
 /// No template exists for the requested language/kind.
 pub const EC4003_NO_SUCH_TEMPLATE: Code = Code("EC4003");
+/// A component project declares no dependency manifest to operate on.
+pub const EC4004_NO_DEPENDENCY_MANIFEST: Code = Code("EC4004");
+/// A Greengrass scaffold has no artifact bucket, so it cannot be published as-is.
+pub const EC4005_NO_ARTIFACT_BUCKET: Code = Code("EC4005");
+/// A component has no published releases to resolve a pin against.
+pub const EC4006_NO_RELEASE_INDEX: Code = Code("EC4006");
+/// A platform's artifact is a container image, which the CLI does not build.
+pub const EC4007_CONTAINER_BUILD_IS_CI: Code = Code("EC4007");
 
 /// Where a diagnostic points: a line/column, or a JSON Pointer into a config document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

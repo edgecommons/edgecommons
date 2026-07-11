@@ -10,6 +10,7 @@
 use std::path::Path;
 
 use ec_diag::{Diagnostic, Report};
+use serde::Deserialize;
 use serde_json::Value as Json;
 use serde_yaml::Value as Yaml;
 
@@ -120,6 +121,73 @@ fn requires_privilege(node: &Yaml, path: &Path) -> Vec<Diagnostic> {
         }
     }
     out
+}
+
+/// `EC2003` — a Kubernetes ConfigMap mount must not use `subPath`.
+///
+/// A `subPath` mount is resolved once, at pod start: the kubelet's `..data` symlink swap never
+/// reaches it, so the config **silently stops hot-reloading**. The component keeps running on
+/// stale config and nothing reports it — which is precisely the failure the whole config-source
+/// design exists to avoid.
+#[must_use]
+pub fn lint_k8s(dir: &Path) -> Report {
+    let mut r = Report::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return r; // no k8s pack: not a Kubernetes component
+    };
+
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if !path.extension().is_some_and(|e| e == "yaml" || e == "yml") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for doc in serde_yaml::Deserializer::from_str(&text) {
+            let Ok(doc) = Yaml::deserialize(doc) else {
+                r.push(
+                    Diagnostic::error(
+                        ec_diag::EC3005_RECIPE_UNPARSABLE,
+                        "manifest is not valid YAML".to_string(),
+                    )
+                    .with_file(&path),
+                );
+                continue;
+            };
+            if has_subpath_mount(&doc) {
+                r.push(
+                    Diagnostic::error(
+                        ec_diag::EC2003_CONFIGMAP_SUBPATH,
+                        "a volume mount uses `subPath`, which breaks ConfigMap hot-reload".to_string(),
+                    )
+                    .with_file(&path)
+                    .with_help(
+                        "mount the whole ConfigMap volume; a subPath mount never sees the kubelet's \
+                         ..data swap, so the component silently keeps running on stale config",
+                    ),
+                );
+            }
+        }
+    }
+    r
+}
+
+fn has_subpath_mount(node: &Yaml) -> bool {
+    let mut stack = vec![node];
+    while let Some(n) = stack.pop() {
+        match n {
+            Yaml::Mapping(map) => {
+                if map.keys().any(|k| k.as_str() == Some("subPath")) {
+                    return true;
+                }
+                stack.extend(map.values());
+            }
+            Yaml::Sequence(items) => stack.extend(items.iter()),
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Lint `gdk-config.json`, which the Python CLI never looked at.
@@ -345,6 +413,62 @@ Manifests:
         let d = tempfile::tempdir().unwrap();
         let r = lint_recipe(&d.path().join("recipe.yaml"));
         assert!(r.is_empty());
+    }
+
+    #[test]
+    fn a_configmap_subpath_mount_is_caught() {
+        // EC2003: a subPath mount is resolved once at pod start, so the kubelet's ..data swap
+        // never reaches it and the config SILENTLY stops hot-reloading. The component keeps
+        // running on stale config and nothing says a word.
+        let d = tempfile::tempdir().unwrap();
+        write(
+            d.path(),
+            "k8s/deployment.yaml",
+            r"
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: thing
+          volumeMounts:
+            - name: config
+              mountPath: /etc/edgecommons/config.json
+              subPath: config.json
+",
+        );
+        let r = lint_k8s(&d.path().join("k8s"));
+        assert_eq!(r.error_count(), 1, "{}", r.render_human());
+        assert_eq!(r.diagnostics[0].code, ec_diag::EC2003_CONFIGMAP_SUBPATH);
+    }
+
+    #[test]
+    fn a_whole_volume_configmap_mount_is_clean() {
+        let d = tempfile::tempdir().unwrap();
+        write(
+            d.path(),
+            "k8s/deployment.yaml",
+            r"
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: thing
+          volumeMounts:
+            - name: config
+              mountPath: /etc/edgecommons
+",
+        );
+        assert_eq!(lint_k8s(&d.path().join("k8s")).error_count(), 0);
+    }
+
+    #[test]
+    fn a_component_with_no_k8s_pack_is_not_linted_for_it() {
+        let d = tempfile::tempdir().unwrap();
+        assert!(lint_k8s(&d.path().join("k8s")).is_empty());
     }
 
     #[test]

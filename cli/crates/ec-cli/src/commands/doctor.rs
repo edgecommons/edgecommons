@@ -128,7 +128,7 @@ const CHECKS: &[Check] = &[
         alternatives: &[],
         need: Need::Platform(Platform::Kubernetes),
         why: "apply Kubernetes manifests",
-        version_args: &["--client", "--output=yaml"],
+        version_args: &["version", "--client=true", "--output=yaml"],
         minimum: None,
     },
     Check {
@@ -189,7 +189,7 @@ pub fn run(args: &DoctorArgs, json: bool) -> Outcome {
                     let v = found.version.clone().unwrap_or_default();
                     report.push(
                         Diagnostic::warning(
-                            ec_diag::Code("EC0002"),
+                            ec_diag::EC0002_TOOL_TOO_OLD,
                             format!(
                                 "{} is {v}, below the required minimum {}",
                                 check.binary,
@@ -225,7 +225,7 @@ pub fn run(args: &DoctorArgs, json: bool) -> Outcome {
             None => {
                 report.push(
                     Diagnostic::error(
-                        ec_diag::Code("EC0001"),
+                        ec_diag::EC0001_TOOL_MISSING,
                         format!("{} not found on PATH", check.binary),
                     )
                     .with_help(format!("needed to {}", check.why)),
@@ -244,11 +244,15 @@ pub fn run(args: &DoctorArgs, json: bool) -> Outcome {
     }
 
     if json {
+        // ONE JSON document on stdout, carrying the diagnostics too. `main` deliberately does
+        // not also render the report for `doctor` — two JSON objects on stdout is not
+        // machine-readable, however valid each one is on its own.
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "platforms": platforms.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
                 "tools": rows,
+                "diagnostics": report.diagnostics,
                 "ok": report.error_count() == 0,
             }))
             .unwrap_or_default()
@@ -431,7 +435,7 @@ mod tests {
         let mut r = Report::new();
         assert_eq!(exit_code(&r), ExitCode::Ok);
         r.push(Diagnostic::error(
-            ec_diag::Code("EC0001"),
+            ec_diag::EC0001_TOOL_MISSING,
             "gdk not found on PATH",
         ));
         // Not `Findings` (1) — a missing tool is an environment problem (3), and it is

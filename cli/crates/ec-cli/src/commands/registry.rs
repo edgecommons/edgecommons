@@ -178,7 +178,7 @@ pub fn versions(name: &str, source: Option<&str>) -> Outcome {
     let mut r = Report::new();
     r.push(
         ec_diag::Diagnostic::warning(
-            ec_diag::Code("EC5001"),
+            ec_diag::EC4006_NO_RELEASE_INDEX,
             format!(
                 "`{name}` has no published releases: the registry carries no release index yet"
             ),

@@ -43,8 +43,12 @@ pub fn validate_config(
 }
 
 /// Validate a whole component project: every config it ships, plus its artifacts.
+///
+/// `platform` is what the config is destined for. Some rules (`EC2001` transport/platform,
+/// `EC2009` config-source/platform) are only *decidable* with it — without one they are skipped
+/// rather than guessed at, so supplying it is what makes them reachable at all.
 #[must_use]
-pub fn validate_project(root: &Path, only: Option<&Path>) -> Report {
+pub fn validate_project(root: &Path, only: Option<&Path>, platform: Option<Platform>) -> Report {
     let mut r = Report::new();
 
     // The component's own schema, if it publishes one.
@@ -74,7 +78,7 @@ pub fn validate_project(root: &Path, only: Option<&Path>) -> Report {
         match serde_json::from_str::<Value>(&text) {
             Ok(cfg) => {
                 r.extend(
-                    validate_config(&cfg, component_schema.as_ref(), None, &source).diagnostics,
+                    validate_config(&cfg, component_schema.as_ref(), platform, &source).diagnostics,
                 );
             }
             Err(e) => r.push(
@@ -89,6 +93,7 @@ pub fn validate_project(root: &Path, only: Option<&Path>) -> Report {
 
     r.extend(artifact::lint_recipe(&root.join("recipe.yaml")).diagnostics);
     r.extend(artifact::lint_gdk_config(&root.join("gdk-config.json")).diagnostics);
+    r.extend(artifact::lint_k8s(&root.join("k8s")).diagnostics);
 
     r
 }
@@ -128,7 +133,7 @@ mod tests {
         )
         .unwrap();
 
-        let r = validate_project(&root, None);
+        let r = validate_project(&root, None, None);
         assert_eq!(r.error_count(), 0, "{}", r.render_human());
         assert_eq!(r.warning_count(), 1);
         assert_eq!(r.diagnostics[0].code, ec_diag::EC1003_NO_COMPONENT_SCHEMA);
@@ -158,7 +163,7 @@ mod tests {
         )
         .unwrap();
 
-        let r = validate_project(&root, None);
+        let r = validate_project(&root, None, None);
         assert_eq!(r.error_count(), 1, "{}", r.render_human());
         assert_eq!(r.diagnostics[0].code, ec_diag::EC1002_COMPONENT_SCHEMA);
     }
@@ -187,7 +192,7 @@ mod tests {
         )
         .unwrap();
 
-        let r = validate_project(&root, None);
+        let r = validate_project(&root, None, None);
         assert_eq!(r.error_count(), 0, "{}", r.render_human());
         assert_eq!(r.warning_count(), 0, "{}", r.render_human());
     }

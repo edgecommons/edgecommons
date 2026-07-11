@@ -130,6 +130,14 @@ pub struct NewArgs {
     #[arg(short, long)]
     pub author: Option<String>,
 
+    /// S3 bucket for Greengrass component artifacts. Only used when the GREENGRASS pack is emitted.
+    #[arg(short, long)]
+    pub bucket: Option<String>,
+
+    /// AWS region for Greengrass publishing. Only used when the GREENGRASS pack is emitted.
+    #[arg(short, long, default_value = "us-east-1")]
+    pub region: String,
+
     /// Overwrite a non-empty target directory.
     #[arg(short, long)]
     pub force: bool,
@@ -152,6 +160,14 @@ pub struct ValidateArgs {
     /// Validate this config file specifically (default: every config the project ships).
     #[arg(short, long)]
     pub config: Option<PathBuf>,
+
+    /// The platform this config is destined for.
+    ///
+    /// Some rules are only decidable with it — a transport or config source that is illegal on
+    /// one platform is perfectly legal on another — so they are skipped when it is absent
+    /// rather than guessed at.
+    #[arg(long, value_enum)]
+    pub platform: Option<Platform>,
 }
 
 #[derive(Debug, Args)]
@@ -221,9 +237,19 @@ pub enum RegistryCmd {
     /// List the components in the ecosystem catalog.
     List(RegistryListArgs),
     /// Show one catalog entry.
-    Show { name: String },
+    Show {
+        name: String,
+        /// Registry URL or a local components.json path.
+        #[arg(long, env = "EDGECOMMONS_REGISTRY_URL")]
+        source: Option<String>,
+    },
     /// List the published releases of a component.
-    Versions { name: String },
+    Versions {
+        name: String,
+        /// Registry URL or a local components.json path.
+        #[arg(long, env = "EDGECOMMONS_REGISTRY_URL")]
+        source: Option<String>,
+    },
 }
 
 #[derive(Debug, Args)]

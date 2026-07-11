@@ -24,14 +24,13 @@ a local MQTT broker. See the [Quickstart](/start/quickstart/) and
 
 ## Prerequisites
 
-- A **scaffolded component** (`edgecommons create-component` with `GREENGRASS` among its target
+- A **scaffolded component** (`edgecommons component new` with `GREENGRASS` among its target
   platforms — the default). See the [Quickstart](/start/quickstart/).
 - The **GDK CLI** (`gdk`) installed and on your `PATH`, plus AWS credentials with permission to
-  upload artifacts to S3 and register component versions. Confirm with `edgecommons doctor`, which
-  reports whether `gdk` and `aws` are present.
-- An **S3 bucket** for published artifacts. The CLI writes the bucket/region you pass at scaffold
-  time into `gdk-config.json` (`--bucket` / `--region`, defaulting to
-  `greengrass-component-artifacts-us-east-1` in `us-east-1`).
+  upload artifacts to S3 and register component versions. Confirm with
+  `edgecommons doctor --platforms GREENGRASS`, which exits non-zero when a required tool is missing.
+- An **S3 bucket** for published artifacts. A scaffold leaves `publish.bucket` empty in
+  `gdk-config.json` and `publish.region` at `us-east-1`; fill in your bucket before publishing.
 - A **Greengrass v2 core device** running the Nucleus, plus the Greengrass CLI component
   (`greengrass-cli`) installed on it if you want to deploy locally.
 
@@ -103,20 +102,20 @@ the `GG_CONFIG` config source; the Rust and TypeScript recipes pass `-c GG_CONFI
 forms resolve to the same thing.
 </Aside>
 
-## Build and publish with the GDK
+## Build and publish
 
-`gdk component build` runs the per-language build declared in `gdk-config.json` and stages the
-artifact + recipe; `gdk component publish` uploads the artifact to your S3 bucket and registers a new
-component version in your account. These two commands are the same for every language — run them from
-the generated component directory:
+`edgecommons component package` builds the Greengrass artifacts, and `--publish` uploads them to your
+S3 bucket and registers a new component version in your account. It drives the GDK for you — `gdk
+component build`, then `gdk component publish` — so the commands are the same for every language. Run
+them from the generated component directory:
 
 <Tabs syncKey="os">
 <TabItem label="Linux">
 
   ```bash
   cd MyComponent
-  gdk component build
-  gdk component publish
+  edgecommons component package --platforms GREENGRASS
+  edgecommons component package --platforms GREENGRASS --publish
   ```
 
 </TabItem>
@@ -124,17 +123,22 @@ the generated component directory:
 
   ```powershell
   cd MyComponent
-  gdk component build
-  gdk component publish
+  edgecommons component package --platforms GREENGRASS
+  edgecommons component package --platforms GREENGRASS --publish
   ```
 
 </TabItem>
 </Tabs>
 
+With no `--platforms`, `package` infers the platforms from what the project ships — a `recipe.yaml`
+means GREENGRASS. Invoking `gdk component build` / `gdk component publish` directly does the same
+thing; the rest of this page names the `gdk` steps where the distinction matters.
+
 <Aside type="note" title="Auto-versioning">
-`gdk-config.json` sets the component version to `NEXT_PATCH`, so each `gdk component publish`
-registers the next patch version above whatever is already in your account. (The cloud-deploy
-helper below needs a *concrete* version instead — see that section.)
+`gdk-config.json` sets the component version to `NEXT_PATCH`, so each publish registers the next patch
+version above whatever is already in your account. To pin a concrete version — which
+`edgecommons component release` requires, and which any rollback target needs — run
+`edgecommons component version --to <x.y.z>`.
 </Aside>
 
 ### Per-language packaging notes
@@ -282,31 +286,36 @@ core. The artifact filename in `--artifactDir` must match the artifact URI in yo
 
 ## Deploy to devices from the cloud
 
-Once a version is published, deploy it to a thing or thing group via the cloud. The `edgecommons` CLI
-wraps the whole flow — `gdk component build`, `gdk component publish`, then
-`aws greengrassv2 create-deployment`:
+Once a version is published, deploy it to a thing with the AWS CLI. Give the deployment the thing's
+ARN as its target and name the component version you published:
 
 <Tabs syncKey="os">
 <TabItem label="Linux">
 
   ```bash
-  edgecommons deploy -p . -t arn:aws:iot:us-east-1:123456789012:thinggroup/edge-fleet
+  aws greengrassv2 create-deployment \
+    --target-arn arn:aws:iot:us-east-1:123456789012:thing/edge-device-1 \
+    --deployment-name my-component-deployment \
+    --components '{"com.example.MyComponent":{"componentVersion":"1.0.0"}}'
   ```
 
 </TabItem>
 <TabItem label="Windows">
 
   ```powershell
-  edgecommons deploy -p . -t arn:aws:iot:us-east-1:123456789012:thinggroup/edge-fleet
+  aws greengrassv2 create-deployment `
+    --target-arn arn:aws:iot:us-east-1:123456789012:thing/edge-device-1 `
+    --deployment-name my-component-deployment `
+    --components '{\"com.example.MyComponent\":{\"componentVersion\":\"1.0.0\"}}'
   ```
 
 </TabItem>
 </Tabs>
 
 <Aside type="caution" title="Concrete version required">
-The cloud-deploy step needs a real component version — it rejects `NEXT_PATCH` (and empty versions).
-Set a concrete version before deploying to a fleet. See the [CLI reference](/reference/cli/) for the
-full `edgecommons deploy` options.
+A deployment names a real component version — `NEXT_PATCH` is a publish-time idiom, not something you
+can deploy or roll back to. Pin one with `edgecommons component version --to <x.y.z>` before you
+publish the version you intend to deploy.
 </Aside>
 
 ## Verify the deployment
@@ -323,4 +332,4 @@ full `edgecommons deploy` options.
 <LinkCard title="Messaging guide" href="/guides/messaging/" description="Publish, subscribe, and request/reply across IPC and MQTT." />
 <LinkCard title="Configuration guide" href="/guides/configuration/" description="Config sources, template variables, hot reload, and validation." />
 <LinkCard title="Platforms and transports" href="/start/platforms-and-transports/" description="How --platform and --transport resolve, and their defaults." />
-<LinkCard title="CLI reference" href="/reference/cli/" description="edgecommons create-component, validate, deploy, and upgrade." />
+<LinkCard title="Scaffolding CLI" href="/start/scaffolding-cli/" description="edgecommons component new, validate, version, upgrade, package, and release." />

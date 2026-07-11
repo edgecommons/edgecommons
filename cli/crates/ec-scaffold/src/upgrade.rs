@@ -34,11 +34,34 @@ pub enum Change {
     NotFound { file: String },
 }
 
+/// What a change is *about* — so the same renderer can serve both verbs without either of them
+/// lying. `component version` moves the component; `component upgrade` moves the library. A
+/// shared "edgecommons {from} -> {to}" line made `version` claim to be doing the other one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Subject {
+    /// The edgecommons library dependency.
+    Library,
+    /// The component's own version.
+    Component,
+}
+
 impl Change {
     #[must_use]
-    pub fn describe(&self) -> String {
+    pub fn describe(&self, subject: Subject) -> String {
+        let what = match subject {
+            Subject::Library => "edgecommons",
+            Subject::Component => "version",
+        };
         match self {
-            Self::Bumped { file, from, to } => format!("{file}: edgecommons {from} -> {to}"),
+            // `from`/`to` may already spell out the whole requirement (a git URL with a tag), so
+            // do not prefix a name that is already in them.
+            Self::Bumped { file, from, to } => {
+                if from.contains("edgecommons") || to.contains("edgecommons") {
+                    format!("{file}: {from} -> {to}")
+                } else {
+                    format!("{file}: {what} {from} -> {to}")
+                }
+            }
             Self::PathDependency { file } => {
                 format!("{file}: edgecommons is a path dependency; nothing to version-bump")
             }
@@ -78,7 +101,7 @@ pub fn upgrade(root: &Path, to: &str, dry_run: bool) -> Result<(Vec<Change>, Rep
     if changes.is_empty() {
         report.push(
             Diagnostic::warning(
-                ec_diag::Code("EC4004"),
+                ec_diag::EC4004_NO_DEPENDENCY_MANIFEST,
                 "no dependency manifest found (Cargo.toml, package.json, requirements.txt, pom.xml)"
                     .to_string(),
             )
