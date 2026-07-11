@@ -1,6 +1,6 @@
 //! `edgecommons component new` (DESIGN-cli §5).
 
-use std::io::{IsTerminal, Write};
+use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use ec_diag::{Fatal, Outcome, Report};
@@ -273,12 +273,15 @@ pub fn template_show(id: &str, json: bool) -> Outcome {
     Ok(Report::new())
 }
 
+/// A template plus the bytes of every file in it.
+type LoadedTemplate = (ec_scaffold::Template, Vec<(String, Vec<u8>)>);
+
 /// Read a template from a directory on disk: its manifest, and every file in it.
 ///
 /// The same manifest-v2 contract the embedded templates obey — a template is a template
 /// wherever it comes from, so a fork or a work-in-progress template is exercised by exactly the
 /// code path that ships.
-fn template_from_dir(dir: &Path) -> Result<(ec_scaffold::Template, Vec<(String, Vec<u8>)>), Fatal> {
+fn template_from_dir(dir: &Path) -> Result<LoadedTemplate, Fatal> {
     let manifest_path = dir.join(catalog::MANIFEST_NAME);
     let text = std::fs::read_to_string(&manifest_path).map_err(|e| {
         Fatal::Usage(format!(
@@ -346,13 +349,21 @@ fn repo_root() -> PathBuf {
         .unwrap_or_default()
 }
 
-fn prompt(label: &str, default: Option<&str>) -> Result<String, Fatal> {
+/// Ask a question. Takes its input rather than reaching for `stdin`, so the wizard — the part
+/// of the CLI a user actually converses with — is testable rather than merely hoped-for.
+fn ask(r: &mut impl BufRead, label: &str, default: Option<&str>) -> Result<String, Fatal> {
     let suffix = default.map(|d| format!(" [{d}]")).unwrap_or_default();
     loop {
         print!("{label}{suffix}: ");
         std::io::stdout().flush().ok();
         let mut line = String::new();
-        std::io::stdin().read_line(&mut line)?;
+        if r.read_line(&mut line)? == 0 {
+            // EOF: the caller closed the input. Take the default if there is one rather than
+            // spinning forever on an empty read.
+            return default.map(str::to_string).ok_or_else(|| {
+                Fatal::Usage(format!("`{label}` is required, and there is no more input"))
+            });
+        }
         let v = line.trim();
         if !v.is_empty() {
             return Ok(v.to_string());
@@ -364,9 +375,13 @@ fn prompt(label: &str, default: Option<&str>) -> Result<String, Fatal> {
     }
 }
 
-fn prompt_language() -> Result<Language, Fatal> {
+fn prompt(label: &str, default: Option<&str>) -> Result<String, Fatal> {
+    ask(&mut std::io::stdin().lock(), label, default)
+}
+
+fn ask_language(r: &mut impl BufRead) -> Result<Language, Fatal> {
     loop {
-        let v = prompt("Language (JAVA/PYTHON/RUST/TYPESCRIPT)", None)?;
+        let v = ask(r, "Language (JAVA/PYTHON/RUST/TYPESCRIPT)", None)?;
         match v.to_uppercase().as_str() {
             "JAVA" => return Ok(Language::Java),
             "PYTHON" => return Ok(Language::Python),
@@ -375,6 +390,10 @@ fn prompt_language() -> Result<Language, Fatal> {
             _ => println!("  choose one of: JAVA, PYTHON, RUST, TYPESCRIPT"),
         }
     }
+}
+
+fn prompt_language() -> Result<Language, Fatal> {
+    ask_language(&mut std::io::stdin().lock())
 }
 
 fn to_lang(l: cli::Language) -> Language {
@@ -400,5 +419,85 @@ fn to_platform(p: cli::Platform) -> Platform {
         cli::Platform::Greengrass => Platform::Greengrass,
         cli::Platform::Host => Platform::Host,
         cli::Platform::Kubernetes => Platform::Kubernetes,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(s: &str) -> std::io::Cursor<Vec<u8>> {
+        std::io::Cursor::new(s.as_bytes().to_vec())
+    }
+
+    #[test]
+    fn a_prompt_takes_the_answer() {
+        let mut r = input(
+            "com.example.Thing
+",
+        );
+        assert_eq!(ask(&mut r, "Name", None).unwrap(), "com.example.Thing");
+    }
+
+    #[test]
+    fn an_empty_answer_takes_the_default() {
+        let mut r = input(
+            "
+",
+        );
+        assert_eq!(
+            ask(&mut r, "Description", Some("A component.")).unwrap(),
+            "A component."
+        );
+    }
+
+    #[test]
+    fn a_required_answer_is_re_asked_until_given() {
+        // Two blank lines, then a real answer: the wizard must keep asking rather than accept
+        // an empty required value.
+        let mut r = input(
+            "
+
+finally
+",
+        );
+        assert_eq!(ask(&mut r, "Name", None).unwrap(), "finally");
+    }
+
+    #[test]
+    fn eof_on_a_required_answer_is_a_usage_error_not_an_infinite_loop() {
+        let mut r = input("");
+        assert!(matches!(ask(&mut r, "Name", None), Err(Fatal::Usage(_))));
+    }
+
+    #[test]
+    fn eof_with_a_default_takes_the_default() {
+        let mut r = input("");
+        assert_eq!(ask(&mut r, "Author", Some("")).unwrap(), "");
+    }
+
+    #[test]
+    fn the_language_prompt_re_asks_on_a_bad_answer() {
+        let mut r = input(
+            "COBOL
+rust
+",
+        );
+        assert_eq!(ask_language(&mut r).unwrap(), Language::Rust);
+    }
+
+    #[test]
+    fn the_language_prompt_is_case_insensitive() {
+        for (given, want) in [
+            ("java", Language::Java),
+            ("PYTHON", Language::Python),
+            ("TypeScript", Language::Typescript),
+        ] {
+            let mut r = input(&format!(
+                "{given}
+"
+            ));
+            assert_eq!(ask_language(&mut r).unwrap(), want);
+        }
     }
 }

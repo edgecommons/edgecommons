@@ -243,9 +243,15 @@ out simply ships no schema, and every stage says so rather than implying coverag
 
 `COMPONENTFULLNAME`, `COMPONENTNAME`, `PACKAGE`, `PACKAGEPATH`, `MAINCLASSNAME`, `JARNAME`, `BINNAME`,
 `DESCRIPTION`, `AUTHOR`, `EDGECOMMONS_VERSION`, `EDGECOMMONS_DEP`, plus the Greengrass-only `BUCKET` and
-`REGION`, which are **prompted and substituted only when the GREENGRASS pack is selected**. The AWS-era
-defaults (`author = "Amazon Web Services"`, `bucket = "greengrass-component-artifacts-us-east-1"`,
-`description = "This is a Greengrass v2 component"`) are deleted.
+`REGION`, which are **prompted and substituted only when the GREENGRASS pack is selected** (`-b/--bucket`,
+`-r/--region`). The AWS-era defaults (`author = "Amazon Web Services"`,
+`bucket = "greengrass-component-artifacts-us-east-1"`, `description = "This is a Greengrass v2
+component"`) are deleted — the old CLI asked every author for an S3 bucket regardless of what they were
+building.
+
+A Greengrass scaffold generated **without** a bucket cannot publish as it stands, so its absence is
+reported (`EC4005`) rather than silently baked into a `gdk-config.json` that fails at `gdk component
+publish` much later.
 
 **`EDGECOMMONS_VERSION` has exactly one source of truth**: it is resolved at CLI build time from the
 workspace (`libs/rust/Cargo.toml`), never hand-maintained in a constant. That constant is how the
@@ -286,17 +292,22 @@ schema, both verbs **warn and say so** rather than implying coverage they do not
 
 The rules JSON Schema cannot express. Each has a stable code and a `--fix` hint where one exists:
 
-| Code | Rule |
-|---|---|
-| `EC2001` | `--transport IPC` is valid only on `--platform GREENGRASS`. |
-| `EC2002` | A supervisord/HOST render requires `--platform HOST`. |
-| `EC2003` | A Kubernetes ConfigMap mount must not use `subPath`. |
-| `EC2004` | A hierarchical config lineage must be acyclic and ordered. |
-| `EC2005` | Secret **values** are forbidden anywhere in a definition or config; only `secret://` references. |
-| `EC2006` | A raw publish to a reserved UNS class (`state`, `metric`, `cfg`, `log`) is rejected — validated via `uns.rs`, not a local regex. |
-| `EC2007` | A component bootstrapping from `CONFIG_COMPONENT` may not depend recursively on `CONFIG_COMPONENT` for its own bootstrap config. |
-| `EC2008` | UNS identity/topic tokens must satisfy the char-set and the IoT-Core 7-slash depth guard (`uns.rs`). |
-| `EC2009` | A component's config source must be legal for its platform — `CONFIGMAP` only on KUBERNETES, `GG_CONFIG` only on GREENGRASS (§8.5.3). |
+| Code | Rule | Where |
+|---|---|---|
+| `EC2001` | `--transport IPC` is valid only on `--platform GREENGRASS`. | component + deployment |
+| `EC2002` | A supervisord/HOST render requires `--platform HOST`. | **deployment only** — it is a property of a *render*, not of a component's config, so `component validate` has nothing to check it against. |
+| `EC2003` | A Kubernetes ConfigMap mount must not use `subPath`. | component (k8s pack) + deployment |
+| `EC2004` | A hierarchical config lineage must be acyclic and ordered. | component + deployment |
+| `EC2005` | Secret **values** are forbidden anywhere in a definition or config; only `secret://` references. | component + deployment |
+| `EC2006` | A raw publish to a reserved UNS class (`state`, `metric`, `cfg`, `log`) is rejected. | component + deployment |
+| `EC2007` | A component bootstrapping from `CONFIG_COMPONENT` may not depend recursively on `CONFIG_COMPONENT` for its own bootstrap config. | component + deployment |
+| `EC2008` | UNS identity tokens must satisfy the char-set and the IoT-Core depth guard. | component + deployment |
+| `EC2009` | A component's config source must be legal for its platform — `CONFIGMAP` only on KUBERNETES, `GG_CONFIG` only on GREENGRASS (§8.5.3). | component + deployment |
+
+**`EC2001` and `EC2009` are only decidable with a platform** — the same transport or config source
+is legal on one and illegal on another. `component validate` therefore takes **`--platform`**;
+without it those two rules are *skipped*, not guessed at. A validator that invents a verdict it
+cannot justify is worse than one that stays quiet, and says so.
 
 ### 6.3 Layer 3 — artifact lint
 

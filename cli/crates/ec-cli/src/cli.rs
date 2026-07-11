@@ -42,6 +42,10 @@ pub struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+// `ComponentCmd::New` carries a lot of flags, so the variants differ in size. Boxing it would
+// cost an allocation on every dispatch to save stack in a struct that exists once, briefly, in
+// main. The trade is not worth it here.
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     /// Work with a component: scaffold, validate, upgrade, version, package, release.
     #[command(subcommand)]
