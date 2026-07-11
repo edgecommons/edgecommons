@@ -1,0 +1,61 @@
+{
+  "logging": {
+    "level": "DEBUG",
+    "java_format": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p] %C{1} (%L) [%t] : %m%n"
+  },
+  "hierarchy": {
+    "levels": ["site", "device"]
+  },
+  "identity": {
+    "site": "factory-1"
+  },
+  "heartbeat": {
+    "enabled": true,
+    "intervalSecs": 5,
+    "destination": "local",
+    "measures": {
+      "cpu": true,
+      "memory": true
+    }
+  },
+  "metricEmission": {
+    "target": "log",
+    "targetConfig": {
+      "logFileName": "{ComponentFullName}.metric.log"
+    }
+  },
+  "tags": {
+    "site": "factory-1"
+  },
+  "component": {
+    "global": {
+      "defaults": {
+        "tickMs": 5000,
+        "maxQueue": 64
+      }
+    },
+    "instances": [
+      {
+        "id": "pass-through",
+        "subscribe": ["ecv1/+/+/+/evt/#"],
+        "publishTopic": "ecv1/gw-01/<<BINNAME>>/pass-through/app/events",
+        "target": "northbound",
+        "pipeline": []
+      },
+      {
+        "id": "pressure",
+        "subscribe": ["ecv1/+/+/+/data/#"],
+        "publishTopic": "ecv1/gw-01/<<BINNAME>>/pressure/app/pressure",
+        "pipeline": [
+          {
+            "fieldEquals": {
+              "path": "signal.id",
+              "value": "pressure-2"
+            }
+          }
+        ],
+        "maxQueue": 1024
+      }
+    ]
+  }
+}

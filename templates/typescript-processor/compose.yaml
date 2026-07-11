@@ -1,0 +1,80 @@
+# HOST platform pack for <<COMPONENTNAME>>.
+#
+# Runs the component exactly the way the README's "Run locally (HOST platform, MQTT transport)"
+# section does — --platform HOST --transport MQTT <messaging config> -c FILE <config> -t <thing> —
+# but containerized, against a throw-away EMQX broker on the compose network.
+#
+#   docker compose up --build          # build the image (./Dockerfile) and start broker + component
+#   docker compose logs -f <<BINNAME>>
+#   docker compose down -v
+#
+# Watch the bus (the library publishes the state keepalive automatically):
+#   mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -t 'ecv1/+/+/+/app/#' -v
+#
+# The device (thing) name defaults to <<BINNAME>>-dev; override with THING_NAME=... docker compose up.
+name: <<BINNAME>>
+
+services:
+  # Local MQTT broker — the HOST platform's `messaging.local` target.
+  emqx:
+    image: emqx/emqx:latest
+    container_name: <<BINNAME>>-emqx
+    ports:
+      - "1883:1883"     # MQTT
+      - "18083:18083"   # EMQX dashboard (default login admin / public)
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  <<BINNAME>>:
+    build:
+      context: .
+      dockerfile: Dockerfile          # multi-stage: npm ci + npm run build -> dist/, ENTRYPOINT node /app/dist/main.js
+      # @edgecommons/edgecommons resolves from GitHub Packages npm; if your .npmrc needs a token,
+      # pass it through at build time:
+      #   args:
+      #     GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    image: <<BINNAME>>:dev
+    container_name: <<BINNAME>>
+    depends_on:
+      emqx:
+        condition: service_healthy
+    # Standard runtime CLI args, appended to the image's ENTRYPOINT.
+    command:
+      - "--platform"
+      - "HOST"
+      - "--transport"
+      - "MQTT"
+      - "/etc/edgecommons/messaging.json"
+      - "-c"
+      - "FILE"
+      - "/etc/edgecommons/test-configs/config.json"
+      - "-t"
+      - "${THING_NAME:-<<BINNAME>>-dev}"
+    volumes:
+      # The component config source (-c FILE ...). Edit test-configs/ on the host and restart.
+      - ./test-configs:/etc/edgecommons/test-configs:ro
+    configs:
+      - source: messaging
+        target: /etc/edgecommons/messaging.json
+    restart: unless-stopped
+
+configs:
+  # The --transport MQTT messaging config. test-configs/standalone-messaging.json is the same thing
+  # for a bare `node dist/main.js` on your workstation (host: localhost); this inline copy points at
+  # the `emqx` service on the compose network instead.
+  messaging:
+    content: |
+      {
+        "messaging": {
+          "local": {
+            "host": "emqx",
+            "port": 1883,
+            "clientId": "<<BINNAME>>-local"
+          }
+        }
+      }

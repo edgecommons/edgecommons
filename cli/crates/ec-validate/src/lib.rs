@@ -91,6 +91,14 @@ pub fn validate_project(root: &Path, only: Option<&Path>, platform: Option<Platf
         }
     }
 
+    // The config a component DEPLOYS with -- the k8s ConfigMap and the Greengrass recipe's
+    // DefaultConfiguration -- is validated against the same schema as the config it runs with
+    // locally. Validating only test-configs/ validates the copy that fails cheapest.
+    for (source, cfg) in artifact::embedded_configs(root) {
+        let label = source.display().to_string();
+        r.extend(validate_config(&cfg, component_schema.as_ref(), platform, &label).diagnostics);
+    }
+
     r.extend(artifact::lint_recipe(&root.join("recipe.yaml")).diagnostics);
     r.extend(artifact::lint_gdk_config(&root.join("gdk-config.json")).diagnostics);
     r.extend(artifact::lint_k8s(&root.join("k8s")).diagnostics);

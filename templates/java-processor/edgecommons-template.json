@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 2,
+  "id": "java/processor",
+  "language": "JAVA",
+  "kind": "processor",
+  "description": "Java processing component: subscribe, transform through a pipeline of stages, forward.",
+  "platforms": [
+    "GREENGRASS",
+    "HOST",
+    "KUBERNETES"
+  ],
+  "substitutions": {
+    "compose.yaml": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "config.schema.json": [
+      "COMPONENTNAME"
+    ],
+    "Dockerfile": [
+      "JARNAME"
+    ],
+    "gdk-config.json": [
+      "AUTHOR",
+      "BUCKET",
+      "COMPONENTFULLNAME",
+      "REGION"
+    ],
+    "pom.xml": [
+      "COMPONENTNAME",
+      "EDGECOMMONS_VERSION",
+      "JARNAME",
+      "MAINCLASSNAME",
+      "PACKAGE"
+    ],
+    "README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "recipe.yaml": [
+      "AUTHOR",
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "DESCRIPTION",
+      "JARNAME",
+      "MAINCLASSNAME"
+    ],
+    "k8s/configmap.yaml": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "k8s/deployment.yaml": [
+      "COMPONENTNAME"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/App.java": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME",
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/Pipeline.java": [
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/Processor.java": [
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/ProcMsg.java": [
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/RouteConfig.java": [
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/Stages.java": [
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/AppTest.java": [
+      "COMPONENTNAME",
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/PipelineTest.java": [
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/RouteConfigTest.java": [
+      "PACKAGE"
+    ],
+    "supervisor/component.conf": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "test-configs/config.json": [
+      "BINNAME"
+    ],
+    "test-configs/config_2.json": [
+      "BINNAME"
+    ],
+    "test-configs/standalone-messaging.json": [
+      "BINNAME"
+    ]
+  },
+  "renames": [
+    {
+      "from": "src/main/java/com/mbreissi/testcomponent",
+      "to": "src/main/java/{PACKAGEPATH}"
+    },
+    {
+      "from": "src/main/java/{PACKAGEPATH}/App.java",
+      "to": "src/main/java/{PACKAGEPATH}/{COMPONENTNAME}.java"
+    },
+    {
+      "from": "src/test/java/com/mbreissi/testcomponent",
+      "to": "src/test/java/{PACKAGEPATH}"
+    },
+    {
+      "from": "src/test/java/{PACKAGEPATH}/AppTest.java",
+      "to": "src/test/java/{PACKAGEPATH}/{COMPONENTNAME}Test.java"
+    }
+  ],
+  "packs": {
+    "GREENGRASS": [
+      "recipe.yaml",
+      "gdk-config.json"
+    ],
+    "HOST": [
+      "compose.yaml",
+      "supervisor",
+      "Dockerfile"
+    ],
+    "KUBERNETES": [
+      "Dockerfile",
+      "k8s"
+    ]
+  },
+  "conditional": []
+}

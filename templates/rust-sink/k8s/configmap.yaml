@@ -11,9 +11,40 @@ metadata:
 data:
   config.json: |-
     {
-      "component": "<<COMPONENTFULLNAME>>",
-      "messaging": {
-        "local": { "type": "mqtt", "host": "emqx.default.svc.cluster.local", "port": 1883, "clientId": "<<COMPONENTNAME>>" }
+      "component": {
+        "global": {
+          "defaults": {
+            "retry": {
+              "baseDelayMs": 1000,
+              "giveUpAfterMs": 3600000
+            }
+          }
+        },
+        "instances": [
+          {
+            "id": "archive",
+            "subscribe": "ecv1/+/+/+/data/#",
+            "destination": {
+              "type": "local",
+              "path": "./out"
+            },
+            "retry": {
+              "baseDelayMs": 1000,
+              "maxDelayMs": 900000,
+              "giveUpAfterMs": 3600000
+            }
+          }
+        ]
       },
-      "logging": { "level": "INFO" }
+      "messaging": {
+        "local": {
+          "type": "mqtt",
+          "host": "emqx.default.svc.cluster.local",
+          "port": 1883,
+          "clientId": "<<COMPONENTNAME>>"
+        }
+      },
+      "logging": {
+        "level": "INFO"
+      }
     }

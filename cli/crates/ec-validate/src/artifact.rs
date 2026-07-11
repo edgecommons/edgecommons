@@ -7,7 +7,7 @@
 //! It also wires in the `RequiresPrivilege` check, which existed in the Python CLI as
 //! `lint_least_privilege` and **was never called by `validate`** — only by a test (DEF-9).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ec_diag::{Diagnostic, Report};
 use serde::Deserialize;
@@ -188,6 +188,45 @@ fn has_subpath_mount(node: &Yaml) -> bool {
         }
     }
     false
+}
+
+/// The component configs **embedded in deployment artifacts**, with the artifact they came from.
+///
+/// A component ships its config in three places, not one: `test-configs/` (what you run locally),
+/// the Kubernetes ConfigMap, and the Greengrass recipe's `DefaultConfiguration`. Validating only
+/// the first is validating the one that fails cheapest. The deployed defaults are the ones that
+/// fail at 3am on a device you cannot reach — so they are validated too, against the same schema.
+#[must_use]
+pub fn embedded_configs(root: &Path) -> Vec<(PathBuf, Json)> {
+    let mut out = Vec::new();
+
+    // The Kubernetes ConfigMap: `data["config.json"]` is a JSON document inside a YAML string.
+    let cm = root.join("k8s").join("configmap.yaml");
+    if let Ok(text) = std::fs::read_to_string(&cm)
+        && let Ok(doc) = serde_yaml::from_str::<Yaml>(&text)
+        && let Some(raw) = doc
+            .get("data")
+            .and_then(|d| d.get("config.json"))
+            .and_then(|v| v.as_str())
+        && let Ok(cfg) = serde_json::from_str::<Json>(raw)
+    {
+        out.push((cm, cfg));
+    }
+
+    // The Greengrass recipe's deployed default configuration.
+    let recipe = root.join("recipe.yaml");
+    if let Ok(text) = std::fs::read_to_string(&recipe)
+        && let Ok(doc) = serde_yaml::from_str::<Yaml>(&text)
+        && let Some(cfg) = doc
+            .get("ComponentConfiguration")
+            .and_then(|c| c.get("DefaultConfiguration"))
+            .and_then(|c| c.get("ComponentConfig"))
+        && let Ok(json) = serde_json::to_value(cfg)
+    {
+        out.push((recipe, json));
+    }
+
+    out
 }
 
 /// Lint `gdk-config.json`, which the Python CLI never looked at.

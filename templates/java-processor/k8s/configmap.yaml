@@ -1,0 +1,55 @@
+# Component config for Kubernetes, mounted as a DIRECTORY at /etc/edgecommons so the CONFIGMAP
+# source watches the kubelet ..data swap and hot-reloads in-process (no restart). config.json
+# carries BOTH the component config AND the messaging block (in-cluster broker via Service DNS).
+# Edit this and `kubectl apply -f k8s/` to drive a hot reload. Point host at your broker Service.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: <<COMPONENTNAME>>-config
+  labels:
+    app.kubernetes.io/name: <<COMPONENTNAME>>
+data:
+  config.json: |-
+    {
+      "component": {
+        "global": {
+          "defaults": {
+            "tickMs": 10000,
+            "maxQueue": 256
+          }
+        },
+        "instances": [
+          {
+            "id": "rollup",
+            "subscribe": [
+              "ecv1/+/+/+/data/#"
+            ],
+            "publishTopic": "ecv1/gw-01/<<BINNAME>>/rollup/data/summary",
+            "target": "local",
+            "pipeline": [
+              {
+                "fieldEquals": {
+                  "path": "signal.id",
+                  "value": "temperature-1"
+                }
+              },
+              {
+                "countPerTick": {}
+              }
+            ],
+            "tickMs": 10000
+          }
+        ]
+      },
+      "messaging": {
+        "local": {
+          "type": "mqtt",
+          "host": "emqx.default.svc.cluster.local",
+          "port": 1883,
+          "clientId": "<<COMPONENTNAME>>"
+        }
+      },
+      "logging": {
+        "level": "INFO"
+      }
+    }

@@ -11,7 +11,7 @@ and heartbeat — so you write only business logic in your component class
 ```bash
 mvn clean package
 # Provide an MQTT messaging-config JSON (messaging.local required, messaging.northbound optional):
-java -jar target/<<JARNAME>>-1.0.0.jar --platform HOST --transport MQTT ./standalone-messaging.json -c FILE test-configs/<<COMPONENTNAME>>.json -t my-thing-name
+java -jar target/<<JARNAME>>-1.0.0.jar --platform HOST --transport MQTT ./test-configs/standalone-messaging.json -c FILE test-configs/<<COMPONENTNAME>>.json -t my-thing-name
 ```
 
 Needs a local MQTT broker (e.g. `docker run -d -p 1883:1883 emqx/emqx:latest`). Subscribe to

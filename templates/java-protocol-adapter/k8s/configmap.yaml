@@ -11,9 +11,65 @@ metadata:
 data:
   config.json: |-
     {
-      "component": "<<COMPONENTFULLNAME>>",
-      "messaging": {
-        "local": { "type": "mqtt", "host": "emqx.default.svc.cluster.local", "port": 1883, "clientId": "<<COMPONENTNAME>>" }
+      "component": {
+        "global": {
+          "defaults": {
+            "publishIntervalMs": 1000,
+            "samplingRateMs": 500,
+            "queueSize": 100
+          },
+          "healthThresholds": {
+            "staleSignalSecs": 30
+          }
+        },
+        "instances": [
+          {
+            "id": "device-1",
+            "adapter": "example",
+            "connection": {
+              "endpoint": "example://localhost:0/"
+            },
+            "defaults": {
+              "publishIntervalMs": 1000,
+              "samplingRateMs": 500,
+              "queueSize": 100
+            },
+            "publish": {
+              "batchMs": 1000
+            },
+            "write": {
+              "enabled": false
+            },
+            "subscriptions": [
+              {
+                "id": "all",
+                "include": [
+                  {
+                    "namespace": 0,
+                    "match": ".*",
+                    "samplingRateMs": 500,
+                    "queueSize": 100,
+                    "deadband": {
+                      "type": "Absolute",
+                      "value": 0.0
+                    }
+                  }
+                ],
+                "exclude": []
+              }
+            ]
+          }
+        ]
       },
-      "logging": { "level": "INFO" }
+      "messaging": {
+        "local": {
+          "type": "mqtt",
+          "host": "emqx.default.svc.cluster.local",
+          "port": 1883,
+          "clientId": "<<COMPONENTNAME>>"
+        }
+      },
+      "logging": {
+        "level": "INFO"
+      }
     }

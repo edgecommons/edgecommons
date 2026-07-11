@@ -39,7 +39,6 @@
       "REGION"
     ],
     "README.md": [
-      "COMPONENTFULLNAME",
       "COMPONENTNAME"
     ],
     "recipe.yaml": [
@@ -49,7 +48,6 @@
       "DESCRIPTION"
     ],
     "k8s/configmap.yaml": [
-      "COMPONENTFULLNAME",
       "COMPONENTNAME"
     ],
     "k8s/deployment.yaml": [

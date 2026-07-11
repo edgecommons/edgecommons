@@ -78,7 +78,7 @@ See `test-configs/<<COMPONENTNAME>>.json` for a full example. Shape:
 
 ```bash
 mvn clean package
-java -jar target/<<JARNAME>>-1.0.0.jar --platform HOST --transport MQTT ./standalone-messaging.json \
+java -jar target/<<JARNAME>>-1.0.0.jar --platform HOST --transport MQTT ./test-configs/standalone-messaging.json \
   -c FILE test-configs/<<COMPONENTNAME>>.json -t my-thing-name
 ```
 

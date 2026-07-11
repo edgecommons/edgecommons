@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docs.edgecommons.mbreissi.com/schemas/<<COMPONENTNAME>>/config.schema.json",
+  "title": "<<COMPONENTNAME>> component configuration",
+  "description": "The configuration <<COMPONENTNAME>> itself understands: the object at `component.global`, with each entry of `component.instances[]` validated against `#/$defs/sink`. A sink models ONE DELIVERY PIPELINE PER INSTANCE — what it consumes, where that goes, and how hard it tries. The library envelope (logging, messaging, metricEmission, heartbeat, streaming, credentials, parameters, health, hierarchy, identity, topic, tags) is owned by the canonical schema and is deliberately not redeclared here. Keep `additionalProperties: false` so a typo'd key is caught at deploy time rather than silently ignored.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Defaults applied to every sink that does not override them.",
+      "properties": {
+        "retry": { "$ref": "#/$defs/retry" },
+        "maxQueue": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 256,
+          "description": "How many items may be queued for a sink before new ones are dropped and counted."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sink": {
+      "title": "One sink",
+      "description": "One entry of `component.instances[]`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "subscribe", "destination"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Unique sink id. It is the `{instance}` token of this sink's UNS topics, so it must be a valid UNS token (lower-kebab). It also prefixes the destination key, so it must be stable."
+        },
+        "subscribe": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The topic filter whose messages this sink delivers.",
+          "examples": ["ecv1/+/+/+/data/#"]
+        },
+        "destination": { "$ref": "#/$defs/destination" },
+        "retry": { "$ref": "#/$defs/retry" },
+        "maxQueue": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per-sink override of the queue bound."
+        }
+      }
+    },
+    "destination": {
+      "title": "Where the sink delivers",
+      "description": "A tagged object. Add a variant here as you implement a backend in `src/dest.ts`. Whatever the backend, two properties are non-negotiable: delivery is idempotent to a STABLE key (so a retry overwrites rather than duplicating), and it is VERIFIED before the source is released.",
+      "type": "object",
+      "required": ["type"],
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "path"],
+          "properties": {
+            "type": { "const": "local" },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The root directory delivered objects land under."
+            }
+          }
+        }
+      ]
+    },
+    "retry": {
+      "title": "Retry policy",
+      "description": "Exponential backoff with full jitter. The jitter is not decoration: without it every component that lost the same endpoint retries on the same instant, and an endpoint that is already struggling gets a synchronized thundering herd on every backoff boundary.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "baseDelayMs": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1000,
+          "description": "The first backoff window. Each attempt doubles it, up to `maxDelayMs`."
+        },
+        "maxDelayMs": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 900000,
+          "description": "The backoff ceiling, so a long outage does not back off to next week."
+        },
+        "giveUpAfterMs": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 3600000,
+          "description": "The TIME BUDGET, not an attempt count. 'Twenty attempts' means something different at 1s and at 15min of backoff; 'keep trying for an hour' means the same thing at every cadence, and it is what an operator can actually reason about. When it is spent, the item is reported as exhausted — loudly, because that is data that did not arrive."
+        }
+      }
+    }
+  }
+}

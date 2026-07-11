@@ -48,21 +48,35 @@ jobs:
         include:
           - language: RUST
             kind: service
-          - language: PYTHON
-            kind: service
-          - language: TYPESCRIPT
-            kind: service
-          - language: JAVA
-            kind: service
-          - language: PYTHON
-            kind: protocol-adapter
-          - language: JAVA
-            kind: protocol-adapter
           - language: RUST
             kind: protocol-adapter
           - language: RUST
             kind: processor
           - language: RUST
+            kind: sink
+          - language: PYTHON
+            kind: service
+          - language: PYTHON
+            kind: protocol-adapter
+          - language: PYTHON
+            kind: processor
+          - language: PYTHON
+            kind: sink
+          - language: JAVA
+            kind: service
+          - language: JAVA
+            kind: protocol-adapter
+          - language: JAVA
+            kind: processor
+          - language: JAVA
+            kind: sink
+          - language: TYPESCRIPT
+            kind: service
+          - language: TYPESCRIPT
+            kind: protocol-adapter
+          - language: TYPESCRIPT
+            kind: processor
+          - language: TYPESCRIPT
             kind: sink
     steps:
       - uses: actions/checkout@v4
@@ -93,9 +107,11 @@ jobs:
         if: matrix.language == 'JAVA'
         run: mvn -q -B -DskipTests install
         working-directory: libs/java
-      - name: Build (Java)
+      - name: Build and test (Java)
         if: matrix.language == 'JAVA'
-        run: mvn -q -B -DskipTests compile
+        run: |
+          mvn -q -B -DskipTests compile
+          mvn -B test
         working-directory: /tmp/scaffold/Gated
 
       # A scaffold that builds with warnings is a scaffold that teaches the author to ignore
@@ -117,20 +133,24 @@ jobs:
         if: matrix.language == 'TYPESCRIPT'
         run: npm ci && npm run build
         working-directory: libs/ts
-      - name: Build (TypeScript)
+      - name: Build and test (TypeScript)
         if: matrix.language == 'TYPESCRIPT'
-        run: npm install && npm run build
+        run: |
+          npm install
+          npm run build
+          npm test --if-present
         working-directory: /tmp/scaffold/Gated
 
       - uses: actions/setup-python@v5
         if: matrix.language == 'PYTHON'
         with:
           python-version: "3.12"
-      - name: Build (Python)
+      - name: Build and test (Python)
         if: matrix.language == 'PYTHON'
         run: |
           python -m compileall -q .
           pip install -r requirements.txt
+          if [ -d tests ]; then pip install pytest && python -m pytest -q tests; fi
         working-directory: /tmp/scaffold/Gated
 
   # A HOST-only scaffold must carry no Greengrass artifacts, and a Greengrass one must carry
