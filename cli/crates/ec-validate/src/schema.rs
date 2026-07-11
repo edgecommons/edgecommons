@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn a_valid_config_passes_the_envelope() {
-        let cfg = json!({ "component": { "token": "MyComponent" } });
+        let cfg = json!({ "component": { "token": "my-component" } });
         let r = validate_envelope(&cfg, "config.json");
         assert_eq!(r.error_count(), 0, "{}", r.render_human());
     }
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn an_unknown_top_level_key_is_rejected() {
         // The top level is strict (additionalProperties: false).
-        let cfg = json!({ "component": { "token": "X" }, "nonsense": true });
+        let cfg = json!({ "component": { "token": "x" }, "nonsense": true });
         let r = validate_envelope(&cfg, "config.json");
         assert!(r.error_count() > 0);
         assert_eq!(r.diagnostics[0].code, ec_diag::EC1001_SCHEMA);
@@ -154,7 +154,7 @@ mod tests {
         // test ever starts failing, the canonical schema grew component-specific knowledge and
         // the two-schema split needs revisiting.
         let cfg = json!({
-            "component": { "token": "X", "global": { "totally": "made up", "pipelnie": [] } }
+            "component": { "token": "x", "global": { "totally": "made up", "pipelnie": [] } }
         });
         let r = validate_envelope(&cfg, "config.json");
         assert_eq!(r.error_count(), 0, "the envelope schema is blind to component config — by design");
@@ -169,7 +169,7 @@ mod tests {
             "properties": { "pipeline": { "type": "array" } }
         });
         let cfg = json!({
-            "component": { "token": "X", "global": { "pipelnie": [] } }  // typo
+            "component": { "token": "x", "global": { "pipelnie": [] } }  // typo
         });
         let r = validate_component_section(&cfg, &component_schema, "config.json");
         assert_eq!(r.error_count(), 1, "{}", r.render_human());
@@ -189,7 +189,7 @@ mod tests {
             "additionalProperties": false,
             "properties": { "pipeline": { "type": "array" } }
         });
-        let cfg = json!({ "component": { "token": "X", "global": { "pipeline": [] } } });
+        let cfg = json!({ "component": { "token": "x", "global": { "pipeline": [] } } });
         let r = validate_component_section(&cfg, &component_schema, "config.json");
         assert_eq!(r.error_count(), 0, "{}", r.render_human());
     }
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn a_config_with_no_component_global_is_simply_not_checked() {
         let component_schema = json!({ "type": "object", "additionalProperties": false });
-        let cfg = json!({ "component": { "token": "X" } });
+        let cfg = json!({ "component": { "token": "x" } });
         let r = validate_component_section(&cfg, &component_schema, "config.json");
         assert_eq!(r.error_count(), 0);
     }

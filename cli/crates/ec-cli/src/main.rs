@@ -23,9 +23,13 @@ fn main() -> ProcExit {
     let cli = Cli::parse();
     let json = cli.json;
 
+    // A validator that says nothing when it passes is a validator nobody trusts. `validate`
+    // confirms a clean result; the other verbs print their own output and stay quiet.
+    let confirm_clean = matches!(cli.command, Command::Component(ComponentCmd::Validate(_)));
+
     match dispatch(&cli) {
         Ok(report) => {
-            emit(&report, json, cli.quiet);
+            emit(&report, json, cli.quiet, confirm_clean);
             // `doctor` maps a missing tool to an environment failure rather than a finding.
             let code = match &cli.command {
                 Command::Doctor(_) => commands::doctor::exit_code(&report),
@@ -63,9 +67,11 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
         Command::Template(TemplateCmd::List) => commands::component::template_list(cli.json),
         Command::Template(TemplateCmd::Show { id }) => commands::component::template_show(id, cli.json),
 
-        // --- Phase P2 ---------------------------------------------------------------
-        Command::Component(ComponentCmd::Validate(_)) => {
-            Err(commands::not_implemented("component validate", "Phase P2", "§6"))
+        Command::Component(ComponentCmd::Validate(args)) => {
+            if !args.path.is_dir() {
+                return Err(Fatal::Usage(format!("no such component directory: {}", args.path.display())));
+            }
+            Ok(ec_validate::validate_project(&args.path, args.config.as_deref()))
         }
 
         // --- Phase P3 ---------------------------------------------------------------
@@ -96,9 +102,9 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
     }
 }
 
-/// Render the report. `doctor` prints its own table, so an empty report stays silent here.
-fn emit(report: &Report, json: bool, quiet: bool) {
-    if report.is_empty() {
+/// Render the report. `doctor` prints its own table, so an empty report stays silent there.
+fn emit(report: &Report, json: bool, quiet: bool, confirm_clean: bool) {
+    if report.is_empty() && !confirm_clean {
         return;
     }
     if json {
