@@ -25,9 +25,14 @@ import { validate } from "./config/validation";
 import { buildConfigSource, ConfigSource, ConfigWatch } from "./config/source";
 import { LayeredConfigCoordinator } from "./config/layered";
 import type { JsonObject } from "./config/merge";
-import { ConfigurationChangeListener } from "./config";
-import { EffectiveConfigPublisher } from "./config/effective_config";
-import { CommandInbox } from "./commands";
+import {
+  ConfigurationChangeListener,
+  ConfigurationValidationPhase,
+  ConfigurationValidationResult,
+  ConfigurationValidator,
+} from "./config";
+import { EffectiveConfigPublisher, redact } from "./config/effective_config";
+import { CommandInbox, CommandInboxState } from "./commands";
 import { EdgeCommonsError } from "./errors";
 import { AppFacade, DataFacade, EventsFacade } from "./facades";
 import type { StreamSink } from "./facades";
@@ -538,6 +543,10 @@ export class EdgeCommons {
 export class EdgeCommonsBuilder {
   private argv?: string[];
   private receiveOwn = true;
+  private initialReadyValue = true;
+  private validationTimeoutMs = 5_000;
+  private readonly configurationValidators: Array<{ name: string; validator: ConfigurationValidator }> = [];
+  private readonly commandConfigurators: Array<(inbox: CommandInbox) => void> = [];
 
   constructor(private readonly componentNameValue: string) {}
 
@@ -559,6 +568,37 @@ export class EdgeCommonsBuilder {
    */
   receiveOwnMessages(value: boolean): this {
     this.receiveOwn = value;
+    return this;
+  }
+
+  /** Set the initial application readiness gate (default: ready). */
+  initialReady(value: boolean): this {
+    this.initialReadyValue = value;
+    return this;
+  }
+
+  /** Register a side-effect-free configuration candidate validator. */
+  configurationValidator(name: string, validator: ConfigurationValidator): this {
+    if (!/^[A-Za-z0-9_.-]{1,128}$/.test(name) || typeof validator !== "function") {
+      throw EdgeCommonsError.config("configuration validator requires a safe non-empty name and function");
+    }
+    this.configurationValidators.push({ name, validator });
+    return this;
+  }
+
+  /** Set the bounded per-validator deadline (1..300000 ms; default 5000 ms). */
+  configurationValidationTimeout(timeoutMs: number): this {
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
+      throw EdgeCommonsError.config("configuration validation timeout must be an integer between 1 and 300000 ms");
+    }
+    this.validationTimeoutMs = timeoutMs;
+    return this;
+  }
+
+  /** Register component command handlers before the inbox subscribes. */
+  configureCommands(configure: (inbox: CommandInbox) => void): this {
+    if (typeof configure !== "function") throw EdgeCommonsError.config("command configurator must be a function");
+    this.commandConfigurators.push(configure);
     return this;
   }
 
@@ -591,6 +631,13 @@ export class EdgeCommonsBuilder {
     const effectiveRaw = await layeredConfig.loadEffective();
     validate(effectiveRaw);
     let current = Config.fromValue(this.componentNameValue, thingName, effectiveRaw);
+    await runConfigurationValidators(
+      this.configurationValidators,
+      effectiveRaw,
+      undefined,
+      ConfigurationValidationPhase.Initial,
+      this.validationTimeoutMs,
+    );
 
     if (messaging instanceof DefaultMessagingService) {
       // UNS-CANONICAL-DESIGN §5 / D-U5: late-bind the request() default deadline from
@@ -647,6 +694,7 @@ export class EdgeCommonsBuilder {
     // Readiness state behind /readyz (FR-HB-1): messaging-connected (live getter; no wired service ⇒
     // not ready) AND the app's readyFlag (default true) AND not shutting down.
     const readiness = new ReadinessState(() => messaging?.connected() ?? false);
+    readiness.setReady(this.initialReadyValue);
 
     // Build the runtime first so the reload closure can update its snapshot.
     let runtime: EdgeCommons;
@@ -654,7 +702,7 @@ export class EdgeCommonsBuilder {
     // by source hot reloads, base-layer hot reloads, and the `reload-config` command. The layered
     // coordinator performs raw-layer parsing/merge first; this path only accepts a fully merged
     // candidate and commits it before notifying listeners.
-    const applyEffectiveConfig = (rawUpdate: JsonObject): boolean => {
+    const applyEffectiveConfig = async (rawUpdate: JsonObject): Promise<boolean> => {
       try {
         validate(rawUpdate);
       } catch (e) {
@@ -666,6 +714,18 @@ export class EdgeCommonsBuilder {
         next = Config.fromValue(this.componentNameValue, thingName, rawUpdate);
       } catch (e) {
         logger.warn(`reloaded config could not be parsed; keeping previous: ${String(e)}`);
+        return false;
+      }
+      try {
+        await runConfigurationValidators(
+          this.configurationValidators,
+          rawUpdate,
+          current.raw,
+          ConfigurationValidationPhase.Reload,
+          this.validationTimeoutMs,
+        );
+      } catch (e) {
+        logger.warn(`reloaded config rejected by application validator; keeping previous: ${stableConfigValidationError(e)}`);
         return false;
       }
       current = next;
@@ -784,6 +844,11 @@ export class EdgeCommonsBuilder {
       // status answer the console out of the box; apps add custom verbs via
       // gg.commands().register(). Always on (no config surface); best-effort start (a failure
       // disables the inbox only).
+      // A component that uses the pre-start command configurator has declared that command
+      // handlers are part of its serving contract (the camera adapter does). Preserve the
+      // established readiness behavior for older components that only use the optional
+      // post-build `commands()` facade, while still exposing their inbox failure state.
+      const commandPlaneRequired = this.commandConfigurators.length > 0;
       const commandInbox = new CommandInbox(
         () => current,
         messaging,
@@ -793,7 +858,20 @@ export class EdgeCommonsBuilder {
         // The built-in `status` verb pulls the SAME provider sample the state keepalive pushes,
         // so the two surfaces cannot disagree.
         () => heartbeat.sampleInstanceConnectivity(),
+        (state) => {
+          if (commandPlaneRequired) readiness.setDependenciesReady(state === CommandInboxState.Active);
+        },
       );
+      // A configured command plane is a startup/readiness gate. It becomes true only after all
+      // handlers are installed and the exact transport filter is acknowledged.
+      if (commandPlaneRequired) readiness.setDependenciesReady(false);
+      try {
+        for (const configure of this.commandConfigurators) configure(commandInbox);
+      } catch (e) {
+        commandInbox.failStartup();
+        logger.warn("command inbox configuration failed; command plane is unavailable");
+        logger.debug(`command inbox configuration detail: ${String(e)}`);
+      }
       await commandInbox.start();
       runtime._setCommandInbox(commandInbox);
     }
@@ -833,6 +911,69 @@ export class EdgeCommonsBuilder {
     runtime._setWatch(await layeredConfig.watch(applyEffectiveConfig));
     return runtime;
   }
+}
+
+/** Run validators against defensive snapshots without exposing a commit-capable config object. */
+async function runConfigurationValidators(
+  validators: ReadonlyArray<{ name: string; validator: ConfigurationValidator }>,
+  candidate: JsonObject,
+  current: JsonObject | undefined,
+  phase: ConfigurationValidationPhase,
+  timeoutMs: number,
+): Promise<void> {
+  for (const { name, validator } of validators) {
+    const candidateView = freezeJson(cloneJson(candidate));
+    const currentView = current === undefined ? undefined : freezeJson(redact(current));
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const result = await Promise.race<ConfigurationValidationResult>([
+        Promise.resolve().then(() => validator(candidateView, currentView, phase)),
+        new Promise<ConfigurationValidationResult>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(EdgeCommonsError.config(`CONFIGURATION_VALIDATOR_TIMEOUT: ${name}`)),
+            timeoutMs,
+          );
+          if (typeof timer.unref === "function") timer.unref();
+        }),
+      ]);
+      if (!result || result.accepted !== true) {
+        const diagnostic = result && "error" in result ? stableValidatorDiagnostic(result.error) : "rejected";
+        throw EdgeCommonsError.config(`CONFIGURATION_VALIDATOR_REJECTED: ${name}: ${diagnostic}`);
+      }
+    } catch (e) {
+      if (e instanceof EdgeCommonsError) throw e;
+      // Do not render arbitrary exception text: validators see config and could accidentally
+      // include a credential in an exception. The validator's explicit reject channel above is
+      // the safe diagnostic surface.
+      throw EdgeCommonsError.config(`CONFIGURATION_VALIDATOR_FAILED: ${name}`);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+}
+
+function stableValidatorDiagnostic(value: unknown): string {
+  if (typeof value !== "string") return "rejected";
+  const normalized = value.replace(/[\x00-\x1F\x7F]/g, " ").trim();
+  return normalized.length === 0 ? "rejected" : normalized.slice(0, 256);
+}
+
+function cloneJson(value: JsonObject): JsonObject {
+  return JSON.parse(JSON.stringify(value)) as JsonObject;
+}
+
+function freezeJson<T>(value: T): T {
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value as Record<string, unknown>)) freezeJson(item);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function stableConfigValidationError(error: unknown): string {
+  // Errors produced by this module are already stable. Do not render arbitrary validator
+  // exceptions, which may contain the candidate configuration.
+  return error instanceof EdgeCommonsError ? error.message : "CONFIGURATION_VALIDATOR_FAILED";
 }
 
 /** Whether the resolved transport is Greengrass IPC. */

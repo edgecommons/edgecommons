@@ -164,8 +164,13 @@ impl StreamService {
     }
 
     /// Flush every buffer, stop the export engines, and free the service. Idempotent.
-    fn close(&mut self) {
-        self.inner = None;
+    fn close(&mut self, py: Python<'_>) {
+        // Take the Python-visible ownership first, so the service is already closed even if the
+        // native drop panics. Dropping the core joins its export workers; a callback worker can be
+        // waiting to acquire the GIL, so release it before waiting for that join.
+        if let Some(inner) = self.inner.take() {
+            py.detach(move || drop(inner));
+        }
     }
 }
 

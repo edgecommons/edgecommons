@@ -282,6 +282,25 @@ class TestInitAndConnect:
             StandaloneProvider(_local_only_config(), "t")
         monkeypatch.setattr(FakeMqttClient, "connect_async", orig)
 
+    def test_partial_constructor_failure_stops_already_started_clients(self, monkeypatch):
+        original_connect = StandaloneProvider._connect_client
+
+        def fail_northbound(self, channel, broker_config):
+            if channel.name == "northbound":
+                raise RuntimeError("northbound unavailable")
+            return original_connect(self, channel, broker_config)
+
+        FakeMqttClient.instances.clear()
+        monkeypatch.setattr(StandaloneProvider, "_connect_client", fail_northbound)
+        monkeypatch.setattr(StandaloneProvider, "_configure_tls", lambda *args: None)
+
+        with pytest.raises(RuntimeError, match="northbound unavailable"):
+            StandaloneProvider(_dual_config(), "t")
+
+        assert len(FakeMqttClient.instances) == 2
+        assert all(not client.is_connected() for client in FakeMqttClient.instances)
+        assert all(not client.loop_started for client in FakeMqttClient.instances)
+
 
 class TestTls:
     def test_northbound_without_ca_uses_plain_mqtt(self):
@@ -386,12 +405,13 @@ class TestSubscribeDispatch:
         assert "fast/topic" not in prov._local.pending_subscriptions
         prov.disconnect()
 
-    def test_suback_failure_still_unblocks(self):
+    def test_suback_failure_is_not_acknowledged_and_cleans_provisional_callback(self):
         prov = StandaloneProvider(_local_only_config(), "t")
         prov.get_native_client()["local"].suback_failure_topics.add("bad/topic")
-        # 0x80 granted Qos -> logged as failure but subscribe() still returns
-        prov.subscribe("bad/topic", lambda t, m: None)
-        assert "bad/topic" in prov._local.subscriptions
+        with pytest.raises(RuntimeError, match="rejected subscription"):
+            prov.subscribe_acknowledged("bad/topic", lambda t, m: None, timeout_secs=1)
+        assert "bad/topic" not in prov._local.subscriptions
+        assert "bad/topic" in prov.get_native_client()["local"].unsubscribed
         prov.disconnect()
 
     def test_max_messages_drop_on_overflow(self):

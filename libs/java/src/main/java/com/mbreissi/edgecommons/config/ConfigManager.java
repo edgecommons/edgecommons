@@ -25,6 +25,7 @@ import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.logging.log4j.core.config.builder.api.*;
 import org.apache.logging.log4j.core.config.builder.impl.BuiltConfiguration;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -50,6 +51,12 @@ public class ConfigManager
 
     ConfigProvider configProvider;
     private LayeredConfigCoordinator layeredConfigCoordinator;
+    private final Object configurationCommitLock = new Object();
+    private final List<CandidateValidationRunner.NamedValidator> candidateValidators;
+    private final Duration candidateValidationTimeout;
+    private volatile List<ConfigurationValidationError> lastCandidateValidationErrors = List.of();
+    private volatile ConfigSnapshot currentSnapshot;
+    private boolean notifyingCommittedGeneration;
     protected final String componentName;
     protected final String componentFullName;
     protected final String thingName;
@@ -70,7 +77,7 @@ public class ConfigManager
      */
     private final MessageIdentity componentIdentity;
     protected final CopyOnWriteArrayList<ConfigurationChangeListener> configChangeListeners = new CopyOnWriteArrayList<>();
-    private boolean initializing = true;
+    private volatile boolean initializing = true;
     /**
      * The full effective configuration as last APPLIED: seeded by the constructor and refreshed
      * by every accepted {@link #applyConfig} (hot reload / {@code set-config} push /
@@ -108,6 +115,24 @@ public class ConfigManager
 
     /** The schema default for {@code messaging.requestTimeoutSeconds} (seconds). */
     public static final int DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
+    /** Default overall deadline shared by one generation's pre-commit validators. */
+    public static final Duration DEFAULT_CANDIDATE_VALIDATION_TIMEOUT = Duration.ofSeconds(5);
+    /** Defensive upper bound: configuration activation must never wait indefinitely. */
+    public static final Duration MAX_CANDIDATE_VALIDATION_TIMEOUT = Duration.ofSeconds(60);
+
+    private record ConfigSnapshot(
+            long generation,
+            JsonObject fullConfig,
+            TagConfiguration tagConfig,
+            HeartbeatConfiguration heartbeatConfig,
+            MetricConfiguration metricConfig,
+            HealthConfiguration healthConfig,
+            JsonObject componentConfig,
+            JsonObject globalConfig,
+            LoggingConfiguration loggingConfig,
+            HashMap<String, JsonObject> instanceConfigs,
+            boolean topicIncludeRoot,
+            double messagingRequestTimeoutSeconds) { }
 
 
     /**
@@ -126,6 +151,8 @@ public class ConfigManager
         this.platform = null;
         this.componentIdentity = null;
         this.layeredConfigCoordinator = null;
+        this.candidateValidators = List.of();
+        this.candidateValidationTimeout = DEFAULT_CANDIDATE_VALIDATION_TIMEOUT;
     }
 
     ConfigManager(String componentFullName, String componentName, String thingName,
@@ -141,15 +168,33 @@ public class ConfigManager
     ConfigManager(String componentFullName, String componentName, String thingName,
                  ConfigProvider configProvider, JsonObject fullConfig, Platform platform,
                  LayeredConfigCoordinator layeredConfigCoordinator) {
+        this(componentFullName, componentName, thingName, configProvider, fullConfig, platform,
+                layeredConfigCoordinator, List.of(), DEFAULT_CANDIDATE_VALIDATION_TIMEOUT);
+    }
+
+    ConfigManager(String componentFullName, String componentName, String thingName,
+                 ConfigProvider configProvider, JsonObject fullConfig, Platform platform,
+                 LayeredConfigCoordinator layeredConfigCoordinator,
+                 List<CandidateValidationRunner.NamedValidator> candidateValidators,
+                 Duration candidateValidationTimeout) {
         this.componentFullName = componentFullName;
         this.componentName = componentName;
         this.thingName = thingName;
         this.configProvider = configProvider;
-        this.fullConfig = fullConfig;
         this.platform = platform;
         this.layeredConfigCoordinator = layeredConfigCoordinator;
+        this.candidateValidators = List.copyOf(candidateValidators == null ? List.of() : candidateValidators);
+        this.candidateValidationTimeout = requireCandidateValidationTimeout(candidateValidationTimeout);
 
-        applyConfig(fullConfig);
+        List<ConfigurationValidationError> initialErrors = CandidateValidationRunner.validate(
+                this.candidateValidators, requireConfig(fullConfig), null,
+                ConfigurationValidationPhase.INITIAL, this.candidateValidationTimeout);
+        if (!initialErrors.isEmpty()) {
+            this.lastCandidateValidationErrors = initialErrors;
+            throw new IllegalStateException("Initial configuration rejected: " + formatValidationErrors(initialErrors));
+        }
+        installSnapshot(prepareSnapshot(fullConfig, 1));
+        reconfigureLogging();
 
         // Resolve the component's UNS identity ONCE, from this component's own config
         // (top-level `hierarchy` + `identity`), fail-fast on any inconsistency.
@@ -180,52 +225,76 @@ public class ConfigManager
      */
     public void applyConfig(JsonObject config)
     {
-        // On a hot reload, re-validate against the schema and keep the previous configuration if
-        // the new document is invalid (parity with Python/Rust/TS, which all reject-and-keep on a
-        // bad reload). Startup config is already validated by ConfigManagerFactory before the first
-        // applyConfig (initializing == true), so we only re-validate subsequent reloads.
-        if (!initializing) {
-            try {
-                ConfigurationValidator.validate(config);
-            } catch (ConfigurationValidator.ConfigurationValidationException e) {
-                LOGGER.error("Rejected hot-reloaded configuration (keeping previous): {}",
-                        e.getMessage());
-                return;
+        tryApplyConfig(config);
+    }
+
+    /**
+     * Validates and atomically commits a reload candidate. The prior snapshot remains byte-for-byte
+     * unchanged when schema validation, a component validator, or snapshot preparation fails.
+     * Effective-config publication and change listeners run only after the new generation is visible.
+     *
+     * @return {@code true} only when the candidate was committed
+     */
+    public boolean tryApplyConfig(JsonObject config) {
+        if (CandidateValidationRunner.inValidatorCallback()) {
+            LOGGER.warn("A configuration validator attempted a nested configuration update; "
+                    + "validators must be side-effect free");
+            return false;
+        }
+        synchronized (configurationCommitLock) {
+            if (notifyingCommittedGeneration) {
+                LOGGER.warn("Rejected a reentrant configuration update from an applied-config listener");
+                return false;
             }
-        }
+            final JsonObject isolatedCandidate;
+            try {
+                isolatedCandidate = requireConfig(config).deepCopy();
+                ConfigurationValidator.validate(isolatedCandidate);
+            } catch (ConfigurationValidator.ConfigurationValidationException | RuntimeException e) {
+                lastCandidateValidationErrors = List.of(new ConfigurationValidationError(
+                        "schema", "CONFIG_VALIDATION_FAILED",
+                        CandidateValidationRunner.sanitize(e.getMessage())));
+                LOGGER.error("Rejected hot-reloaded configuration (keeping previous): {}", e.getMessage());
+                return false;
+            }
 
-        // Keep the full-config snapshot current: getFullConfig() (the effective-config publisher,
-        // the get-configuration verb, the opt-in subsystem inits) must reflect the APPLIED
-        // configuration, not the startup snapshot, after a hot reload / push / reload-config.
-        this.fullConfig = config;
+            ConfigSnapshot prior = currentSnapshot;
+            JsonObject redactedCurrent = prior == null ? null : EffectiveConfigPublisher.redact(prior.fullConfig());
+            List<ConfigurationValidationError> errors = CandidateValidationRunner.validate(
+                    candidateValidators, isolatedCandidate, redactedCurrent,
+                    ConfigurationValidationPhase.RELOAD, candidateValidationTimeout);
+            if (!errors.isEmpty()) {
+                lastCandidateValidationErrors = errors;
+                LOGGER.warn("Rejected configuration candidate (keeping generation {}): {}",
+                        prior == null ? 0 : prior.generation(), formatValidationErrors(errors));
+                return false;
+            }
 
-        tagConfig = ConfigurationFactory.createTagConfiguration(config);
-        loggingConfig = ConfigurationFactory.createLoggingConfiguration(config);
-        heartbeatConfig = ConfigurationFactory.createHeartbeatConfiguration(config);
-        metricConfig = ConfigurationFactory.createMetricConfiguration(config);
-        healthConfig = ConfigurationFactory.createHealthConfiguration(config);
-        topicIncludeRoot = parseTopicIncludeRoot(config);
-        // D-U25: includeRoot needs a level ABOVE the device to prepend — with a single-level
-        // hierarchy (the zero-config ["device"] default) hier[0] IS the device, so the setting
-        // is a no-op in Uns (prepending would duplicate the device). Tell the user once.
-        if (topicIncludeRoot && !warnedIncludeRootSingleLevel && hierarchyLevelCount(config) == 1)
-        {
-            warnedIncludeRootSingleLevel = true;
-            LOGGER.warn("topic.includeRoot=true has no effect with a single-level hierarchy"
-                    + " (hierarchy.levels resolves to one level - the device): the site position"
-                    + " requires a level above the device, so UNS topics stay rootless."
-                    + " Declare a multi-level hierarchy.levels or remove topic.includeRoot.");
-        }
-        messagingRequestTimeoutSeconds = parseMessagingRequestTimeoutSeconds(config);
-        reconfigureLogging();
+            ConfigSnapshot next;
+            try {
+                next = prepareSnapshot(isolatedCandidate,
+                        prior == null ? 1 : prior.generation() + 1);
+            } catch (RuntimeException e) {
+                lastCandidateValidationErrors = List.of(new ConfigurationValidationError(
+                        "configuration", "CONFIG_PREPARATION_FAILED",
+                        CandidateValidationRunner.sanitize(e.getMessage())));
+                LOGGER.warn("Rejected configuration candidate during preparation (keeping previous): {}",
+                        e.getMessage());
+                return false;
+            }
 
-        componentConfig = config.get("component").getAsJsonObject();
-        globalConfig = componentConfig.has("global")
-                ? componentConfig.get("global").getAsJsonObject()
-                : new JsonObject();
-        genInstancesMap();
-        if (!initializing) {
-            notifyConfigurationChanged();
+            installSnapshot(next);
+            lastCandidateValidationErrors = List.of();
+            reconfigureLogging();
+            if (!initializing) {
+                notifyingCommittedGeneration = true;
+                try {
+                    notifyConfigurationChanged();
+                } finally {
+                    notifyingCommittedGeneration = false;
+                }
+            }
+            return true;
         }
     }
 
@@ -268,19 +337,9 @@ public class ConfigManager
                     + " previous configuration", configProvider.getConfigSource());
             return false;
         }
-        try
-        {
-            // Validate BEFORE applying so the caller gets a truthful verdict (applyConfig's own
-            // reject-and-keep path logs but does not report).
-            ConfigurationValidator.validate(newConfig);
-        }
-        catch (ConfigurationValidator.ConfigurationValidationException e)
-        {
-            LOGGER.error("reload-config: rejected re-fetched configuration (keeping previous): {}",
-                    e.getMessage());
+        if (!tryApplyConfig(newConfig)) {
             return false;
         }
-        applyConfig(newConfig);
         LOGGER.info("reload-config: configuration re-fetched and re-applied from the '{}' source",
                 configProvider.getConfigSource());
         return true;
@@ -295,14 +354,12 @@ public class ConfigManager
     {
         if (layeredConfigCoordinator == null)
         {
-            applyConfig(rawConfig);
-            return true;
+            return tryApplyConfig(rawConfig);
         }
         try
         {
             JsonObject effective = layeredConfigCoordinator.applyProviderPayload(rawConfig);
-            applyConfig(effective);
-            return true;
+            return tryApplyConfig(effective);
         }
         catch (Exception e)
         {
@@ -310,6 +367,99 @@ public class ConfigManager
                     e.getMessage(), e);
             return false;
         }
+    }
+
+    private static JsonObject requireConfig(JsonObject config) {
+        if (config == null) {
+            throw new IllegalArgumentException("configuration candidate must not be null");
+        }
+        return config;
+    }
+
+    private static Duration requireCandidateValidationTimeout(Duration timeout) {
+        if (timeout == null || timeout.isZero() || timeout.isNegative()
+                || timeout.compareTo(MAX_CANDIDATE_VALIDATION_TIMEOUT) > 0) {
+            throw new IllegalArgumentException("configuration validation timeout must be positive and at most "
+                    + MAX_CANDIDATE_VALIDATION_TIMEOUT.toSeconds() + " seconds");
+        }
+        return timeout;
+    }
+
+    private ConfigSnapshot prepareSnapshot(JsonObject source, long generation) {
+        JsonObject config = requireConfig(source).deepCopy();
+        TagConfiguration preparedTag = ConfigurationFactory.createTagConfiguration(config);
+        LoggingConfiguration preparedLogging = ConfigurationFactory.createLoggingConfiguration(config);
+        HeartbeatConfiguration preparedHeartbeat = ConfigurationFactory.createHeartbeatConfiguration(config);
+        MetricConfiguration preparedMetric = ConfigurationFactory.createMetricConfiguration(config);
+        HealthConfiguration preparedHealth = ConfigurationFactory.createHealthConfiguration(config);
+        JsonObject preparedComponent = config.get("component").getAsJsonObject();
+        JsonObject preparedGlobal = preparedComponent.has("global")
+                ? preparedComponent.get("global").getAsJsonObject() : new JsonObject();
+        HashMap<String, JsonObject> preparedInstances = buildInstancesMap(preparedComponent);
+        return new ConfigSnapshot(generation, config, preparedTag, preparedHeartbeat,
+                preparedMetric, preparedHealth, preparedComponent, preparedGlobal,
+                preparedLogging, preparedInstances, parseTopicIncludeRoot(config),
+                parseMessagingRequestTimeoutSeconds(config));
+    }
+
+    /** Installs legacy protected fields first and publishes the volatile generation pointer last. */
+    private void installSnapshot(ConfigSnapshot snapshot) {
+        this.fullConfig = snapshot.fullConfig();
+        this.tagConfig = snapshot.tagConfig();
+        this.heartbeatConfig = snapshot.heartbeatConfig();
+        this.metricConfig = snapshot.metricConfig();
+        this.healthConfig = snapshot.healthConfig();
+        this.componentConfig = snapshot.componentConfig();
+        this.globalConfig = snapshot.globalConfig();
+        this.loggingConfig = snapshot.loggingConfig();
+        this.instanceConfigs = snapshot.instanceConfigs();
+        this.topicIncludeRoot = snapshot.topicIncludeRoot();
+        this.messagingRequestTimeoutSeconds = snapshot.messagingRequestTimeoutSeconds();
+        this.currentSnapshot = snapshot;
+        warnIfIncludeRootNoOp(snapshot);
+    }
+
+    private static HashMap<String, JsonObject> buildInstancesMap(JsonObject component) {
+        HashMap<String, JsonObject> instancesById = new HashMap<>();
+        JsonArray instances = component.has("instances")
+                ? component.get("instances").getAsJsonArray() : null;
+        if (instances != null) {
+            for (JsonElement instance : instances) {
+                JsonObject instanceConfig = instance.getAsJsonObject();
+                instancesById.put(instanceConfig.get("id").getAsString(), instanceConfig);
+                LOGGER.debug("Loaded instance config for {}", instanceConfig.get("id"));
+            }
+        }
+        return instancesById;
+    }
+
+    private void warnIfIncludeRootNoOp(ConfigSnapshot snapshot) {
+        if (snapshot.topicIncludeRoot() && !warnedIncludeRootSingleLevel
+                && hierarchyLevelCount(snapshot.fullConfig()) == 1) {
+            warnedIncludeRootSingleLevel = true;
+            LOGGER.warn("topic.includeRoot=true has no effect with a single-level hierarchy"
+                    + " (hierarchy.levels resolves to one level - the device): the site position"
+                    + " requires a level above the device, so UNS topics stay rootless."
+                    + " Declare a multi-level hierarchy.levels or remove topic.includeRoot.");
+        }
+    }
+
+    private static String formatValidationErrors(List<ConfigurationValidationError> errors) {
+        return errors.stream()
+                .map(error -> error.validator() + ":" + error.code() + ":" + error.message())
+                .reduce((left, right) -> left + "; " + right)
+                .orElse("");
+    }
+
+    /** Monotonic generation of the atomically committed effective configuration. */
+    public long getConfigGeneration() {
+        ConfigSnapshot snapshot = currentSnapshot;
+        return snapshot == null ? 0 : snapshot.generation();
+    }
+
+    /** Stable pre-commit diagnostics for the most recently rejected candidate. */
+    public List<ConfigurationValidationError> getLastCandidateValidationErrors() {
+        return lastCandidateValidationErrors;
     }
 
 
@@ -340,7 +490,8 @@ public class ConfigManager
      */
     public boolean isTopicIncludeRoot()
     {
-        return topicIncludeRoot;
+        ConfigSnapshot snapshot = currentSnapshot;
+        return snapshot == null ? topicIncludeRoot : snapshot.topicIncludeRoot();
     }
 
     /**
@@ -396,32 +547,13 @@ public class ConfigManager
      */
     public java.time.Duration getMessagingRequestTimeout()
     {
-        return messagingRequestTimeoutSeconds <= 0
+        ConfigSnapshot snapshot = currentSnapshot;
+        double seconds = snapshot == null
+                ? messagingRequestTimeoutSeconds : snapshot.messagingRequestTimeoutSeconds();
+        return seconds <= 0
                 ? java.time.Duration.ZERO
-                : java.time.Duration.ofMillis(Math.round(messagingRequestTimeoutSeconds * 1000.0));
+                : java.time.Duration.ofMillis(Math.round(seconds * 1000.0));
     }
-
-    /**
-     * Generates a map of instance configurations from the full configuration.
-     * This is an internal method used to organize instance-specific settings.
-     */
-    private void genInstancesMap()
-    {
-        instanceConfigs = new HashMap<>();
-        JsonArray instances = componentConfig.has("instances")
-                ? componentConfig.get("instances").getAsJsonArray()
-                : null;
-        if (instances != null)
-        {
-            for (JsonElement instance : instances)
-            {
-                JsonObject instanceConfig = instance.getAsJsonObject();
-                instanceConfigs.put(instanceConfig.get("id").getAsString(), instanceConfig);
-                LOGGER.debug("Loaded instance config for {}", instanceConfig.get("id"));
-            }
-        }
-    }
-
 
     /**
      * Returns the global configuration that applies to all instances.
@@ -430,7 +562,9 @@ public class ConfigManager
      */
     public JsonObject getGlobalConfig()
     {
-        return globalConfig;
+        ConfigSnapshot snapshot = currentSnapshot;
+        JsonObject value = snapshot == null ? globalConfig : snapshot.globalConfig();
+        return value == null ? null : value.deepCopy();
     }
 
     /**
@@ -440,7 +574,9 @@ public class ConfigManager
      */
     public Collection<String> getInstanceIds()
     {
-        return instanceConfigs.keySet();
+        ConfigSnapshot snapshot = currentSnapshot;
+        Map<String, JsonObject> values = snapshot == null ? instanceConfigs : snapshot.instanceConfigs();
+        return values == null ? List.of() : Set.copyOf(values.keySet());
     }
 
     /**
@@ -451,7 +587,10 @@ public class ConfigManager
      */
     public JsonObject getInstanceConfig(String instanceId)
     {
-        return instanceConfigs.getOrDefault(instanceId, null);
+        ConfigSnapshot snapshot = currentSnapshot;
+        Map<String, JsonObject> values = snapshot == null ? instanceConfigs : snapshot.instanceConfigs();
+        JsonObject value = values == null ? null : values.get(instanceId);
+        return value == null ? null : value.deepCopy();
     }
 
     /**
@@ -459,7 +598,11 @@ public class ConfigManager
      *
      * @return JsonObject containing the full configuration
      */
-    public JsonObject getFullConfig() { return fullConfig; }
+    public JsonObject getFullConfig() {
+        ConfigSnapshot snapshot = currentSnapshot;
+        JsonObject value = snapshot == null ? fullConfig : snapshot.fullConfig();
+        return value == null ? null : value.deepCopy();
+    }
 
     /**
      * Returns the tag configuration settings.
@@ -468,7 +611,8 @@ public class ConfigManager
      */
     public TagConfiguration getTagConfig()
     {
-        return tagConfig;
+        ConfigSnapshot snapshot = currentSnapshot;
+        return snapshot == null ? tagConfig : snapshot.tagConfig();
     }
 
     /**
@@ -478,7 +622,8 @@ public class ConfigManager
      */
     public HeartbeatConfiguration getHeartbeatConfig()
     {
-        return heartbeatConfig;
+        ConfigSnapshot snapshot = currentSnapshot;
+        return snapshot == null ? heartbeatConfig : snapshot.heartbeatConfig();
     }
 
     /**
@@ -488,7 +633,8 @@ public class ConfigManager
      */
     public LoggingConfiguration getLoggingConfig()
     {
-        return loggingConfig;
+        ConfigSnapshot snapshot = currentSnapshot;
+        return snapshot == null ? loggingConfig : snapshot.loggingConfig();
     }
 
     /**
@@ -497,7 +643,8 @@ public class ConfigManager
      * @return MetricConfiguration object containing metric-related settings
      */
     public MetricConfiguration getMetricConfig() {
-        return metricConfig;
+        ConfigSnapshot snapshot = currentSnapshot;
+        return snapshot == null ? metricConfig : snapshot.metricConfig();
     }
 
     /**
@@ -522,7 +669,8 @@ public class ConfigManager
      * @return HealthConfiguration object containing health-endpoint settings
      */
     public HealthConfiguration getHealthConfig() {
-        return healthConfig;
+        ConfigSnapshot snapshot = currentSnapshot;
+        return snapshot == null ? healthConfig : snapshot.healthConfig();
     }
 
     /**
@@ -847,14 +995,16 @@ public class ConfigManager
             }
         }
 
-        if (null != tagConfig && tagConfig.getKeys() != null)
+        TagConfiguration currentTags = getTagConfig();
+        if (currentTags != null && currentTags.getKeys() != null)
         {
-            for (String tagKey : tagConfig.getKeys())
+            for (String tagKey : currentTags.getKeys())
             {
                 String hierarchyLevelTemplate = "{" + tagKey + "}";
                 if (retVal.contains(hierarchyLevelTemplate))
                 {
-                    retVal = retVal.replace(hierarchyLevelTemplate, sanitize(tagConfig.getKeyValue(tagKey)));
+                    retVal = retVal.replace(hierarchyLevelTemplate,
+                            sanitize(currentTags.getKeyValue(tagKey)));
                 }
             }
         }

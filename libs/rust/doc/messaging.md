@@ -23,11 +23,13 @@ argument):
 | Local | Northbound |
 |-------|------------|
 | `publish` | `publish_northbound` (+ `qos`) |
+| `publish_confirmed` | `publish_northbound_confirmed` |
+| `publish_encoded_confirmed` | `publish_northbound_encoded_confirmed` |
 | `publish_raw` | `publish_northbound_raw` (+ `qos`) |
 | `subscribe` | `subscribe_northbound` (+ `qos`) |
 | `unsubscribe` | `unsubscribe_northbound` |
 | `request` / `request_with_timeout` | `request_northbound` / `request_northbound_with_timeout` |
-| `reply` | `reply_northbound` |
+| `reply` / `reply_confirmed` | `reply_northbound` / `reply_northbound_confirmed` |
 | `cancel_request` | `cancel_request_northbound` |
 
 The public Rust API uses `northbound` consistently: `Destination::Northbound` and
@@ -139,6 +141,59 @@ svc.subscribe("events/+", message_handler(|topic, msg| async move {
 }), 32, 4).await?;
 ```
 
+### Strict confirmed publication
+
+Ordinary `publish` completes when the transport accepts the request into its bounded client path. Use
+`publish_confirmed(topic, message, timeout)` when a durable outbox must distinguish enqueueing from
+transport acknowledgement:
+
+- standalone MQTT always uses QoS 1 and returns success only after the matching broker PUBACK;
+- Greengrass returns success only after the IPC publish operation completes successfully;
+- zero/expired timeout, disconnect before acknowledgement, and lost waiter state are errors with an
+  ambiguous outcome; and
+- a provider that cannot prove acknowledgement returns an unsupported error. It never delegates to
+  ordinary `publish` and calls that confirmation.
+
+Every MQTT publish goes through one bounded per-connection funnel. Ordinary QoS 0/1/2 publishes and
+confirmed QoS 1 publishes all consume an ordered tracker marker. `rumqttc`'s
+`Outgoing::Publish(packet_id)` assigns that marker, and only the matching incoming PUBACK settles its
+confirmed waiter. Packet-id tombstones survive retransmission, so an ordinary concurrent publish or a
+reconnect cannot shift a later PUBACK onto the wrong waiter.
+
+`publish_encoded_confirmed` is the exact-byte durable-outbox seam. It first validates that the supplied
+bytes decode as an EdgeCommons protobuf envelope, then applies the same reserved-topic and confirmation
+semantics while sending the caller's original bytes without reserialization. Raw or malformed payloads
+are rejected before provider I/O; use the raw publication APIs for non-envelope data.
+
+```rust
+use std::time::Duration;
+
+svc.publish_confirmed("plant/camera/result", &msg, Duration::from_secs(5)).await?;
+```
+
+The app facade prepares stable envelopes for this path:
+
+```rust
+use serde_json::json;
+use std::time::Duration;
+
+let app = gg.instance("camera-1")?.app();
+let prepared = app.prepare_correlated(
+    "ImageCaptured",
+    "image/captured",
+    json!({ "captureId": "cap-1" }),
+    &request,
+)?;
+
+// Persist prepared.topic(), prepared.message(), and prepared.encoded() before publish.
+app.publish_prepared_confirmed(&prepared, Duration::from_secs(5)).await?;
+```
+
+`prepare_correlated` accepts either a received `&Message` or an explicit correlation-id string. The
+correlation is stamped in the standard envelope header. `PreparedAppMessage::encoded()` is produced once;
+confirmed prepared publication sends those stored bytes verbatim. Legacy `app.publish` and
+`app.publish_via` delegate through preparation but retain their existing completion/error behavior.
+
 ## Request / reply
 
 `request` returns a [`ReplyFuture`] (the Rust analog of Java `CompletableFuture` /
@@ -170,6 +225,10 @@ svc.subscribe("svc/op", message_handler(move |_t, req| {
     }
 }), 16, 1).await?;
 ```
+
+Use `reply_confirmed(request, reply, timeout)` when the responder must retry until an actual QoS 1/IPC
+acknowledgement. It retains the standard guarded `reply_to` behavior and copies the request correlation id.
+The command inbox's deferred registry uses this strict path. See [commands.md](commands.md).
 
 Because correlation lives **above** the transport, it behaves identically over MQTT
 and Greengrass IPC, and is fully testable against a local broker.

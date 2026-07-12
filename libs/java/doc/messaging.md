@@ -52,6 +52,38 @@ MessagingClient.subscribe(topicFilter, (topic, message) -> {
 });
 ```
 
+Framework lifecycle subscriptions use `subscribeAcknowledged(...)`. Successful return means the
+MQTT SUBACK was observed or the Greengrass IPC subscription operation completed; the operation has
+a positive bounded timeout and never falls back to the older best-effort `subscribe`. On timeout or
+failure the built-in providers remove the processor/stream and best-effort unsubscribe any late
+partial subscription.
+
+`CommandInbox` exposes `STARTING`, `ACTIVE`, `FAILED`, and `STOPPED` through `startupStatus()`.
+`ACTIVE` is published only after the acknowledged subscription returns. Up to 256 deliveries that
+arrive through the acknowledged transport before activation are retained in arrival order and
+dispatched only after `ACTIVE`; overflow is dropped explicitly. A failed, stopped, or stale start
+discards that generation's retained deliveries, and callbacks from stale restart generations never
+dispatch. `stop()` unsubscribes one generation and permits a deterministic retry; `close()` is
+permanent. Failure diagnostics are control-character sanitized and bounded. Runtime readiness
+requires `ACTIVE`, so an acknowledged-subscription failure cannot leave a component briefly ready.
+
+For a durable outbox, use strict confirmed publishing with an explicit QoS-1 value and bounded
+timeout. MQTT returns only after Paho observes the matching PUBACK; Greengrass returns only after
+the IPC publish operation completes successfully. Timeout, disconnect, interruption, and transport
+errors throw `PublishConfirmationException`. A provider without acknowledgement support throws
+`UnsupportedOperationException`; it never falls back to immediate `publish`.
+
+```java
+client.publishConfirmed(topic, exactEnvelopeBytes,
+        Qos.AT_LEAST_ONCE, Duration.ofSeconds(5));
+client.publishNorthboundConfirmed(topic, exactEnvelopeBytes,
+        Qos.AT_LEAST_ONCE, Duration.ofSeconds(5));
+```
+
+Confirmed operations are bounded to 1,024 in-flight acknowledgement waits per provider. The timeout
+includes waiting for that capacity, so saturation applies blocking backpressure without creating an
+unbounded provider-side waiter registry.
+
 #### 2. Request-Reply
 Synchronous and asynchronous request-reply patterns:
 ```java
@@ -63,6 +95,63 @@ future.thenAccept(response -> { /* Handle response */ }); // Async
 
 // Replying to requests
 MessagingClient.reply(requestMessage, replyMessage);
+```
+
+#### Explicit command outcomes and deferred replies
+
+`CommandInbox.register(...)` remains the legacy synchronous `JsonObject` handler API.
+`registerOutcome(...)` adds the tagged `CommandOutcome` path:
+
+- `ImmediateSuccess(result)` sends the normal `{ "ok": true, "result": ... }` wrapper;
+- `ImmediateError(code, message)` sends the normal coded error wrapper; and
+- `Deferred(token)` suppresses automatic reply and releases the inbox delivery callback as soon as
+  the handler returns.
+
+Provision before the durable insert, activate only after the insert commits, and discard on insert
+failure. The application retains only the opaque handle, not the received request or its
+`reply_to`.
+
+```java
+commands.registerOutcome("sb/capture", request -> {
+    CommandInbox.DeferredReply deferred =
+            commands.defer(request, Duration.ofSeconds(95));
+    try {
+        durableCatalog.insertAccepted(/* original request and effective profile */);
+        deferred.activate();
+        queueCapture(deferred);
+        return CommandOutcome.deferred(deferred);
+    } catch (Exception e) {
+        deferred.discard();
+        return CommandOutcome.error("PERSISTENCE_FAILED", "acceptance was not durable");
+    }
+});
+
+// Later, from job completion:
+deferred.settleSuccess(result);       // or settleError(code, message)
+```
+
+The inbox registry holds at most 1,024 active tokens and accepts lifetimes from 1 ms through
+1,860,000 ms. A token moves `PROVISIONAL -> OPEN -> SETTLING -> SETTLED`; discard, timer expiration,
+and shutdown are terminal alternatives. Settlement uses one compare-and-set winner, retries strict
+guarded reply publication with bounded backoff until expiration, and exposes current state plus
+registry counters through `DeferredReply.state()` and `deferredReplySnapshot()`. Missing `reply_to`
+is rejected before provisioning with `REPLY_REQUIRED`. Shutdown attempts a `COMPONENT_STOPPING`
+reply for each open token while messaging is still available, then marks it
+`CANCELLED_ON_SHUTDOWN`.
+
+#### Prepared and correlated application messages
+
+`AppFacade.prepare(...)` returns `PreparedAppMessage`: the facade-generated topic, the built
+`Message`, and defensively copied exact encoded bytes. `prepareCorrelated(...)` accepts either a
+received request or a non-empty correlation ID and stamps it in the normal envelope header.
+`publishConfirmed(prepared, routing, timeout)` sends the retained bytes rather than rebuilding the
+envelope, so retries preserve the original UUID, timestamp, correlation, identity, and encoding.
+
+```java
+AppFacade.PreparedAppMessage prepared = app.prepareCorrelated(
+        "ImageCaptured", "image/captured", body, request);
+outbox.insert(prepared.topic(), prepared.encodedBytes());
+app.publishConfirmed(prepared, Duration.ofSeconds(5));
 ```
 
 ##### Request deadline (`messaging.requestTimeoutSeconds`)
@@ -90,8 +179,9 @@ applies (deliberately — the CONFIG_COMPONENT bootstrap request gets a deadline
 The UNS classes `state`, `metric`, `cfg` and `log` are **library-owned** (UNS-CANONICAL-DESIGN
 §4.1): the heartbeat publishes the `state` keepalive, the metric subsystem publishes `metric`,
 and the effective-config publisher announces `cfg`. Every publish path that takes a client-chosen
-topic — `publish`, `publishRaw`, `publishNorthbound`, `publishNorthboundRaw`, `request`,
-`requestNorthbound`, and `reply`/`replyNorthbound` (via the request's `reply_to`) — rejects a
+topic — `publish`, `publishConfirmed`, `publishRaw`, `publishNorthbound`,
+`publishNorthboundConfirmed`, `publishNorthboundRaw`, `request`, `requestNorthbound`, and
+`reply`/`replyConfirmed` (via the request's `reply_to`) — rejects a
 topic whose UNS class position holds a reserved token with a `ReservedTopicException`:
 
 ```

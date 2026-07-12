@@ -19,7 +19,7 @@ Builder patterns in edgecommons provide:
 Creates EdgeCommons instances with fluent configuration:
 
 ```python
-from edgecommons.builders import EdgeCommonsBuilder
+from edgecommons import EdgeCommonsBuilder
 
 # Basic usage
 edgecommons = EdgeCommonsBuilder.create("com.example.MyComponent") \
@@ -31,6 +31,10 @@ edgecommons = EdgeCommonsBuilder.create("com.example.MyComponent") \
     .with_args(args) \
     .with_app_options(custom_parser) \
     .receive_own_messages(False) \
+    .initial_ready(False) \
+    .configuration_validator("application", validate_candidate) \
+    .configuration_validation_timeout(5.0) \
+    .configure_commands(lambda inbox: inbox.register("capture", capture)) \
     .build()
 ```
 
@@ -40,6 +44,10 @@ edgecommons = EdgeCommonsBuilder.create("com.example.MyComponent") \
 - `with_args(args)`: Set command line arguments
 - `with_app_options(parser)`: Set custom ArgumentParser
 - `receive_own_messages(flag)`: Set message reception behavior
+- `initial_ready(flag)`: Set the app readiness gate before any endpoint starts (default `True`)
+- `configuration_validator(name, callback)`: Register a pre-commit `INITIAL`/`RELOAD` validator
+- `configuration_validation_timeout(seconds)`: Set the overall validator deadline (default 5, max 60)
+- `configure_commands(callback)`: Install component verbs before acknowledged inbox activation
 - `build()`: Create the EdgeCommons instance
 
 #### Validation
@@ -47,6 +55,8 @@ edgecommons = EdgeCommonsBuilder.create("com.example.MyComponent") \
 - Component name cannot be None or empty
 - Args list cannot be None (empty list is acceptable)
 - App options must be a valid ArgumentParser instance
+- Validator names are unique, non-empty strings and callbacks must be callable
+- Validation timeouts are positive and no greater than 60 seconds
 
 ### MessageBuilder
 

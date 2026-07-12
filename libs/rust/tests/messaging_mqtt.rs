@@ -166,6 +166,70 @@ async fn publish_subscribe_invokes_handler() {
 }
 
 #[tokio::test]
+async fn confirmed_publish_survives_concurrent_ordinary_qos1_traffic() {
+    if skipped() {
+        return;
+    }
+    init_logs();
+    info!("=== TEST confirmed_publish_survives_concurrent_ordinary_qos1_traffic ===");
+    let svc = connect_service(&format!("it-confirmed-{}", Uuid::new_v4())).await;
+    let topic = format!("itest/confirmed/{}", Uuid::new_v4());
+    let received = Arc::new(AtomicUsize::new(0));
+    let received_handler = received.clone();
+    svc.subscribe(
+        &topic,
+        message_handler(move |_topic, _message| {
+            let received = received_handler.clone();
+            async move {
+                received.fetch_add(1, Ordering::SeqCst);
+            }
+        }),
+        MAX_MESSAGES,
+        4,
+    )
+    .await
+    .expect("subscribe");
+
+    let mut ordinary = Vec::new();
+    for n in 0..8u64 {
+        let svc = svc.clone();
+        let topic = topic.clone();
+        ordinary.push(tokio::spawn(async move {
+            svc.publish(
+                &topic,
+                &MessageBuilder::new("Ordinary", "1.0")
+                    .payload(json!({ "n": n }))
+                    .build(),
+            )
+            .await
+        }));
+    }
+    svc.publish_confirmed(
+        &topic,
+        &MessageBuilder::new("Confirmed", "1.0")
+            .payload(json!({ "confirmed": true }))
+            .build(),
+        Duration::from_secs(5),
+    )
+    .await
+    .expect("matching MQTT PUBACK");
+    for task in ordinary {
+        task.await
+            .expect("ordinary task")
+            .expect("ordinary publish");
+    }
+
+    for _ in 0..50 {
+        if received.load(Ordering::SeqCst) == 9 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(received.load(Ordering::SeqCst), 9);
+    info!("=== PASS confirmed_publish_survives_concurrent_ordinary_qos1_traffic ===");
+}
+
+#[tokio::test]
 async fn request_reply_roundtrip() {
     if skipped() {
         return;

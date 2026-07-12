@@ -7,6 +7,7 @@ package com.mbreissi.edgecommons.messaging.providers.standalone;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.MessagingConfiguration;
+import com.mbreissi.edgecommons.messaging.PublishConfirmationException;
 import com.mbreissi.edgecommons.messaging.ReplyFuture;
 import com.mbreissi.edgecommons.proto.v1.EdgeCommonsMessage;
 import com.mbreissi.edgecommons.test.MockConfigurationService;
@@ -26,6 +27,8 @@ import com.mbreissi.edgecommons.messaging.Qos;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.time.Duration;
+import java.util.Arrays;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -129,6 +132,24 @@ class StandaloneMessagingProviderTest {
     }
 
     @Test
+    void acknowledgedSubscribeReturnsAfterSubackAndRejectsDuplicateGeneration() throws Exception {
+        provider = localProvider("acknowledged-subscribe");
+        String topic = "prov/test/acknowledged";
+        CountDownLatch delivered = new CountDownLatch(1);
+
+        provider.subscribeAcknowledged(topic, (t, m) -> delivered.countDown(),
+                1, 16, Duration.ofSeconds(2));
+        assertThrows(IllegalStateException.class,
+                () -> provider.subscribeAcknowledged(topic, (t, m) -> { },
+                        1, 16, Duration.ofSeconds(2)),
+                "one lifecycle generation must own a filter at a time");
+
+        provider.publish(topic, msg("Acknowledged"));
+        assertTrue(delivered.await(5, TimeUnit.SECONDS));
+        provider.unsubscribe(topic);
+    }
+
+    @Test
     void publishWritesProtobufBytesToMqttPayload() throws Exception {
         provider = localProvider("wire-bytes");
         String topic = "prov/wire/protobuf";
@@ -158,6 +179,51 @@ class StandaloneMessagingProviderTest {
             observer.disconnect();
             observer.close();
         }
+    }
+
+    @Test
+    void confirmedPublishWaitsForQosOnePubackAndPreservesExactBytes() throws Exception {
+        provider = localProvider("confirmed-puback");
+        String topic = "prov/confirmed/puback";
+        byte[] exact = msg("ConfirmedWire").toBytes();
+        var latch = new CountDownLatch(1);
+        var payloadRef = new AtomicReference<byte[]>();
+
+        MqttClient observer = new MqttClient(
+                "tcp://127.0.0.1:" + port, "confirmed-observer");
+        MqttConnectOptions opts = new MqttConnectOptions();
+        opts.setCleanSession(true);
+        observer.connect(opts);
+        observer.subscribe(topic, 1, (t, message) -> {
+            payloadRef.set(message.getPayload());
+            latch.countDown();
+        });
+        try {
+            provider.publishConfirmed(topic, exact, Qos.AT_LEAST_ONCE,
+                    Duration.ofSeconds(3));
+            assertTrue(latch.await(3, TimeUnit.SECONDS),
+                    "observer did not receive confirmed publication");
+            assertTrue(Arrays.equals(exact, payloadRef.get()),
+                    "confirmed path must publish the caller's exact serialized envelope");
+        } finally {
+            observer.disconnect();
+            observer.close();
+        }
+    }
+
+    @Test
+    void confirmedPublishRejectsNonQosOneAndUnboundedTimeouts() {
+        provider = localProvider("confirmed-contract");
+        byte[] exact = msg("Confirmed").toBytes();
+        assertThrows(IllegalArgumentException.class,
+                () -> provider.publishConfirmed("prov/confirmed", exact,
+                        Qos.AT_MOST_ONCE, Duration.ofSeconds(1)));
+        assertThrows(IllegalArgumentException.class,
+                () -> provider.publishConfirmed("prov/confirmed", exact,
+                        Qos.AT_LEAST_ONCE, Duration.ZERO));
+        assertThrows(NullPointerException.class,
+                () -> provider.publishConfirmed("prov/confirmed", null,
+                        Qos.AT_LEAST_ONCE, Duration.ofSeconds(1)));
     }
 
     @Test
@@ -290,6 +356,9 @@ class StandaloneMessagingProviderTest {
         assertThrows(IllegalStateException.class,
                 () -> provider.publishNorthbound("iot/t", m, Qos.AT_LEAST_ONCE));
         assertThrows(IllegalStateException.class,
+                () -> provider.publishNorthboundConfirmed("iot/t", m.toBytes(),
+                        Qos.AT_LEAST_ONCE, Duration.ofSeconds(1)));
+        assertThrows(IllegalStateException.class,
                 () -> provider.publishNorthboundRaw("iot/t", raw, Qos.AT_LEAST_ONCE));
         assertThrows(IllegalStateException.class,
                 () -> provider.subscribeNorthbound("iot/t", (t, msg) -> {}, Qos.AT_MOST_ONCE, 1, -1));
@@ -346,6 +415,11 @@ class StandaloneMessagingProviderTest {
         raw.addProperty("x", 1);
         assertDoesNotThrow(() -> provider.publishRaw("prov/disc/raw", raw),
                 "publishRaw on a disconnected client must be swallowed");
+        PublishConfirmationException strict = assertThrows(PublishConfirmationException.class,
+                () -> provider.publishConfirmed("prov/disc/confirmed", msg("X").toBytes(),
+                        Qos.AT_LEAST_ONCE, Duration.ofSeconds(1)),
+                "confirmed publish must propagate disconnect instead of claiming success");
+        assertEquals(PublishConfirmationException.Reason.TRANSPORT_ERROR, strict.getReason());
         // internalUnsubscribe has a broad catch(Exception) -> safe even on a disconnected client.
         assertDoesNotThrow(() -> provider.unsubscribe("prov/disc/sub"),
                 "unsubscribe on a disconnected client must be swallowed");

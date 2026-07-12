@@ -23,9 +23,15 @@ jobs:
           - 1883:1883
     steps:
       - uses: actions/checkout@v4
+        with:
+          # diff-cover needs the merge base with the PR base branch.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       # The durable-CloudWatch + streaming tests load the native edgestreamlog node addon,
       # so build it before the suite (mirrors the streaming workflow's node job).
       - uses: dtolnay/rust-toolchain@stable
@@ -36,6 +42,17 @@ jobs:
       # streaming binding, and the TS example) so cross-package deps link cleanly.
       - run: npm ci || npm install
       - run: npm run build --workspace=@edgecommons/edgecommons
-      # `coverage` runs the full suite AND enforces the >=90% statements/lines gate
-      # (thresholds in vitest.config.ts).
+      # `coverage` runs the full suite AND enforces the >=92% statements/lines gate
+      # (thresholds in vitest.config.ts); its cobertura reporter writes
+      # libs/ts/coverage/cobertura-coverage.xml for the diff-coverage gate below.
       - run: npm run coverage --workspace=@edgecommons/edgecommons
+
+      # The bundle average is a lagging indicator: a large under-tested change barely moves it. The
+      # diff gate asks the question that matters on day one — is the code THIS pr changed tested? —
+      # and holds every changed line to 95%. A PR that changes no TypeScript source has no changed
+      # lines and passes trivially.
+      - name: Diff coverage gate (95% of changed lines)
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          pip install diff-cover
+          diff-cover libs/ts/coverage/cobertura-coverage.xml --compare-branch=origin/main --fail-under=95

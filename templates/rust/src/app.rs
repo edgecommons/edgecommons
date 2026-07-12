@@ -52,6 +52,49 @@ const SET_GREETING: &str = "set-greeting";
 /// How often the demo loop ticks (publishes the status/metric/data/evt quartet below).
 const TICK_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Shared state installed into the application command before the inbox becomes ACTIVE.
+pub type GreetingState = Arc<Mutex<String>>;
+
+/// Construct the demo state before building the EdgeCommons runtime.
+pub fn greeting_state() -> GreetingState {
+    Arc::new(Mutex::new("Hello from <<COMPONENTNAME>>".to_string()))
+}
+
+/// Install every application command before acknowledged inbox startup.
+pub fn configure_commands(
+    commands: &CommandInbox,
+    greeting: GreetingState,
+) -> edgecommons::Result<()> {
+    commands.register(
+        SET_GREETING,
+        command_handler(move |request| {
+            let greeting = Arc::clone(&greeting);
+            async move {
+                let next = match request
+                    .body
+                    .get("greeting")
+                    .and_then(|value| value.as_str())
+                {
+                    Some(value) => value.to_string(),
+                    None => {
+                        return Err(CommandError::new(
+                            "BAD_ARGS",
+                            "expected a JSON body {\"greeting\": \"<text>\"}",
+                        ));
+                    }
+                };
+                let previous = {
+                    let mut guard = greeting.lock().expect("greeting mutex poisoned");
+                    std::mem::replace(&mut *guard, next.clone())
+                };
+                Ok(Some(
+                    json!({ "previousGreeting": previous, "greeting": next }),
+                ))
+            }
+        }),
+    )
+}
+
 /// The component's business logic and the `edgecommons` service handles it operates over.
 pub struct App {
     config: Arc<Config>,
@@ -67,7 +110,7 @@ pub struct App {
     /// startup, like the Java/Python/TS facades).
     uns: Uns,
     /// In-memory demo state: mutated by the [`SET_GREETING`] command (registered in
-    /// [`App::new`]), read back by the periodic status publish in [`App::run`] — so a console
+    /// [`configure_commands`]), read back by the periodic status publish in [`App::run`] — so a console
     /// "Send command" has a visible effect without needing a dedicated custom "get" verb.
     greeting: Arc<Mutex<String>>,
 }
@@ -89,7 +132,7 @@ impl App {
     /// Build the app from an initialized [`edgecommons::EdgeCommons`] runtime, capturing
     /// the service handles it needs, registering for config hot-reload, defining the demo
     /// metric, and registering the demo custom command verb.
-    pub fn new(gg: &EdgeCommons) -> anyhow::Result<Self> {
+    pub fn new(gg: &EdgeCommons, greeting: GreetingState) -> anyhow::Result<Self> {
         // Dynamic config pickup: react to deployment/shadow config changes at runtime.
         gg.add_config_change_listener(Arc::new(ConfigListener));
 
@@ -107,38 +150,6 @@ impl App {
                 .add_dimension("demo", "scaffold")
                 .build(),
         );
-
-        let greeting = Arc::new(Mutex::new("Hello from <<COMPONENTNAME>>".to_string()));
-
-        // --- commands: ping/reload-config/get-configuration are already live (wired by
-        // EdgeCommonsBuilder::build before this runs). Register ONE custom verb so there is
-        // something for the console's "Send command" to invoke beyond the built-ins.
-        // `gg.commands()` is only `None` when no messaging transport was wired at all.
-        if let Some(commands) = gg.commands() {
-            let greeting_for_handler = Arc::clone(&greeting);
-            commands.register(
-                SET_GREETING,
-                command_handler(move |request| {
-                    let greeting = Arc::clone(&greeting_for_handler);
-                    async move {
-                        let next = match request.body.get("greeting").and_then(|v| v.as_str()) {
-                            Some(g) => g.to_string(),
-                            None => {
-                                return Err(CommandError::new(
-                                    "BAD_ARGS",
-                                    "expected a JSON body {\"greeting\": \"<text>\"}",
-                                ));
-                            }
-                        };
-                        let previous = {
-                            let mut guard = greeting.lock().expect("greeting mutex poisoned");
-                            std::mem::replace(&mut *guard, next.clone())
-                        };
-                        Ok(Some(json!({ "previousGreeting": previous, "greeting": next })))
-                    }
-                }),
-            )?;
-        }
 
         // --- instance connectivity: ONE provider, TWO surfaces. Whatever it returns is pushed
         // into the `state` keepalive's `instances[]` on every tick AND returned by the built-in

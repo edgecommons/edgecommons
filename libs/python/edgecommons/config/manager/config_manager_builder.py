@@ -20,7 +20,12 @@ logger = logging.getLogger("ConfigManagerBuilder")
 
 class ConfigManagerBuilder:
     @staticmethod
-    def build(args: Namespace, component_name: str) -> ConfigManager:
+    def build(
+        args: Namespace,
+        component_name: str,
+        candidate_validators=None,
+        validation_timeout_secs=5.0,
+    ) -> ConfigManager:
         config_args = args.config
         # Use the identity already resolved by the platform resolver (canonical
         # precedence: -t > AWS_IOT_THING_NAME > NOT_GREENGRASS). Fall back to the
@@ -35,11 +40,16 @@ class ConfigManagerBuilder:
         platform = getattr(args, "platform", None)
         if not isinstance(platform, Platform):
             platform = None
+        lifecycle = {
+            "platform": platform,
+            "candidate_validators": candidate_validators,
+            "validation_timeout_secs": validation_timeout_secs,
+        }
         if config_args[0].upper() == "FILE":
             logger.info("Config file specified. Using FileConfigManager")
             config_file = config_args[1] if len(config_args) > 1 else "config.json"
             config_manager = FileConfigManager(
-                thing_name, component_name, config_file, platform=platform,
+                thing_name, component_name, config_file, **lifecycle,
             )
         elif config_args[0].upper() == "CONFIGMAP":
             logger.info("CONFIGMAP specified. Using ConfigMapConfigManager")
@@ -48,13 +58,13 @@ class ConfigManagerBuilder:
             mount_dir = config_args[1] if len(config_args) > 1 else None
             config_key = config_args[2] if len(config_args) > 2 else None
             config_manager = ConfigMapConfigManager(
-                thing_name, component_name, mount_dir, config_key, platform=platform,
+                thing_name, component_name, mount_dir, config_key, **lifecycle,
             )
         elif config_args[0].upper() == "ENV":
             logger.info("Environment config specified. Using EnvironmentConfigManager")
             env_var = config_args[1] if len(config_args) > 1 else "CONFIG"
             config_manager = EnvironmentConfigManager(
-                thing_name, component_name, env_var, platform=platform,
+                thing_name, component_name, env_var, **lifecycle,
             )
         elif config_args[0].upper() == "GG_CONFIG":
             logger.info("GG_CONFIG specified. Using GreengrassConfigManager")
@@ -62,7 +72,7 @@ class ConfigManagerBuilder:
             config_component_key = config_args[2] if len(config_args) > 2 else None
             config_manager = GreengrassConfigManager(
                 thing_name, component_name, config_component_name, config_component_key,
-                platform=platform,
+                **lifecycle,
             )
         elif config_args[0].upper() == "SHADOW":
             logger.info("SHADOW specified. Using ShadowConfigManager")
@@ -73,12 +83,12 @@ class ConfigManagerBuilder:
                 config_args[1] if len(config_args) > 1 else _sanitize_shadow_name(component_name)
             )
             config_manager = ShadowConfigManager(
-                thing_name, component_name, shadow_name, platform=platform,
+                thing_name, component_name, shadow_name, **lifecycle,
             )
         elif config_args[0].upper() == "CONFIG_COMPONENT":
             logger.info("CONFIG_COMPONENT specified. Using ConfigComponentManager")
             config_manager = ConfigComponentManager(
-                thing_name, component_name, platform=platform,
+                thing_name, component_name, **lifecycle,
             )
         else:
             logger.fatal(

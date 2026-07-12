@@ -9,6 +9,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.time.Duration;
+import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -29,6 +30,9 @@ public abstract class MessagingProvider
      * bootstrap request gets a deadline instead of hanging forever.
      */
     public static final int DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
+
+    /** Default bound on transport operations concurrently waiting for delivery acknowledgement. */
+    public static final int DEFAULT_MAX_IN_FLIGHT_CONFIRMED_PUBLISHES = 1024;
 
     /**
      * The default {@code request()} deadline applied when a call supplies no per-call timeout.
@@ -169,11 +173,86 @@ public abstract class MessagingProvider
     public abstract void publish(String topic, Message message);
     public abstract void publishNorthbound(String topic, Message message, Qos qos);
 
+    /**
+     * Publishes an already-encoded envelope and returns only after the local transport positively
+     * acknowledges it. Providers that cannot prove acknowledgement must leave this default in
+     * place; silently delegating to {@link #publish(String, Message)} is forbidden.
+     *
+     * @param topic target topic
+     * @param encodedMessage exact serialized envelope bytes
+     * @param qos must be {@link Qos#AT_LEAST_ONCE}
+     * @param timeout positive acknowledgement deadline
+     * @throws UnsupportedOperationException when this provider has no strict confirmation path
+     */
+    public void publishConfirmed(String topic, byte[] encodedMessage, Qos qos, Duration timeout)
+    {
+        throw new UnsupportedOperationException(
+                getClass().getName() + " does not support confirmed local publish");
+    }
+
+    /**
+     * Northbound counterpart of {@link #publishConfirmed(String, byte[], Qos, Duration)}.
+     * Unsupported providers throw rather than degrading to immediate publish.
+     */
+    public void publishNorthboundConfirmed(String topic, byte[] encodedMessage, Qos qos,
+                                            Duration timeout)
+    {
+        throw new UnsupportedOperationException(
+                getClass().getName() + " does not support confirmed northbound publish");
+    }
+
+    /** Validates the common strict-confirmation contract and returns its millisecond deadline. */
+    protected static long confirmedTimeoutMillis(byte[] encodedMessage, Qos qos, Duration timeout)
+    {
+        Objects.requireNonNull(encodedMessage, "encodedMessage must not be null");
+        Objects.requireNonNull(qos, "qos must not be null");
+        Objects.requireNonNull(timeout, "timeout must not be null");
+        if (qos != Qos.AT_LEAST_ONCE)
+        {
+            throw new IllegalArgumentException(
+                    "confirmed publish requires explicit QoS 1 (AT_LEAST_ONCE)");
+        }
+        if (timeout.isZero() || timeout.isNegative())
+        {
+            throw new IllegalArgumentException("confirmed publish timeout must be positive");
+        }
+        final long timeoutMillis;
+        try
+        {
+            timeoutMillis = timeout.toMillis();
+        }
+        catch (ArithmeticException e)
+        {
+            throw new IllegalArgumentException("confirmed publish timeout is too large", e);
+        }
+        if (timeoutMillis <= 0)
+        {
+            throw new IllegalArgumentException(
+                    "confirmed publish timeout must be at least one millisecond");
+        }
+        return timeoutMillis;
+    }
+
     public abstract void publishRaw(String topic, JsonObject payload);
     public abstract void publishNorthboundRaw(String topic, JsonObject payload, Qos qos);
 
     public abstract void subscribe(String topicFilter, BiConsumer<String, Message> callback,
                                    int maxConcurrency, int maxMessages);
+
+    /**
+     * Subscribes locally and returns only after positive transport acknowledgement. MQTT means
+     * SUBACK; Greengrass means successful subscription-operation completion. Implementations that
+     * cannot prove acknowledgement must throw rather than delegate to the immediate API.
+     */
+    public void subscribeAcknowledged(String topicFilter,
+                                      BiConsumer<String, Message> callback,
+                                      int maxConcurrency,
+                                      int maxMessages,
+                                      Duration timeout)
+    {
+        throw new UnsupportedOperationException(
+                getClass().getName() + " does not support acknowledged local subscribe");
+    }
     public abstract void subscribeNorthbound(String topicFilter, BiConsumer<String, Message> callback, Qos qos,
                                             int maxConcurrency, int maxMessages);
 
@@ -191,6 +270,31 @@ public abstract class MessagingProvider
     public abstract void unsubscribe(String topicFilter);
 
     public abstract void unsubscribeNorthbound(String topicFilter);
+
+    /** Validates an acknowledged-subscription deadline and returns milliseconds. */
+    protected static long subscriptionTimeoutMillis(Duration timeout)
+    {
+        Objects.requireNonNull(timeout, "timeout must not be null");
+        if (timeout.isZero() || timeout.isNegative())
+        {
+            throw new IllegalArgumentException("subscription acknowledgement timeout must be positive");
+        }
+        long millis;
+        try
+        {
+            millis = timeout.toMillis();
+        }
+        catch (ArithmeticException e)
+        {
+            throw new IllegalArgumentException("subscription acknowledgement timeout is too large", e);
+        }
+        if (millis <= 0)
+        {
+            throw new IllegalArgumentException(
+                    "subscription acknowledgement timeout must be at least one millisecond");
+        }
+        return millis;
+    }
 
     public abstract ReplyFuture request(String topic, Message message);
 

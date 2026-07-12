@@ -51,10 +51,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use rumqttc::{
-    AsyncClient, Event, LastWill, MqttOptions, Packet, QoS, TlsConfiguration, Transport,
+    AsyncClient, Event, LastWill, MqttOptions, Outgoing, Packet, QoS, SubscribeReasonCode,
+    TlsConfiguration, Transport,
 };
 use tokio::sync::mpsc::{self, Sender, error::TrySendError};
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{Notify, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::error::{EdgeCommonsError, Result};
@@ -65,6 +66,10 @@ use crate::messaging::{Destination, MessagingProvider, Qos, Subscription, topic_
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Event-loop request channel capacity.
 const EVENTLOOP_CAP: usize = 32;
+/// Bounded ingress for the single per-connection publish funnel.
+const PUBLISH_FUNNEL_CAP: usize = 1024;
+/// Maximum publish markers awaiting packet-id assignment or acknowledgement.
+const MAX_TRACKED_PUBLISHES: usize = 1024;
 /// Minimum MQTT packet budget for EdgeCommons payloads. `rumqttc` defaults to
 /// 10 KiB for both directions, which is far below EMQX's 1 MiB default and too
 /// small for legitimate command replies such as OPC UA address-space pages.
@@ -84,12 +89,187 @@ type Registry = Arc<Mutex<HashMap<u64, SubEntry>>>;
 /// MQTT acks SUBSCRIBEs in order on a single connection, so the front waiter corresponds to the
 /// oldest outstanding subscribe. (Reconnect re-subscribes run in the event loop with no waiter
 /// pending, so their SUBACKs simply pop an empty queue.)
-type PendingSubacks = Arc<Mutex<VecDeque<oneshot::Sender<()>>>>;
+struct PendingSuback {
+    id: u64,
+    result: oneshot::Sender<Result<()>>,
+}
+
+type PendingSubacks = Arc<Mutex<VecDeque<PendingSuback>>>;
+
+/// One application publish tracked from funnel submission through its transport acknowledgement.
+#[derive(Debug)]
+struct TrackedPublish {
+    id: u64,
+    qos: QoS,
+    confirmation: Option<oneshot::Sender<Result<()>>>,
+}
+
+/// Ordered pre-wire markers plus packet-id-addressable in-flight QoS 1/2 publishes.
+///
+/// Every publish, including ordinary fire-and-forget QoS publishes, receives a marker. That is
+/// what makes the FIFO `Outgoing::Publish(pkid)` event safe to associate under concurrent traffic.
+/// Once a nonzero packet id is observed, the marker remains in `inflight` until its PUBACK/PUBCOMP;
+/// retransmitted `Outgoing::Publish(pkid)` events therefore cannot consume the next marker.
+#[derive(Default)]
+struct PublishTracking {
+    awaiting_outgoing: VecDeque<TrackedPublish>,
+    inflight: HashMap<u16, TrackedPublish>,
+}
+
+impl PublishTracking {
+    fn len(&self) -> usize {
+        self.awaiting_outgoing.len() + self.inflight.len()
+    }
+
+    fn register(&mut self, publish: TrackedPublish) -> std::result::Result<(), TrackedPublish> {
+        if self.len() >= MAX_TRACKED_PUBLISHES {
+            return Err(publish);
+        }
+        self.awaiting_outgoing.push_back(publish);
+        Ok(())
+    }
+
+    fn remove(&mut self, id: u64) -> Option<TrackedPublish> {
+        if let Some(index) = self
+            .awaiting_outgoing
+            .iter()
+            .position(|publish| publish.id == id)
+        {
+            return self.awaiting_outgoing.remove(index);
+        }
+        let pkid = self
+            .inflight
+            .iter()
+            .find_map(|(pkid, publish)| (publish.id == id).then_some(*pkid));
+        pkid.and_then(|pkid| self.inflight.remove(&pkid))
+    }
+
+    /// Observe a wire send. Returns `true` when a marker left the bounded tracker.
+    fn observe_outgoing(&mut self, pkid: u16) -> bool {
+        if pkid != 0 && self.inflight.contains_key(&pkid) {
+            tracing::debug!(pkid, "observed retransmitted MQTT publish");
+            return false;
+        }
+
+        let Some(mut publish) = self.awaiting_outgoing.pop_front() else {
+            tracing::error!(
+                pkid,
+                "MQTT emitted an outgoing publish with no funnel marker; confirmation disabled for it"
+            );
+            return false;
+        };
+
+        match (publish.qos, pkid) {
+            (QoS::AtMostOnce, 0) => {
+                if let Some(tx) = publish.confirmation.take() {
+                    let _ = tx.send(Err(EdgeCommonsError::Messaging(
+                        "confirmed MQTT publish cannot use QoS 0".to_string(),
+                    )));
+                }
+                true
+            }
+            (QoS::AtLeastOnce | QoS::ExactlyOnce, 1..) => {
+                self.inflight.insert(pkid, publish);
+                false
+            }
+            (qos, packet_id) => {
+                if let Some(tx) = publish.confirmation.take() {
+                    let _ = tx.send(Err(EdgeCommonsError::Messaging(format!(
+                        "MQTT publish tracker observed incompatible QoS {qos:?} and packet id {packet_id}; outcome is ambiguous"
+                    ))));
+                }
+                tracing::error!(
+                    publish_id = publish.id,
+                    ?qos,
+                    packet_id,
+                    "MQTT publish tracker lost protocol alignment"
+                );
+                true
+            }
+        }
+    }
+
+    /// Observe a PUBACK. Returns `true` when a marker left the bounded tracker.
+    fn observe_puback(&mut self, pkid: u16) -> bool {
+        let Some(mut publish) = self.inflight.remove(&pkid) else {
+            tracing::debug!(pkid, "PUBACK had no tracked application waiter");
+            return false;
+        };
+        if publish.qos != QoS::AtLeastOnce {
+            tracing::error!(
+                pkid,
+                qos = ?publish.qos,
+                "PUBACK did not match a QoS 1 publish marker"
+            );
+            if let Some(tx) = publish.confirmation.take() {
+                let _ = tx.send(Err(EdgeCommonsError::Messaging(
+                    "MQTT PUBACK did not match the tracked QoS; outcome is ambiguous".to_string(),
+                )));
+            }
+            return true;
+        }
+        if let Some(tx) = publish.confirmation.take() {
+            let _ = tx.send(Ok(()));
+        }
+        true
+    }
+
+    /// Observe a PUBCOMP. Returns `true` when a marker left the bounded tracker.
+    fn observe_pubcomp(&mut self, pkid: u16) -> bool {
+        if let Some(mut publish) = self.inflight.remove(&pkid) {
+            if let Some(tx) = publish.confirmation.take() {
+                let _ = tx.send(Err(EdgeCommonsError::Messaging(
+                    "confirmed MQTT publish requires QoS 1, not QoS 2".to_string(),
+                )));
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn fail_confirmations(&mut self, detail: &str) {
+        for publish in self
+            .awaiting_outgoing
+            .iter_mut()
+            .chain(self.inflight.values_mut())
+        {
+            if let Some(tx) = publish.confirmation.take() {
+                let _ = tx.send(Err(EdgeCommonsError::Messaging(detail.to_string())));
+            }
+        }
+    }
+}
+
+type PublishTracker = Arc<Mutex<PublishTracking>>;
+
+/// One command entering the per-connection publish funnel.
+struct PublishCommand {
+    id: u64,
+    topic: String,
+    payload: Vec<u8>,
+    qos: QoS,
+    confirmation: Option<oneshot::Sender<Result<()>>>,
+    submitted: oneshot::Sender<Result<()>>,
+}
 
 /// Removes a subscription's routing entry when the [`Subscription`] is dropped.
 struct SubGuard {
     registry: Registry,
     id: u64,
+}
+
+struct PendingSubackGuard {
+    pending: PendingSubacks,
+    id: u64,
+}
+
+impl Drop for PendingSubackGuard {
+    fn drop(&mut self) {
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.retain(|waiter| waiter.id != self.id);
+        }
+    }
 }
 
 impl Drop for SubGuard {
@@ -103,10 +283,15 @@ impl Drop for SubGuard {
 /// A single broker connection (client + event-loop task + routing registry).
 struct BrokerConn {
     client: AsyncClient,
+    publish_tx: mpsc::Sender<PublishCommand>,
+    publish_tracker: PublishTracker,
     registry: Registry,
     pending_subacks: PendingSubacks,
     next_id: AtomicU64,
+    next_suback_id: AtomicU64,
+    next_publish_id: AtomicU64,
     task: JoinHandle<()>,
+    publish_task: JoinHandle<()>,
     /// Live connection state: the event-loop task sets it `true` on each `CONNACK` and `false`
     /// on a connection error. Read (latest value) by [`MqttProvider::connected`] for `/readyz`.
     connected: watch::Receiver<bool>,
@@ -114,7 +299,45 @@ struct BrokerConn {
 
 impl Drop for BrokerConn {
     fn drop(&mut self) {
+        if let Ok(mut tracker) = self.publish_tracker.lock() {
+            tracker.fail_confirmations(
+                "MQTT provider stopped before PUBACK; publish outcome is ambiguous",
+            );
+        }
         self.task.abort();
+        self.publish_task.abort();
+    }
+}
+
+impl BrokerConn {
+    async fn submit_publish(
+        &self,
+        topic: &str,
+        payload: Vec<u8>,
+        qos: Qos,
+        confirmation: Option<oneshot::Sender<Result<()>>>,
+    ) -> Result<u64> {
+        let id = self.next_publish_id.fetch_add(1, Ordering::Relaxed);
+        let (submitted_tx, submitted_rx) = oneshot::channel();
+        self.publish_tx
+            .send(PublishCommand {
+                id,
+                topic: topic.to_string(),
+                payload,
+                qos: to_rumqttc_qos(qos),
+                confirmation,
+                submitted: submitted_tx,
+            })
+            .await
+            .map_err(|_| {
+                EdgeCommonsError::Messaging(format!("publish funnel for '{topic}' is not running"))
+            })?;
+        submitted_rx.await.map_err(|_| {
+            EdgeCommonsError::Messaging(format!(
+                "publish funnel for '{topic}' stopped before submission"
+            ))
+        })??;
+        Ok(id)
     }
 }
 
@@ -201,36 +424,24 @@ impl MqttProvider {
             }),
         }
     }
-}
 
-#[async_trait]
-impl MessagingProvider for MqttProvider {
-    async fn publish(
-        &self,
-        topic: &str,
-        payload: Vec<u8>,
-        dest: Destination,
-        qos: Qos,
-    ) -> Result<()> {
-        let conn = self.conn(dest)?;
-        conn.client
-            .publish(topic, to_rumqttc_qos(qos), false, payload)
-            .await
-            .map_err(|e| EdgeCommonsError::Messaging(format!("publish to '{topic}' failed: {e}")))
-    }
-
-    async fn subscribe(
+    async fn subscribe_with_acknowledgement(
         &self,
         filter: &str,
         dest: Destination,
         qos: Qos,
         max_messages: usize,
+        timeout: Duration,
     ) -> Result<Subscription> {
+        if timeout.is_zero() {
+            return Err(EdgeCommonsError::Messaging(
+                "acknowledged MQTT subscribe requires a positive timeout".to_string(),
+            ));
+        }
         let conn = self.conn(dest)?;
         let rqos = to_rumqttc_qos(qos);
         let (tx, rx) = mpsc::channel(max_messages.max(1));
         let id = conn.next_id.fetch_add(1, Ordering::Relaxed);
-
         {
             let mut map = conn.registry.lock().map_err(|_| {
                 EdgeCommonsError::Messaging("subscription registry poisoned".to_string())
@@ -244,34 +455,135 @@ impl MessagingProvider for MqttProvider {
                 },
             );
         }
-
-        // Register a SUBACK waiter before sending the SUBSCRIBE so the event loop can signal us.
-        let (ack_tx, ack_rx) = oneshot::channel();
-        {
-            let mut q = conn
-                .pending_subacks
-                .lock()
-                .map_err(|_| EdgeCommonsError::Messaging("suback queue poisoned".to_string()))?;
-            q.push_back(ack_tx);
-        }
-
-        conn.client.subscribe(filter, rqos).await.map_err(|e| {
-            EdgeCommonsError::Messaging(format!("subscribe to '{filter}' failed: {e}"))
-        })?;
-
-        // Block until the broker confirms the subscription (SUBACK), so a publish issued right
-        // after subscribe isn't lost — parity with Java/Python/TS. Fall back to proceeding (the
-        // entry is registered and will be re-subscribed on reconnect) if no SUBACK arrives in time.
-        match tokio::time::timeout(CONNECT_TIMEOUT, ack_rx).await {
-            Ok(Ok(())) => {}
-            _ => tracing::warn!(filter, "SUBACK not observed within timeout; proceeding"),
-        }
-
-        let guard = SubGuard {
+        // These two guards make future cancellation safe: a caller-side timeout cannot leave a
+        // routing entry or stale FIFO acknowledgement waiter behind.
+        let sub_guard = SubGuard {
             registry: conn.registry.clone(),
             id,
         };
-        Ok(Subscription::new(rx, Box::new(guard)))
+        let ack_id = conn.next_suback_id.fetch_add(1, Ordering::Relaxed);
+        let (ack_tx, ack_rx) = oneshot::channel();
+        {
+            let mut pending = conn
+                .pending_subacks
+                .lock()
+                .map_err(|_| EdgeCommonsError::Messaging("suback queue poisoned".to_string()))?;
+            pending.push_back(PendingSuback {
+                id: ack_id,
+                result: ack_tx,
+            });
+        }
+        let _ack_guard = PendingSubackGuard {
+            pending: conn.pending_subacks.clone(),
+            id: ack_id,
+        };
+
+        conn.client.subscribe(filter, rqos).await.map_err(|error| {
+            EdgeCommonsError::Messaging(format!("subscribe to '{filter}' failed: {error}"))
+        })?;
+
+        match tokio::time::timeout(timeout, ack_rx).await {
+            Ok(Ok(Ok(()))) => Ok(Subscription::new(rx, Box::new(sub_guard))),
+            Ok(Ok(Err(error))) => {
+                let _ = conn.client.unsubscribe(filter).await;
+                Err(error)
+            }
+            Ok(Err(_)) => {
+                let _ = conn.client.unsubscribe(filter).await;
+                Err(EdgeCommonsError::Messaging(format!(
+                    "SUBACK tracker ended before acknowledgement for '{filter}'"
+                )))
+            }
+            Err(_) => {
+                let _ = conn.client.unsubscribe(filter).await;
+                Err(EdgeCommonsError::Messaging(format!(
+                    "timed out after {}s waiting for MQTT SUBACK on '{filter}'",
+                    timeout.as_secs_f64()
+                )))
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl MessagingProvider for MqttProvider {
+    async fn publish(
+        &self,
+        topic: &str,
+        payload: Vec<u8>,
+        dest: Destination,
+        qos: Qos,
+    ) -> Result<()> {
+        let conn = self.conn(dest)?;
+        conn.submit_publish(topic, payload, qos, None).await?;
+        Ok(())
+    }
+
+    async fn publish_confirmed(
+        &self,
+        topic: &str,
+        payload: Vec<u8>,
+        dest: Destination,
+        qos: Qos,
+        timeout: Duration,
+    ) -> Result<()> {
+        if qos != Qos::AtLeastOnce {
+            return Err(EdgeCommonsError::Messaging(
+                "confirmed MQTT publish requires QoS 1".to_string(),
+            ));
+        }
+        if timeout.is_zero() {
+            return Err(EdgeCommonsError::Messaging(
+                "confirmed MQTT publish requires a positive timeout".to_string(),
+            ));
+        }
+        let conn = self.conn(dest)?;
+        if !*conn.connected.borrow() {
+            return Err(EdgeCommonsError::Messaging(format!(
+                "cannot confirm MQTT publish to '{topic}' while disconnected"
+            )));
+        }
+
+        let (confirmation_tx, confirmation_rx) = oneshot::channel();
+        let submit_and_confirm = async {
+            conn.submit_publish(topic, payload, Qos::AtLeastOnce, Some(confirmation_tx))
+                .await?;
+            confirmation_rx.await.map_err(|_| {
+                EdgeCommonsError::Messaging(format!(
+                    "MQTT confirmation tracker ended before PUBACK for '{topic}'; outcome is ambiguous"
+                ))
+            })?
+        };
+        match tokio::time::timeout(timeout, submit_and_confirm).await {
+            Ok(result) => result,
+            Err(_) => Err(EdgeCommonsError::Messaging(format!(
+                "timed out after {}s submitting or waiting for MQTT PUBACK on '{topic}'; outcome is ambiguous",
+                timeout.as_secs_f64()
+            ))),
+        }
+    }
+
+    async fn subscribe(
+        &self,
+        filter: &str,
+        dest: Destination,
+        qos: Qos,
+        max_messages: usize,
+    ) -> Result<Subscription> {
+        self.subscribe_with_acknowledgement(filter, dest, qos, max_messages, CONNECT_TIMEOUT)
+            .await
+    }
+
+    async fn subscribe_acknowledged(
+        &self,
+        filter: &str,
+        dest: Destination,
+        qos: Qos,
+        max_messages: usize,
+        timeout: Duration,
+    ) -> Result<Subscription> {
+        self.subscribe_with_acknowledgement(filter, dest, qos, max_messages, timeout)
+            .await
     }
 
     async fn unsubscribe(&self, filter: &str, dest: Destination) -> Result<()> {
@@ -336,10 +648,81 @@ async fn connect_broker(
     let (client, mut eventloop) = AsyncClient::new(options, EVENTLOOP_CAP);
     let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
     let pending_subacks: PendingSubacks = Arc::new(Mutex::new(VecDeque::new()));
+    let publish_tracker: PublishTracker = Arc::new(Mutex::new(PublishTracking::default()));
+    let publish_space = Arc::new(Notify::new());
+    let (publish_tx, mut publish_rx) = mpsc::channel::<PublishCommand>(PUBLISH_FUNNEL_CAP);
+
+    let publish_client = client.clone();
+    let publish_tracker_task = publish_tracker.clone();
+    let publish_space_task = publish_space.clone();
+    let publish_task = tokio::spawn(async move {
+        'commands: while let Some(command) = publish_rx.recv().await {
+            let PublishCommand {
+                id,
+                topic,
+                payload,
+                qos,
+                confirmation,
+                submitted,
+            } = command;
+
+            let mut tracked = TrackedPublish {
+                id,
+                qos,
+                confirmation,
+            };
+            loop {
+                let registered = match publish_tracker_task.lock() {
+                    Ok(mut tracker) => tracker.register(tracked),
+                    Err(_) => {
+                        let error = "MQTT publish tracker is poisoned";
+                        if let Some(tx) = tracked.confirmation.take() {
+                            let _ = tx.send(Err(EdgeCommonsError::Messaging(error.to_string())));
+                        }
+                        let _ = submitted.send(Err(EdgeCommonsError::Messaging(error.to_string())));
+                        continue 'commands;
+                    }
+                };
+                match registered {
+                    Ok(()) => break,
+                    Err(returned) => {
+                        // Preserve ordinary-publish compatibility by exposing bounded
+                        // backpressure instead of turning tracker saturation into message loss.
+                        tracked = returned;
+                        publish_space_task.notified().await;
+                    }
+                }
+            }
+
+            match publish_client.publish(&topic, qos, false, payload).await {
+                Ok(()) => {
+                    let _ = submitted.send(Ok(()));
+                }
+                Err(error) => {
+                    let tracked = publish_tracker_task
+                        .lock()
+                        .ok()
+                        .and_then(|mut tracker| tracker.remove(id));
+                    if tracked.is_some() {
+                        publish_space_task.notify_one();
+                    }
+                    let detail = format!("publish to '{topic}' failed: {error}");
+                    if let Some(mut tracked) = tracked {
+                        if let Some(tx) = tracked.confirmation.take() {
+                            let _ = tx.send(Err(EdgeCommonsError::Messaging(detail.clone())));
+                        }
+                    }
+                    let _ = submitted.send(Err(EdgeCommonsError::Messaging(detail)));
+                }
+            }
+        }
+    });
 
     let (connected_tx, connected_rx) = watch::channel(false);
     let registry_task = registry.clone();
     let pending_task = pending_subacks.clone();
+    let publish_tracker_event = publish_tracker.clone();
+    let publish_space_event = publish_space.clone();
     let client_task = client.clone();
 
     let task = tokio::spawn(async move {
@@ -357,12 +740,47 @@ async fn connect_broker(
                     let _ = connected_tx.send(true);
                     tracing::info!("MQTT broker connection established");
                 }
-                Ok(Event::Incoming(Packet::SubAck(_))) => {
+                Ok(Event::Incoming(Packet::SubAck(ack))) => {
                     // Wake the oldest outstanding subscribe() (FIFO; SUBACKs are ordered).
                     if let Ok(mut q) = pending_task.lock() {
-                        if let Some(tx) = q.pop_front() {
-                            let _ = tx.send(());
+                        if let Some(waiter) = q.pop_front() {
+                            let accepted = ack
+                                .return_codes
+                                .iter()
+                                .all(|code| matches!(code, SubscribeReasonCode::Success(_)));
+                            let result = if accepted {
+                                Ok(())
+                            } else {
+                                Err(EdgeCommonsError::Messaging(
+                                    "MQTT broker rejected subscription in SUBACK".to_string(),
+                                ))
+                            };
+                            let _ = waiter.result.send(result);
                         }
+                    }
+                }
+                Ok(Event::Outgoing(Outgoing::Publish(pkid))) => {
+                    let freed = publish_tracker_event
+                        .lock()
+                        .is_ok_and(|mut tracker| tracker.observe_outgoing(pkid));
+                    if freed {
+                        publish_space_event.notify_one();
+                    }
+                }
+                Ok(Event::Incoming(Packet::PubAck(ack))) => {
+                    let freed = publish_tracker_event
+                        .lock()
+                        .is_ok_and(|mut tracker| tracker.observe_puback(ack.pkid));
+                    if freed {
+                        publish_space_event.notify_one();
+                    }
+                }
+                Ok(Event::Incoming(Packet::PubComp(ack))) => {
+                    let freed = publish_tracker_event
+                        .lock()
+                        .is_ok_and(|mut tracker| tracker.observe_pubcomp(ack.pkid));
+                    if freed {
+                        publish_space_event.notify_one();
                     }
                 }
                 Ok(Event::Incoming(Packet::Publish(p))) => {
@@ -388,6 +806,11 @@ async fn connect_broker(
                 Ok(_) => {}
                 Err(e) => {
                     let _ = connected_tx.send(false);
+                    if let Ok(mut tracker) = publish_tracker_event.lock() {
+                        tracker.fail_confirmations(
+                            "MQTT connection failed before PUBACK; publish outcome is ambiguous",
+                        );
+                    }
                     tracing::warn!(error = %e, "MQTT connection error; retrying");
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
@@ -403,14 +826,20 @@ async fn connect_broker(
     if connacked {
         Ok(BrokerConn {
             client,
+            publish_tx,
+            publish_tracker,
             registry,
             pending_subacks,
             next_id: AtomicU64::new(0),
+            next_suback_id: AtomicU64::new(1),
+            next_publish_id: AtomicU64::new(1),
             task,
+            publish_task,
             connected: ready,
         })
     } else {
         task.abort();
+        publish_task.abort();
         Err(EdgeCommonsError::Messaging(format!(
             "timed out waiting {}s for broker CONNACK",
             CONNECT_TIMEOUT.as_secs()
@@ -672,6 +1101,277 @@ mod tests {
         assert!(
             build_last_will(&last_will("t", Vec::new(), Qos::ExactlyOnce)).is_err(),
             "qos 2 is invalid for MQTT last will"
+        );
+    }
+
+    #[tokio::test]
+    async fn ordinary_qos1_publish_cannot_consume_a_later_confirmation() {
+        let mut tracker = PublishTracking::default();
+        tracker
+            .register(TrackedPublish {
+                id: 1,
+                qos: QoS::AtLeastOnce,
+                confirmation: None,
+            })
+            .unwrap();
+        let (confirmed_tx, mut confirmed_rx) = oneshot::channel();
+        tracker
+            .register(TrackedPublish {
+                id: 2,
+                qos: QoS::AtLeastOnce,
+                confirmation: Some(confirmed_tx),
+            })
+            .unwrap();
+
+        tracker.observe_outgoing(41);
+        tracker.observe_outgoing(42);
+        tracker.observe_puback(41);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), &mut confirmed_rx)
+                .await
+                .is_err(),
+            "the ordinary publish's PUBACK must not settle the later confirmed publish"
+        );
+        tracker.observe_puback(42);
+        assert!(confirmed_rx.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn retransmitted_outgoing_publish_does_not_shift_fifo_alignment() {
+        let mut tracker = PublishTracking::default();
+        let (first_tx, first_rx) = oneshot::channel();
+        tracker
+            .register(TrackedPublish {
+                id: 1,
+                qos: QoS::AtLeastOnce,
+                confirmation: Some(first_tx),
+            })
+            .unwrap();
+        tracker.observe_outgoing(7);
+
+        let (second_tx, second_rx) = oneshot::channel();
+        tracker
+            .register(TrackedPublish {
+                id: 2,
+                qos: QoS::AtLeastOnce,
+                confirmation: Some(second_tx),
+            })
+            .unwrap();
+        tracker.observe_outgoing(7); // reconnect retransmission of the first publish
+        tracker.observe_outgoing(8); // the second application's first wire send
+        tracker.observe_puback(7);
+        tracker.observe_puback(8);
+
+        assert!(first_rx.await.unwrap().is_ok());
+        assert!(second_rx.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn disconnect_fails_confirmation_and_late_puback_cannot_reverse_it() {
+        let mut tracker = PublishTracking::default();
+        let (confirmed_tx, confirmed_rx) = oneshot::channel();
+        tracker
+            .register(TrackedPublish {
+                id: 1,
+                qos: QoS::AtLeastOnce,
+                confirmation: Some(confirmed_tx),
+            })
+            .unwrap();
+        tracker.observe_outgoing(9);
+        tracker.fail_confirmations(
+            "MQTT connection failed before PUBACK; publish outcome is ambiguous",
+        );
+        tracker.observe_outgoing(9); // retransmit remains a tombstone, not a new marker
+        tracker.observe_puback(9);
+
+        assert!(confirmed_rx.await.unwrap().is_err());
+        assert_eq!(tracker.len(), 0);
+    }
+
+    #[test]
+    fn publish_tracker_has_a_hard_1024_entry_bound() {
+        let mut tracker = PublishTracking::default();
+        for id in 0..MAX_TRACKED_PUBLISHES as u64 {
+            tracker
+                .register(TrackedPublish {
+                    id,
+                    qos: QoS::AtMostOnce,
+                    confirmation: None,
+                })
+                .unwrap();
+        }
+        assert!(
+            tracker
+                .register(TrackedPublish {
+                    id: MAX_TRACKED_PUBLISHES as u64,
+                    qos: QoS::AtMostOnce,
+                    confirmation: None,
+                })
+                .is_err()
+        );
+    }
+
+    /// Register a marker and return its confirmation receiver.
+    fn tracked(tracker: &mut PublishTracking, id: u64, qos: QoS) -> oneshot::Receiver<Result<()>> {
+        let (tx, rx) = oneshot::channel();
+        tracker
+            .register(TrackedPublish {
+                id,
+                qos,
+                confirmation: Some(tx),
+            })
+            .map_err(|_| "tracker full")
+            .unwrap();
+        rx
+    }
+
+    #[tokio::test]
+    async fn a_failed_wire_send_untracks_its_marker_so_it_cannot_absorb_a_later_puback() {
+        // This is what the publish funnel does when `AsyncClient::publish` errors: it removes
+        // the marker it just registered. If `remove` missed the marker, the FIFO would be one
+        // entry out of step and the NEXT publish's PUBACK would settle the wrong caller.
+        let mut tracker = PublishTracking::default();
+        let failed = tracked(&mut tracker, 1, QoS::AtLeastOnce);
+        let survivor = tracked(&mut tracker, 2, QoS::AtLeastOnce);
+
+        assert!(
+            tracker.remove(1).is_some(),
+            "a marker still awaiting the wire must be removable"
+        );
+        drop(failed);
+        assert_eq!(tracker.len(), 1);
+
+        tracker.observe_outgoing(11);
+        tracker.observe_puback(11);
+        assert!(
+            survivor.await.unwrap().is_ok(),
+            "the surviving publish must be settled by its own PUBACK"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_inflight_marker_is_removable_by_publish_id() {
+        let mut tracker = PublishTracking::default();
+        let inflight = tracked(&mut tracker, 7, QoS::AtLeastOnce);
+        tracker.observe_outgoing(21); // now addressed by packet id, not by the FIFO
+
+        assert!(
+            tracker.remove(7).is_some(),
+            "in-flight markers are removable"
+        );
+        drop(inflight);
+        assert_eq!(tracker.len(), 0);
+        assert!(
+            !tracker.observe_puback(21),
+            "a removed marker's PUBACK must free nothing"
+        );
+        assert!(tracker.remove(7).is_none(), "removal is not repeatable");
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_publish_at_qos_zero_is_reported_as_unconfirmable() {
+        // QoS 0 gets no PUBACK, so a caller awaiting confirmation would hang forever. The
+        // tracker must fail it explicitly instead.
+        let mut tracker = PublishTracking::default();
+        let confirmation = tracked(&mut tracker, 1, QoS::AtMostOnce);
+
+        assert!(
+            tracker.observe_outgoing(0),
+            "a QoS 0 send leaves the tracker immediately"
+        );
+        let error = confirmation.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("cannot use QoS 0"), "{error}");
+        assert_eq!(tracker.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_qos1_send_without_a_packet_id_is_an_ambiguous_outcome_not_a_success() {
+        // Protocol misalignment (a QoS 1/2 marker paired with packet id 0) must never be
+        // reported as a confirmed delivery.
+        let mut tracker = PublishTracking::default();
+        let confirmation = tracked(&mut tracker, 1, QoS::AtLeastOnce);
+
+        assert!(tracker.observe_outgoing(0));
+        let error = confirmation.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("ambiguous"), "{error}");
+        assert_eq!(tracker.len(), 0);
+    }
+
+    #[test]
+    fn an_outgoing_publish_with_no_marker_is_survivable() {
+        // Nothing to associate: the tracker must not pop a marker belonging to another publish
+        // and must not panic.
+        let mut tracker = PublishTracking::default();
+        assert!(
+            !tracker.observe_outgoing(5),
+            "no marker left the bounded tracker"
+        );
+        assert!(
+            !tracker.observe_puback(5),
+            "a PUBACK for an untracked packet id is ignored"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_puback_that_does_not_match_the_tracked_qos_is_ambiguous() {
+        let mut tracker = PublishTracking::default();
+        let confirmation = tracked(&mut tracker, 1, QoS::ExactlyOnce);
+        tracker.observe_outgoing(31);
+
+        assert!(tracker.observe_puback(31), "the marker leaves the tracker");
+        let error = confirmation.await.unwrap().unwrap_err();
+        assert!(
+            error.to_string().contains("ambiguous"),
+            "a QoS 2 publish is not delivered by a PUBACK: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pubcomp_settles_the_marker_as_a_confirmation_error() {
+        // Confirmed publication is defined at QoS 1. A QoS 2 flow completing with PUBCOMP must
+        // release the marker AND tell the caller its confirmation contract was not honored.
+        let mut tracker = PublishTracking::default();
+        let confirmation = tracked(&mut tracker, 1, QoS::ExactlyOnce);
+        tracker.observe_outgoing(41);
+
+        assert!(tracker.observe_pubcomp(41), "the marker leaves the tracker");
+        let error = confirmation.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("requires QoS 1"), "{error}");
+        assert_eq!(tracker.len(), 0);
+        assert!(
+            !tracker.observe_pubcomp(41),
+            "a duplicate PUBCOMP frees nothing"
+        );
+    }
+
+    #[test]
+    fn every_qos_maps_onto_its_mqtt_counterpart() {
+        // The wire QoS is what the broker enforces; a mis-mapping would silently downgrade
+        // delivery guarantees.
+        assert_eq!(to_rumqttc_qos(Qos::AtMostOnce), QoS::AtMostOnce);
+        assert_eq!(to_rumqttc_qos(Qos::AtLeastOnce), QoS::AtLeastOnce);
+        assert_eq!(to_rumqttc_qos(Qos::ExactlyOnce), QoS::ExactlyOnce);
+    }
+
+    #[test]
+    fn a_dropped_subscribe_waiter_leaves_no_stale_fifo_entry() {
+        // A caller-side timeout drops the guard; the SUBACK FIFO must not keep the dead waiter,
+        // or the NEXT subscribe's SUBACK would be routed to a gone caller.
+        let pending: PendingSubacks = Arc::new(Mutex::new(VecDeque::new()));
+        let (tx, _rx) = oneshot::channel();
+        pending
+            .lock()
+            .unwrap()
+            .push_back(PendingSuback { id: 9, result: tx });
+        let guard = PendingSubackGuard {
+            pending: pending.clone(),
+            id: 9,
+        };
+        assert_eq!(pending.lock().unwrap().len(), 1);
+        drop(guard);
+        assert!(
+            pending.lock().unwrap().is_empty(),
+            "the abandoned waiter must be evicted from the FIFO"
         );
     }
 }

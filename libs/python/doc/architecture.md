@@ -25,14 +25,17 @@ gg = EdgeCommonsBuilder.create("com.example.MyComponent").with_args(args).build(
 
 1. **Argument processing** — parse the standard `-c` / `--platform` / `--transport` / `-t` contract
    (plus any app parser).
-2. **Configuration** — `ConfigManagerBuilder.build()` selects the config-source manager and loads +
-   validates the config.
+2. **Configuration** — `ConfigManagerBuilder.build()` selects the config-source manager, schema-checks
+   and pre-commit-validates the initial candidate, atomically installs generation 1, then starts any
+   provider watcher/subscription.
 3. **Messaging** — `MessagingClient.init()` selects the provider for the resolved transport.
 4. **Metrics** — `MetricEmitter.init()` wires the configured metric target(s).
 5. **Heartbeat** — `EnhancedHeartbeat` starts (with messaging + metric services passed in).
 6. **Opt-in subsystems** — credentials / parameters / streaming initialize **only if** their config
    section is present.
-7. **`complete_initialization()`** — enables configuration-change notifications.
+7. **`complete_initialization()`** — enables applied-configuration notifications.
+8. **Command plane** — builder-configured component handlers are installed, then `CommandInbox` waits
+   for transport acknowledgement before reporting `ACTIVE`.
 
 ## Accessing subsystems
 
@@ -68,7 +71,9 @@ HOST → FILE, KUBERNETES → CONFIGMAP).
 
 Config supports template-variable substitution (component / thing / custom tags), hot reload via
 `ConfigurationChangeListener`, multi-instance components (global + per-instance config), and
-JSON-schema validation. The schema is the single-source `schema/edgecommons-config-schema.json` at the
+JSON-schema validation. Component validators run before the atomic generation swap with a 5-second
+overall deadline (60-second maximum); rejected candidates never reach listeners or cfg publication.
+The schema is the single-source `schema/edgecommons-config-schema.json` at the
 monorepo root (synced into `edgecommons/resources/`).
 
 ```python

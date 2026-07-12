@@ -17,14 +17,21 @@
 mod app;
 
 use edgecommons::prelude::*;
+use std::sync::Arc;
 
 /// The component's full name (matches `recipe.yaml` / `gdk-config.json`).
 const COMPONENT_NAME: &str = "<<COMPONENTFULLNAME>>";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let greeting = app::greeting_state();
+    let command_greeting = Arc::clone(&greeting);
     let gg = EdgeCommonsBuilder::new(COMPONENT_NAME)
         .args(std::env::args_os())
+        .initial_ready(false)
+        .configure_commands(move |commands| {
+            app::configure_commands(commands, Arc::clone(&command_greeting))
+        })
         .build()
         .await?;
 
@@ -34,7 +41,8 @@ async fn main() -> anyhow::Result<()> {
         "<<COMPONENTNAME>> starting"
     );
 
-    let app = app::App::new(&gg)?;
+    let app = app::App::new(&gg, greeting)?;
+    gg.set_ready(true);
     app.run(&gg).await?;
 
     tracing::info!("<<COMPONENTNAME>> stopped");

@@ -82,8 +82,11 @@ export type {
   LoggingPublishQueueConfig,
   LoggingPublishRedactionConfig,
   ConfigurationChangeListener,
+  ConfigurationValidationResult,
+  ConfigurationValidator,
   ConfigSource,
 } from "./config";
+export { ConfigurationValidationPhase } from "./config";
 export { EffectiveConfigPublisher, redact } from "./config/effective_config";
 
 // Messaging
@@ -96,7 +99,9 @@ export {
   Qos,
   ReplyFuture,
   RequestTimeoutError,
+  PublishConfirmationError,
   ReservedTopicError,
+  MAX_IN_FLIGHT_CONFIRMED_PUBLISHES,
   REPLY_TOPIC_PREFIX,
   DefaultMessagingService,
   StandaloneMqttProvider,
@@ -117,6 +122,7 @@ export type {
   MessagingConfig,
   BrokerConfig,
   Credentials,
+  PublishConfirmationReason,
 } from "./messaging";
 
 // Metrics
@@ -141,8 +147,25 @@ export { RepublishListener } from "./republish_listener";
 export type { Delayer as RepublishDelayer, ClockMillis as RepublishClockMillis, JitterFn as RepublishJitterFn } from "./republish_listener";
 
 // Command inbox — the minimal `commands()` facade (DESIGN-uns §7.3/§9.5, edge-console slice S2)
-export { CommandInbox, CommandException } from "./commands";
-export type { CommandHandler, CommandResult } from "./commands";
+export {
+  CommandInbox,
+  CommandInboxState,
+  CommandException,
+  CommandOutcomes,
+  DeferredReply,
+  DeferredReplyState,
+  SettlementResult,
+} from "./commands";
+export type {
+  CommandHandler,
+  CommandResult,
+  OutcomeCommandHandler,
+  CommandOutcome,
+  ImmediateSuccess,
+  ImmediateError,
+  Deferred,
+  DeferredReplySnapshot,
+} from "./commands";
 
 // App-usable class publish facades: data()/events()/app() (DESIGN-class-facades)
 export {
@@ -154,6 +177,7 @@ export {
   EVT_MESSAGE_NAME,
   EVT_MESSAGE_VERSION,
   AppFacade,
+  PreparedAppMessage,
   APP_MESSAGE_VERSION,
   Quality,
   qualityFromWire,

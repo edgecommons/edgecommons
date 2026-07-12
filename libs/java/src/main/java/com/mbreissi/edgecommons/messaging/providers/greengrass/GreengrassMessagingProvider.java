@@ -6,6 +6,7 @@ package com.mbreissi.edgecommons.messaging.providers.greengrass;
 
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessagingProvider;
+import com.mbreissi.edgecommons.messaging.PublishConfirmationException;
 import com.mbreissi.edgecommons.messaging.Qos;
 import com.mbreissi.edgecommons.messaging.ReplyFuture;
 import com.google.gson.Gson;
@@ -22,8 +23,18 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
+import java.util.function.Supplier;
 
 public final class GreengrassMessagingProvider extends MessagingProvider
 {
@@ -35,6 +46,10 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     ConcurrentHashMap<String, ReplyFuture> responseFutures = new ConcurrentHashMap<>();
 
     final ReceiveMode receiveMode;
+
+    /** Bounds IPC operations concurrently waiting for successful operation completion. */
+    private final Semaphore confirmedPublishPermits = new Semaphore(
+            DEFAULT_MAX_IN_FLIGHT_CONFIRMED_PUBLISHES);
 
     public GreengrassMessagingProvider(boolean receiveOwnMessages)
     {
@@ -113,6 +128,115 @@ public final class GreengrassMessagingProvider extends MessagingProvider
     }
 
     @Override
+    public void publishConfirmed(String topic, byte[] encodedMessage, Qos qos, Duration timeout)
+    {
+        confirmedTimeoutMillis(encodedMessage, qos, timeout);
+        BinaryMessage ipcMessage = new BinaryMessage().withMessage(encodedMessage.clone());
+        PublishMessage publishMessage = new PublishMessage().withBinaryMessage(ipcMessage);
+        PublishToTopicRequest request = new PublishToTopicRequest()
+                .withTopic(topic)
+                .withPublishMessage(publishMessage);
+        awaitConfirmed(topic, timeout, () -> ipcClient.publishToTopicAsync(request));
+    }
+
+    @Override
+    public void publishNorthboundConfirmed(String topic, byte[] encodedMessage, Qos qos,
+                                            Duration timeout)
+    {
+        confirmedTimeoutMillis(encodedMessage, qos, timeout);
+        PublishToIoTCoreRequest request = new PublishToIoTCoreRequest()
+                .withTopicName(topic)
+                .withPayload(encodedMessage.clone())
+                .withQos(QOS.AT_LEAST_ONCE);
+        awaitConfirmed(topic, timeout, () -> ipcClient.publishToIoTCoreAsync(request));
+    }
+
+    /** Waits for the Greengrass IPC operation response; scheduling the operation is not success. */
+    private void awaitConfirmed(String topic, Duration timeout,
+                                Supplier<CompletableFuture<?>> operationFactory)
+    {
+        long timeoutMillis = timeout.toMillis();
+        long timeoutNanos = TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        long started = System.nanoTime();
+        boolean acquired = false;
+        CompletableFuture<?> operation = null;
+        try
+        {
+            acquired = confirmedPublishPermits.tryAcquire(timeoutNanos, TimeUnit.NANOSECONDS);
+            if (!acquired)
+            {
+                throw confirmationFailure(PublishConfirmationException.Reason.TIMEOUT, topic,
+                        "timed out waiting for confirmed-publish capacity", null);
+            }
+            long remaining = timeoutNanos - (System.nanoTime() - started);
+            if (remaining <= 0)
+            {
+                throw confirmationFailure(PublishConfirmationException.Reason.TIMEOUT, topic,
+                        "IPC confirmation timeout elapsed before send", null);
+            }
+            operation = operationFactory.get();
+            remaining = timeoutNanos - (System.nanoTime() - started);
+            if (remaining <= 0)
+            {
+                operation.cancel(true);
+                throw confirmationFailure(PublishConfirmationException.Reason.TIMEOUT, topic,
+                        "IPC confirmation timeout elapsed while starting the operation", null);
+            }
+            operation.get(remaining, TimeUnit.NANOSECONDS);
+        }
+        catch (TimeoutException e)
+        {
+            if (operation != null)
+            {
+                operation.cancel(true);
+            }
+            throw confirmationFailure(PublishConfirmationException.Reason.TIMEOUT, topic,
+                    "IPC publish operation did not complete before timeout", e);
+        }
+        catch (InterruptedException e)
+        {
+            if (operation != null)
+            {
+                operation.cancel(true);
+            }
+            Thread.currentThread().interrupt();
+            throw confirmationFailure(PublishConfirmationException.Reason.INTERRUPTED, topic,
+                    "interrupted before IPC publish confirmation", e);
+        }
+        catch (ExecutionException | java.util.concurrent.CancellationException e)
+        {
+            Throwable cause = e instanceof ExecutionException && e.getCause() != null
+                    ? e.getCause() : e;
+            throw confirmationFailure(PublishConfirmationException.Reason.TRANSPORT_ERROR, topic,
+                    "IPC publish operation failed", cause);
+        }
+        catch (PublishConfirmationException e)
+        {
+            throw e;
+        }
+        catch (RuntimeException e)
+        {
+            throw confirmationFailure(PublishConfirmationException.Reason.TRANSPORT_ERROR, topic,
+                    "IPC publish operation could not be started", e);
+        }
+        finally
+        {
+            if (acquired)
+            {
+                confirmedPublishPermits.release();
+            }
+        }
+    }
+
+    private static PublishConfirmationException confirmationFailure(
+            PublishConfirmationException.Reason reason, String topic, String detail,
+            Throwable cause)
+    {
+        return new PublishConfirmationException(reason,
+                "confirmed publish on '" + topic + "' failed: " + detail, cause);
+    }
+
+    @Override
     public void publishRaw(String topic, JsonObject payload)
     {
         try
@@ -163,6 +287,80 @@ public final class GreengrassMessagingProvider extends MessagingProvider
         catch (Exception e)
         {
             LOGGER.error("Failed to subscribe to IPC messages on topic filter {}", topicFilter);
+        }
+    }
+
+    @Override
+    public void subscribeAcknowledged(String topicFilter,
+                                      BiConsumer<String, Message> callback,
+                                      int maxConcurrency,
+                                      int maxMessages,
+                                      Duration timeout)
+    {
+        long timeoutMillis = subscriptionTimeoutMillis(timeout);
+        AtomicBoolean abandoned = new AtomicBoolean(false);
+        ExecutorService waiter = Executors.newVirtualThreadPerTaskExecutor();
+        Future<GreengrassCoreIPCClientV2.StreamingResponse<SubscribeToTopicResponse,
+                SubscribeToTopicResponseHandler>> operation = waiter.submit(() -> {
+            SubscribeToTopicRequest request = new SubscribeToTopicRequest()
+                    .withTopic(topicFilter)
+                    .withReceiveMode(receiveMode);
+            GreengrassCoreIPCClientV2.StreamingResponse<SubscribeToTopicResponse,
+                    SubscribeToTopicResponseHandler> response = ipcClient.subscribeToTopic(
+                    request,
+                    new IpcSubscriptionHandler(
+                            topicFilter, callback, maxConcurrency, maxMessages));
+            if (abandoned.get())
+            {
+                response.getHandler().closeStream();
+            }
+            return response;
+        });
+        try
+        {
+            GreengrassCoreIPCClientV2.StreamingResponse<SubscribeToTopicResponse,
+                    SubscribeToTopicResponseHandler> response =
+                    operation.get(timeoutMillis, TimeUnit.MILLISECONDS);
+            if (abandoned.get())
+            {
+                response.getHandler().closeStream();
+                throw new IllegalStateException(
+                        "Greengrass subscription completed after its deadline");
+            }
+            SubscribeToTopicResponseHandler existing = ipcSubscriptionStreams.putIfAbsent(
+                    topicFilter, response.getHandler());
+            if (existing != null)
+            {
+                response.getHandler().closeStream();
+                throw new IllegalStateException(
+                        "an IPC subscription already exists for '" + topicFilter + "'");
+            }
+        }
+        catch (TimeoutException e)
+        {
+            abandoned.set(true);
+            operation.cancel(true);
+            throw new IllegalStateException(
+                    "Greengrass subscription operation did not complete before its deadline", e);
+        }
+        catch (InterruptedException e)
+        {
+            abandoned.set(true);
+            operation.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(
+                    "interrupted while waiting for Greengrass subscription completion", e);
+        }
+        catch (ExecutionException e)
+        {
+            abandoned.set(true);
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            throw new IllegalStateException(
+                    "Greengrass subscription operation failed", cause);
+        }
+        finally
+        {
+            waiter.shutdownNow();
         }
     }
 

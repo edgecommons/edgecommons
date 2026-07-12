@@ -13,12 +13,13 @@
 //! Compiled only under `#[cfg(test)]`.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use tokio::sync::Notify;
 
 use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::Qos;
@@ -34,6 +35,10 @@ pub(crate) struct RecordingMessaging {
     pub published: Mutex<Vec<(String, Message)>>,
     /// `(topic, message)` published to IoT Core.
     pub iot_published: Mutex<Vec<(String, Message)>>,
+    /// Exact bytes supplied to confirmed local publication.
+    pub confirmed_local: Mutex<Vec<(String, Vec<u8>)>>,
+    /// Exact bytes supplied to confirmed northbound publication.
+    pub confirmed_iot: Mutex<Vec<(String, Vec<u8>)>>,
     /// `(topic, message)` published locally through the privileged seam.
     pub reserved_published: Mutex<Vec<(String, Message)>>,
     /// `(topic, message)` published to IoT Core through the privileged seam.
@@ -54,11 +59,19 @@ pub(crate) struct RecordingMessaging {
     /// When `true`, `reply`/`reply_northbound` return an error instead of recording — drives
     /// the "a failing reply publish is swallowed" tests. Set via [`Self::set_fail_reply`].
     pub fail_reply: AtomicBool,
+    /// Number of upcoming confirmed publish/reply attempts which fail before recording.
+    pub confirmed_failures_remaining: AtomicUsize,
     /// Monotonic timestamps of each publish (any path), for timing tests.
     pub publish_times: Mutex<Vec<Instant>>,
     /// The value [`MessagingService::connected`] returns (default `false`); set via
     /// [`RecordingMessaging::set_connected`] to drive readiness tests.
     pub connected: AtomicBool,
+    /// Command-start acknowledgement controls for lifecycle tests.
+    pub block_subscribe_ack: AtomicBool,
+    pub subscribe_ack_entered: Notify,
+    pub subscribe_ack_release: Notify,
+    pub subscribe_ack_failure: Mutex<Option<String>>,
+    pub deliver_during_subscribe_ack: Mutex<Vec<(String, Message)>>,
 }
 
 impl RecordingMessaging {
@@ -76,6 +89,16 @@ impl RecordingMessaging {
     #[allow(dead_code)] // parity accessor with local(); kept for future tests
     pub fn iot(&self) -> Vec<(String, Message)> {
         self.iot_published.lock().unwrap().clone()
+    }
+
+    /// Exact bytes sent through confirmed local publication.
+    pub fn confirmed_local(&self) -> Vec<(String, Vec<u8>)> {
+        self.confirmed_local.lock().unwrap().clone()
+    }
+
+    /// Exact bytes sent through confirmed northbound publication.
+    pub fn confirmed_iot(&self) -> Vec<(String, Vec<u8>)> {
+        self.confirmed_iot.lock().unwrap().clone()
     }
 
     /// All `(topic, message)` pairs published locally through the privileged seam.
@@ -134,6 +157,20 @@ impl RecordingMessaging {
     pub fn set_fail_reply(&self, fail: bool) {
         self.fail_reply.store(fail, Ordering::SeqCst);
     }
+
+    /// Fail the next `attempts` confirmed publish/reply calls.
+    pub fn fail_next_confirmed(&self, attempts: usize) {
+        self.confirmed_failures_remaining
+            .store(attempts, Ordering::SeqCst);
+    }
+
+    fn consume_confirmed_failure(&self) -> bool {
+        self.confirmed_failures_remaining
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                (remaining > 0).then(|| remaining - 1)
+            })
+            .is_ok()
+    }
 }
 
 #[async_trait]
@@ -186,6 +223,74 @@ impl MessagingService for RecordingMessaging {
         Ok(())
     }
 
+    async fn publish_confirmed(
+        &self,
+        topic: &str,
+        msg: &Message,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        self.publish_encoded_confirmed(topic, &msg.to_vec()?, timeout)
+            .await
+    }
+
+    async fn publish_northbound_confirmed(
+        &self,
+        topic: &str,
+        msg: &Message,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        self.publish_northbound_encoded_confirmed(topic, &msg.to_vec()?, timeout)
+            .await
+    }
+
+    async fn publish_encoded_confirmed(
+        &self,
+        topic: &str,
+        payload: &[u8],
+        _timeout: std::time::Duration,
+    ) -> Result<()> {
+        if self.consume_confirmed_failure() {
+            return Err(EdgeCommonsError::Messaging(
+                "simulated confirmed publish failure".to_string(),
+            ));
+        }
+        let message = Message::from_slice(payload)?;
+        self.publish_times.lock().unwrap().push(Instant::now());
+        self.confirmed_local
+            .lock()
+            .unwrap()
+            .push((topic.to_string(), payload.to_vec()));
+        self.published
+            .lock()
+            .unwrap()
+            .push((topic.to_string(), message));
+        Ok(())
+    }
+
+    async fn publish_northbound_encoded_confirmed(
+        &self,
+        topic: &str,
+        payload: &[u8],
+        _timeout: std::time::Duration,
+    ) -> Result<()> {
+        if self.consume_confirmed_failure() {
+            return Err(EdgeCommonsError::Messaging(
+                "simulated confirmed publish failure".to_string(),
+            ));
+        }
+        let message = Message::from_slice(payload)?;
+        self.publish_times.lock().unwrap().push(Instant::now());
+        self.confirmed_iot
+            .lock()
+            .unwrap()
+            .push((topic.to_string(), payload.to_vec()));
+        self.iot_published
+            .lock()
+            .unwrap()
+            .push((topic.to_string(), message));
+        Ok(())
+    }
+
     async fn publish_raw(&self, topic: &str, payload: &Value) -> Result<()> {
         // Record as a raw message so tests can read it via `get_raw()`.
         let msg = Message::raw(payload.clone());
@@ -219,6 +324,31 @@ impl MessagingService for RecordingMessaging {
             .lock()
             .unwrap()
             .insert(filter.to_string(), handler);
+        Ok(())
+    }
+
+    async fn subscribe_acknowledged(
+        &self,
+        filter: &str,
+        handler: Arc<dyn MessageHandler>,
+        max_messages: usize,
+        max_concurrency: usize,
+        _timeout: Duration,
+    ) -> Result<()> {
+        self.subscribe(filter, handler.clone(), max_messages, max_concurrency)
+            .await?;
+        self.subscribe_ack_entered.notify_one();
+        let deliveries = std::mem::take(&mut *self.deliver_during_subscribe_ack.lock().unwrap());
+        for (topic, message) in deliveries {
+            handler.handle(topic, message).await;
+        }
+        if self.block_subscribe_ack.load(Ordering::SeqCst) {
+            self.subscribe_ack_release.notified().await;
+        }
+        if let Some(error) = self.subscribe_ack_failure.lock().unwrap().clone() {
+            self.handlers.lock().unwrap().remove(filter);
+            return Err(EdgeCommonsError::Messaging(error));
+        }
         Ok(())
     }
 
@@ -299,6 +429,29 @@ impl MessagingService for RecordingMessaging {
 
     async fn reply_northbound(&self, request: &Message, reply: Message) -> Result<()> {
         self.reply(request, reply).await
+    }
+
+    async fn reply_confirmed(
+        &self,
+        request: &Message,
+        reply: Message,
+        _timeout: std::time::Duration,
+    ) -> Result<()> {
+        if self.consume_confirmed_failure() {
+            return Err(EdgeCommonsError::Messaging(
+                "simulated confirmed reply failure".to_string(),
+            ));
+        }
+        self.reply(request, reply).await
+    }
+
+    async fn reply_northbound_confirmed(
+        &self,
+        request: &Message,
+        reply: Message,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        self.reply_confirmed(request, reply, timeout).await
     }
 
     fn cancel_request(&self, _reply_future: ReplyFuture) {}

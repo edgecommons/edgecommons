@@ -298,7 +298,7 @@ class RepublishListener:
             command.triggered = True
             command.last_accepted_ms = now
             delay_millis = self._jitter(JITTER_WINDOW_MS)
-        logger.info(
+        logger.debug(
             "'%s' broadcast accepted - re-announcing in %s ms", command.verb, delay_millis
         )
         self._delayer(lambda c=command: self._fire(c), delay_millis)

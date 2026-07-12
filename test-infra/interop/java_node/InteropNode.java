@@ -1,4 +1,6 @@
 import com.mbreissi.edgecommons.EdgeCommons;
+import com.mbreissi.edgecommons.commands.CommandInbox;
+import com.mbreissi.edgecommons.commands.CommandOutcome;
 import com.mbreissi.edgecommons.logging.LogRecord;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
@@ -7,6 +9,7 @@ import com.mbreissi.edgecommons.messaging.MessagingClient;
 import com.mbreissi.edgecommons.messaging.MessagingConfiguration;
 import com.mbreissi.edgecommons.messaging.MessagingProvider;
 import com.mbreissi.edgecommons.messaging.MessageTags;
+import com.mbreissi.edgecommons.messaging.Qos;
 import com.mbreissi.edgecommons.messaging.ReservedTopicException;
 import com.mbreissi.edgecommons.messaging.proto.MessageBodyCase;
 import com.mbreissi.edgecommons.messaging.providers.greengrass.GreengrassMessagingProvider;
@@ -24,8 +27,10 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Map;
 import java.time.Duration;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -63,6 +68,64 @@ public class InteropNode {
 
     static String logComponentToken() {
         return "interop-log-" + LANG;
+    }
+
+    static Path writeCommandRuntimeConfig(String componentToken) throws Exception {
+        JsonObject cfg = new JsonObject();
+        JsonObject component = new JsonObject();
+        component.addProperty("token", componentToken);
+        cfg.add("component", component);
+
+        JsonObject local = new JsonObject();
+        local.addProperty("type", "mqtt");
+        local.addProperty("host", host());
+        local.addProperty("port", Integer.parseInt(port()));
+        local.addProperty("clientId", "interop-" + LANG + "-deferred-runtime-"
+                + ProcessHandle.current().pid());
+        JsonObject messaging = new JsonObject();
+        messaging.add("local", local);
+        messaging.addProperty("requestTimeoutSeconds", 4);
+        cfg.add("messaging", messaging);
+
+        JsonObject heartbeat = new JsonObject();
+        heartbeat.addProperty("enabled", false);
+        cfg.add("heartbeat", heartbeat);
+        JsonObject health = new JsonObject();
+        health.addProperty("enabled", false);
+        cfg.add("health", health);
+
+        Path path = Files.createTempFile("edgecommons-deferred-" + LANG + "-", ".json");
+        Files.writeString(path, GSON.toJson(cfg), StandardCharsets.UTF_8);
+        return path;
+    }
+
+    /**
+     * Write and flush the bounded P1 durable-acceptance marker before exposing a deferred reply.
+     * The marker is intentionally not an in-memory JSON flag: a successful terminal reply may
+     * claim {@code durablyAccepted} only after this local persistence boundary completes.
+     */
+    static Path writeDurableAcceptanceMarker() throws java.io.IOException {
+        Path marker = Files.createTempFile("edgecommons-p1-accept-" + LANG + "-", ".marker");
+        try (FileChannel channel = FileChannel.open(marker,
+                StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            var content = StandardCharsets.UTF_8.encode("accepted\n");
+            while (content.hasRemaining()) {
+                channel.write(content);
+            }
+            channel.force(true);
+            return marker;
+        } catch (java.io.IOException error) {
+            Files.deleteIfExists(marker);
+            throw error;
+        }
+    }
+
+    static void removeDurableAcceptanceMarker(Path marker) {
+        try {
+            Files.deleteIfExists(marker);
+        } catch (java.io.IOException ignored) {
+            // The marker is a test-harness artifact; cleanup is best effort after settlement.
+        }
     }
 
     static Path writeLogRuntimeConfig() throws Exception {
@@ -236,6 +299,313 @@ public class InteropNode {
         };
     }
 
+    static Path ggP1ReadyPath(String runId, String actor) {
+        return Path.of("/tmp", "edgecommons_gg_ipc_p1_ready_" + actor + "_" + runId);
+    }
+
+    static java.util.List<String> waitForGgP1Ready(String runId, String[] expectedActors)
+            throws InterruptedException {
+        long readyWaitMs = (long) (Double.parseDouble(
+                System.getenv().getOrDefault("EDGECOMMONS_GG_READY_WAIT_SECS", "180")) * 1000);
+        long deadline = System.currentTimeMillis() + readyWaitMs;
+        while (System.currentTimeMillis() < deadline) {
+            java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+            for (String actor : expectedActors) {
+                if (!Files.exists(ggP1ReadyPath(runId, actor))) {
+                    missing.add(actor);
+                }
+            }
+            if (missing.isEmpty()) {
+                return missing;
+            }
+            Thread.sleep(200);
+        }
+        java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+        for (String actor : expectedActors) {
+            if (!Files.exists(ggP1ReadyPath(runId, actor))) {
+                missing.add(actor);
+            }
+        }
+        return missing;
+    }
+
+    static String ggP1TargetActor(String targetLanguage, String senderActor) {
+        return targetLanguage.equals("rust") && senderActor.equals("rust")
+                ? "rustpeer" : targetLanguage;
+    }
+
+    static String ggP1CommandTopic(String actor) {
+        return "ecv1/interop-device/interop-p1-" + actor + "/main/cmd/deferred";
+    }
+
+    static String ggP1ConfirmedTopic(String runId, String publisher, String targetActor) {
+        return "edgecommons/interop/p1/" + runId + "/confirmed/" + publisher + "/" + targetActor;
+    }
+
+    static JsonObject sendGgP1Deferred(
+            MessagingProvider provider, String runId, String senderActor,
+            String targetLanguage, String targetActor) throws Exception {
+        String token = runId + ":" + senderActor + "->" + targetLanguage;
+        String replyTopic = "edgecommons/interop/p1/" + runId + "/reply/" + senderActor
+                + "/" + targetActor + "/" + java.util.UUID.randomUUID();
+        java.util.List<Message> replies = java.util.Collections.synchronizedList(
+                new java.util.ArrayList<>());
+        CountDownLatch firstReply = new CountDownLatch(1);
+        provider.subscribe(replyTopic, (topic, reply) -> {
+            replies.add(reply);
+            firstReply.countDown();
+        }, 1, 2);
+        JsonObject requestBody = new JsonObject();
+        requestBody.addProperty("token", token);
+        requestBody.addProperty("from", LANG);
+        requestBody.addProperty("actor", senderActor);
+        Message request = MessageBuilder.create("deferred", "1.0")
+                .withCommand(requestBody).withReplyTo(replyTopic).build();
+        String correlation = request.getCorrelationId();
+        provider.publish(ggP1CommandTopic(targetActor), request);
+        JsonObject out = new JsonObject();
+        out.addProperty("target_actor", targetActor);
+        out.addProperty("expected_token", token);
+        out.addProperty("expected_responder", targetLanguage);
+        out.addProperty("expected_responder_actor", targetActor);
+        if (!firstReply.await(8, TimeUnit.SECONDS)) {
+            out.addProperty("ok", false);
+            out.addProperty("error", "timeout");
+            return out;
+        }
+        Thread.sleep(750);
+        Message reply;
+        int replyCount;
+        synchronized (replies) {
+            replyCount = replies.size();
+            reply = replies.get(0);
+        }
+        JsonElement replyBody = asElement(reply.getBody());
+        JsonObject result = replyBody.isJsonObject() && replyBody.getAsJsonObject().has("result")
+                ? replyBody.getAsJsonObject().getAsJsonObject("result") : null;
+        boolean correlationMatch = correlation != null && correlation.equals(reply.getCorrelationId());
+        boolean ok = replyCount == 1 && correlationMatch && replyBody.isJsonObject()
+                && replyBody.getAsJsonObject().has("ok")
+                && replyBody.getAsJsonObject().get("ok").getAsBoolean()
+                && result != null && token.equals(result.get("token").getAsString())
+                && result.get("durablyAccepted").getAsBoolean()
+                && targetLanguage.equals(result.get("responder").getAsString())
+                && targetActor.equals(result.get("responderActor").getAsString());
+        out.addProperty("ok", ok);
+        out.addProperty("reply_count", replyCount);
+        out.addProperty("correlation_match", correlationMatch);
+        out.addProperty("duplicate_window_ms", 750);
+        out.add("reply_body", replyBody);
+        return out;
+    }
+
+    static void runGgP1Matrix(String[] args) throws Exception {
+        String runId = args[1];
+        String[] languages = args[2].split(",");
+        String[] expectedActors = System.getenv().getOrDefault(
+                "EDGECOMMONS_GG_READY_LANGS", args[2]).split(",");
+        String actor = System.getenv().getOrDefault("EDGECOMMONS_GG_READY_LANG", LANG);
+        boolean canonicalActor = !actor.equals("rustpeer");
+        long subscribeDelayMs = (long) (Double.parseDouble(
+                System.getenv().getOrDefault("EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS", "2")) * 1000);
+        long waitMs = (long) (Double.parseDouble(
+                System.getenv().getOrDefault("EDGECOMMONS_GG_WAIT_SECS", "90")) * 1000);
+        java.util.List<String> expectedPublishers = new java.util.ArrayList<>();
+        if (actor.equals("rust")) {
+            for (String language : languages) {
+                if (!language.equals("rust")) expectedPublishers.add(language);
+            }
+        } else if (canonicalActor) {
+            java.util.Collections.addAll(expectedPublishers, languages);
+        } else {
+            expectedPublishers.add("rust");
+        }
+
+        MessagingProvider provider = new GreengrassMessagingProvider(true);
+        java.util.concurrent.ConcurrentHashMap<String, java.util.List<JsonObject>> received =
+                new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.ConcurrentHashMap<String, String> errors =
+                new java.util.concurrent.ConcurrentHashMap<>();
+        CountDownLatch firstConfirmed = new CountDownLatch(1);
+        EdgeCommons gg = null;
+        Path path = null;
+        try {
+            path = writeCommandRuntimeConfig("interop-p1-" + actor);
+            gg = new EdgeCommons("com.mbreissi.edgecommons.interop." + LANG + ".P1Responder",
+                    ggLogRuntimeArgs(path));
+            CommandInbox inbox = gg.getCommands();
+            if (inbox == null) throw new IllegalStateException("runtime did not expose command inbox");
+            String responderActor = actor;
+            inbox.registerOutcome("deferred", request -> {
+                CommandInbox.DeferredReply deferred = inbox.defer(request, Duration.ofSeconds(4));
+                JsonObject requestBody = asElement(request.getBody()).getAsJsonObject();
+                Path acceptanceMarker;
+                try {
+                    acceptanceMarker = writeDurableAcceptanceMarker();
+                } catch (java.io.IOException error) {
+                    deferred.discard();
+                    return CommandOutcome.error("ACCEPTANCE_FAILED", "work was not accepted");
+                }
+                String token = requestBody.get("token").getAsString();
+                if (!deferred.activate()) {
+                    removeDurableAcceptanceMarker(acceptanceMarker);
+                    return CommandOutcome.error("ACTIVATION_FAILED", "deferred token was not open");
+                }
+                return CommandOutcome.deferredWithContinuation(deferred, () -> {
+                    try {
+                        JsonObject result = new JsonObject();
+                        result.addProperty("token", token);
+                        result.addProperty("responder", LANG);
+                        result.addProperty("responderActor", responderActor);
+                        result.addProperty("durablyAccepted", true);
+                        deferred.settleSuccess(result);
+                    } finally {
+                        removeDurableAcceptanceMarker(acceptanceMarker);
+                    }
+                });
+            });
+            provider.subscribe("edgecommons/interop/p1/" + runId + "/confirmed/+/" + actor,
+                    (topic, message) -> {
+                        String publisher = publisherFromGgTopic(topic);
+                        try {
+                            JsonObject body = asElement(message.getBody()).getAsJsonObject();
+                            boolean valid = publisher != null
+                                    && runId.equals(body.get("runId").getAsString())
+                                    && publisher.equals(body.get("publisher").getAsString())
+                                    && actor.equals(body.get("targetActor").getAsString())
+                                    && body.get("strict").getAsBoolean();
+                            JsonObject item = new JsonObject();
+                            item.addProperty("ok", valid);
+                            item.addProperty("topic", topic);
+                            item.add("body", body);
+                            received.computeIfAbsent(publisher == null ? "unknown" : publisher,
+                                    unused -> java.util.Collections.synchronizedList(new java.util.ArrayList<>()))
+                                    .add(item);
+                        } catch (Exception error) {
+                            errors.put("confirmed:" + (publisher == null ? "unknown" : publisher),
+                                    error.toString());
+                        } finally {
+                            firstConfirmed.countDown();
+                        }
+                    }, 1, 32);
+            System.out.println("READY");
+            System.out.flush();
+            Files.writeString(ggP1ReadyPath(runId, actor), Long.toString(System.currentTimeMillis()),
+                    StandardCharsets.UTF_8);
+
+            java.util.List<String> readyMissing = waitForGgP1Ready(runId, expectedActors);
+            JsonObject deferredRequests = new JsonObject();
+            JsonObject confirmedPublishes = new JsonObject();
+            if (readyMissing.isEmpty() && canonicalActor) {
+                Thread.sleep(subscribeDelayMs);
+                for (String targetLanguage : languages) {
+                    String targetActor = ggP1TargetActor(targetLanguage, actor);
+                    try {
+                        deferredRequests.add(targetLanguage,
+                                sendGgP1Deferred(provider, runId, actor, targetLanguage, targetActor));
+                    } catch (Exception error) {
+                        JsonObject failure = new JsonObject();
+                        failure.addProperty("ok", false);
+                        failure.addProperty("target_actor", targetActor);
+                        failure.addProperty("error", error.getClass().getSimpleName());
+                        deferredRequests.add(targetLanguage, failure);
+                    }
+                    JsonObject body = new JsonObject();
+                    body.addProperty("runId", runId);
+                    body.addProperty("publisher", LANG);
+                    body.addProperty("publisherActor", actor);
+                    body.addProperty("targetLanguage", targetLanguage);
+                    body.addProperty("targetActor", targetActor);
+                    body.addProperty("strict", true);
+                    JsonObject published = new JsonObject();
+                    published.addProperty("target_actor", targetActor);
+                    try {
+                        Message message = MessageBuilder.create("InteropConfirmed", "1.0")
+                                .withPayload(body).build();
+                        provider.publishConfirmed(ggP1ConfirmedTopic(runId, LANG, targetActor),
+                                message.toBytes(), Qos.AT_LEAST_ONCE, Duration.ofSeconds(5));
+                        published.addProperty("ok", true);
+                        published.addProperty("confirmed", true);
+                        published.addProperty("qos", 1);
+                    } catch (Exception error) {
+                        published.addProperty("ok", false);
+                        published.addProperty("error", error.getClass().getSimpleName());
+                    }
+                    confirmedPublishes.add(targetLanguage, published);
+                }
+            }
+            firstConfirmed.await(waitMs, TimeUnit.MILLISECONDS);
+            long deadline = System.currentTimeMillis() + waitMs;
+            while (System.currentTimeMillis() < deadline && expectedPublishers.stream()
+                    .anyMatch(publisher -> !received.containsKey(publisher))) {
+                Thread.sleep(50);
+            }
+            Thread.sleep(750);
+
+            JsonObject receivedJson = new JsonObject();
+            java.util.List<String> confirmedMissing = new java.util.ArrayList<>();
+            boolean receiveOk = true;
+            for (String publisher : expectedPublishers) {
+                java.util.List<JsonObject> items = received.get(publisher);
+                if (items == null) {
+                    confirmedMissing.add(publisher);
+                    receiveOk = false;
+                    continue;
+                }
+                JsonObject evidence = new JsonObject();
+                synchronized (items) {
+                    evidence.addProperty("count", items.size());
+                    evidence.add("items", GSON.toJsonTree(items));
+                    evidence.addProperty("ok", items.size() == 1 && items.get(0).get("ok").getAsBoolean());
+                }
+                receiveOk = receiveOk && evidence.get("ok").getAsBoolean();
+                receivedJson.add(publisher, evidence);
+            }
+            for (Map.Entry<String, java.util.List<JsonObject>> entry : received.entrySet()) {
+                if (!receivedJson.has(entry.getKey())) {
+                    JsonObject evidence = new JsonObject();
+                    synchronized (entry.getValue()) {
+                        evidence.addProperty("count", entry.getValue().size());
+                        evidence.add("items", GSON.toJsonTree(entry.getValue()));
+                        evidence.addProperty("ok", false);
+                    }
+                    receivedJson.add(entry.getKey(), evidence);
+                    receiveOk = false;
+                }
+            }
+            boolean requestsOk = !canonicalActor || deferredRequests.size() == languages.length;
+            boolean publishesOk = !canonicalActor || confirmedPublishes.size() == languages.length;
+            if (canonicalActor) {
+                for (String language : languages) {
+                    requestsOk = requestsOk && deferredRequests.getAsJsonObject(language).get("ok").getAsBoolean();
+                    publishesOk = publishesOk && confirmedPublishes.getAsJsonObject(language).get("ok").getAsBoolean();
+                }
+            }
+            boolean ok = readyMissing.isEmpty() && errors.isEmpty() && requestsOk && publishesOk && receiveOk;
+            JsonObject result = new JsonObject();
+            result.addProperty("schema", "edgecommons.gg-ipc-p1.v1");
+            result.addProperty("ok", ok);
+            result.addProperty("run_id", runId);
+            result.addProperty("actor", actor);
+            result.addProperty("language", LANG);
+            result.addProperty("canonical_actor", canonicalActor);
+            result.add("ready_missing", GSON.toJsonTree(readyMissing));
+            result.add("deferred_requests", deferredRequests);
+            result.add("confirmed_publishes", confirmedPublishes);
+            result.add("confirmed_received", receivedJson);
+            result.add("confirmed_missing", GSON.toJsonTree(confirmedMissing));
+            result.add("errors", GSON.toJsonTree(errors));
+            Files.writeString(Path.of("/tmp", "edgecommons_gg_ipc_p1_" + actor + "_" + runId + ".json"),
+                    GSON.toJson(result), StandardCharsets.UTF_8);
+            System.out.println(result);
+            System.exit(ok ? 0 : 1);
+        } finally {
+            if (gg != null) gg.shutdown();
+            if (path != null) Files.deleteIfExists(path);
+            provider.close();
+        }
+    }
+
     /**
      * Canonical cross-language payload permutations, built as a plain {@link java.util.Map} (NOT a
      * JsonObject) so the Java sender exercises issue #13's {@code withPayload(Map)} -> Gson
@@ -311,6 +681,177 @@ public class InteropNode {
                 out.addProperty("error", e.getClass().getSimpleName());
                 System.out.println(out);
                 System.exit(1);
+            }
+        } else if (role.equals("deferred-responder")) {
+            String componentToken = args[1];
+            Path path = writeCommandRuntimeConfig(componentToken);
+            EdgeCommons gg = null;
+            try {
+                gg = new EdgeCommons(
+                        "com.mbreissi.edgecommons.interop." + LANG + ".DeferredResponder",
+                        logRuntimeArgs(path));
+                CommandInbox inbox = gg.getCommands();
+                if (inbox == null) {
+                    throw new IllegalStateException("runtime did not expose command inbox");
+                }
+                inbox.registerOutcome("deferred", request -> {
+                    CommandInbox.DeferredReply deferred = inbox.defer(request, Duration.ofSeconds(4));
+                    Path acceptanceMarker;
+                    try {
+                        acceptanceMarker = writeDurableAcceptanceMarker();
+                    } catch (java.io.IOException error) {
+                        deferred.discard();
+                        return CommandOutcome.error("ACCEPTANCE_FAILED", "work was not accepted");
+                    }
+                    String acceptedToken = asElement(request.getBody())
+                            .getAsJsonObject().get("token").getAsString();
+                    if (!deferred.activate()) {
+                        removeDurableAcceptanceMarker(acceptanceMarker);
+                        return CommandOutcome.error("ACTIVATION_FAILED", "deferred token was not open");
+                    }
+                    return CommandOutcome.deferredWithContinuation(deferred, () -> {
+                        try {
+                            JsonObject result = new JsonObject();
+                            result.addProperty("token", acceptedToken);
+                            result.addProperty("responder", LANG);
+                            result.addProperty("durablyAccepted", true);
+                            deferred.settleSuccess(result);
+                        } finally {
+                            removeDurableAcceptanceMarker(acceptanceMarker);
+                        }
+                    });
+                });
+                System.out.println("READY");
+                System.out.flush();
+                Thread.sleep(Long.MAX_VALUE);
+            } finally {
+                if (gg != null) {
+                    gg.shutdown();
+                }
+                Files.deleteIfExists(path);
+            }
+        } else if (role.equals("deferred-request")) {
+            String topic = args[1];
+            String token = args[2];
+            StandaloneMessagingProvider prov = provider("deferredreq");
+            String replyTopic = "interop/deferred/reply/" + LANG + "/"
+                    + java.util.UUID.randomUUID();
+            java.util.List<Message> replies = java.util.Collections.synchronizedList(
+                    new java.util.ArrayList<>());
+            CountDownLatch firstReply = new CountDownLatch(1);
+            try {
+                prov.subscribe(replyTopic, (t, reply) -> {
+                    replies.add(reply);
+                    firstReply.countDown();
+                }, 1);
+                JsonObject body = new JsonObject();
+                body.addProperty("token", token);
+                body.addProperty("from", LANG);
+                Message request = MessageBuilder.create("deferred", "1.0")
+                        .withCommand(body).withReplyTo(replyTopic).build();
+                String correlation = request.getCorrelationId();
+                prov.publish(topic, request);
+                JsonObject out = new JsonObject();
+                if (!firstReply.await(8, TimeUnit.SECONDS)) {
+                    out.addProperty("ok", false);
+                    out.addProperty("error", "timeout");
+                    System.out.println(out);
+                    System.exit(1);
+                }
+                // Retain the reply subscription long enough to expose a duplicate settlement.
+                Thread.sleep(750);
+                Message reply;
+                int replyCount;
+                synchronized (replies) {
+                    replyCount = replies.size();
+                    reply = replies.get(0);
+                }
+                boolean correlationMatch = correlation != null
+                        && correlation.equals(reply.getCorrelationId());
+                JsonElement replyBody = asElement(reply.getBody());
+                JsonObject result = replyBody.isJsonObject()
+                        && replyBody.getAsJsonObject().has("result")
+                        ? replyBody.getAsJsonObject().getAsJsonObject("result") : null;
+                boolean ok = replyCount == 1 && correlationMatch && replyBody.isJsonObject()
+                        && replyBody.getAsJsonObject().has("ok")
+                        && replyBody.getAsJsonObject().get("ok").getAsBoolean()
+                        && result != null && token.equals(result.get("token").getAsString())
+                        && result.get("durablyAccepted").getAsBoolean()
+                        && result.has("responder");
+                out.addProperty("ok", ok);
+                out.addProperty("reply_count", replyCount);
+                out.addProperty("correlation_match", correlationMatch);
+                out.add("reply_body", replyBody);
+                System.out.println(out);
+                System.exit(ok ? 0 : 1);
+            } finally {
+                prov.close();
+            }
+        } else if (role.equals("confirmed-sub")) {
+            String topic = args[1];
+            String token = args[2];
+            StandaloneMessagingProvider prov = provider("confirmedsub");
+            java.util.List<Message> messages = java.util.Collections.synchronizedList(
+                    new java.util.ArrayList<>());
+            CountDownLatch firstMessage = new CountDownLatch(1);
+            try {
+                prov.subscribe(topic, (t, message) -> {
+                    messages.add(message);
+                    firstMessage.countDown();
+                }, 1);
+                System.out.println("READY");
+                System.out.flush();
+                JsonObject out = new JsonObject();
+                if (!firstMessage.await(8, TimeUnit.SECONDS)) {
+                    out.addProperty("ok", false);
+                    out.addProperty("error", "timeout");
+                    System.out.println(out);
+                    System.exit(1);
+                }
+                Thread.sleep(750);
+                Message message;
+                int messageCount;
+                synchronized (messages) {
+                    messageCount = messages.size();
+                    message = messages.get(0);
+                }
+                JsonElement body = asElement(message.getBody());
+                boolean ok = messageCount == 1 && body.isJsonObject()
+                        && token.equals(body.getAsJsonObject().get("token").getAsString())
+                        && body.getAsJsonObject().has("from");
+                out.addProperty("ok", ok);
+                out.addProperty("message_count", messageCount);
+                out.add("body", body);
+                System.out.println(out);
+                System.exit(ok ? 0 : 1);
+            } finally {
+                prov.close();
+            }
+        } else if (role.equals("confirmed-pub")) {
+            String topic = args[1];
+            String token = args[2];
+            StandaloneMessagingProvider prov = provider("confirmedpub");
+            JsonObject out = new JsonObject();
+            try {
+                JsonObject body = new JsonObject();
+                body.addProperty("token", token);
+                body.addProperty("from", LANG);
+                Message message = MessageBuilder.create("InteropConfirmed", "1.0")
+                        .withPayload(body).build();
+                // This method returns only after the standalone MQTT client has received PUBACK.
+                prov.publishConfirmed(topic, message.toBytes(), Qos.AT_LEAST_ONCE,
+                        Duration.ofSeconds(5));
+                out.addProperty("ok", true);
+                out.addProperty("confirmed", true);
+                out.addProperty("qos", 1);
+                System.out.println(out);
+            } catch (Exception e) {
+                out.addProperty("ok", false);
+                out.addProperty("error", e.getClass().getSimpleName());
+                System.out.println(out);
+                System.exit(1);
+            } finally {
+                prov.close();
             }
         } else if (role.equals("raw-sub")) {
             String topic = args[1];
@@ -645,6 +1186,8 @@ public class InteropNode {
                 }
                 prov.close();
             }
+        } else if (role.equals("gg-p1-matrix")) {
+            runGgP1Matrix(args);
         } else if (role.equals("gg-binary-matrix")) {
             String runId = args[1];
             String[] expectedLangs = args[2].split(",");

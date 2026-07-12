@@ -21,10 +21,10 @@ def main():
         EdgeCommonsBuilder.create("<<COMPONENTFULLNAME>>")
         .with_args(sys.argv[1:])
         .with_app_options(arg_parser)
+        .initial_ready(False)
         .build()
     )
     config_manager = gg.get_config_manager()
-    gg.set_ready(False)
 
     devices = []
 

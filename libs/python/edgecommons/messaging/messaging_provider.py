@@ -1,5 +1,6 @@
 import abc
 import logging
+import math
 import threading
 from abc import abstractmethod
 from typing import Callable, Optional
@@ -16,6 +17,13 @@ DEFAULT_MAX_MESSAGES = 10000
 # (UNS-CANONICAL-DESIGN §5 / D-U5). Deliberately non-zero so the CONFIG_COMPONENT
 # bootstrap request gets a deadline instead of hanging forever.
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
+
+# Strict publish operations wait for a transport acknowledgement, so they need a
+# hard process-local bound just like subscription delivery queues.
+DEFAULT_MAX_IN_FLIGHT_CONFIRMED_PUBLISHES = 1024
+
+# Default bounded wait used by lifecycle-critical acknowledged subscriptions.
+DEFAULT_ACKNOWLEDGED_SUBSCRIBE_TIMEOUT_SECONDS = 10.0
 
 _logger = logging.getLogger("MessagingProvider")
 
@@ -113,6 +121,53 @@ class MessagingProvider(metaclass=abc.ABCMeta):
     def publish_northbound(self, topic: str, msg: Message, qos: Qos):
         pass
 
+    def publish_confirmed(
+        self,
+        topic: str,
+        encoded_message: bytes,
+        qos: Qos,
+        timeout_secs: float,
+    ) -> None:
+        """Strictly publishes exact envelope bytes on the local transport.
+
+        Providers must override this only when they can prove positive transport
+        acknowledgement.  Falling back to :meth:`publish` would falsely turn queue
+        submission into delivery evidence, so unsupported providers raise.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support confirmed local publish"
+        )
+
+    def publish_northbound_confirmed(
+        self,
+        topic: str,
+        encoded_message: bytes,
+        qos: Qos,
+        timeout_secs: float,
+    ) -> None:
+        """Northbound counterpart of :meth:`publish_confirmed`."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support confirmed northbound publish"
+        )
+
+    @staticmethod
+    def _validated_confirmation_timeout(
+        encoded_message: bytes, qos: Qos, timeout_secs: float
+    ) -> float:
+        """Validates the shared strict-confirmation contract."""
+        if not isinstance(encoded_message, bytes):
+            raise TypeError("encoded_message must be bytes")
+        if qos is not Qos.AT_LEAST_ONCE:
+            raise ValueError(
+                "confirmed publish requires explicit QoS 1 (AT_LEAST_ONCE)"
+            )
+        if isinstance(timeout_secs, bool) or not isinstance(timeout_secs, (int, float)):
+            raise TypeError("confirmed publish timeout_secs must be a number")
+        timeout = float(timeout_secs)
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("confirmed publish timeout_secs must be finite and positive")
+        return timeout
+
     @abstractmethod
     def publish_northbound_raw(self, topic: str, msg: dict, qos: Qos):
         pass
@@ -159,6 +214,35 @@ class MessagingProvider(metaclass=abc.ABCMeta):
                               timeout_secs: Optional[float] = None) -> Iou:
         """Northbound variant of :meth:`request` (same deadline semantics)."""
         pass
+
+    def subscribe_acknowledged(
+        self,
+        topic: str,
+        callback: Callable[[str, Message], None],
+        max_concurrency: int = None,
+        max_messages: int = None,
+        timeout_secs: float = DEFAULT_ACKNOWLEDGED_SUBSCRIBE_TIMEOUT_SECONDS,
+    ) -> None:
+        """Subscribe and return only after positive transport acknowledgement.
+
+        This deliberately has no fallback to :meth:`subscribe`: lifecycle code must not
+        interpret mere request submission as MQTT SUBACK or Greengrass operation success.
+        """
+
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support acknowledged local subscribe"
+        )
+
+    @staticmethod
+    def _validated_subscribe_timeout(timeout_secs: float) -> float:
+        if isinstance(timeout_secs, bool) or not isinstance(timeout_secs, (int, float)):
+            raise TypeError("acknowledged subscribe timeout_secs must be a number")
+        timeout = float(timeout_secs)
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError(
+                "acknowledged subscribe timeout_secs must be finite and positive"
+            )
+        return timeout
 
     @abstractmethod
     def reply(self, request_msg: Message, response_msg: Message):

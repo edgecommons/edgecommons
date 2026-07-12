@@ -81,6 +81,12 @@ class ConfigComponentProviderTest {
         public void applyConfig(JsonObject config) {
             applied.add(config);
         }
+
+        @Override
+        public boolean applyConfigFromProvider(JsonObject rawConfig) {
+            applied.add(rawConfig);
+            return true;
+        }
     }
 
     private static ReplyFuture timedOut() {
@@ -275,6 +281,7 @@ class ConfigComponentProviderTest {
         // The set-config inbox uses the same sanitized tokens: an exact-topic push must land.
         CapturingConfigManager manager = new CapturingConfigManager();
         p.attachConfigManager(manager);
+        p.start();
         JsonObject pushed = new JsonObject();
         pushed.addProperty("v", 2);
         messaging.simulateMessage("ecv1/plant_7_east/My_Comp_1/main/cmd/set-config", setConfigPush(pushed));
@@ -289,6 +296,7 @@ class ConfigComponentProviderTest {
         ConfigComponentProvider p = provider(messaging);
         CapturingConfigManager manager = new CapturingConfigManager();
         p.attachConfigManager(manager); // what the ConfigManager constructor does post-bootstrap
+        p.start();
 
         JsonObject newConfig = new JsonObject();
         newConfig.addProperty("component", "pushed");
@@ -300,18 +308,23 @@ class ConfigComponentProviderTest {
 
     @Test
     void pushedSetConfigBeforeAttachIsDroppedWithoutNPE() {
-        // The provider exists BEFORE the ConfigManager (production bootstrap). A push racing
-        // ahead of the attach must be dropped, not dereference the null manager.
+        // The provider exists BEFORE the ConfigManager (production bootstrap), but its constructor
+        // must not subscribe. An early delivery therefore has no callback to race the null manager.
         ScriptedMessaging messaging = new ScriptedMessaging();
         ConfigComponentProvider p = provider(messaging);
 
         JsonObject early = new JsonObject();
         assertDoesNotThrow(() ->
                 messaging.simulateMessage(EXPECTED_SET_CONFIG_TOPIC, setConfigPush(early)));
+        assertTrue(messaging.getSubscribedTopics().isEmpty(),
+                "provider construction must not start change delivery before manager attachment");
 
         // After the attach, pushes flow normally.
         CapturingConfigManager manager = new CapturingConfigManager();
         p.attachConfigManager(manager);
+        p.start();
+        assertEquals(java.util.Set.of(EXPECTED_SET_CONFIG_TOPIC),
+                messaging.getSubscribedTopics());
         JsonObject late = new JsonObject();
         late.addProperty("component", "late");
         messaging.simulateMessage(EXPECTED_SET_CONFIG_TOPIC, setConfigPush(late));

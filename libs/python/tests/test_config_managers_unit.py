@@ -479,6 +479,19 @@ class TestConfigManagerBuilderDispatch:
         passed_args = calls["FileConfigManager"][0]
         assert passed_args[0] == "raw-thing"
 
+    def test_dispatch_forwards_precommit_lifecycle_before_construction(self, monkeypatch):
+        cmb, calls = self._patch_all(monkeypatch)
+        validator = lambda candidate, current, phase: None
+        cmb.ConfigManagerBuilder.build(
+            self._args(["FILE", "c.json"]),
+            "com.example.C",
+            candidate_validators={"camera": validator},
+            validation_timeout_secs=4.0,
+        )
+        kwargs = calls["FileConfigManager"][1]
+        assert kwargs["candidate_validators"] == {"camera": validator}
+        assert kwargs["validation_timeout_secs"] == 4.0
+
 
 # ----------------------------------------------------------- config component mgr
 
@@ -517,8 +530,10 @@ class TestConfigComponentManager:
 
         subscribed = {}
         monkeypatch.setattr(
-            ccm.MessagingClient, "subscribe",
-            staticmethod(lambda topic, cb: subscribed.update(topic=topic, cb=cb)),
+            ccm.MessagingClient, "subscribe_acknowledged",
+            staticmethod(
+                lambda topic, cb, **kwargs: subscribed.update(topic=topic, cb=cb)
+            ),
         )
 
         reply = Message()
@@ -546,7 +561,11 @@ class TestConfigComponentManager:
         import edgecommons.config.manager.config_component_manager as ccm
         from edgecommons.messaging.message import Message
 
-        monkeypatch.setattr(ccm.MessagingClient, "subscribe", staticmethod(lambda t, cb: None))
+        monkeypatch.setattr(
+            ccm.MessagingClient,
+            "subscribe_acknowledged",
+            staticmethod(lambda topic, cb, **kwargs: None),
+        )
         reply = Message()
         reply.body = json.dumps(_lineage_bundle("C", {"component": {"global": {"k": "str-body"}}}))
         monkeypatch.setattr(
@@ -560,7 +579,11 @@ class TestConfigComponentManager:
         import edgecommons.config.manager.config_component_manager as ccm
         from edgecommons.messaging.message import Message
 
-        monkeypatch.setattr(ccm.MessagingClient, "subscribe", staticmethod(lambda t, cb: None))
+        monkeypatch.setattr(
+            ccm.MessagingClient,
+            "subscribe_acknowledged",
+            staticmethod(lambda topic, cb, **kwargs: None),
+        )
         reply = Message()
         reply.body = _lineage_bundle("C")
         monkeypatch.setattr(

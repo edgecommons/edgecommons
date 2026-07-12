@@ -23,7 +23,15 @@ from concurrent.futures import ThreadPoolExecutor
 import paho.mqtt.client as mqtt
 
 from edgecommons.messaging.message import Message
-from edgecommons.messaging.messaging_provider import MessagingProvider, DEFAULT_MAX_MESSAGES
+from edgecommons.messaging.errors import (
+    PublishConfirmationError,
+    PublishConfirmationReason,
+)
+from edgecommons.messaging.messaging_provider import (
+    DEFAULT_MAX_IN_FLIGHT_CONFIRMED_PUBLISHES,
+    DEFAULT_MAX_MESSAGES,
+    MessagingProvider,
+)
 from edgecommons.messaging.qos import Qos
 from edgecommons.messaging.messaging_config import MessagingConfiguration, QosDefaults
 from edgecommons.utils.iou import Iou
@@ -44,6 +52,7 @@ class _BrokerChannel:
         self.client: Optional[mqtt.Client] = None
         self.subscriptions: Dict[str, dict] = {}
         self.pending_subscriptions: Dict[str, threading.Event] = {}
+        self.subscription_ack_results: Dict[str, bool] = {}
         self.mid_to_topic: Dict[int, str] = {}
 
 
@@ -68,6 +77,9 @@ class StandaloneProvider(MessagingProvider):
         self._response_ious: Dict[str, Iou] = {}
         self._executor = ThreadPoolExecutor(max_workers=10)
         self._lock = threading.RLock()
+        self._confirmed_publish_permits = threading.BoundedSemaphore(
+            DEFAULT_MAX_IN_FLIGHT_CONFIRMED_PUBLISHES
+        )
         self._subscription_timeout = 5.0
 
         self._initialize_clients()
@@ -117,6 +129,24 @@ class StandaloneProvider(MessagingProvider):
 
         except Exception as e:
             logger.error(f"Failed to initialize MQTT clients in STANDALONE mode: {e}")
+            # Construction can fail after the local client has already started (for
+            # example, local connects but the northbound TLS broker is unavailable).
+            # The caller never receives the partially-built provider and therefore
+            # cannot call disconnect(); tear down every started Paho loop here.
+            for channel in (self._local, self._northbound):
+                client = channel.client
+                if client is None:
+                    continue
+                try:
+                    client.disconnect()
+                except Exception:  # noqa: BLE001 - preserve the initialization error
+                    pass
+                try:
+                    client.loop_stop()
+                except Exception:  # noqa: BLE001 - preserve the initialization error
+                    pass
+                channel.client = None
+            self._executor.shutdown(wait=False, cancel_futures=True)
             raise
 
     @staticmethod
@@ -247,6 +277,8 @@ class StandaloneProvider(MessagingProvider):
         with self._lock:
             for event in channel.pending_subscriptions.values():
                 event.set()
+            for topic in channel.pending_subscriptions:
+                channel.subscription_ack_results[topic] = False
             channel.pending_subscriptions.clear()
             channel.mid_to_topic.clear()
 
@@ -256,7 +288,9 @@ class StandaloneProvider(MessagingProvider):
             topic = channel.mid_to_topic.pop(mid, None)
             if topic and topic in channel.pending_subscriptions:
                 event = channel.pending_subscriptions.pop(topic)
-                if 0x80 in granted_qos:  # Subscription failed
+                succeeded = 0x80 not in granted_qos
+                channel.subscription_ack_results[topic] = succeeded
+                if not succeeded:  # Subscription failed
                     logger.error(f"{channel.name} broker subscription failed for topic: {topic}")
                 else:
                     logger.debug(f"{channel.name} broker subscription confirmed for topic: {topic}")
@@ -378,8 +412,8 @@ class StandaloneProvider(MessagingProvider):
 
         for channel in (self._local, self._northbound):
             if channel.client:
-                channel.client.loop_stop()
                 channel.client.disconnect()
+                channel.client.loop_stop()
                 channel.client = None
                 logger.info(f"Disconnected from {channel.name} broker")
 
@@ -406,56 +440,164 @@ class StandaloneProvider(MessagingProvider):
             logger.error(f"Error publishing message to {channel.name} broker topic {topic}: {e}")
             raise
 
+    def _publish_confirmed(
+        self,
+        channel: _BrokerChannel,
+        topic: str,
+        encoded_message: bytes,
+        qos: Qos,
+        timeout_secs: float,
+    ) -> None:
+        """Publish exact bytes and return only after the matching QoS-1 PUBACK."""
+        timeout = self._validated_confirmation_timeout(
+            encoded_message, qos, timeout_secs
+        )
+        started = time.monotonic()
+        acquired = self._confirmed_publish_permits.acquire(timeout=timeout)
+        if not acquired:
+            raise PublishConfirmationError(
+                PublishConfirmationReason.TIMEOUT,
+                f"confirmed publish on '{topic}' timed out waiting for capacity",
+            )
+        try:
+            remaining = timeout - (time.monotonic() - started)
+            if remaining <= 0:
+                raise PublishConfirmationError(
+                    PublishConfirmationReason.TIMEOUT,
+                    f"confirmed publish on '{topic}' timed out before send",
+                )
+            try:
+                client = self._require_client(channel)
+                result = client.publish(
+                    topic, bytes(encoded_message), qos=Qos.AT_LEAST_ONCE.value
+                )
+            except Exception as exc:
+                raise PublishConfirmationError(
+                    PublishConfirmationReason.TRANSPORT_ERROR,
+                    f"confirmed publish on '{topic}' failed before broker acknowledgement: {exc}",
+                ) from exc
+            if result.rc != mqtt.MQTT_ERR_SUCCESS:
+                raise PublishConfirmationError(
+                    PublishConfirmationReason.TRANSPORT_ERROR,
+                    f"confirmed publish on '{topic}' was rejected by the MQTT client"
+                    f" (rc={result.rc})",
+                )
+            remaining = timeout - (time.monotonic() - started)
+            if remaining <= 0:
+                raise PublishConfirmationError(
+                    PublishConfirmationReason.TIMEOUT,
+                    f"broker PUBACK for '{topic}' was not observed before timeout",
+                )
+            try:
+                result.wait_for_publish(timeout=remaining)
+            except Exception as exc:
+                raise PublishConfirmationError(
+                    PublishConfirmationReason.TRANSPORT_ERROR,
+                    f"confirmed publish on '{topic}' failed while awaiting PUBACK: {exc}",
+                ) from exc
+            # Paho wait_for_publish intentionally returns normally when its timeout
+            # elapses; is_published() is the required positive acknowledgement test.
+            if not result.is_published():
+                raise PublishConfirmationError(
+                    PublishConfirmationReason.TIMEOUT,
+                    f"broker PUBACK for '{topic}' was not observed before timeout",
+                )
+        finally:
+            self._confirmed_publish_permits.release()
+
     def _publish_raw(self, channel: _BrokerChannel, topic: str, msg: dict, mqtt_qos: int):
         client = self._require_client(channel)
         client.publish(topic, json.dumps(msg), qos=mqtt_qos)
 
     def _subscribe(self, channel: _BrokerChannel, topic: str,
                    callback: Optional[Callable[[str, Message], None]],
-                   mqtt_qos: int, max_concurrency, max_messages=None):
+                   mqtt_qos: int, max_concurrency, max_messages=None,
+                   timeout_secs=None):
         client = self._require_client(channel)
+        timeout = (
+            self._subscription_timeout
+            if timeout_secs is None
+            else self._validated_subscribe_timeout(timeout_secs)
+        )
         logger.debug(f"Subscribing to {channel.name} broker topic: {topic} (QoS: {mqtt_qos})")
         try:
             event = threading.Event()
-            with self._lock:
-                channel.pending_subscriptions[topic] = event
-                result = client.subscribe(topic, qos=mqtt_qos)
-                if result[0] != mqtt.MQTT_ERR_SUCCESS:
-                    channel.pending_subscriptions.pop(topic, None)
-                    raise RuntimeError(f"Failed to send {channel.name} subscription request: {result[0]}")
-                channel.mid_to_topic[result[1]] = topic
-
-            # Block until SUBACK or timeout.
-            if not event.wait(timeout=self._subscription_timeout):
-                with self._lock:
-                    channel.pending_subscriptions.pop(topic, None)
-                    channel.mid_to_topic.pop(result[1], None)
-                raise TimeoutError(
-                    f"{channel.name} subscription to {topic} timed out after "
-                    f"{self._subscription_timeout} seconds"
-                )
-
-            # Confirmed: store it (qos retained for re-subscribe on reconnect).
             effective_max = max_messages if max_messages is not None else DEFAULT_MAX_MESSAGES
-            channel.subscriptions[topic] = {
+            subscription = {
                 'callback': callback,
                 'max_concurrency': max_concurrency,
                 'semaphore': self._make_semaphore(max_concurrency),
                 'max_messages': effective_max,
-                # Bounded permit (drop on overflow) when > 0, else None (unbounded).
                 'queue_permits': threading.Semaphore(effective_max) if effective_max and effective_max > 0 else None,
                 'qos': mqtt_qos,
             }
+            with self._lock:
+                # Install the callback before sending SUBSCRIBE. MQTT can deliver immediately
+                # after SUBACK and before this waiting thread resumes; CommandInbox's activation
+                # gate owns that race and must receive those messages rather than lose them.
+                channel.subscriptions[topic] = subscription
+                channel.pending_subscriptions[topic] = event
+                channel.subscription_ack_results.pop(topic, None)
+                result = client.subscribe(topic, qos=mqtt_qos)
+                if result[0] != mqtt.MQTT_ERR_SUCCESS:
+                    channel.pending_subscriptions.pop(topic, None)
+                    channel.subscriptions.pop(topic, None)
+                    raise RuntimeError(f"Failed to send {channel.name} subscription request: {result[0]}")
+                channel.mid_to_topic[result[1]] = topic
+
+            # Block until SUBACK or timeout.
+            if not event.wait(timeout=timeout):
+                with self._lock:
+                    channel.pending_subscriptions.pop(topic, None)
+                    channel.mid_to_topic.pop(result[1], None)
+                    channel.subscription_ack_results.pop(topic, None)
+                    channel.subscriptions.pop(topic, None)
+                try:
+                    client.unsubscribe(topic)
+                except Exception:  # noqa: BLE001 - preserve the primary timeout
+                    pass
+                raise TimeoutError(
+                    f"{channel.name} subscription to {topic} timed out after "
+                    f"{timeout} seconds"
+                )
+
+            with self._lock:
+                acknowledged = channel.subscription_ack_results.pop(topic, False)
+            if not acknowledged:
+                with self._lock:
+                    channel.subscriptions.pop(topic, None)
+                try:
+                    client.unsubscribe(topic)
+                except Exception:  # noqa: BLE001 - preserve the negative SUBACK
+                    pass
+                raise RuntimeError(
+                    f"{channel.name} broker rejected subscription to {topic}"
+                )
             logger.debug(f"Successfully subscribed to {channel.name} broker topic: {topic}")
 
         except Exception as e:
+            with self._lock:
+                channel.pending_subscriptions.pop(topic, None)
+                channel.subscription_ack_results.pop(topic, None)
+                channel.subscriptions.pop(topic, None)
+                for mid, pending_topic in list(channel.mid_to_topic.items()):
+                    if pending_topic == topic:
+                        channel.mid_to_topic.pop(mid, None)
             logger.error(f"Error subscribing to {channel.name} broker topic {topic}: {e}")
             raise
 
     def _unsubscribe(self, channel: _BrokerChannel, topic: str):
-        if channel.client and topic in channel.subscriptions:
+        with self._lock:
+            event = channel.pending_subscriptions.pop(topic, None)
+            if event is not None:
+                channel.subscription_ack_results[topic] = False
+                event.set()
+            for mid, pending_topic in list(channel.mid_to_topic.items()):
+                if pending_topic == topic:
+                    channel.mid_to_topic.pop(mid, None)
+            existed = channel.subscriptions.pop(topic, None) is not None
+        if channel.client and (existed or event is not None):
             channel.client.unsubscribe(topic)
-            del channel.subscriptions[topic]
 
     def _request(self, channel: _BrokerChannel, topic: str, msg: Message,
                  reply_qos: int, publish_qos: int,
@@ -511,10 +653,35 @@ class StandaloneProvider(MessagingProvider):
         """Publish message to local broker."""
         self._publish(self._local, topic, msg, self._local_publish_qos)
 
+    def publish_confirmed(
+        self, topic: str, encoded_message: bytes, qos: Qos, timeout_secs: float
+    ) -> None:
+        self._publish_confirmed(
+            self._local, topic, encoded_message, qos, timeout_secs
+        )
+
     def subscribe(self, topic: str, callback: Callable[[str, Message], None], max_concurrency: int = None,
                   max_messages: int = None):
         """Subscribe to topic on local broker and wait for confirmation."""
         self._subscribe(self._local, topic, callback, self._local_subscribe_qos, max_concurrency, max_messages)
+
+    def subscribe_acknowledged(
+        self,
+        topic: str,
+        callback: Callable[[str, Message], None],
+        max_concurrency: int = None,
+        max_messages: int = None,
+        timeout_secs: float = 10.0,
+    ) -> None:
+        self._subscribe(
+            self._local,
+            topic,
+            callback,
+            self._local_subscribe_qos,
+            max_concurrency,
+            max_messages,
+            timeout_secs,
+        )
 
     def request(self, topic: str, msg: Message, timeout_secs: Optional[float] = None) -> Iou:
         """Send request to local broker and wait for response.
@@ -546,6 +713,13 @@ class StandaloneProvider(MessagingProvider):
     def publish_northbound(self, topic: str, msg: Message, qos: Qos):
         """Publish message to the northbound broker."""
         self._publish(self._northbound, topic, msg, self._mqtt_qos(qos))
+
+    def publish_northbound_confirmed(
+        self, topic: str, encoded_message: bytes, qos: Qos, timeout_secs: float
+    ) -> None:
+        self._publish_confirmed(
+            self._northbound, topic, encoded_message, qos, timeout_secs
+        )
 
     def subscribe_northbound(self, topic: str, callback: Callable[[str, Message], None],
                               qos: Qos, max_concurrency: int = None, max_messages: int = None):

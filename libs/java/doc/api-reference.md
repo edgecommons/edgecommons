@@ -20,6 +20,27 @@ This document provides a complete reference for the public API of the EdgeCommon
 
 Main entry point for the EdgeCommons framework.
 
+Prefer `EdgeCommonsBuilder`. Lifecycle-sensitive components can set the readiness gate before any
+runtime initialization, install all command handlers before the inbox subscribes, and register
+ordered pre-commit configuration validators:
+
+```java
+EdgeCommons gg = EdgeCommonsBuilder.create("com.example.CameraAdapter")
+        .withArgs(args)
+        .initialReady(false)
+        .withConfigValidationTimeout(Duration.ofSeconds(5))
+        .withConfigurationValidator("camera-endpoints", (candidate, prior, phase) ->
+                validateEndpoints(candidate, prior, phase))
+        .configureCommands(inbox -> inbox.register("sb/capture", this::capture))
+        .build();
+// Finish component-owned startup, then explicitly release the application gate.
+gg.setReady(true);
+```
+
+`initialReady(false)` is applied before argument parsing, transport setup, provider startup, or the
+health endpoint, so readiness cannot briefly report true. Runtime readiness also requires the
+command inbox to be `ACTIVE`.
+
 #### Constructors
 
 ```java
@@ -88,7 +109,20 @@ Returns configuration for a specific instance.
 ```java
 public JsonObject getFullConfig()
 ```
-Returns the complete configuration object.
+Returns a defensive copy of the atomically committed configuration generation.
+
+```java
+public boolean tryApplyConfig(JsonObject candidate)
+public long getConfigGeneration()
+public List<ConfigurationValidationError> getLastCandidateValidationErrors()
+```
+
+`tryApplyConfig` runs schema validation and every registered component validator before commit.
+Validators receive defensive copies of the candidate and the redacted prior snapshot, plus
+`INITIAL` or `RELOAD`. They share one bounded deadline. Reject, timeout, callback failure, or
+preparation failure retains the exact prior generation and does not invoke change listeners or the
+effective-config publisher. A successful candidate is prepared off to the side, atomically committed,
+then logging/effective publication/listeners observe the new generation.
 
 ```java
 public TagConfiguration getTagConfig()
@@ -319,6 +353,17 @@ public static void publishNorthbound(String topic, Message message, Qos qos)
 Publishes message to the configured northbound transport.
 
 ```java
+public void publishConfirmed(String topic, Message message, Qos qos, Duration timeout)
+public void publishConfirmed(String topic, byte[] encodedMessage, Qos qos, Duration timeout)
+public void publishNorthboundConfirmed(String topic, Message message, Qos qos, Duration timeout)
+public void publishNorthboundConfirmed(String topic, byte[] encodedMessage, Qos qos, Duration timeout)
+```
+Publishes at explicit `Qos.AT_LEAST_ONCE` and returns only after broker PUBACK (MQTT) or successful
+Greengrass IPC operation completion. The byte-array overload retains exact durable-outbox bytes.
+Failure throws `PublishConfirmationException`; unsupported providers throw
+`UnsupportedOperationException`.
+
+```java
 public static void publishRaw(String topic, JsonObject payload)
 ```
 Publishes raw JSON payload via IPC.
@@ -339,6 +384,48 @@ Sends request via the configured northbound transport and returns future for res
 public static void reply(Message originalMessage, Message replyMessage)
 ```
 Sends reply to a received message.
+
+```java
+public void replyConfirmed(Message originalMessage, Message replyMessage, Duration timeout)
+public void replyNorthboundConfirmed(Message originalMessage, Message replyMessage, Duration timeout)
+```
+Sends a guarded correlated reply through the strict acknowledgement path.
+
+### Command outcomes
+
+```java
+public void registerOutcome(String verb, OutcomeCommandHandler handler)
+public DeferredReply defer(Message request, Duration lifetime) throws CommandException
+public DeferredReplySnapshot deferredReplySnapshot()
+```
+
+`OutcomeCommandHandler` returns one of `CommandOutcome.ImmediateSuccess`,
+`CommandOutcome.ImmediateError`, or `CommandOutcome.Deferred`. `DeferredReply` exposes
+`activate()`, `discard()`, `settleSuccess(...)`, `settleError(...)`, and `state()`. The inbox owns
+the guarded reply metadata, timer, retry policy, 1,024-entry capacity bound, and shutdown
+settlement.
+
+For asynchronous application work, return
+`CommandOutcome.deferredWithContinuation(token, continuation)` after the durable commit and
+`token.activate()`. The inbox validates that the exact token is still `OPEN`, then starts the
+bounded continuation (maximum 256 running or queued). The continuation captures and settles the
+opaque token; it never receives a raw reply topic. The legacy `deferred(token)` form remains
+unchanged.
+
+### Prepared application messages
+
+```java
+public PreparedAppMessage prepare(String name, String channel, JsonObject body)
+public PreparedAppMessage prepareCorrelated(String name, String channel, JsonObject body,
+                                             Message request)
+public PreparedAppMessage prepareCorrelated(String name, String channel, JsonObject body,
+                                             String correlationId)
+public void publishConfirmed(PreparedAppMessage prepared, Duration timeout)
+public void publishConfirmed(PreparedAppMessage prepared, Channel routing, Duration timeout)
+```
+
+`PreparedAppMessage` carries `topic()`, `message()`, and defensive `encodedBytes()`. Confirmed
+publication uses those exact bytes so outbox retries preserve UUID and envelope encoding.
 
 ### Message
 

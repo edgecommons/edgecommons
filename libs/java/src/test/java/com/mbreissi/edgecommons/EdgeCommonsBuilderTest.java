@@ -6,6 +6,9 @@ package com.mbreissi.edgecommons;
 
 import org.apache.commons.cli.Options;
 import org.junit.jupiter.api.Test;
+
+import java.time.Duration;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -61,5 +64,25 @@ class EdgeCommonsBuilderTest {
                 .receiveOwnMessages(true);
         
         assertNotNull(builder);
+    }
+
+    @Test
+    void lifecycleConfigurationIsFluentAndRejectsAmbiguousRegistration() {
+        EdgeCommonsBuilder builder = EdgeCommonsBuilder.create("test.component")
+                .initialReady(false)
+                .withConfigValidationTimeout(Duration.ofMillis(250))
+                .withConfigurationValidator("camera", (candidate, current, phase) ->
+                        com.mbreissi.edgecommons.config.ConfigurationCandidateValidator.Result.accept())
+                .configureCommands(inbox -> { });
+
+        assertNotNull(builder);
+        assertThrows(IllegalArgumentException.class,
+                () -> builder.withConfigurationValidator("camera", (candidate, current, phase) ->
+                        com.mbreissi.edgecommons.config.ConfigurationCandidateValidator.Result.accept()));
+        assertThrows(IllegalArgumentException.class,
+                () -> builder.withConfigValidationTimeout(Duration.ZERO));
+        assertThrows(IllegalArgumentException.class,
+                () -> builder.withConfigurationValidator(" ", (candidate, current, phase) ->
+                        com.mbreissi.edgecommons.config.ConfigurationCandidateValidator.Result.accept()));
     }
 }

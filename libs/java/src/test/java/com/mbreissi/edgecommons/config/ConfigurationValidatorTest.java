@@ -166,6 +166,24 @@ class ConfigurationValidatorTest {
     }
 
     @Test
+    void aConfigThatIsNotRepresentableAsJsonIsReportedAsAValidationError() {
+        // Gson tolerates a non-finite number in the tree; JSON does not. Such a candidate must
+        // come back as a validation failure with the parse cause attached — never as an unchecked
+        // exception escaping into the hot-reload path.
+        JsonObject unrepresentable = obj("""
+                {"component":{"global":{}}}""");
+        unrepresentable.getAsJsonObject("component").getAsJsonObject("global")
+                .addProperty("ratio", Double.NaN);
+
+        ConfigurationValidator.ConfigurationValidationException error = assertThrows(
+                ConfigurationValidator.ConfigurationValidationException.class,
+                () -> ConfigurationValidator.validate(unrepresentable));
+        assertTrue(error.getMessage().startsWith("Configuration validation error:"),
+                "expected the wrapped-error form, got: " + error.getMessage());
+        assertNotNull(error.getCause(), "the underlying parse failure is retained as the cause");
+    }
+
+    @Test
     void validationExceptionConstructorsAreUsable() {
         ConfigurationValidator.ConfigurationValidationException e1 =
                 new ConfigurationValidator.ConfigurationValidationException("msg");

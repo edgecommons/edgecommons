@@ -10,10 +10,12 @@ import com.mbreissi.edgecommons.messaging.ReplyFuture;
 import com.google.gson.JsonObject;
 import com.mbreissi.edgecommons.messaging.Qos;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BiConsumer;
 
 /**
@@ -22,7 +24,8 @@ import java.util.function.BiConsumer;
  * provider is created) so it can be injected wherever a MessagingClient is expected.
  */
 public class MockMessagingService extends MessagingClient {
-    private final List<PublishedMessage> publishedMessages = new ArrayList<>();
+    private final List<PublishedMessage> publishedMessages = new CopyOnWriteArrayList<>();
+    private final List<ConfirmedPublish> confirmedPublishes = new CopyOnWriteArrayList<>();
     private final Map<String, BiConsumer<String, Message>> subscriptions = new HashMap<>();
     // Simulated transport connectivity for the readiness model (FR-HB-2). Defaults to connected so a
     // freshly-built mock messaging client reports a ready transport; tests flip it to exercise the
@@ -75,8 +78,35 @@ public class MockMessagingService extends MessagingClient {
     }
 
     @Override
+    public void subscribeAcknowledged(String topic, BiConsumer<String, Message> handler,
+                                      int maxConcurrency, int maxMessages, Duration timeout) {
+        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+            throw new IllegalArgumentException("subscription acknowledgement timeout must be positive");
+        }
+        subscriptions.put(topic, handler);
+    }
+
+    @Override
     public void subscribeNorthbound(String topic, BiConsumer<String, Message> handler, Qos qos) {
         subscriptions.put(topic, handler);
+    }
+
+    /** One strict confirmed-publish call, retaining the exact bytes supplied by the caller. */
+    public static class ConfirmedPublish {
+        public final String topic;
+        public final byte[] encodedBytes;
+        public final Qos qos;
+        public final Duration timeout;
+        public final boolean northbound;
+
+        public ConfirmedPublish(String topic, byte[] encodedBytes, Qos qos, Duration timeout,
+                                boolean northbound) {
+            this.topic = topic;
+            this.encodedBytes = encodedBytes.clone();
+            this.qos = qos;
+            this.timeout = timeout;
+            this.northbound = northbound;
+        }
     }
 
     @Override
@@ -92,6 +122,23 @@ public class MockMessagingService extends MessagingClient {
     @Override
     public void publishNorthbound(String topic, Message message, Qos qos) {
         publishedMessages.add(new PublishedMessage(topic, message, qos));
+    }
+
+    @Override
+    public void publishConfirmed(String topic, byte[] encodedMessage, Qos qos, Duration timeout) {
+        confirmedPublishes.add(new ConfirmedPublish(
+                topic, encodedMessage, qos, timeout, false));
+        publishedMessages.add(new PublishedMessage(
+                topic, Message.fromBytes(encodedMessage), qos));
+    }
+
+    @Override
+    public void publishNorthboundConfirmed(String topic, byte[] encodedMessage, Qos qos,
+                                            Duration timeout) {
+        confirmedPublishes.add(new ConfirmedPublish(
+                topic, encodedMessage, qos, timeout, true));
+        publishedMessages.add(new PublishedMessage(
+                topic, Message.fromBytes(encodedMessage), qos));
     }
 
     @Override
@@ -215,6 +262,11 @@ public class MockMessagingService extends MessagingClient {
 
     public void clearPublishedMessages() {
         publishedMessages.clear();
+        confirmedPublishes.clear();
+    }
+
+    public List<ConfirmedPublish> getConfirmedPublishes() {
+        return new ArrayList<>(confirmedPublishes);
     }
 
     /** The topic filters currently subscribed (for subscribe/unsubscribe lifecycle assertions). */
@@ -237,6 +289,7 @@ public class MockMessagingService extends MessagingClient {
 
     public void reset() {
         publishedMessages.clear();
+        confirmedPublishes.clear();
         subscriptions.clear();
     }
 }

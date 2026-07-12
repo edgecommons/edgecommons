@@ -77,7 +77,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "fs"] }
 async-trait = "0.1"
 arc-swap = "1"
-sysinfo = "0.39"
+# Keep the resolver inside the crate's declared Rust 1.85 MSRV. sysinfo 0.37+
+# requires Rust 1.88 or newer; 0.36.1 is the newest release compatible with
+# this library's supported toolchain. Pin exactly so a fresh resolution cannot
+# silently select an MSRV-incompatible release.
+sysinfo = "=0.36.1"
 notify = "8"
 # Message wire-format parity with Java/Python: UUID correlation ids + RFC3339 timestamps.
 uuid = { version = "1", features = ["v4"] }

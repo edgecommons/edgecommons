@@ -38,6 +38,13 @@ public abstract sealed class ConfigProvider
     public abstract JsonObject loadConfiguration();
     public abstract String getConfigSource();
 
+    /**
+     * Starts provider-owned watchers/subscriptions after initial validation and manager attachment.
+     * Constructors must remain side-effect free with respect to change delivery. Default no-op for
+     * pull-only providers.
+     */
+    public void start() {}
+
     /** Releases any resources held by this provider (e.g. file watchers). Default no-op. */
     public void close() {}
 

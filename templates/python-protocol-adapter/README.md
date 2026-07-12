@@ -16,6 +16,11 @@ This is a **scaffold** — implement your protocol in `app/<<COMPONENTNAME>>.py`
 See the OPC UA (subscribe-based, Java) and Modbus (poll-based, Python) reference adapters for complete
 implementations.
 
+The scaffold selects `initial_ready(False)` in the builder, so readiness cannot flicker true during
+transport/config/health startup. A worker releases the application gate only after an enabled instance
+has been constructed; messaging connectivity and acknowledged command-inbox `ACTIVE` state remain
+mandatory library-owned readiness conditions.
+
 ## Layout
 
 - `main.py` — builds edgecommons, registers the instance-connectivity provider, spawns one worker per

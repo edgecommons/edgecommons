@@ -191,6 +191,63 @@ pub trait MessagingService: Send + Sync {
     /// [`Self::publish`]).
     async fn publish_northbound(&self, topic: &str, msg: &Message, qos: Qos) -> Result<()>;
 
+    /// Publish locally at QoS 1 and return only after transport confirmation.
+    ///
+    /// The timeout is mandatory and bounds acknowledgement waiting. A timeout is an ambiguous
+    /// failure, never success. The default deliberately reports unsupported rather than treating
+    /// ordinary publish enqueueing as confirmation.
+    async fn publish_confirmed(
+        &self,
+        _topic: &str,
+        _msg: &Message,
+        _timeout: Duration,
+    ) -> Result<()> {
+        Err(EdgeCommonsError::Messaging(
+            "confirmed publish is not supported by this messaging service".to_string(),
+        ))
+    }
+
+    /// Northbound counterpart to [`Self::publish_confirmed`]. Confirmation always uses QoS 1.
+    async fn publish_northbound_confirmed(
+        &self,
+        _topic: &str,
+        _msg: &Message,
+        _timeout: Duration,
+    ) -> Result<()> {
+        Err(EdgeCommonsError::Messaging(
+            "confirmed northbound publish is not supported by this messaging service".to_string(),
+        ))
+    }
+
+    /// Confirmed local publication of caller-prepared EdgeCommons envelope bytes.
+    ///
+    /// This is the exact-byte seam used by durable outboxes: implementations must validate that
+    /// `payload` decodes as an EdgeCommons envelope, then send those original bytes verbatim
+    /// without reserializing them.
+    async fn publish_encoded_confirmed(
+        &self,
+        _topic: &str,
+        _payload: &[u8],
+        _timeout: Duration,
+    ) -> Result<()> {
+        Err(EdgeCommonsError::Messaging(
+            "confirmed encoded publish is not supported by this messaging service".to_string(),
+        ))
+    }
+
+    /// Northbound counterpart to [`Self::publish_encoded_confirmed`].
+    async fn publish_northbound_encoded_confirmed(
+        &self,
+        _topic: &str,
+        _payload: &[u8],
+        _timeout: Duration,
+    ) -> Result<()> {
+        Err(EdgeCommonsError::Messaging(
+            "confirmed encoded northbound publish is not supported by this messaging service"
+                .to_string(),
+        ))
+    }
+
     /// Publish a raw JSON payload to `topic` on the local broker (guarded — D-U8).
     async fn publish_raw(&self, topic: &str, payload: &Value) -> Result<()>;
     /// Publish a raw JSON payload to `topic` on the northbound transport at `qos` (guarded).
@@ -207,6 +264,20 @@ pub trait MessagingService: Send + Sync {
         max_messages: usize,
         max_concurrency: usize,
     ) -> Result<()>;
+
+    /// Register a local callback only after strict transport acknowledgement.
+    async fn subscribe_acknowledged(
+        &self,
+        _filter: &str,
+        _handler: Arc<dyn MessageHandler>,
+        _max_messages: usize,
+        _max_concurrency: usize,
+        _timeout: Duration,
+    ) -> Result<()> {
+        Err(EdgeCommonsError::Messaging(
+            "acknowledged subscribe is not supported by this messaging service".to_string(),
+        ))
+    }
 
     /// Register a callback for `filter` on the northbound transport at `qos`. Never guarded.
     async fn subscribe_northbound(
@@ -261,6 +332,30 @@ pub trait MessagingService: Send + Sync {
     async fn reply(&self, request: &Message, reply: Message) -> Result<()>;
     /// Reply to a received request on the northbound transport (guarded the same way).
     async fn reply_northbound(&self, request: &Message, reply: Message) -> Result<()>;
+
+    /// Send a guarded local reply and await strict QoS 1 confirmation.
+    async fn reply_confirmed(
+        &self,
+        _request: &Message,
+        _reply: Message,
+        _timeout: Duration,
+    ) -> Result<()> {
+        Err(EdgeCommonsError::Messaging(
+            "confirmed reply is not supported by this messaging service".to_string(),
+        ))
+    }
+
+    /// Northbound counterpart to [`Self::reply_confirmed`].
+    async fn reply_northbound_confirmed(
+        &self,
+        _request: &Message,
+        _reply: Message,
+        _timeout: Duration,
+    ) -> Result<()> {
+        Err(EdgeCommonsError::Messaging(
+            "confirmed northbound reply is not supported by this messaging service".to_string(),
+        ))
+    }
 
     /// Abandon a pending local request, cleaning up its reply subscription.
     fn cancel_request(&self, reply_future: ReplyFuture);
@@ -402,6 +497,32 @@ impl DefaultMessagingService {
         Ok(())
     }
 
+    fn validate_confirmation_timeout(timeout: Duration) -> Result<()> {
+        if timeout.is_zero() {
+            return Err(EdgeCommonsError::Messaging(
+                "confirmed publish requires a positive timeout".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn send_encoded_confirmed(
+        &self,
+        topic: &str,
+        payload: &[u8],
+        dest: Destination,
+        timeout: Duration,
+    ) -> Result<()> {
+        Self::validate_confirmation_timeout(timeout)?;
+        // This is an exact-byte *EdgeCommons envelope* lane, not a raw-payload escape hatch.
+        // Decode only to validate the public contract; send the caller's original bytes so
+        // signing, deterministic serialization, and retry identity are preserved.
+        Message::from_slice(payload)?;
+        self.provider
+            .publish_confirmed(topic, payload.to_vec(), dest, Qos::AtLeastOnce, timeout)
+            .await
+    }
+
     /// Open a provider subscription, spawn its dispatcher, and record the handle.
     async fn start_subscription(
         &self,
@@ -423,6 +544,43 @@ impl DefaultMessagingService {
                 EdgeCommonsError::Messaging("subscription map poisoned".to_string())
             })?;
             map.insert((dest, filter.to_string()), task)
+        };
+        if let Some(old) = previous {
+            old.abort();
+        }
+        Ok(())
+    }
+
+    /// Strict counterpart used by lifecycle-sensitive consumers such as CommandInbox.
+    async fn start_acknowledged_subscription(
+        &self,
+        filter: &str,
+        max_messages: usize,
+        max_concurrency: usize,
+        handler: Arc<dyn MessageHandler>,
+        timeout: Duration,
+    ) -> Result<()> {
+        if timeout.is_zero() {
+            return Err(EdgeCommonsError::Messaging(
+                "acknowledged subscribe requires a positive timeout".to_string(),
+            ));
+        }
+        let sub = self
+            .provider
+            .subscribe_acknowledged(
+                filter,
+                Destination::Local,
+                self.local_subscribe_qos,
+                max_messages,
+                timeout,
+            )
+            .await?;
+        let task = tokio::spawn(run_dispatcher(sub, handler, max_concurrency));
+        let previous = {
+            let mut map = self.subscriptions.lock().map_err(|_| {
+                EdgeCommonsError::Messaging("subscription map poisoned".to_string())
+            })?;
+            map.insert((Destination::Local, filter.to_string()), task)
         };
         if let Some(old) = previous {
             old.abort();
@@ -565,6 +723,23 @@ impl DefaultMessagingService {
             .publish(&topic, reply.to_vec()?, dest, self.publish_qos(dest))
             .await
     }
+
+    /// Publish a reply correlated with `request` and await strict QoS 1 confirmation.
+    async fn send_reply_confirmed(
+        &self,
+        request: &Message,
+        reply: Message,
+        dest: Destination,
+        timeout: Duration,
+    ) -> Result<()> {
+        let topic = request.header.reply_to.clone().ok_or_else(|| {
+            EdgeCommonsError::Messaging("cannot reply: request has no reply_to".to_string())
+        })?;
+        let mut reply = reply;
+        reply.header.correlation_id = request.header.correlation_id.clone();
+        self.send_encoded_confirmed(&topic, &reply.to_vec()?, dest, timeout)
+            .await
+    }
 }
 
 impl Drop for DefaultMessagingService {
@@ -629,6 +804,45 @@ impl MessagingService for DefaultMessagingService {
             .await
     }
 
+    async fn publish_confirmed(&self, topic: &str, msg: &Message, timeout: Duration) -> Result<()> {
+        self.check_reserved(Some(topic))?;
+        self.send_encoded_confirmed(topic, &msg.to_vec()?, Destination::Local, timeout)
+            .await
+    }
+
+    async fn publish_northbound_confirmed(
+        &self,
+        topic: &str,
+        msg: &Message,
+        timeout: Duration,
+    ) -> Result<()> {
+        self.check_reserved(Some(topic))?;
+        self.send_encoded_confirmed(topic, &msg.to_vec()?, Destination::Northbound, timeout)
+            .await
+    }
+
+    async fn publish_encoded_confirmed(
+        &self,
+        topic: &str,
+        payload: &[u8],
+        timeout: Duration,
+    ) -> Result<()> {
+        self.check_reserved(Some(topic))?;
+        self.send_encoded_confirmed(topic, payload, Destination::Local, timeout)
+            .await
+    }
+
+    async fn publish_northbound_encoded_confirmed(
+        &self,
+        topic: &str,
+        payload: &[u8],
+        timeout: Duration,
+    ) -> Result<()> {
+        self.check_reserved(Some(topic))?;
+        self.send_encoded_confirmed(topic, payload, Destination::Northbound, timeout)
+            .await
+    }
+
     async fn publish_raw(&self, topic: &str, payload: &Value) -> Result<()> {
         self.check_reserved(Some(topic))?;
         self.provider
@@ -667,6 +881,24 @@ impl MessagingService for DefaultMessagingService {
             max_messages,
             max_concurrency,
             handler,
+        )
+        .await
+    }
+
+    async fn subscribe_acknowledged(
+        &self,
+        filter: &str,
+        handler: Arc<dyn MessageHandler>,
+        max_messages: usize,
+        max_concurrency: usize,
+        timeout: Duration,
+    ) -> Result<()> {
+        self.start_acknowledged_subscription(
+            filter,
+            max_messages,
+            max_concurrency,
+            handler,
+            timeout,
         )
         .await
     }
@@ -751,6 +983,28 @@ impl MessagingService for DefaultMessagingService {
     async fn reply_northbound(&self, request: &Message, reply: Message) -> Result<()> {
         self.check_reserved(request.header.reply_to.as_deref())?;
         self.send_reply(request, reply, Destination::Northbound)
+            .await
+    }
+
+    async fn reply_confirmed(
+        &self,
+        request: &Message,
+        reply: Message,
+        timeout: Duration,
+    ) -> Result<()> {
+        self.check_reserved(request.header.reply_to.as_deref())?;
+        self.send_reply_confirmed(request, reply, Destination::Local, timeout)
+            .await
+    }
+
+    async fn reply_northbound_confirmed(
+        &self,
+        request: &Message,
+        reply: Message,
+        timeout: Duration,
+    ) -> Result<()> {
+        self.check_reserved(request.header.reply_to.as_deref())?;
+        self.send_reply_confirmed(request, reply, Destination::Northbound, timeout)
             .await
     }
 
@@ -1278,6 +1532,351 @@ mod tests {
 
     // ---------- §4.1 reserved-class publish guard ----------
 
+    #[derive(Default)]
+    struct ConfirmationProbe {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl MessagingProvider for ConfirmationProbe {
+        async fn publish(
+            &self,
+            _topic: &str,
+            _payload: Vec<u8>,
+            _dest: Destination,
+            _qos: Qos,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        async fn publish_confirmed(
+            &self,
+            _topic: &str,
+            _payload: Vec<u8>,
+            _dest: Destination,
+            _qos: Qos,
+            _timeout: Duration,
+        ) -> Result<()> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn subscribe(
+            &self,
+            _filter: &str,
+            _dest: Destination,
+            _qos: Qos,
+            _max_messages: usize,
+        ) -> Result<Subscription> {
+            Err(EdgeCommonsError::Messaging(
+                "confirmation probe does not subscribe".to_string(),
+            ))
+        }
+
+        async fn unsubscribe(&self, _filter: &str, _dest: Destination) -> Result<()> {
+            Ok(())
+        }
+
+        fn connected(&self) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn encoded_confirmed_publish_rejects_non_envelope_bytes_before_provider_io() {
+        let provider = Arc::new(ConfirmationProbe::default());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let malformed = svc
+            .publish_encoded_confirmed(
+                "events/camera",
+                b"not an EdgeCommons protobuf envelope",
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            malformed
+                .to_string()
+                .contains("Malformed EdgeCommons protobuf")
+        );
+
+        let missing_header = svc
+            .publish_northbound_encoded_confirmed("events/camera", &[], Duration::from_secs(1))
+            .await
+            .unwrap_err();
+        assert!(missing_header.to_string().contains("requires header"));
+        assert_eq!(
+            provider.calls.load(Ordering::SeqCst),
+            0,
+            "invalid envelope bytes must be rejected before provider I/O"
+        );
+    }
+
+    // ---------- reply correlation ----------
+
+    /// A request carrying a `reply_to`, as the requester's `request()` would stamp it.
+    fn request_message(reply_to: &str) -> Message {
+        MessageBuilder::new("svc/op", "1.0")
+            .payload(json!({}))
+            .reply_to(reply_to)
+            .build()
+    }
+
+    /// The single `(topic, decoded message)` the fake provider published.
+    fn only_published(provider: &FakeProvider) -> (String, Message) {
+        let published = provider.published.lock().unwrap();
+        assert_eq!(published.len(), 1, "exactly one publish expected");
+        let (topic, payload) = &published[0];
+        (
+            topic.clone(),
+            Message::from_slice(payload).expect("an EdgeCommons envelope"),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_reply_goes_to_the_requests_reply_to_stamped_with_its_correlation_id() {
+        // The correlation id is what lets the requester match this reply to its pending
+        // request; a reply that keeps its own freshly-minted id would never be delivered.
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let request = request_message("edgecommons/reply/abc");
+        let reply = msg(42);
+        assert_ne!(
+            reply.header.correlation_id, request.header.correlation_id,
+            "the reply starts with its own id"
+        );
+
+        svc.reply(&request, reply).await.unwrap();
+
+        let (topic, published) = only_published(&provider);
+        assert_eq!(topic, "edgecommons/reply/abc");
+        assert_eq!(
+            published.header.correlation_id, request.header.correlation_id,
+            "the reply must be re-stamped with the request's correlation id"
+        );
+        assert_eq!(published.body, json!(42));
+        assert_eq!(
+            provider.published_qos.lock().unwrap()[0].0,
+            Destination::Local
+        );
+    }
+
+    #[tokio::test]
+    async fn a_northbound_reply_is_published_northbound_not_locally() {
+        // A wrong-destination reply either strands the requester or leaks the payload to the
+        // cloud; the destination is part of the contract, not an implementation detail.
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        svc.reply_northbound(&request_message("edgecommons/reply/nb"), msg(7))
+            .await
+            .unwrap();
+
+        let (topic, published) = only_published(&provider);
+        assert_eq!(topic, "edgecommons/reply/nb");
+        assert_eq!(published.body, json!(7));
+        assert_eq!(
+            provider.published_qos.lock().unwrap()[0].0,
+            Destination::Northbound,
+            "reply_northbound must use the northbound broker"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reply_to_a_fire_and_forget_message_is_refused() {
+        // A notification has nowhere to answer. Publishing to an empty/absent topic must be an
+        // error, never a publish to some default topic.
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        let notification = msg(1); // no reply_to
+
+        for result in [
+            svc.reply(&notification, msg(2)).await,
+            svc.reply_northbound(&notification, msg(2)).await,
+            svc.reply_confirmed(&notification, msg(2), Duration::from_secs(1))
+                .await,
+            svc.reply_northbound_confirmed(&notification, msg(2), Duration::from_secs(1))
+                .await,
+        ] {
+            let error = result.expect_err("a request without reply_to cannot be answered");
+            assert!(error.to_string().contains("no reply_to"), "{error}");
+        }
+        assert!(
+            provider.published.lock().unwrap().is_empty(),
+            "nothing may reach the wire"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_reply_is_correlated_and_routed_through_the_confirmed_path() {
+        let provider = Arc::new(ConfirmationProbe::default());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let request = request_message("edgecommons/reply/conf");
+        svc.reply_confirmed(&request, msg(5), Duration::from_secs(1))
+            .await
+            .expect("the probe confirms");
+        svc.reply_northbound_confirmed(&request, msg(5), Duration::from_secs(1))
+            .await
+            .expect("the probe confirms");
+
+        assert_eq!(
+            provider.calls.load(Ordering::SeqCst),
+            2,
+            "a confirmed reply must go through publish_confirmed, never plain publish"
+        );
+    }
+
+    // ---------- fail-closed transport contracts ----------
+
+    #[tokio::test]
+    async fn confirmation_fails_closed_on_a_provider_that_cannot_prove_delivery() {
+        // FakeProvider does not implement publish_confirmed. The trait default MUST error
+        // rather than silently degrade to a fire-and-forget publish reported as confirmed.
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let error = svc
+            .publish_confirmed("t", &msg(1), Duration::from_secs(1))
+            .await
+            .expect_err("an unprovable confirmation must not report success");
+        assert!(error.to_string().contains("not supported"), "{error}");
+
+        let error = svc
+            .reply_confirmed(
+                &request_message("edgecommons/reply/x"),
+                msg(1),
+                Duration::from_secs(1),
+            )
+            .await
+            .expect_err("the same fail-closed rule applies to replies");
+        assert!(error.to_string().contains("not supported"), "{error}");
+
+        assert!(
+            provider.published.lock().unwrap().is_empty(),
+            "the plain publish path must not be used as a fallback"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_acknowledged_subscribe_needs_a_positive_timeout_and_a_provider_that_subacks() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        let handler = message_handler(|_t, _m| async move {});
+
+        let error = svc
+            .subscribe_acknowledged("t", handler.clone(), 4, 1, Duration::ZERO)
+            .await
+            .expect_err("a zero deadline can never admit an acknowledgement");
+        assert!(error.to_string().contains("positive timeout"), "{error}");
+
+        // FakeProvider does not implement subscribe_acknowledged: the trait default fails
+        // closed instead of handing back an unacknowledged (possibly dead) subscription.
+        let error = svc
+            .subscribe_acknowledged("t", handler, 4, 1, Duration::from_secs(1))
+            .await
+            .expect_err("an unacknowledged subscribe must not masquerade as active");
+        assert!(error.to_string().contains("not supported"), "{error}");
+    }
+
+    // ---------- subscription bookkeeping ----------
+
+    #[tokio::test]
+    async fn resubscribing_a_filter_replaces_the_previous_dispatcher() {
+        // Two live dispatchers on one filter would double-handle every message. The newer
+        // subscription must abort the older one.
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let first = Arc::new(AtomicUsize::new(0));
+        let second = Arc::new(AtomicUsize::new(0));
+        for counter in [first.clone(), second.clone()] {
+            svc.subscribe(
+                "t",
+                message_handler(move |_t, _m| {
+                    let counter = counter.clone();
+                    async move {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                    }
+                }),
+                16,
+                1,
+            )
+            .await
+            .unwrap();
+        }
+
+        provider.push("t", &msg(1));
+        wait_for(&second, 1).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            first.load(Ordering::SeqCst),
+            0,
+            "the replaced dispatcher must be aborted, not left double-handling"
+        );
+        assert_eq!(second.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_northbound_subscription_is_unsubscribed_on_the_northbound_side() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        svc.subscribe_northbound(
+            "t",
+            message_handler(|_t, _m| async move {}),
+            Qos::AtLeastOnce,
+            16,
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            provider.subscribed_qos.lock().unwrap()[0],
+            (Destination::Northbound, Qos::AtLeastOnce)
+        );
+
+        svc.unsubscribe_northbound("t").await.unwrap();
+        assert_eq!(
+            provider.unsubscribed_dests.lock().unwrap().as_slice(),
+            &[Destination::Northbound],
+            "unsubscribing the wrong side would leak the northbound subscription"
+        );
+    }
+
+    #[tokio::test]
+    async fn confirmed_publish_never_fakes_support_with_an_ordinary_provider() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let error = svc
+            .publish_confirmed("events/camera", &msg(1), Duration::from_secs(1))
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("not supported"));
+        assert!(
+            provider.published.lock().unwrap().is_empty(),
+            "unsupported confirmation must not fall back to ordinary publish"
+        );
+    }
+
+    #[tokio::test]
+    async fn confirmed_publish_requires_a_positive_timeout_before_provider_use() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let error = svc
+            .publish_confirmed("events/camera", &msg(1), Duration::ZERO)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("positive timeout"));
+        assert!(provider.published.lock().unwrap().is_empty());
+    }
+
     fn assert_reserved(err: EdgeCommonsError) {
         assert!(
             matches!(err, EdgeCommonsError::ReservedTopic(_)),
@@ -1294,6 +1893,27 @@ mod tests {
         assert_reserved(svc.publish(reserved, &msg(1)).await.unwrap_err());
         assert_reserved(
             svc.publish_northbound(reserved, &msg(1), Qos::AtLeastOnce)
+                .await
+                .unwrap_err(),
+        );
+        assert_reserved(
+            svc.publish_confirmed(reserved, &msg(1), Duration::from_secs(1))
+                .await
+                .unwrap_err(),
+        );
+        assert_reserved(
+            svc.publish_northbound_confirmed(reserved, &msg(1), Duration::from_secs(1))
+                .await
+                .unwrap_err(),
+        );
+        let encoded = msg(1).to_vec().unwrap();
+        assert_reserved(
+            svc.publish_encoded_confirmed(reserved, &encoded, Duration::from_secs(1))
+                .await
+                .unwrap_err(),
+        );
+        assert_reserved(
+            svc.publish_northbound_encoded_confirmed(reserved, &encoded, Duration::from_secs(1))
                 .await
                 .unwrap_err(),
         );
@@ -1341,6 +1961,16 @@ mod tests {
             .build();
         assert_reserved(svc.reply(&request, msg(1)).await.unwrap_err());
         assert_reserved(svc.reply_northbound(&request, msg(1)).await.unwrap_err());
+        assert_reserved(
+            svc.reply_confirmed(&request, msg(1), Duration::from_secs(1))
+                .await
+                .unwrap_err(),
+        );
+        assert_reserved(
+            svc.reply_northbound_confirmed(&request, msg(1), Duration::from_secs(1))
+                .await
+                .unwrap_err(),
+        );
         assert!(provider.published.lock().unwrap().is_empty());
     }
 

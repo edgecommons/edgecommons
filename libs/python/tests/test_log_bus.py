@@ -89,6 +89,33 @@ class _BlockingMessaging(_RecordingMessaging):
         super()._publish_reserved(topic, msg)
 
 
+@pytest.fixture(autouse=True)
+def _root_logger_hygiene():
+    """Fail loudly if a test leaves a log-bus handler on the root logger.
+
+    The bus attaches its handler to the ROOT logger, which is process-global: a handler left behind by
+    one test captures the next test's records (and the records of any background thread still running),
+    which is precisely how this file used to flake -- a different victim each run, green in isolation.
+    Restoring the handler set is the cheap half; asserting on it is the half that stops the leak coming
+    back silently.
+    """
+    root = logging.getLogger()
+    before = list(root.handlers)
+    before_level = root.level
+    try:
+        yield
+    finally:
+        leaked = [h for h in root.handlers if h not in before]
+        for h in leaked:
+            root.removeHandler(h)
+        root.setLevel(before_level)
+        LogService._current = None
+        assert not leaked, (
+            f"test left {len(leaked)} log-bus handler(s) on the root logger; "
+            "close() the service (it detaches the handler) or the next test inherits it"
+        )
+
+
 def _service(publish_config=None, messaging=None):
     messaging = messaging or _RecordingMessaging()
     service = LogService(messaging)
@@ -101,7 +128,13 @@ def _enabled(**kwargs):
         "enabled": True,
         "destination": "local",
         "minLevel": "INFO",
-        "captureNative": True,
+        # OFF by default and deliberately so. The bus handler attaches to the ROOT logger, and the
+        # re-capture guard is a threading.local set on the publishing worker -- so it cannot suppress
+        # records emitted by OTHER threads. Background threads left running by earlier tests
+        # (messaging clients, metric emitters) keep logging, and with native capture on those foreign
+        # records get captured, published and COUNTED, inflating stats() nondeterministically. That is
+        # the whole of the order-dependent flake. Tests that genuinely exercise capture opt in below.
+        "captureNative": False,
         "captureConsole": False,
         "maxRecordBytes": 8192,
     }
@@ -177,13 +210,18 @@ def test_disconnected_transport_counts_failure_without_provider_publish():
 
 
 def test_provider_logs_emitted_during_publish_are_not_recaptured():
-    service, messaging = _service(_enabled(), _LoggingMessaging())
+    service, messaging = _service(_enabled(captureNative=True), _LoggingMessaging())
     try:
         service.install_handler()
         service.publish(LogRecord(timestamp=TS, level="INFO", logger="unit", message="one"))
         assert service.flush(timeout=2) is True
-        assert len(messaging.local) == 1
-        assert messaging.local[0][1].to_dict()["body"]["message"] == "one"
+        # Select this test's own record: with root capture on, an unrelated thread elsewhere in the
+        # process may legitimately log too. Asserting on the whole list would be asserting on the
+        # rest of the test suite.
+        mine = [m for _, m in messaging.local
+                if m.to_dict()["body"]["logger"] == "unit"]
+        assert len(mine) == 1
+        assert mine[0].to_dict()["body"]["message"] == "one"
     finally:
         service.close()
 
@@ -366,7 +404,7 @@ def test_queue_drop_oldest_never_blocks_and_reports_drop():
 
 
 def test_root_logging_handler_capture_honors_config_and_min_level():
-    service, messaging = _service(_enabled(minLevel="WARN"))
+    service, messaging = _service(_enabled(minLevel="WARN", captureNative=True))
     service.install_handler()
     logger = logging.getLogger("unit.logbus.capture")
     old_level = logger.level
@@ -377,8 +415,10 @@ def test_root_logging_handler_capture_honors_config_and_min_level():
         logger.info("ignored")
         logger.warning("captured %s", "warning", extra={"asset": "press-1"})
         assert service.flush(timeout=2) is True
-        assert len(messaging.local) == 1
-        topic, msg = messaging.local[0]
+        mine = [(t, m) for t, m in messaging.local
+                if m.to_dict()["body"]["logger"] == "unit.logbus.capture"]
+        assert len(mine) == 1
+        topic, msg = mine[0]
         body = msg.to_dict()["body"]
         assert topic == "ecv1/gw-01/adapter/main/log/warn"
         assert body["level"] == "WARN"

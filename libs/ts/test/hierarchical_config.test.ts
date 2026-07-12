@@ -158,4 +158,38 @@ describe("LayeredConfigCoordinator", () => {
     expect(coordinator.latestSnapshot()).toEqual(valid.expected.effective);
     await watch?.close();
   });
+
+  it("serializes asynchronous candidate application so generations commit in source order", async () => {
+    const source = new MutableSource({ generation: 0 }, "FILE");
+    const coordinator = new LayeredConfigCoordinator({
+      source,
+      sourceSpec: { kind: "FILE", path: "config.json" },
+      componentName: "camera-adapter",
+    });
+    await coordinator.loadEffective();
+    const accepted: number[] = [];
+    let beganFirst!: () => void;
+    let releaseFirst!: () => void;
+    const firstBegan = new Promise<void>((resolve) => { beganFirst = resolve; });
+    const firstReleased = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const watch = await coordinator.watch(async (candidate) => {
+      const generation = candidate.generation as number;
+      if (generation === 1) {
+        beganFirst();
+        await firstReleased;
+      }
+      accepted.push(generation);
+      return true;
+    });
+
+    source.update?.({ generation: 1 });
+    await firstBegan;
+    source.update?.({ generation: 2 });
+    releaseFirst();
+    await tick(10);
+
+    expect(accepted).toEqual([1, 2]);
+    expect(coordinator.latestSnapshot()).toEqual({ generation: 2 });
+    await watch?.close();
+  });
 });

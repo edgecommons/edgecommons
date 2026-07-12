@@ -17,8 +17,16 @@ class FileConfigManager(ConfigManager):
         component_name: str,
         config_file_path: str,
         platform=None,
+        candidate_validators=None,
+        validation_timeout_secs=5.0,
     ):
-        super().__init__(component_name, thing_name, platform=platform)
+        super().__init__(
+            component_name,
+            thing_name,
+            platform=platform,
+            candidate_validators=candidate_validators,
+            validation_timeout_secs=validation_timeout_secs,
+        )
         self._config_file_path = config_file_path
         self._config_source = f"Config File (file name: {config_file_path})"
         self._config_provider_family = "FILE"

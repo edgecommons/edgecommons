@@ -11,8 +11,8 @@ This documentation explains the key components, message structure, and usage pat
 
 ## Key Components
 
-### MessagingService
-The primary interface for applications to interact with the messaging system through dependency injection. It provides methods for:
+### MessagingClient
+Applications obtain the concrete static messaging handle with `gg.get_messaging()`. It provides methods for:
 - Publishing messages
 - Subscribing to topics
 - Making request-reply style calls
@@ -39,11 +39,10 @@ Messages in EdgeCommons follow a header-payload model consisting of:
 #### 1. Publish-Subscribe
 Basic pub-sub messaging using either MQTT or Greengrass IPC:
 ```python
-from edgecommons.interfaces import IMessagingService
-from edgecommons.messaging.qos import Qos
+from edgecommons import Qos
 
-# Get messaging service through dependency injection
-messaging_service = edgecommons.get_service(IMessagingService)
+# Get the concrete messaging handle
+messaging_service = gg.get_messaging()
 
 # Publishing to local broker
 messaging_service.publish(topic, message)
@@ -100,6 +99,123 @@ except RequestTimeoutError:
 Note (init order): the messaging client is initialized before the config loads, so the configured
 default is late-bound right after the `ConfigManager` exists; until then the built-in 30 s applies
 (deliberately — the CONFIG_COMPONENT bootstrap request gets a deadline too).
+
+#### Deferred command replies
+
+Handlers registered with `CommandInbox.register(...)` retain the existing immediate `dict`/`None`
+contract. Long-running commands use the additive `register_outcome(...)` contract and return one of
+`ImmediateSuccess`, `ImmediateError`, or `Deferred`:
+
+```python
+from edgecommons import CommandOutcome
+
+def capture(request):
+    # Provision first. This rejects fire-and-forget requests with REPLY_REQUIRED,
+    # validates the guarded reply_to, and reserves one bounded registry entry.
+    token = commands.defer(request, lifetime_secs=95)
+    try:
+        capture_id = catalog.insert_accepted(request.get_body())
+    except Exception as error:
+        token.discard()
+        return CommandOutcome.error("CATALOG_ERROR", str(error))
+
+    token.activate()                 # only after durable acceptance commits
+
+    def finish():
+        token.settle_success({"captureId": capture_id, "state": "SUCCEEDED"})
+
+    return CommandOutcome.deferred_with_continuation(token, finish)
+
+commands.register_outcome("sb/capture", capture)
+
+# Later, from the worker that owns the terminal result. Exactly one concurrent
+# settler receives SettlementResult.ACCEPTED.
+token.settle_success({"captureId": capture_id, "state": "SUCCEEDED"})
+# or: token.settle_error("CAPTURE_FAILED", "camera did not return a frame")
+```
+
+The inbox owns a maximum of 1,024 provisional/open/settling replies. A token is opaque: component
+code cannot read or directly publish to the retained reply topic. The registry retains only guarded
+reply metadata, expires tokens from an explicit timer (maximum lifetime 31 minutes), and retries a
+failed confirmed reply with the same envelope UUID until expiration. An open token that expires
+records a stable diagnostic. `close()` makes new deferrals fail, attempts a bounded
+`COMPONENT_STOPPING` reply for open tokens while messaging is still available, and marks them
+`CANCELLED_ON_SHUTDOWN`. Deferred paths are ephemeral and are not recovered after restart; durable
+application status and terminal messages provide recovery.
+
+`CommandOutcome.deferred_with_continuation(token, callback)` is the race-free handoff when work
+must start asynchronously after durable acceptance. The inbox validates the exact `OPEN` token
+before starting its bounded callback (maximum 256 running or queued); it never invokes the
+callback for an invalid token. The callback captures and settles the opaque token and never gets a
+raw reply topic. `CommandOutcome.deferred(token)` remains available for established callers.
+
+#### Observable command-inbox activation
+
+`CommandInbox.start(timeout_secs=10)` exposes a `CommandInboxStartupStatus` with `STARTING`,
+`ACTIVE`, `FAILED`, or `STOPPED`. `ACTIVE` means all built-in and builder-configured component
+handlers exist, the exact inbox filter was submitted, and MQTT SUBACK or the Greengrass initial
+subscription response succeeded. Failure retains a bounded sanitized diagnostic and performs
+best-effort partial-subscription cleanup; `stop()` invalidates that generation and a later `start()`
+can retry. `close()` is terminal.
+
+Deliveries that race acknowledged subscribe are not lost: the inbox retains at most 256 while
+`STARTING` and while the activation drain runs, preserves arrival order, and drops the newest with a
+warning on overflow. Callbacks are generation-bound, so a stopped/failed generation cannot dispatch
+after restart. Components install handlers before subscribe through the builder:
+
+```python
+from edgecommons import EdgeCommonsBuilder
+
+gg = (
+    EdgeCommonsBuilder.create("com.example.CameraAdapter")
+    .configure_commands(
+        lambda inbox: inbox.register_outcome("sb/capture", capture)
+    )
+    .build()
+)
+```
+
+`MessagingClient.subscribe_acknowledged(...)` is the additive strict transport primitive. It never
+falls back to ordinary `subscribe(...)` on a provider that cannot prove acknowledgement.
+
+#### Confirmed publication and prepared application messages
+
+Ordinary `publish(...)` retains its immediate submission semantics. A durable outbox uses the strict
+confirmed path with explicit QoS 1 and a positive timeout:
+
+```python
+from edgecommons import Qos
+
+MessagingClient.publish_confirmed(
+    topic, exact_encoded_envelope, Qos.AT_LEAST_ONCE, timeout_secs=5
+)
+```
+
+On MQTT, success means the matching broker PUBACK was observed. On Greengrass, success means the IPC
+publish operation completed successfully. Timeout, disconnect, and a provider without positive
+confirmation support raise; an ambiguous timeout is never reported as success. Exact-byte calls first
+parse the value through the canonical EdgeCommons envelope codec and reject malformed bytes before
+touching the transport, while still sending the caller's original representation after validation.
+
+The `app()` facade can prepare one stable envelope before storing or publishing it:
+
+```python
+prepared = gg.app().prepare_correlated(
+    "ImageCaptured",
+    "image/captured",
+    {"captureId": capture_id, "absolutePath": absolute_path},
+    request,                           # or an explicit correlation-id string
+)
+
+outbox.insert(prepared.topic, prepared.encoded_bytes)
+gg.app().publish_confirmed(prepared, timeout_secs=5)
+```
+
+`PreparedAppMessage` contains the facade-generated topic, the `Message`, and exact serialized bytes.
+Retries of the same prepared value therefore preserve the UUID, timestamp, correlation, identity,
+body, and encoded envelope. `publish_prepared(...)` uses the existing immediate path;
+`publish_confirmed(...)` propagates failures, including for northbound routing, so an outbox can
+leave the record pending.
 
 ### Reserved-class publish guard (UNS)
 
@@ -415,7 +531,8 @@ def test_dual_subscription():
 ### Connection Management
 The STANDALONE provider includes robust connection management:
 - **Blocking connections**: Waits for connection confirmation before proceeding
-- **Blocking subscriptions**: Waits for SUBACK confirmation before returning
+- **Blocking subscriptions**: built-in MQTT subscriptions wait for positive SUBACK; lifecycle code
+  uses the explicit `subscribe_acknowledged` contract with its own timeout
 - **Automatic cleanup**: Handles disconnections and timeouts gracefully
 - **5-second timeouts**: For both connections and subscriptions
 
@@ -429,15 +546,9 @@ messaging_service.subscribe("sensors/#", all_sensor_handler)
 
 ## Migration Guide
 
-### From Legacy MessagingClient
+### Accessing messaging
 ```python
-# Old way (still supported)
-from edgecommons import MessagingClient
-MessagingClient.publish(topic, message)
-
-# New way (recommended)
-from edgecommons.interfaces import IMessagingService
-messaging_service = edgecommons.get_service(IMessagingService)
+messaging_service = gg.get_messaging()
 messaging_service.publish(topic, message)
 ```
 

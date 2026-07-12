@@ -3,7 +3,6 @@ package <<PACKAGE>>;
 import com.mbreissi.edgecommons.EdgeCommons;
 import com.mbreissi.edgecommons.EdgeCommonsBuilder;
 import com.mbreissi.edgecommons.commands.CommandException;
-import com.mbreissi.edgecommons.commands.CommandInbox;
 import com.mbreissi.edgecommons.config.ConfigManager;
 import com.mbreissi.edgecommons.facades.DataFacade;
 import com.mbreissi.edgecommons.facades.EventsFacade;
@@ -39,9 +38,9 @@ import static com.mbreissi.edgecommons.utils.Utils.sleep;
  * <p>The {@code state} heartbeat keepalive AND the component command inbox are both
  * <b>automatic</b> (library-owned, no code here): the {@code state} keepalive publishes on
  * {@code ecv1/{device}/{component}/main/state} (on / 5 s / local by default), and the inbox
- * ({@code ecv1/{device}/{component}/main/cmd/#}, {@code gg.getCommands()}) already answers
+ * ({@code ecv1/{device}/{component}/main/cmd/#}, {@code gg.getCommands()}) answers
  * {@code ping} / {@code status} / {@code describe} / {@code reload-config} /
- * {@code get-configuration} before this constructor even runs.
+ * {@code get-configuration} once its transport subscription is acknowledged.
  *
  * <p>What this scaffold adds is the rest of the monitoring + command surface the edge-console
  * reads (DESIGN-uns §7/§9 — G-S1/S2), so a freshly generated component has something to show up
@@ -58,7 +57,7 @@ import static com.mbreissi.edgecommons.utils.Utils.sleep;
  *       — the {@link EventsFacade} derives the {@code evt/{severity}/{type}} channel from the
  *       body's own severity + type, so the topic and body can never disagree;</li>
  *   <li>a custom <b>command verb</b> ({@value #SET_GREETING}), registered with
- *       {@code gg.getCommands().register(...)} alongside the automatic built-ins, that mutates a
+ *       {@code EdgeCommonsBuilder.configureCommands(...)} alongside the automatic built-ins, that mutates a
  *       small piece of in-memory state which the periodic {@code app} status publish below then
  *       reflects on its very next tick — so invoking it from the console is visibly observable.</li>
  * </ul>
@@ -81,7 +80,6 @@ public class <<COMPONENTNAME>>
     final ConfigManager configManager;
     final MessagingClient messaging;
     final MetricEmitter metrics;
-    final CommandInbox commands;
     /** The {@code data()} publish facade — see the class docs. */
     final DataFacade data;
     /** The {@code events()} publish facade — see the class docs. */
@@ -101,11 +99,16 @@ public class <<COMPONENTNAME>>
 
     public <<COMPONENTNAME>>(String[] args)
     {
-        edgeCommons = EdgeCommonsBuilder.create("<<COMPONENTFULLNAME>>").withArgs(args).build();
+        edgeCommons = EdgeCommonsBuilder.create("<<COMPONENTFULLNAME>>")
+                .withArgs(args)
+                .initialReady(false)
+                // Install component verbs before the command-inbox subscription can become ACTIVE.
+                .configureCommands(inbox -> inbox.register(
+                        SET_GREETING, this::handleSetGreeting))
+                .build();
         configManager = edgeCommons.getConfigManager();
         messaging = edgeCommons.getMessaging();
         metrics = edgeCommons.getMetrics();
-        commands = edgeCommons.getCommands();
         data = edgeCommons.getData();
         events = edgeCommons.getEvents();
 
@@ -121,20 +124,12 @@ public class <<COMPONENTNAME>>
                 .addDimension("demo", "scaffold")
                 .build());
 
-        // --- commands: ping/status/describe/reload-config/get-configuration are already live
-        // (wired by the library before this constructor runs). Register ONE custom verb so there
-        // is something for the console's "Send command" to invoke beyond the built-ins.
-        // `getCommands()` is only null on a mock/subclass bring-up that never initialized - guard
-        // defensively.
-        if (commands != null) {
-            commands.register(SET_GREETING, this::handleSetGreeting);
-        }
-
         // --- per-instance connectivity: ONE provider, TWO surfaces. The library pushes this
         // sample into the `state` keepalive's instances[] every tick AND returns it from the
         // built-in `status` verb when pulled, so a console that subscribes and a console that
         // asks can never disagree. See instanceConnectivity() below.
         edgeCommons.setInstanceConnectivityProvider(<<COMPONENTNAME>>::instanceConnectivity);
+
 
         // The resolved UNS identity path (e.g. "site1/my-gw") and the topic minted from it. APP
         // is the free application class for this scaffold's status publish below; the data()
@@ -143,6 +138,10 @@ public class <<COMPONENTNAME>>
         String statusTopic = edgeCommons.getUns().topic(UnsClass.APP, "status");
         LOGGER.info("UNS identity path: {} - status={}",
                 edgeCommons.getUns().identity().getPath(), statusTopic);
+
+        // All required handlers and metric definitions now exist; release the application gate.
+        // Readiness still also requires connected messaging and an ACTIVE command inbox.
+        edgeCommons.setReady(true);
 
         long seq = 0;
         long startMillis = System.currentTimeMillis();
