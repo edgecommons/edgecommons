@@ -84,4 +84,43 @@ class Asn1ObjectTest {
         assertEquals(2, o.getLength());
         assertEquals(new BigInteger(new byte[]{0x01, 0x02}), o.getInteger());
     }
+
+    @Test
+    void derParserRejectsAMissingTag() throws Exception {
+        DerParser parser = new DerParser(new byte[0]);
+        IOException error = assertThrows(IOException.class, parser::read);
+        assertTrue(error.getMessage().contains("missing tag"), error.getMessage());
+    }
+
+    @Test
+    void derParserRejectsAMissingLength() throws Exception {
+        // A tag with no length octet at all.
+        DerParser parser = new DerParser(new byte[]{0x02});
+        IOException error = assertThrows(IOException.class, parser::read);
+        assertTrue(error.getMessage().contains("length missing"), error.getMessage());
+    }
+
+    @Test
+    void derParserRejectsALengthFieldWiderThanFourOctets() throws Exception {
+        // 0x85 => long form announcing five length octets, one more than the decoder supports.
+        DerParser parser = new DerParser(new byte[]{0x02, (byte) 0x85, 1, 1, 1, 1, 1});
+        IOException error = assertThrows(IOException.class, parser::read);
+        assertTrue(error.getMessage().contains("length field too big"), error.getMessage());
+    }
+
+    @Test
+    void derParserRejectsATruncatedLengthField() throws Exception {
+        // Long form announcing two length octets, but the stream ends immediately.
+        DerParser parser = new DerParser(new byte[]{0x02, (byte) 0x82});
+        IOException error = assertThrows(IOException.class, parser::read);
+        assertTrue(error.getMessage().contains("length too short"), error.getMessage());
+    }
+
+    @Test
+    void derParserRejectsATruncatedValue() throws Exception {
+        // INTEGER announcing four content octets with only one present.
+        DerParser parser = new DerParser(new byte[]{0x02, 0x04, 0x01});
+        IOException error = assertThrows(IOException.class, parser::read);
+        assertTrue(error.getMessage().contains("missing value"), error.getMessage());
+    }
 }

@@ -19,12 +19,27 @@ jobs:
         working-directory: libs/python
     steps:
       - uses: actions/checkout@v4
+        with:
+          # diff-cover needs the merge base with the PR base branch.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -e . && pip install -r requirements-test.txt
       # The default local gate (broker-free); broker-backed tests run in the interop job.
-      # 90% line-coverage gate on the CI-testable surface (omit/exclude list in libs/python/.coveragerc:
+      # 92% line-coverage gate on the CI-testable surface (omit/exclude list in libs/python/.coveragerc:
       # GG-IPC, AWS Secrets-Manager sync, shadow/GG config sources, KMS/PKCS#11 providers — validated on
       # the lab/floci, mirroring how Java JaCoCo / TS vitest scope their gates).
-      - run: python -m pytest -m "not slow and not integration and not aws" --cov=edgecommons --cov-fail-under=90
+      # --cov-report=xml writes the Cobertura report the diff-coverage gate below reads.
+      - run: python -m pytest -m "not slow and not integration and not aws" --cov=edgecommons --cov-report=xml --cov-fail-under=92
+
+      # The bundle average is a lagging indicator: a large under-tested change barely moves it. The
+      # diff gate asks the question that matters on day one — is the code THIS pr changed tested? —
+      # and holds every changed line to 95%. A PR that changes no Python source has no changed lines
+      # and passes trivially.
+      - name: Diff coverage gate (95% of changed lines)
+        working-directory: ${{ github.workspace }}
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          pip install diff-cover
+          diff-cover libs/python/coverage.xml --compare-branch=origin/main --fail-under=95

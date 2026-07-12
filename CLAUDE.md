@@ -138,7 +138,7 @@ cargo feature is enabled).
 
 ### Java library (`libs/java/`)
 ```bash
-mvn clean package            # build + test → shaded self-contained JAR (JaCoCo enforces 90% coverage)
+mvn clean package            # build + test → shaded self-contained JAR (JaCoCo enforces 92% coverage)
 mvn clean package -DskipTests
 mvn test -Dtest=ClassName#methodName   # single test
 mvn clean install            # install to local ~/.m2
@@ -254,7 +254,7 @@ All of these run from the dev machine — none is "manual / can't automate":
 
 | Path | Where | Infra |
 |------|-------|-------|
-| Per-language unit/integration suites | this machine | Java (`mvn verify`, JaCoCo 90%), Python (`pytest`), Rust (`cargo test`, standalone — **no `greengrass` feature on Windows**), TS (`vitest` + coverage). Java toolchain is at `C:\Users\breis\tools\{jdk,maven}` (not on PATH). |
+| Per-language unit/integration suites | this machine | Java (`mvn verify`, JaCoCo 92%), Python (`pytest`), Rust (`cargo test`, standalone — **no `greengrass` feature on Windows**), TS (`vitest` + coverage). Java toolchain is at `C:\Users\breis\tools\{jdk,maven}` (not on PATH). |
 | **Cross-language wire interop: local MQTT** | this machine | Mandatory for any core wire-contract change. Use EMQX on `localhost:1883` and `python -m pytest test-infra/interop/test_interop.py -v` after extending `test-infra/interop/{python_node.py,java_node,rust_node,ts_node}` for the new wire behavior. The matrix must make every affected language produce and consume the new wire shape; for binary bodies, assert exact byte equality. A green per-language suite does **not** satisfy this gate. |
 | **`--platform HOST`** (dual-MQTT) end-to-end | this machine | EMQX `localhost:1883` (plaintext) / `8883` (mTLS) + floci `localhost:4566`, both in Docker (`edgecommons-emqx`, `edgestreamlog-floci`). Restart them before a HOST smoke — they crash under heavy parallel-build load. |
 | Rust **`greengrass` feature** build/tests (Linux-only) | **WSL** (Ubuntu, `cargo`+`cmake`+`cc`) | `wsl.exe bash -lc`, `CARGO_TARGET_DIR=/tmp`; the native GG SDK can't compile on Windows. |
@@ -335,16 +335,34 @@ Follow this for **every** code change, in the language(s) you touched:
    paths, edge cases, and error conditions; run the suite and fix failures:
    - Java `mvn test` · Python `python -m pytest` · Rust `cargo test` · TS `npm test`.
    Include the relevant test output in your response.
-   **Coverage is gated at 90% (line) in ALL FOUR languages**, scoped to the **CI-testable surface** —
-   live-infra-only code (Greengrass IPC, AWS KMS/Secrets-Manager/SSM, PKCS#11, shadow/GG config sources)
-   is validated on the lab/floci and is excluded from the gate, mirroring how Java/TS already scope theirs.
-   Run the gate locally before pushing:
-   - **Java**: `mvn verify` (JaCoCo 90% BUNDLE gate).
-   - **TS**: `npm run coverage` (vitest thresholds: stmts/lines 90, funcs 85, branches 80).
-   - **Python**: `python -m pytest -m "not slow and not integration and not aws" --cov=edgecommons --cov-fail-under=90`
+   **Two coverage gates run in ALL FOUR languages** — both are enforced in CI and both must pass:
+   - **Bundle: 92% (line).** The whole-library average, scoped to the **CI-testable surface** —
+     live-infra-only code (Greengrass IPC, AWS KMS/Secrets-Manager/SSM, PKCS#11, shadow/GG config
+     sources) is validated on the lab/floci and is excluded from the gate.
+   - **Diff: 95% of the lines THIS change touches.** The bundle average is a *lagging* indicator: a
+     large under-tested PR barely moves it, so it can hide inside. The diff gate asks the question
+     that matters on day one — is the code you changed tested? — via
+     [`diff-cover`](https://pypi.org/project/diff-cover/) against `origin/main`. It reads the same
+     reports the bundle gate produces (JaCoCo XML for Java, Cobertura for Python/Rust/TS). A PR that
+     changes no source in a given language has no changed lines there and passes that gate trivially.
+
+   Run the bundle gate locally before pushing:
+   - **Java**: `mvn verify` (JaCoCo 92% BUNDLE gate).
+   - **TS**: `npm run coverage` (vitest thresholds: stmts/lines 92, funcs 85, branches 80).
+   - **Python**: `python -m pytest -m "not slow and not integration and not aws" --cov=edgecommons --cov-report=xml --cov-fail-under=92`
      (omit/exclude list in `libs/python/.coveragerc`).
-   - **Rust**: `cargo llvm-cov --features credentials,streaming,metrics-prometheus,parameters --ignore-filename-regex 'testutil\.rs' --fail-under-lines 90`
+   - **Rust**: `cargo llvm-cov --features credentials,streaming,metrics-prometheus,parameters --ignore-filename-regex 'testutil\.rs' --cobertura --output-path target/cobertura.xml --fail-under-lines 92`
      (needs `cargo-llvm-cov` + `llvm-tools`; excludes test-support + the AWS/HSM-gated infra not built here).
+
+   And the diff gate the same way — `pip install diff-cover`, then, **from the repo root** (the paths
+   `git diff` reports are repo-root-relative; running it from the library directory silently matches
+   nothing and passes vacuously):
+   ```bash
+   diff-cover libs/python/coverage.xml            --compare-branch=origin/main --fail-under=95
+   diff-cover libs/rust/target/cobertura.xml      --compare-branch=origin/main --fail-under=95
+   diff-cover libs/ts/coverage/cobertura-coverage.xml --compare-branch=origin/main --fail-under=95
+   diff-cover libs/java/target/site/jacoco/jacoco.xml --src-roots libs/java/src/main/java --compare-branch=origin/main --fail-under=95
+   ```
    Don't lower a gate or `pragma`/exclude genuinely-testable code to pass — add tests.
 4. **Parity check.** If the change alters public behavior, the config schema, the CLI contract, or
    the message envelope, note whether the other three languages need the matching change. If it

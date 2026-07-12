@@ -19,18 +19,36 @@ jobs:
         working-directory: libs/rust
     steps:
       - uses: actions/checkout@v4
+        with:
+          # diff-cover needs the merge base with the PR base branch.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, llvm-tools-preview
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: libs/rust
       - run: cargo test --lib
       - run: cargo clippy --all-targets -- -D warnings
-      # 90% line-coverage gate on the CI-testable surface: the pure-Rust feature set (the AWS/HSM infra
+      # 92% line-coverage gate on the CI-testable surface: the pure-Rust feature set (the AWS/HSM infra
       # features credentials-aws/pkcs11/kafka + the Linux-only greengrass feature are excluded — validated
       # on the lab/floci), with the test-support file excluded. Mirrors Java JaCoCo / TS vitest scoping.
+      # The same run exports the Cobertura report the diff-coverage gate below reads.
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
-      - run: cargo llvm-cov --features credentials,streaming,metrics-prometheus,parameters --ignore-filename-regex 'testutil\.rs' --fail-under-lines 90
+      - run: cargo llvm-cov --features credentials,streaming,metrics-prometheus,parameters --ignore-filename-regex 'testutil\.rs' --cobertura --output-path target/cobertura.xml --fail-under-lines 92
+
+      # The bundle average is a lagging indicator: a large under-tested change barely moves it. The
+      # diff gate asks the question that matters on day one — is the code THIS pr changed tested? —
+      # and holds every changed line to 95%. A PR that changes no Rust source has no changed lines
+      # and passes trivially.
+      - name: Diff coverage gate (95% of changed lines)
+        working-directory: ${{ github.workspace }}
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          pip install diff-cover
+          diff-cover libs/rust/target/cobertura.xml --compare-branch=origin/main --fail-under=95
