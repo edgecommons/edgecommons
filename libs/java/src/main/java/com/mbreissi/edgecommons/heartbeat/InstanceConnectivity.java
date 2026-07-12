@@ -50,21 +50,24 @@ public final class InstanceConnectivity
     private final Map<String, JsonElement> attributes;
 
     /**
-     * Full constructor.
+     * The private wide constructor. It is NOT public, and that is the point.
      *
-     * @param instance   the component instance / connection id (e.g. an OPC UA server id, a Modbus
-     *                   slave id, a camera id); must be non-null/non-blank
-     * @param connected  whether that instance's southbound/source is currently reachable — the
-     *                   normalized flag every consumer can read
-     * @param detail     an optional human detail (endpoint, or the down reason), or {@code null}
-     * @param state      the component's own richer condition token, or {@code null}
-     * @param attributes optional domain-specific data, or {@code null}; copied defensively
+     * <p>A public 5-arg positional constructor is what forced this type into a constructor-overload
+     * and argument-ordering problem in the first place — one that had to be resolved differently in
+     * each language (Python and TypeScript cannot overload a constructor at all). The public
+     * construction path is therefore uniform across all four ports and positional-free:
      *
-     * <p>The argument order keeps the pre-existing 3-arg form a strict prefix, which is also the order
-     * Python and TypeScript arrived at independently (neither can overload a constructor). One order,
-     * four languages.
+     * <pre>{@code
+     * InstanceConnectivity.of("cam-02", false, "connect timed out")
+     *     .withState("BACKOFF")
+     *     .withAttributes(Map.of("lastError", new JsonPrimitive("CAMERA_UNAVAILABLE")));
+     * }</pre>
+     *
+     * <p>which is exactly how it reads in Rust, TypeScript and Python. Adding a member later extends
+     * the builder rather than minting a sixth argument nobody can order correctly. The legacy 3-arg
+     * constructor stays public for back-compat.
      */
-    public InstanceConnectivity(String instance, boolean connected, String detail, String state,
+    private InstanceConnectivity(String instance, boolean connected, String detail, String state,
                                 Map<String, JsonElement> attributes)
     {
         if (instance == null || instance.isBlank())

@@ -197,8 +197,10 @@ class CommandInboxTest {
                 uptime::get, reloadResult::get, redactedConfig::get,
                 () -> List.of(
                         InstanceConnectivity.of("cam-01", true).withState("ONLINE"),
-                        new InstanceConnectivity("cam-02", false, "connect timed out", "BACKOFF",
-                                Map.of("capabilities", attrs.get("capabilities"),
+                        InstanceConnectivity.of("cam-02", false, "connect timed out")
+                                .withState("BACKOFF")
+                                .withAttributes(Map.of(
+                                        "capabilities", attrs.get("capabilities"),
                                         "lastError", attrs.get("lastError")))));
         withInstances.start();
         messaging.simulateMessage(topic(CommandInbox.STATUS), request(CommandInbox.STATUS));
