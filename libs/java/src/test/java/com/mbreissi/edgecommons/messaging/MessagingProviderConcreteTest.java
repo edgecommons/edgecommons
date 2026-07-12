@@ -63,6 +63,11 @@ class MessagingProviderConcreteTest {
         long acknowledgedTimeoutMillis(java.time.Duration timeout) {
             return subscriptionTimeoutMillis(timeout);
         }
+
+        /** The strict-confirmation deadline guard every confirming provider runs first. */
+        long confirmedDeadlineMillis(byte[] encoded, Qos qos, java.time.Duration timeout) {
+            return confirmedTimeoutMillis(encoded, qos, timeout);
+        }
     }
 
     @Test
@@ -118,6 +123,40 @@ class MessagingProviderConcreteTest {
                 () -> p.acknowledgedTimeoutMillis(java.time.Duration.ZERO));
         assertThrows(IllegalArgumentException.class,
                 () -> p.acknowledgedTimeoutMillis(java.time.Duration.ofNanos(1)));
+        // A deadline that cannot even be expressed in milliseconds is a caller bug, not an
+        // "effectively infinite" wait.
+        assertThrows(IllegalArgumentException.class,
+                () -> p.acknowledgedTimeoutMillis(java.time.Duration.ofSeconds(Long.MAX_VALUE)));
+    }
+
+    @Test
+    void confirmedPublishDeadlineMustBeExplicitPositiveAndMillisecondResolved() {
+        RecordingProvider p = new RecordingProvider();
+        byte[] encoded = {1, 2, 3};
+
+        assertEquals(1500, p.confirmedDeadlineMillis(
+                encoded, Qos.AT_LEAST_ONCE, java.time.Duration.ofMillis(1500)));
+
+        // QoS 1 is the whole point: there is no acknowledgement to wait for at QoS 0.
+        assertThrows(IllegalArgumentException.class, () -> p.confirmedDeadlineMillis(
+                encoded, Qos.AT_MOST_ONCE, java.time.Duration.ofSeconds(1)));
+        // Nothing about the strict contract may be left implicit.
+        assertThrows(NullPointerException.class, () -> p.confirmedDeadlineMillis(
+                null, Qos.AT_LEAST_ONCE, java.time.Duration.ofSeconds(1)));
+        assertThrows(NullPointerException.class, () -> p.confirmedDeadlineMillis(
+                encoded, null, java.time.Duration.ofSeconds(1)));
+        assertThrows(NullPointerException.class, () -> p.confirmedDeadlineMillis(
+                encoded, Qos.AT_LEAST_ONCE, null));
+        // An unbounded wait would turn a lost acknowledgement into a hung component.
+        assertThrows(IllegalArgumentException.class, () -> p.confirmedDeadlineMillis(
+                encoded, Qos.AT_LEAST_ONCE, java.time.Duration.ZERO));
+        assertThrows(IllegalArgumentException.class, () -> p.confirmedDeadlineMillis(
+                encoded, Qos.AT_LEAST_ONCE, java.time.Duration.ofSeconds(-1)));
+        // Sub-millisecond and un-representable deadlines are rejected rather than truncated to 0.
+        assertThrows(IllegalArgumentException.class, () -> p.confirmedDeadlineMillis(
+                encoded, Qos.AT_LEAST_ONCE, java.time.Duration.ofNanos(1)));
+        assertThrows(IllegalArgumentException.class, () -> p.confirmedDeadlineMillis(
+                encoded, Qos.AT_LEAST_ONCE, java.time.Duration.ofSeconds(Long.MAX_VALUE)));
     }
 
     @Test

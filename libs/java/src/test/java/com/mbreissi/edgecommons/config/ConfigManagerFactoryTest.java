@@ -5,13 +5,18 @@
 package com.mbreissi.edgecommons.config;
 
 import com.mbreissi.edgecommons.ParsedCommandLine;
+import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -92,6 +97,82 @@ class ConfigManagerFactoryTest {
 
         assertFalse(validatorCalled.get(),
                 "schema-invalid candidates must never reach component validators");
+    }
+
+    @Test
+    void registeredValidatorsRunOnTheInitialCandidateUnderTheirRegisteredNames() throws Exception {
+        File config = writeTempConfig(VALID_CONFIG);
+        List<String> ran = new CopyOnWriteArrayList<>();
+        Map<String, ConfigurationCandidateValidator> validators = new LinkedHashMap<>();
+        // The full legal name shape: alphanumerics plus '.', '_' and '-'.
+        validators.put("camera", (candidate, current, phase) -> {
+            ran.add("camera:" + phase);
+            return ConfigurationCandidateValidator.Result.accept();
+        });
+        validators.put("sb.probe_1-a", (candidate, current, phase) -> {
+            ran.add("sb.probe_1-a:" + phase);
+            return ConfigurationCandidateValidator.Result.accept();
+        });
+
+        ConfigManager cm = ConfigManagerFactory.create("com.test.Comp",
+                fileCmdLine(config, "t"), null, validators, Duration.ofSeconds(2));
+
+        assertEquals(2, ran.size(), "every registered validator sees the initial candidate");
+        assertTrue(ran.contains("camera:INITIAL"));
+        assertTrue(ran.contains("sb.probe_1-a:INITIAL"));
+        assertEquals(1, cm.getConfigGeneration());
+    }
+
+    @Test
+    void aMalformedValidatorRegistrationFailsComponentStartup() throws Exception {
+        File config = writeTempConfig(VALID_CONFIG);
+        ConfigurationCandidateValidator accepts = (candidate, current, phase) ->
+                ConfigurationCandidateValidator.Result.accept();
+
+        // Validator names become operator-facing error identifiers, so the shape is enforced up
+        // front rather than producing an unusable diagnostic at rejection time.
+        for (String illegalName : new String[]{"", "-leading", "has space", "a".repeat(65)}) {
+            Map<String, ConfigurationCandidateValidator> named = new HashMap<>();
+            named.put(illegalName, accepts);
+            ConfigurationException ex = assertThrows(ConfigurationException.class,
+                    () -> ConfigManagerFactory.create("com.test.Comp", fileCmdLine(config, "t"),
+                            null, named, Duration.ofSeconds(2)),
+                    "illegal validator name accepted: '" + illegalName + "'");
+            assertInstanceOf(IllegalArgumentException.class, ex.getCause());
+        }
+
+        Map<String, ConfigurationCandidateValidator> nullName = new HashMap<>();
+        nullName.put(null, accepts);
+        assertInstanceOf(IllegalArgumentException.class,
+                assertThrows(ConfigurationException.class,
+                        () -> ConfigManagerFactory.create("com.test.Comp", fileCmdLine(config, "t"),
+                                null, nullName, Duration.ofSeconds(2))).getCause());
+
+        Map<String, ConfigurationCandidateValidator> nullValidator = new HashMap<>();
+        nullValidator.put("camera", null);
+        assertInstanceOf(NullPointerException.class,
+                assertThrows(ConfigurationException.class,
+                        () -> ConfigManagerFactory.create("com.test.Comp", fileCmdLine(config, "t"),
+                                null, nullValidator, Duration.ofSeconds(2))).getCause());
+    }
+
+    @Test
+    void aSchemaInvalidReloadIsRefusedAndTheRunningConfigurationIsUntouched() throws Exception {
+        File config = writeTempConfig(VALID_CONFIG);
+        ConfigManager cm = ConfigManagerFactory.create("com.test.Comp",
+                fileCmdLine(config, "my-thing"));
+        JsonObject running = cm.getFullConfig();
+
+        // The operator edits the file into a schema-invalid state and asks for a reload.
+        try (FileWriter writer = new FileWriter(config)) {
+            writer.write("""
+                    {"component":{"global":{}},"notASection":true}""");
+        }
+
+        assertFalse(cm.reloadFromProvider(), "reload-config must report the refusal");
+        assertEquals(running, cm.getFullConfig(),
+                "the running configuration survives a bad reload byte for byte");
+        assertEquals(1, cm.getConfigGeneration(), "a refused reload produces no new generation");
     }
 
     @Test

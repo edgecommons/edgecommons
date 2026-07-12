@@ -714,6 +714,84 @@ class CommandInboxTest {
     }
 
     @Test
+    void anOutcomeHandlerMustReturnAnOutcomeAndItsCodedFailuresSurvive() {
+        // The outcome contract is "return a non-null explicit outcome". A handler that returns
+        // nothing is a bug in the component, and must surface as a coded error reply rather than
+        // a swallowed no-reply (which would hang the caller until its request deadline).
+        inbox.registerOutcome("outcome-null", req -> null);
+        inbox.start();
+        messaging.simulateMessage(topic("outcome-null"), request("outcome-null"));
+        JsonObject body = onlyReplyBody();
+        assertFalse(body.get("ok").getAsBoolean());
+        assertEquals(CommandInbox.ERR_HANDLER_ERROR,
+                body.getAsJsonObject("error").get("code").getAsString());
+
+        // A coded failure thrown from an outcome handler keeps its code, exactly as for the
+        // legacy handler surface.
+        messaging.clearPublishedMessages();
+        inbox.registerOutcome("outcome-coded", req -> {
+            throw new CommandException("CAMERA_BUSY", "a capture is already running");
+        });
+        messaging.simulateMessage(topic("outcome-coded"), request("outcome-coded"));
+        JsonObject coded = onlyReplyBody();
+        assertFalse(coded.get("ok").getAsBoolean());
+        assertEquals("CAMERA_BUSY", coded.getAsJsonObject("error").get("code").getAsString());
+        assertEquals("a capture is already running",
+                coded.getAsJsonObject("error").get("message").getAsString());
+        inbox.close();
+    }
+
+    @Test
+    void aProvisionalTokenThatIsNeverActivatedStillExpiresAndReleasesItsCapacity() throws Exception {
+        // A handler may provision a token and then fail before activating it. The registry is hard
+        // bounded, so such a token must not sit there holding a slot forever.
+        CommandInbox.DeferredReply token = inbox.defer(request("capture"), Duration.ofMillis(40));
+        assertEquals(CommandInbox.DeferredReplyState.PROVISIONAL, token.state());
+        assertEquals(1, inbox.deferredReplySnapshot().active());
+
+        awaitCondition(() -> token.state() == CommandInbox.DeferredReplyState.EXPIRED,
+                "a provisional token must expire on its own lifetime timer");
+        awaitCondition(() -> inbox.deferredReplySnapshot().active() == 0,
+                "expiring a provisional token must release its registry slot");
+        assertEquals(1, inbox.deferredReplySnapshot().expired());
+        assertTrue(messaging.getPublishedMessages().isEmpty(),
+                "a token that was never activated owes no reply");
+        inbox.close();
+    }
+
+    @Test
+    void aFailingComponentStoppingReplyStillCancelsTheTokenAndNeverBreaksShutdown() {
+        MockMessagingService brokerDown = new MockMessagingService() {
+            @Override
+            public void publishConfirmed(String topic, byte[] encodedMessage,
+                                         com.mbreissi.edgecommons.messaging.Qos qos,
+                                         Duration timeout) {
+                throw new RuntimeException("broker is gone");
+            }
+        };
+        CommandInbox subject = new CommandInbox(config, brokerDown,
+                uptime::get, reloadResult::get, redactedConfig::get);
+        AtomicReference<CommandInbox.DeferredReply> tokenRef = new AtomicReference<>();
+        subject.registerOutcome("shutdown", req -> {
+            CommandInbox.DeferredReply token = subject.defer(req, Duration.ofSeconds(5));
+            tokenRef.set(token);
+            token.activate();
+            return CommandOutcome.deferred(token);
+        });
+        subject.start();
+        brokerDown.simulateMessage(topic("shutdown"), request("shutdown"));
+
+        assertDoesNotThrow(subject::close,
+                "an unreachable broker must not turn shutdown into a crash");
+
+        assertEquals(CommandInbox.DeferredReplyState.CANCELLED_ON_SHUTDOWN,
+                tokenRef.get().state(),
+                "the token reaches its terminal state even when its stopping reply cannot be sent");
+        assertEquals(0, subject.deferredReplySnapshot().active());
+        assertEquals(1, subject.deferredReplySnapshot().cancelledOnShutdown());
+    }
+
+    @Test
     void registerOutcomeSharesDuplicateAndUnregisterRulesWithLegacyHandlers() {
         inbox.registerOutcome("explicit", req -> CommandOutcome.success(null));
         assertTrue(inbox.verbs().contains("explicit"));

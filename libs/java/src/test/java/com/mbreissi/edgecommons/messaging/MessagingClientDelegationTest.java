@@ -108,6 +108,88 @@ class MessagingClientDelegationTest {
     }
 
     @Test
+    void confirmedNorthboundPublishOfAMessageEncodesItOnceAndDelegatesTheExactBytes() {
+        Message msg = MessageBuilder.create("Confirmed", "1.0")
+                .withPayload(new JsonObject()).build();
+        Duration timeout = Duration.ofSeconds(6);
+
+        client.publishNorthboundConfirmed("topic/nb", msg, Qos.AT_LEAST_ONCE, timeout);
+
+        ArgumentCaptor<byte[]> bytes = ArgumentCaptor.forClass(byte[].class);
+        verify(provider).publishNorthboundConfirmed(
+                eq("topic/nb"), bytes.capture(), eq(Qos.AT_LEAST_ONCE), eq(timeout));
+        assertArrayEquals(msg.toBytes(), bytes.getValue());
+        verify(provider, never()).publishNorthbound(anyString(), any(Message.class), any(Qos.class));
+    }
+
+    @Test
+    void aNullEnvelopeIsRejectedBeforeAnyConfirmedProviderIo() {
+        Duration timeout = Duration.ofSeconds(1);
+        assertThrows(NullPointerException.class, () -> client.publishConfirmed(
+                "t", (Message) null, Qos.AT_LEAST_ONCE, timeout));
+        assertThrows(NullPointerException.class, () -> client.publishConfirmed(
+                "t", (byte[]) null, Qos.AT_LEAST_ONCE, timeout));
+        assertThrows(NullPointerException.class, () -> client.publishNorthboundConfirmed(
+                "t", (Message) null, Qos.AT_LEAST_ONCE, timeout));
+        assertThrows(NullPointerException.class, () -> client.publishNorthboundConfirmed(
+                "t", (byte[]) null, Qos.AT_LEAST_ONCE, timeout));
+
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void aConfirmedReplyRequiresARealReplyTargetAndANonNullReply() {
+        Duration timeout = Duration.ofSeconds(1);
+        Message reply = MessageBuilder.create("Reply", "1.0").withPayload(new JsonObject()).build();
+
+        // No reply_to at all: the request was fire-and-forget, so there is nothing to confirm to.
+        Message noReplyTo = MessageBuilder.create("Req", "1.0")
+                .withPayload(new JsonObject()).build();
+        assertThrows(IllegalArgumentException.class,
+                () -> client.replyConfirmed(noReplyTo, reply, timeout));
+        assertThrows(IllegalArgumentException.class,
+                () -> client.replyNorthboundConfirmed(noReplyTo, reply, timeout));
+        // A headerless (raw) envelope has no reply metadata either.
+        assertThrows(IllegalArgumentException.class, () -> client.validateReplyTarget(
+                MessageBuilder.fromObject(new JsonObject())));
+        // A hostile request cannot aim a confirmed reply at a library-owned reserved class.
+        Message hostile = MessageBuilder.create("Req", "1.0").withPayload(new JsonObject()).build();
+        hostile.makeRequest("ecv1/device/component/main/state");
+        assertThrows(ReservedTopicException.class,
+                () -> client.replyConfirmed(hostile, reply, timeout));
+
+        Message request = MessageBuilder.create("Req", "1.0").withPayload(new JsonObject()).build();
+        request.makeRequest("reply/ok");
+        assertThrows(NullPointerException.class,
+                () -> client.replyConfirmed(request, null, timeout));
+        assertThrows(NullPointerException.class,
+                () -> client.replyNorthboundConfirmed(request, null, timeout));
+
+        verify(provider, never()).publishConfirmed(anyString(), any(byte[].class),
+                any(Qos.class), any(Duration.class));
+        verify(provider, never()).publishNorthboundConfirmed(anyString(), any(byte[].class),
+                any(Qos.class), any(Duration.class));
+    }
+
+    @Test
+    void confirmedNorthboundReplyGuardsTheTargetStampsCorrelationAndUsesTheStrictPath() {
+        Message request = MessageBuilder.create("Req", "1.0")
+                .withCorrelationId("corr-88")
+                .withReplyTo("reply/nb-confirmed")
+                .build();
+        Message reply = MessageBuilder.create("Reply", "1.0")
+                .withPayload(new JsonObject()).build();
+
+        client.replyNorthboundConfirmed(request, reply, Duration.ofSeconds(3));
+
+        assertEquals("corr-88", reply.getHeader().getCorrelationId(),
+                "the reply inherits the request correlation before it is encoded");
+        verify(provider).publishNorthboundConfirmed(eq("reply/nb-confirmed"), any(byte[].class),
+                eq(Qos.AT_LEAST_ONCE), eq(Duration.ofSeconds(3)));
+        verify(provider, never()).replyNorthbound(any(Message.class), any(Message.class));
+    }
+
+    @Test
     void publishRawDelegates() {
         JsonObject obj = new JsonObject();
         obj.addProperty("k", "v");

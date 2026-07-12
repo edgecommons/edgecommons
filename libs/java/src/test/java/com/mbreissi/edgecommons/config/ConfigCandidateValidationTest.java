@@ -157,6 +157,63 @@ class ConfigCandidateValidationTest {
     }
 
     @Test
+    void aValidatorCannotDriveANestedConfigurationUpdate() {
+        // A validator is contractually side-effect free. If one nonetheless calls back into the
+        // manager, the update must be refused outright — the outer apply holds the commit lock, so
+        // without this guard the validator would deadlock the configuration lifecycle.
+        AtomicReference<ConfigManager> self = new AtomicReference<>();
+        AtomicReference<Boolean> nestedResult = new AtomicReference<>();
+        ConfigManager manager = manager((candidate, current, phase) -> {
+            if (phase == ConfigurationValidationPhase.RELOAD) {
+                nestedResult.set(self.get().tryApplyConfig(config(99)));
+            }
+            return ConfigurationCandidateValidator.Result.accept();
+        }, Duration.ofSeconds(2));
+        self.set(manager);
+        manager.completeInitialization();
+
+        assertTrue(manager.tryApplyConfig(config(2)), "the outer candidate still commits");
+
+        assertEquals(Boolean.FALSE, nestedResult.get(),
+                "a nested update attempted from inside a validator must be rejected");
+        assertEquals(2, manager.getConfigGeneration(),
+                "only the outer candidate produced a generation");
+        assertEquals(2, manager.getGlobalConfig().get("v").getAsInt());
+    }
+
+    @Test
+    void aNullCandidateIsRejectedAsAValidationFailureNotAnEscapingThrowable() {
+        ConfigManager manager = manager((candidate, current, phase) ->
+                ConfigurationCandidateValidator.Result.accept(), Duration.ofSeconds(1));
+        manager.completeInitialization();
+
+        assertFalse(manager.tryApplyConfig(null), "a null candidate never commits");
+
+        assertEquals(1, manager.getConfigGeneration(), "the prior generation survives");
+        assertEquals("CONFIG_VALIDATION_FAILED",
+                manager.getLastCandidateValidationErrors().get(0).code());
+        assertEquals("schema", manager.getLastCandidateValidationErrors().get(0).validator());
+    }
+
+    @Test
+    void theCandidateValidationDeadlineMustBePositiveAndBounded() {
+        ConfigurationCandidateValidator accepts = (candidate, current, phase) ->
+                ConfigurationCandidateValidator.Result.accept();
+
+        // An unbounded (or absent) deadline would let one hung validator hang the component.
+        assertThrows(IllegalArgumentException.class, () -> manager(accepts, null));
+        assertThrows(IllegalArgumentException.class, () -> manager(accepts, Duration.ZERO));
+        assertThrows(IllegalArgumentException.class,
+                () -> manager(accepts, Duration.ofSeconds(-1)));
+        assertThrows(IllegalArgumentException.class, () -> manager(accepts,
+                ConfigManager.MAX_CANDIDATE_VALIDATION_TIMEOUT.plusSeconds(1)));
+
+        // The bound itself is allowed.
+        assertEquals(1, manager(accepts, ConfigManager.MAX_CANDIDATE_VALIDATION_TIMEOUT)
+                .getConfigGeneration());
+    }
+
+    @Test
     void appliedListenerCannotReplaceGenerationWhileOtherListenersObserveIt() {
         ConfigManager manager = manager((candidate, current, phase) ->
                 ConfigurationCandidateValidator.Result.accept(), Duration.ofSeconds(1));
