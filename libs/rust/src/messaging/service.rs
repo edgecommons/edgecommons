@@ -1613,6 +1613,239 @@ mod tests {
         );
     }
 
+    // ---------- reply correlation ----------
+
+    /// A request carrying a `reply_to`, as the requester's `request()` would stamp it.
+    fn request_message(reply_to: &str) -> Message {
+        MessageBuilder::new("svc/op", "1.0")
+            .payload(json!({}))
+            .reply_to(reply_to)
+            .build()
+    }
+
+    /// The single `(topic, decoded message)` the fake provider published.
+    fn only_published(provider: &FakeProvider) -> (String, Message) {
+        let published = provider.published.lock().unwrap();
+        assert_eq!(published.len(), 1, "exactly one publish expected");
+        let (topic, payload) = &published[0];
+        (
+            topic.clone(),
+            Message::from_slice(payload).expect("an EdgeCommons envelope"),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_reply_goes_to_the_requests_reply_to_stamped_with_its_correlation_id() {
+        // The correlation id is what lets the requester match this reply to its pending
+        // request; a reply that keeps its own freshly-minted id would never be delivered.
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let request = request_message("edgecommons/reply/abc");
+        let reply = msg(42);
+        assert_ne!(
+            reply.header.correlation_id, request.header.correlation_id,
+            "the reply starts with its own id"
+        );
+
+        svc.reply(&request, reply).await.unwrap();
+
+        let (topic, published) = only_published(&provider);
+        assert_eq!(topic, "edgecommons/reply/abc");
+        assert_eq!(
+            published.header.correlation_id, request.header.correlation_id,
+            "the reply must be re-stamped with the request's correlation id"
+        );
+        assert_eq!(published.body, json!(42));
+        assert_eq!(
+            provider.published_qos.lock().unwrap()[0].0,
+            Destination::Local
+        );
+    }
+
+    #[tokio::test]
+    async fn a_northbound_reply_is_published_northbound_not_locally() {
+        // A wrong-destination reply either strands the requester or leaks the payload to the
+        // cloud; the destination is part of the contract, not an implementation detail.
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        svc.reply_northbound(&request_message("edgecommons/reply/nb"), msg(7))
+            .await
+            .unwrap();
+
+        let (topic, published) = only_published(&provider);
+        assert_eq!(topic, "edgecommons/reply/nb");
+        assert_eq!(published.body, json!(7));
+        assert_eq!(
+            provider.published_qos.lock().unwrap()[0].0,
+            Destination::Northbound,
+            "reply_northbound must use the northbound broker"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reply_to_a_fire_and_forget_message_is_refused() {
+        // A notification has nowhere to answer. Publishing to an empty/absent topic must be an
+        // error, never a publish to some default topic.
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        let notification = msg(1); // no reply_to
+
+        for result in [
+            svc.reply(&notification, msg(2)).await,
+            svc.reply_northbound(&notification, msg(2)).await,
+            svc.reply_confirmed(&notification, msg(2), Duration::from_secs(1))
+                .await,
+            svc.reply_northbound_confirmed(&notification, msg(2), Duration::from_secs(1))
+                .await,
+        ] {
+            let error = result.expect_err("a request without reply_to cannot be answered");
+            assert!(error.to_string().contains("no reply_to"), "{error}");
+        }
+        assert!(
+            provider.published.lock().unwrap().is_empty(),
+            "nothing may reach the wire"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_reply_is_correlated_and_routed_through_the_confirmed_path() {
+        let provider = Arc::new(ConfirmationProbe::default());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let request = request_message("edgecommons/reply/conf");
+        svc.reply_confirmed(&request, msg(5), Duration::from_secs(1))
+            .await
+            .expect("the probe confirms");
+        svc.reply_northbound_confirmed(&request, msg(5), Duration::from_secs(1))
+            .await
+            .expect("the probe confirms");
+
+        assert_eq!(
+            provider.calls.load(Ordering::SeqCst),
+            2,
+            "a confirmed reply must go through publish_confirmed, never plain publish"
+        );
+    }
+
+    // ---------- fail-closed transport contracts ----------
+
+    #[tokio::test]
+    async fn confirmation_fails_closed_on_a_provider_that_cannot_prove_delivery() {
+        // FakeProvider does not implement publish_confirmed. The trait default MUST error
+        // rather than silently degrade to a fire-and-forget publish reported as confirmed.
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let error = svc
+            .publish_confirmed("t", &msg(1), Duration::from_secs(1))
+            .await
+            .expect_err("an unprovable confirmation must not report success");
+        assert!(error.to_string().contains("not supported"), "{error}");
+
+        let error = svc
+            .reply_confirmed(
+                &request_message("edgecommons/reply/x"),
+                msg(1),
+                Duration::from_secs(1),
+            )
+            .await
+            .expect_err("the same fail-closed rule applies to replies");
+        assert!(error.to_string().contains("not supported"), "{error}");
+
+        assert!(
+            provider.published.lock().unwrap().is_empty(),
+            "the plain publish path must not be used as a fallback"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_acknowledged_subscribe_needs_a_positive_timeout_and_a_provider_that_subacks() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+        let handler = message_handler(|_t, _m| async move {});
+
+        let error = svc
+            .subscribe_acknowledged("t", handler.clone(), 4, 1, Duration::ZERO)
+            .await
+            .expect_err("a zero deadline can never admit an acknowledgement");
+        assert!(error.to_string().contains("positive timeout"), "{error}");
+
+        // FakeProvider does not implement subscribe_acknowledged: the trait default fails
+        // closed instead of handing back an unacknowledged (possibly dead) subscription.
+        let error = svc
+            .subscribe_acknowledged("t", handler, 4, 1, Duration::from_secs(1))
+            .await
+            .expect_err("an unacknowledged subscribe must not masquerade as active");
+        assert!(error.to_string().contains("not supported"), "{error}");
+    }
+
+    // ---------- subscription bookkeeping ----------
+
+    #[tokio::test]
+    async fn resubscribing_a_filter_replaces_the_previous_dispatcher() {
+        // Two live dispatchers on one filter would double-handle every message. The newer
+        // subscription must abort the older one.
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        let first = Arc::new(AtomicUsize::new(0));
+        let second = Arc::new(AtomicUsize::new(0));
+        for counter in [first.clone(), second.clone()] {
+            svc.subscribe(
+                "t",
+                message_handler(move |_t, _m| {
+                    let counter = counter.clone();
+                    async move {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                    }
+                }),
+                16,
+                1,
+            )
+            .await
+            .unwrap();
+        }
+
+        provider.push("t", &msg(1));
+        wait_for(&second, 1).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            first.load(Ordering::SeqCst),
+            0,
+            "the replaced dispatcher must be aborted, not left double-handling"
+        );
+        assert_eq!(second.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_northbound_subscription_is_unsubscribed_on_the_northbound_side() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        svc.subscribe_northbound(
+            "t",
+            message_handler(|_t, _m| async move {}),
+            Qos::AtLeastOnce,
+            16,
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            provider.subscribed_qos.lock().unwrap()[0],
+            (Destination::Northbound, Qos::AtLeastOnce)
+        );
+
+        svc.unsubscribe_northbound("t").await.unwrap();
+        assert_eq!(
+            provider.unsubscribed_dests.lock().unwrap().as_slice(),
+            &[Destination::Northbound],
+            "unsubscribing the wrong side would leak the northbound subscription"
+        );
+    }
+
     #[tokio::test]
     async fn confirmed_publish_never_fakes_support_with_an_ordinary_provider() {
         let provider = Arc::new(FakeProvider::new());

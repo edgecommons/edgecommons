@@ -18,10 +18,12 @@ export default defineConfig({
         "src/**/index.ts",
         "src/**/types.ts",
       ],
-      reporter: ["text"],
+      // `cobertura` (coverage/cobertura-coverage.xml) feeds the diff-coverage gate; `text`
+      // is the human-readable summary.
+      reporter: ["text", "cobertura"],
       thresholds: {
-        statements: 90,
-        lines: 90,
+        statements: 92,
+        lines: 92,
         functions: 85,
         branches: 80,
       },

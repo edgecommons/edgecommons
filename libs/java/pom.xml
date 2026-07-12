@@ -328,6 +328,9 @@
                         <exclude>com/mbreissi/edgecommons/config/provider/GreengrassConfigProvider*</exclude>
                         <exclude>com/mbreissi/edgecommons/config/provider/ShadowConfigProvider*</exclude>
                         <exclude>com/mbreissi/edgecommons/config/provider/ConfigComponentProvider*</exclude>
+                        <!-- PKCS#11 key provider: only executes against a real HSM/softhsm token
+                             (live infra), so it is validated out-of-band, not by the in-process suite. -->
+                        <exclude>com/mbreissi/edgecommons/credentials/Pkcs11KeyProvider*</exclude>
                         <!-- protoc-generated message classes are validated through the hand-written
                              codec tests and cross-language protobuf interop, not direct builder coverage. -->
                         <exclude>com/mbreissi/edgecommons/proto/v1/**</exclude>
@@ -363,7 +366,7 @@
                                         <limit>
                                             <counter>LINE</counter>
                                             <value>COVEREDRATIO</value>
-                                            <minimum>0.90</minimum>
+                                            <minimum>0.92</minimum>
                                         </limit>
                                     </limits>
                                 </rule>

@@ -2560,4 +2560,223 @@ mod tests {
         assert_eq!(tags.extra.get("site"), Some(&json!("override")));
         assert_eq!(tags.extra.get("extra"), Some(&json!(1)));
     }
+
+    // ===================== inbound binary-marker validation =====================
+
+    /// An inbound envelope whose body is the given binary-marker descriptor.
+    fn message_with_marker(descriptor: Value) -> Message {
+        serde_json::from_value(json!({ "body": { BINARY_BODY_KEY: descriptor } }))
+            .expect("a syntactically valid envelope")
+    }
+
+    #[test]
+    fn a_malformed_inbound_binary_marker_is_rejected_rather_than_decoded() {
+        // Every one of these is a *hostile or corrupt* peer's payload. `binary_body()` is the
+        // only door to the bytes, so each must fail closed — never yield truncated, over-long,
+        // or garbage bytes to the component.
+        let cases: [(&str, Value); 6] = [
+            (
+                "encoding must be base64",
+                json!({ "encoding": "hex", "length": 1, "data": "AA==" }),
+            ),
+            (
+                "encoding must be base64",
+                json!({ "length": 1, "data": "AA==" }), // encoding absent entirely
+            ),
+            (
+                "length must be a non-negative integer",
+                json!({ "encoding": "base64", "data": "AA==" }),
+            ),
+            (
+                "data is required",
+                json!({ "encoding": "base64", "length": 1 }),
+            ),
+            (
+                "not valid base64",
+                json!({ "encoding": "base64", "length": 1, "data": "%%%%" }),
+            ),
+            (
+                "length does not match decoded data",
+                json!({ "encoding": "base64", "length": 99, "data": "AA==" }),
+            ),
+        ];
+
+        for (expected, descriptor) in cases {
+            let message = message_with_marker(descriptor.clone());
+            assert!(
+                message.is_binary_body(),
+                "the marker key alone identifies a binary body: {descriptor}"
+            );
+            let error = message
+                .binary_body()
+                .expect_err("a malformed marker must not decode");
+            assert!(
+                error.to_string().contains(expected),
+                "expected '{expected}', got '{error}' for {descriptor}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_inbound_binary_body_larger_than_the_cap_is_refused_before_allocation() {
+        // The declared length is attacker-controlled: it must be bounded *before* it is used,
+        // so a 4 GiB claim cannot become a 4 GiB allocation.
+        let error = message_with_marker(json!({
+            "encoding": "base64",
+            "length": (MAX_BINARY_BODY_BYTES as u64) + 1,
+            "data": "AA=="
+        }))
+        .binary_body()
+        .expect_err("an over-cap declared length must be refused");
+        assert!(error.to_string().contains("exceeds"), "{error}");
+    }
+
+    #[test]
+    fn a_binary_marker_that_is_not_an_object_is_rejected() {
+        let error = message_with_marker(json!("not-a-descriptor"))
+            .binary_body()
+            .expect_err("the marker's value must be a descriptor object");
+        assert!(error.to_string().contains("must be an object"), "{error}");
+    }
+
+    #[test]
+    fn a_non_binary_body_yields_no_bytes_instead_of_an_error() {
+        let plain = MessageBuilder::new("N", "1.0")
+            .payload(json!({ "temperature": 21.5 }))
+            .build();
+        assert!(!plain.is_binary_body());
+        assert_eq!(plain.binary_body().unwrap(), None);
+
+        // A body that is not even an object cannot carry a marker.
+        let scalar = MessageBuilder::new("N", "1.0").payload(json!(7)).build();
+        assert_eq!(scalar.binary_body().unwrap(), None);
+    }
+
+    // ===================== command error + schema wire shape =====================
+
+    #[test]
+    fn a_coded_command_error_with_details_survives_the_protobuf_round_trip() {
+        // The command reply's `error` object is the contract every language's command client
+        // reads. It travels in the typed `CommandMessage` lane, not as free-form JSON.
+        let body = json!({
+            "ok": false,
+            "error": {
+                "code": "DEVICE_BUSY",
+                "message": "the sensor is capturing",
+                "details": { "retryAfterSecs": 5, "session": "s-7" }
+            }
+        });
+        let message = MessageBuilder::new("sb/capture", "1.0")
+            .command(body.clone())
+            .build();
+
+        let bytes = message.to_vec().unwrap();
+        let decoded = pb::EdgeCommonsMessage::decode(bytes.as_slice()).unwrap();
+        let command = match decoded.body {
+            Some(pb::edge_commons_message::Body::Command(command)) => command,
+            other => panic!("expected the typed command lane, got {other:?}"),
+        };
+        let error = command.error.expect("the error travels in the typed lane");
+        assert_eq!(error.code, "DEVICE_BUSY");
+        assert_eq!(error.message, "the sensor is capturing");
+        assert_eq!(
+            error.details.len(),
+            2,
+            "the details map must not be flattened away"
+        );
+
+        let back = Message::from_slice(&bytes).unwrap();
+        assert_eq!(back.body_case(), MessageBodyCase::Command);
+        assert_eq!(
+            back.body["error"], body["error"],
+            "the coded error, its message and every detail survive verbatim"
+        );
+        assert_eq!(back.body["ok"], json!(false));
+        assert_eq!(
+            back.body["verb"], "sb/capture",
+            "a reply-shaped command body carries the verb back out of the typed lane"
+        );
+    }
+
+    #[test]
+    fn body_schema_metadata_round_trips_through_the_diagnostic_json_form() {
+        // Protobuf is the wire; the JSON form is the diagnostic/interop rendering, and it must
+        // carry the same schema metadata (name/version/content_type/descriptor_ref/hash).
+        let message = MessageBuilder::new("Frame", "1.0")
+            .opaque_payload(b"\x01\x02", "application/x-protobuf")
+            .unwrap()
+            .schema(MessageBodySchema {
+                name: Some("demo.Frame".to_string()),
+                version: Some("2".to_string()),
+                content_type: Some("application/x-protobuf".to_string()),
+                descriptor_ref: Some("s3://schemas/demo".to_string()),
+                hash: Some("abc123".to_string()),
+            })
+            .build();
+
+        let json_form = serde_json::to_value(&message).unwrap();
+        assert_eq!(
+            json_form["schema"],
+            json!({
+                "name": "demo.Frame",
+                "version": "2",
+                "content_type": "application/x-protobuf",
+                "descriptor_ref": "s3://schemas/demo",
+                "hash": "abc123"
+            })
+        );
+
+        let back: Message = serde_json::from_value(json_form).unwrap();
+        let schema = back
+            .schema
+            .as_ref()
+            .expect("the schema survives the JSON round trip");
+        assert_eq!(schema.name.as_deref(), Some("demo.Frame"));
+        assert_eq!(schema.version.as_deref(), Some("2"));
+        assert_eq!(schema.descriptor_ref.as_deref(), Some("s3://schemas/demo"));
+        assert_eq!(schema.hash.as_deref(), Some("abc123"));
+        assert_eq!(
+            back.binary_body().unwrap(),
+            Some(b"\x01\x02".to_vec()),
+            "the opaque bytes travel alongside their schema"
+        );
+    }
+
+    #[test]
+    fn a_partial_body_schema_omits_its_absent_members() {
+        let message = MessageBuilder::new("Frame", "1.0")
+            .payload(json!({}))
+            .schema(MessageBodySchema {
+                name: Some("demo.Frame".to_string()),
+                ..MessageBodySchema::default()
+            })
+            .build();
+        assert_eq!(
+            serde_json::to_value(&message).unwrap()["schema"],
+            json!({ "name": "demo.Frame" }),
+            "absent schema members must not serialize as nulls"
+        );
+    }
+
+    #[test]
+    fn the_body_case_spellings_match_the_canonical_java_diagnostics() {
+        // These strings are the cross-language diagnostic vocabulary (Java `getBodyCase()`);
+        // renaming one silently breaks parity in logs and interop tooling.
+        for (case, spelling) in [
+            (
+                MessageBodyCase::SouthboundSignalUpdate,
+                "SOUTHBOUND_SIGNAL_UPDATE",
+            ),
+            (MessageBodyCase::StateUpdate, "STATE_UPDATE"),
+            (MessageBodyCase::ConfigUpdate, "CONFIG_UPDATE"),
+            (MessageBodyCase::MetricUpdate, "METRIC_UPDATE"),
+            (MessageBodyCase::Event, "EVENT"),
+            (MessageBodyCase::Command, "COMMAND"),
+            (MessageBodyCase::Structured, "STRUCTURED"),
+            (MessageBodyCase::Opaque, "OPAQUE"),
+            (MessageBodyCase::BodyNotSet, "BODY_NOT_SET"),
+        ] {
+            assert_eq!(case.as_str(), spelling);
+        }
+    }
 }
