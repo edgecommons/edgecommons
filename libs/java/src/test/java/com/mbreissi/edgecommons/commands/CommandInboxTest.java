@@ -197,7 +197,7 @@ class CommandInboxTest {
                 uptime::get, reloadResult::get, redactedConfig::get,
                 () -> List.of(
                         InstanceConnectivity.of("cam-01", true).withState("ONLINE"),
-                        new InstanceConnectivity("cam-02", false, "BACKOFF", "connect timed out",
+                        new InstanceConnectivity("cam-02", false, "connect timed out", "BACKOFF",
                                 Map.of("capabilities", attrs.get("capabilities"),
                                         "lastError", attrs.get("lastError")))));
         withInstances.start();

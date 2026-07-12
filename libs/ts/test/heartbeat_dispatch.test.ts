@@ -261,4 +261,76 @@ describe("Heartbeat per-instance connectivity (#1c)", () => {
     expect(() => new InstanceConnectivity("", true)).toThrow();
     expect(() => new InstanceConnectivity("  ", true)).toThrow();
   });
+
+  it("InstanceConnectivity carries the optional state and the open attributes bag, omitting empties", () => {
+    // The component's OWN vocabulary rides alongside the normalized `connected` flag.
+    expect(InstanceConnectivity.of("cam-01", true).withState("ONLINE").toJson()).toEqual({
+      instance: "cam-01",
+      connected: true,
+      state: "ONLINE",
+    });
+    // A blank state token is omitted, exactly like a blank detail.
+    expect(new InstanceConnectivity("cam-01", true, undefined, "  ").toJson().state).toBeUndefined();
+
+    // The open bag: unconstrained domain data, member order instance/connected/state/detail/attributes.
+    const full = new InstanceConnectivity("cam-02", false, "connect timed out", "BACKOFF", {
+      capabilities: ["ptz", "snapshot"],
+      lastError: "CAMERA_UNAVAILABLE",
+    });
+    expect(full.toJson()).toEqual({
+      instance: "cam-02",
+      connected: false,
+      state: "BACKOFF",
+      detail: "connect timed out",
+      attributes: { capabilities: ["ptz", "snapshot"], lastError: "CAMERA_UNAVAILABLE" },
+    });
+    expect(Object.keys(full.toJson())).toEqual(["instance", "connected", "state", "detail", "attributes"]);
+
+    // An empty/absent bag is omitted (never an empty object), and attributes are copied defensively.
+    expect(full.withAttributes(undefined).toJson().attributes).toBeUndefined();
+    expect(full.withAttributes({}).toJson().attributes).toBeUndefined();
+    const bag: Record<string, unknown> = { a: 1 };
+    const copied = InstanceConnectivity.of("plc1", true).withAttributes(bag);
+    bag.a = 2;
+    expect(copied.attributes).toEqual({ a: 1 });
+    // withState preserves the attributes and the detail.
+    expect(full.withState("DISABLED").toJson()).toEqual({
+      instance: "cam-02",
+      connected: false,
+      state: "DISABLED",
+      detail: "connect timed out",
+      attributes: { capabilities: ["ptz", "snapshot"], lastError: "CAMERA_UNAVAILABLE" },
+    });
+  });
+
+  it("sampleInstanceConnectivity is the single seam: same sample the keepalive pushes; best-effort", async () => {
+    const metrics = new RecordingMetricService();
+    const svc = new RecordingMessagingService();
+    const config = cfg({ intervalSecs: 60, measures: { memory: true } });
+    const hb = Heartbeat.start(() => config, metrics, svc);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // No provider -> empty (never nullish).
+    expect(hb.sampleInstanceConnectivity()).toEqual([]);
+
+    hb.setInstanceConnectivityProvider(() => [
+      InstanceConnectivity.of("kep2", false),
+      null as unknown as InstanceConnectivity, // a nullish element is dropped
+    ]);
+    const sample = hb.sampleInstanceConnectivity();
+    expect(sample.map((c) => c.toJson())).toEqual([{ instance: "kep2", connected: false }]);
+    // The pushed keepalive carries exactly the sampled elements.
+    await hb.publishStateNow();
+    expect(lastBody(svc).instances).toEqual(sample.map((c) => c.toJson()));
+
+    // A nullish result and a throwing provider both degrade to an empty sample.
+    hb.setInstanceConnectivityProvider(() => undefined);
+    expect(hb.sampleInstanceConnectivity()).toEqual([]);
+    hb.setInstanceConnectivityProvider(() => {
+      throw new Error("boom");
+    });
+    expect(hb.sampleInstanceConnectivity()).toEqual([]);
+
+    await hb.stop();
+  });
 });

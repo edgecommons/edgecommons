@@ -35,7 +35,10 @@
 //!   same redacted snapshot the `cfg` push class publishes, as a reply (**Flow B**: the console
 //!   pulls a component's own config; unrelated to the Flow-A
 //!   `ecv1/{device}/config/main/cmd/get-configuration` rendezvous where a component fetches its
-//!   config FROM a config server).
+//!   config FROM a config server); [`STATUS`] → [`PING`]'s per-instance superset
+//!   (`{"status":"RUNNING","uptimeSecs":n[,"instances":[…]]}`), pulling the very same
+//!   per-instance sample the `state` keepalive pushes
+//!   ([`crate::heartbeat::Heartbeat::sample_instance_connectivity`]).
 //! - **Unknown verb** — a well-formed request whose verb has no handler gets an
 //!   [`ERR_UNKNOWN_VERB`] error reply (fire-and-forget unknowns are ignored at DEBUG).
 //! - **Malformed** — a `header.name` that does not equal the topic's verb (which also covers a
@@ -76,6 +79,7 @@ use serde_json::{Value, json};
 
 use crate::config::model::Config;
 use crate::error::{EdgeCommonsError, Result};
+use crate::heartbeat::InstanceConnectivity;
 use crate::messaging::message::{Message, MessageBuilder};
 use crate::messaging::{MessagingService, message_handler};
 use crate::uns::{Uns, UnsClass, UnsScope};
@@ -88,6 +92,19 @@ pub const DESCRIBE: &str = "describe";
 pub const RELOAD_CONFIG: &str = "reload-config";
 /// The return-my-redacted-effective-config built-in verb (Flow B).
 pub const GET_CONFIGURATION: &str = "get-configuration";
+/// The universal component status verb:
+/// `{"status":"RUNNING","uptimeSecs":n[,"instances":[…]]}`.
+///
+/// [`PING`] answers only for the component as a whole. `status` is its per-instance superset: it
+/// returns the same sample the `state` keepalive pushes in `instances[]`, sourced from the one
+/// component-supplied [`crate::heartbeat::InstanceConnectivityProvider`] through
+/// [`crate::heartbeat::Heartbeat::sample_instance_connectivity`]. Push and pull can therefore never
+/// disagree — a console can subscribe, or ask, and get the same answer.
+///
+/// Every component implements it by registering that provider; a component with no instances (a
+/// plain service) simply omits the section and answers exactly as [`PING`] does. It is deliberately
+/// **not** named `sb/status`: a processor or a sink has no southbound, and this verb is universal.
+pub const STATUS: &str = "status";
 /// The command request/reply envelope version.
 pub const CMD_MESSAGE_VERSION: &str = "1.0";
 
@@ -105,8 +122,9 @@ pub const ERR_NO_CONFIG: &str = "NO_CONFIG";
 /// error-reply it.
 pub const SET_CONFIG_VERB: &str = "set-config";
 
-/// The built-in verbs (registered at construction; shadowing/unregistering is rejected).
-pub const BUILT_IN_VERBS: [&str; 4] = [PING, DESCRIBE, RELOAD_CONFIG, GET_CONFIGURATION];
+/// The built-in verbs (registered at construction; shadowing/unregistering is rejected). The order
+/// is pinned by `uns-test-vectors/commands.json` (`behavior.builtInVerbs`).
+pub const BUILT_IN_VERBS: [&str; 5] = [PING, DESCRIBE, RELOAD_CONFIG, GET_CONFIGURATION, STATUS];
 /// Verbs owned by other library subscriptions on the same inbox path — always ignored.
 pub const DELEGATED_VERBS: [&str; 1] = [SET_CONFIG_VERB];
 
@@ -213,6 +231,13 @@ where
 pub(crate) type ReloadAction =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync>;
 
+/// The [`STATUS`] verb's source: one sample of the component's per-instance connectivity
+/// (production: [`crate::heartbeat::Heartbeat::sample_instance_connectivity`], i.e. the very same
+/// provider the `state` keepalive pushes, so the pulled answer and the pushed one cannot diverge).
+/// Best-effort by contract — it never fails; an empty vec omits the reply's `instances[]` section.
+pub(crate) type InstanceConnectivitySource =
+    Arc<dyn Fn() -> Vec<InstanceConnectivity> + Send + Sync>;
+
 /// Lifecycle flags + the resolved inbox topic, behind one lock (no `.await` ever happens while
 /// holding it) — mirrors [`crate::uns::RepublishListener`]'s `Inner`.
 #[derive(Default)]
@@ -252,25 +277,57 @@ impl CommandInbox {
     ///   over the live config snapshot — always `Some` once `build()` has succeeded; kept
     ///   optional for parity with the Java canonical's mock/test bring-up case and so
     ///   [`ERR_NO_CONFIG`] is directly testable).
+    /// - `instance_connectivity` — the [`STATUS`] source (see [`InstanceConnectivitySource`]).
     pub(crate) fn new(
         messaging: Arc<dyn MessagingService>,
         config: Arc<ArcSwap<Config>>,
         uptime_secs: Arc<dyn Fn() -> u64 + Send + Sync>,
         reload_action: ReloadAction,
         redacted_config: Arc<dyn Fn() -> Option<Value> + Send + Sync>,
+        instance_connectivity: InstanceConnectivitySource,
     ) -> Arc<CommandInbox> {
         let mut handlers: HashMap<String, Arc<dyn CommandHandler>> = HashMap::new();
 
         // ping -> the state keepalive's RUNNING body shape: proves the component is not just
         // alive (the keepalive does that) but RESPONSIVE to addressed commands.
+        let ping_uptime_secs = uptime_secs.clone();
         handlers.insert(
             PING.to_string(),
             command_handler(move |_request| {
-                let uptime_secs = uptime_secs.clone();
+                let uptime_secs = ping_uptime_secs.clone();
                 async move {
                     Ok(Some(
                         json!({ "status": "RUNNING", "uptimeSecs": (uptime_secs)() }),
                     ))
+                }
+            }),
+        );
+
+        // status -> ping's per-instance superset. Same body, plus the instances[] the state
+        // keepalive pushes, from the SAME provider. A component with no instances omits the
+        // section, so a plain service answers exactly as ping does.
+        handlers.insert(
+            STATUS.to_string(),
+            command_handler(move |_request| {
+                let uptime_secs = uptime_secs.clone();
+                let instance_connectivity = instance_connectivity.clone();
+                async move {
+                    let mut result = serde_json::Map::new();
+                    result.insert("status".to_string(), json!("RUNNING"));
+                    result.insert("uptimeSecs".to_string(), json!((uptime_secs)()));
+                    let instances = (instance_connectivity)();
+                    if !instances.is_empty() {
+                        result.insert(
+                            "instances".to_string(),
+                            Value::Array(
+                                instances
+                                    .iter()
+                                    .map(InstanceConnectivity::to_json)
+                                    .collect(),
+                            ),
+                        );
+                    }
+                    Ok(Some(Value::Object(result)))
                 }
             }),
         );
@@ -943,13 +1000,15 @@ mod tests {
         MessageBuilder::new(verb, "1.0").payload(json!({})).build()
     }
 
-    /// A deterministic fixture: injected uptime/reload/redacted-config seams over a
-    /// [`RecordingMessaging`], mirroring the Java `CommandInboxTest` fixture.
+    /// A deterministic fixture: injected uptime/reload/redacted-config/instance-connectivity seams
+    /// over a [`RecordingMessaging`], mirroring the Java `CommandInboxTest` fixture.
     struct Fixture {
         messaging: Arc<RecordingMessaging>,
         uptime: Arc<AtomicU64>,
         reload_ok: Arc<AtomicBool>,
         redacted: Arc<Mutex<Option<Value>>>,
+        /// The one provider sample the `status` verb pulls (production: the heartbeat's).
+        instances: Arc<Mutex<Vec<InstanceConnectivity>>>,
         inbox: Arc<CommandInbox>,
     }
 
@@ -961,6 +1020,7 @@ mod tests {
         let redacted = Arc::new(Mutex::new(Some(
             json!({ "component": { "global": { "v": 1 } } }),
         )));
+        let instances: Arc<Mutex<Vec<InstanceConnectivity>>> = Arc::new(Mutex::new(Vec::new()));
 
         let uptime_secs: Arc<dyn Fn() -> u64 + Send + Sync> = {
             let uptime = uptime.clone();
@@ -977,6 +1037,10 @@ mod tests {
             let redacted = redacted.clone();
             Arc::new(move || redacted.lock().unwrap().clone())
         };
+        let instance_connectivity: InstanceConnectivitySource = {
+            let instances = instances.clone();
+            Arc::new(move || instances.lock().unwrap().clone())
+        };
 
         let inbox = CommandInbox::new(
             messaging.clone(),
@@ -984,12 +1048,14 @@ mod tests {
             uptime_secs,
             reload_action,
             redacted_config,
+            instance_connectivity,
         );
         Fixture {
             messaging,
             uptime,
             reload_ok,
             redacted,
+            instances,
             inbox,
         }
     }
@@ -1070,6 +1136,88 @@ mod tests {
         assert!(body["ok"].as_bool().unwrap());
         assert_eq!(body["result"]["status"], "RUNNING");
         assert_eq!(body["result"]["uptimeSecs"], 1234);
+    }
+
+    /// A component with no instances (a plain service) answers `status` exactly as `ping` does —
+    /// the `instances[]` section is omitted, never emitted empty.
+    #[tokio::test]
+    async fn status_without_instances_answers_exactly_as_ping() {
+        let f = fixture();
+        f.uptime.store(7, Ordering::SeqCst);
+        f.inbox.clone().start().await;
+        f.messaging
+            .simulate_message(&topic(STATUS), request(STATUS))
+            .await;
+        let body = only_reply_body(&f.messaging);
+        assert!(body["ok"].as_bool().unwrap());
+        assert_eq!(
+            body["result"],
+            json!({ "status": "RUNNING", "uptimeSecs": 7 }),
+            "no instances -> the section is omitted, so status == ping's body"
+        );
+    }
+
+    /// `status` returns the SAME per-instance sample the `state` keepalive pushes (one provider,
+    /// two surfaces), including the optional `state`/`attributes` members.
+    #[tokio::test]
+    async fn status_returns_the_instance_connectivity_sample() {
+        let f = fixture();
+        f.uptime.store(99, Ordering::SeqCst);
+        *f.instances.lock().unwrap() = vec![
+            InstanceConnectivity::new("kep1", true, Some("opc.tcp://kep:49320".to_string()))
+                .with_state("ONLINE"),
+            InstanceConnectivity::of("cam-2", false).with_attributes(
+                json!({ "lastError": "timeout" })
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        ];
+        f.inbox.clone().start().await;
+        f.messaging
+            .simulate_message(&topic(STATUS), request(STATUS))
+            .await;
+
+        let body = only_reply_body(&f.messaging);
+        assert!(body["ok"].as_bool().unwrap());
+        let result = &body["result"];
+        assert_eq!(result["status"], "RUNNING");
+        assert_eq!(result["uptimeSecs"], 99);
+        let instances = result["instances"].as_array().unwrap();
+        assert_eq!(instances.len(), 2);
+        assert_eq!(
+            instances[0],
+            json!({
+                "instance": "kep1",
+                "connected": true,
+                "state": "ONLINE",
+                "detail": "opc.tcp://kep:49320"
+            })
+        );
+        assert_eq!(
+            instances[1],
+            json!({
+                "instance": "cam-2",
+                "connected": false,
+                "attributes": { "lastError": "timeout" }
+            })
+        );
+    }
+
+    /// `status` is a built-in: it can be neither shadowed nor unregistered.
+    #[tokio::test]
+    async fn status_is_a_built_in_verb() {
+        let f = fixture();
+        assert!(BUILT_IN_VERBS.contains(&STATUS));
+        assert!(matches!(
+            f.inbox
+                .register(STATUS, command_handler(|_r| async move { Ok(None) })),
+            Err(EdgeCommonsError::Command(_))
+        ));
+        assert!(matches!(
+            f.inbox.unregister(STATUS),
+            Err(EdgeCommonsError::Command(_))
+        ));
     }
 
     #[tokio::test]
@@ -1401,6 +1549,7 @@ mod tests {
                 DESCRIBE.to_string(),
                 RELOAD_CONFIG.to_string(),
                 GET_CONFIGURATION.to_string(),
+                STATUS.to_string(),
                 "mine".to_string(),
             ])
         );
@@ -1620,12 +1769,16 @@ mod vector_tests {
                 "messaging": { "local": { "credentials": "***" } }
             }))
         });
+        // The golden `status` reply carries no instances[]: the vectors pin a component with no
+        // registered connectivity provider, so status answers exactly as ping.
+        let instance_connectivity: InstanceConnectivitySource = Arc::new(Vec::new);
         let inbox = CommandInbox::new(
             messaging.clone(),
             config,
             Arc::new(|| 42u64),
             reload_action,
             redacted_config,
+            instance_connectivity,
         );
         inbox.clone().start().await;
         assert_eq!(

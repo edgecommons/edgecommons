@@ -56,11 +56,15 @@ public final class InstanceConnectivity
      *                   slave id, a camera id); must be non-null/non-blank
      * @param connected  whether that instance's southbound/source is currently reachable — the
      *                   normalized flag every consumer can read
-     * @param state      the component's own richer condition token, or {@code null}
      * @param detail     an optional human detail (endpoint, or the down reason), or {@code null}
+     * @param state      the component's own richer condition token, or {@code null}
      * @param attributes optional domain-specific data, or {@code null}; copied defensively
+     *
+     * <p>The argument order keeps the pre-existing 3-arg form a strict prefix, which is also the order
+     * Python and TypeScript arrived at independently (neither can overload a constructor). One order,
+     * four languages.
      */
-    public InstanceConnectivity(String instance, boolean connected, String state, String detail,
+    public InstanceConnectivity(String instance, boolean connected, String detail, String state,
                                 Map<String, JsonElement> attributes)
     {
         if (instance == null || instance.isBlank())
@@ -79,7 +83,7 @@ public final class InstanceConnectivity
     /** Retained: the pre-{@code state}/{@code attributes} surface. */
     public InstanceConnectivity(String instance, boolean connected, String detail)
     {
-        this(instance, connected, null, detail, null);
+        this(instance, connected, detail, null, null);
     }
 
     /** Convenience factory without a detail. */
@@ -91,19 +95,19 @@ public final class InstanceConnectivity
     /** Convenience factory with a detail. */
     public static InstanceConnectivity of(String instance, boolean connected, String detail)
     {
-        return new InstanceConnectivity(instance, connected, null, detail, null);
+        return new InstanceConnectivity(instance, connected, detail, null, null);
     }
 
     /** Returns a copy carrying the component's own condition token. */
     public InstanceConnectivity withState(String newState)
     {
-        return new InstanceConnectivity(instance, connected, newState, detail, attributes);
+        return new InstanceConnectivity(instance, connected, detail, newState, attributes);
     }
 
     /** Returns a copy carrying domain-specific attributes. */
     public InstanceConnectivity withAttributes(Map<String, JsonElement> newAttributes)
     {
-        return new InstanceConnectivity(instance, connected, state, detail, newAttributes);
+        return new InstanceConnectivity(instance, connected, detail, state, newAttributes);
     }
 
     public String getInstance()

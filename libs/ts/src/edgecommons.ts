@@ -205,8 +205,8 @@ export class EdgeCommons {
   /**
    * The library-owned command inbox — the minimal `commands()` facade (DESIGN-uns §9.5, slice
    * S2): subscribes `ecv1/{device}/{component}/main/cmd/#` on the primary connection,
-   * dispatches `cmd` envelopes by verb (built-ins `ping` / `reload-config` /
-   * `get-configuration` + custom registrations via {@link commands}), and replies to
+   * dispatches `cmd` envelopes by verb (built-ins `ping` / `describe` / `reload-config` /
+   * `get-configuration` / `status` + custom registrations via {@link commands}), and replies to
    * `header.reply_to`. Always wired when messaging is available (no config surface); undefined
    * otherwise.
    */
@@ -274,6 +274,10 @@ export class EdgeCommons {
    * connection (data + lifecycle stay under `main`; the #1c model). A reference adapter maps each
    * connection to its reachability: OPC UA server session / Modbus slave / file-replicator source
    * directory. Pass `undefined` to stop reporting.
+   *
+   * The same sample serves both surfaces: it is pushed on every `state` keepalive and returned by
+   * the built-in `status` command verb when pulled — supply it once, and push and pull cannot
+   * disagree.
    */
   setInstanceConnectivityProvider(provider: InstanceConnectivityProvider | undefined): void {
     this.heartbeat.setInstanceConnectivityProvider(provider);
@@ -335,7 +339,9 @@ export class EdgeCommons {
   /**
    * The command-inbox facade — the minimal `gg.commands()` surface (DESIGN-uns §9.5): register
    * custom command verbs with `commands().register(verb, handler)`; the built-in verbs (`ping`,
-   * `reload-config`, `get-configuration`) are registered by the library and cannot be shadowed.
+   * `describe`, `reload-config`, `get-configuration`, `status`) are registered by the library and
+   * cannot be shadowed. `status` answers with the same per-instance connectivity sample the `state`
+   * keepalive pushes — supply it once through {@link setInstanceConnectivityProvider}.
    * `undefined` when no messaging is available in this runtime mode (mirrors the Java
    * `getCommands()`, which may be `null` on a mock/subclass bring-up).
    */
@@ -774,15 +780,19 @@ export class EdgeCommonsBuilder {
 
       // §9.5 (slice S2): subscribe the component's own command inbox
       // (ecv1/{device}/{component}/main/cmd/#) on the primary connection and dispatch cmd
-      // envelopes by verb - built-ins ping / reload-config / get-configuration answer the
-      // console out of the box; apps add custom verbs via gg.commands().register(). Always on
-      // (no config surface); best-effort start (a failure disables the inbox only).
+      // envelopes by verb - built-ins ping / describe / reload-config / get-configuration /
+      // status answer the console out of the box; apps add custom verbs via
+      // gg.commands().register(). Always on (no config surface); best-effort start (a failure
+      // disables the inbox only).
       const commandInbox = new CommandInbox(
         () => current,
         messaging,
         () => heartbeat.getUptimeSecs(),
         async () => layeredConfig.reloadFromProvider(applyEffectiveConfig),
         () => effectiveConfigPublisher.redactedEffectiveConfig(),
+        // The built-in `status` verb pulls the SAME provider sample the state keepalive pushes,
+        // so the two surfaces cannot disagree.
+        () => heartbeat.sampleInstanceConnectivity(),
       );
       await commandInbox.start();
       runtime._setCommandInbox(commandInbox);

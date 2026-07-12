@@ -117,6 +117,7 @@ describe.skipIf(!present)("uns-test-vectors/commands.json — CommandInbox confo
       CommandInbox.DESCRIBE,
       CommandInbox.RELOAD_CONFIG,
       CommandInbox.GET_CONFIGURATION,
+      CommandInbox.STATUS,
     ]);
     expect(doc.errors).toHaveLength(1);
     expect(doc.errors[0].name).toBe("unknown-verb");
@@ -245,6 +246,7 @@ describe.skipIf(!present)("uns-test-vectors/commands.json — CommandInbox confo
       CommandInbox.DESCRIBE,
       CommandInbox.RELOAD_CONFIG,
       CommandInbox.GET_CONFIGURATION,
+      CommandInbox.STATUS,
     ]);
     expect(new Set(doc.behavior.builtInVerbs)).toEqual(CommandInbox.BUILT_IN_VERBS);
     expect(new Set(doc.behavior.delegatedVerbs)).toEqual(CommandInbox.DELEGATED_VERBS);
