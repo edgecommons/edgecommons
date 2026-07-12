@@ -1210,4 +1210,168 @@ mod tests {
                 .is_err()
         );
     }
+
+    /// Register a marker and return its confirmation receiver.
+    fn tracked(tracker: &mut PublishTracking, id: u64, qos: QoS) -> oneshot::Receiver<Result<()>> {
+        let (tx, rx) = oneshot::channel();
+        tracker
+            .register(TrackedPublish {
+                id,
+                qos,
+                confirmation: Some(tx),
+            })
+            .map_err(|_| "tracker full")
+            .unwrap();
+        rx
+    }
+
+    #[tokio::test]
+    async fn a_failed_wire_send_untracks_its_marker_so_it_cannot_absorb_a_later_puback() {
+        // This is what the publish funnel does when `AsyncClient::publish` errors: it removes
+        // the marker it just registered. If `remove` missed the marker, the FIFO would be one
+        // entry out of step and the NEXT publish's PUBACK would settle the wrong caller.
+        let mut tracker = PublishTracking::default();
+        let failed = tracked(&mut tracker, 1, QoS::AtLeastOnce);
+        let survivor = tracked(&mut tracker, 2, QoS::AtLeastOnce);
+
+        assert!(
+            tracker.remove(1).is_some(),
+            "a marker still awaiting the wire must be removable"
+        );
+        drop(failed);
+        assert_eq!(tracker.len(), 1);
+
+        tracker.observe_outgoing(11);
+        tracker.observe_puback(11);
+        assert!(
+            survivor.await.unwrap().is_ok(),
+            "the surviving publish must be settled by its own PUBACK"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_inflight_marker_is_removable_by_publish_id() {
+        let mut tracker = PublishTracking::default();
+        let inflight = tracked(&mut tracker, 7, QoS::AtLeastOnce);
+        tracker.observe_outgoing(21); // now addressed by packet id, not by the FIFO
+
+        assert!(
+            tracker.remove(7).is_some(),
+            "in-flight markers are removable"
+        );
+        drop(inflight);
+        assert_eq!(tracker.len(), 0);
+        assert!(
+            !tracker.observe_puback(21),
+            "a removed marker's PUBACK must free nothing"
+        );
+        assert!(tracker.remove(7).is_none(), "removal is not repeatable");
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_publish_at_qos_zero_is_reported_as_unconfirmable() {
+        // QoS 0 gets no PUBACK, so a caller awaiting confirmation would hang forever. The
+        // tracker must fail it explicitly instead.
+        let mut tracker = PublishTracking::default();
+        let confirmation = tracked(&mut tracker, 1, QoS::AtMostOnce);
+
+        assert!(
+            tracker.observe_outgoing(0),
+            "a QoS 0 send leaves the tracker immediately"
+        );
+        let error = confirmation.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("cannot use QoS 0"), "{error}");
+        assert_eq!(tracker.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_qos1_send_without_a_packet_id_is_an_ambiguous_outcome_not_a_success() {
+        // Protocol misalignment (a QoS 1/2 marker paired with packet id 0) must never be
+        // reported as a confirmed delivery.
+        let mut tracker = PublishTracking::default();
+        let confirmation = tracked(&mut tracker, 1, QoS::AtLeastOnce);
+
+        assert!(tracker.observe_outgoing(0));
+        let error = confirmation.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("ambiguous"), "{error}");
+        assert_eq!(tracker.len(), 0);
+    }
+
+    #[test]
+    fn an_outgoing_publish_with_no_marker_is_survivable() {
+        // Nothing to associate: the tracker must not pop a marker belonging to another publish
+        // and must not panic.
+        let mut tracker = PublishTracking::default();
+        assert!(
+            !tracker.observe_outgoing(5),
+            "no marker left the bounded tracker"
+        );
+        assert!(
+            !tracker.observe_puback(5),
+            "a PUBACK for an untracked packet id is ignored"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_puback_that_does_not_match_the_tracked_qos_is_ambiguous() {
+        let mut tracker = PublishTracking::default();
+        let confirmation = tracked(&mut tracker, 1, QoS::ExactlyOnce);
+        tracker.observe_outgoing(31);
+
+        assert!(tracker.observe_puback(31), "the marker leaves the tracker");
+        let error = confirmation.await.unwrap().unwrap_err();
+        assert!(
+            error.to_string().contains("ambiguous"),
+            "a QoS 2 publish is not delivered by a PUBACK: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pubcomp_settles_the_marker_as_a_confirmation_error() {
+        // Confirmed publication is defined at QoS 1. A QoS 2 flow completing with PUBCOMP must
+        // release the marker AND tell the caller its confirmation contract was not honored.
+        let mut tracker = PublishTracking::default();
+        let confirmation = tracked(&mut tracker, 1, QoS::ExactlyOnce);
+        tracker.observe_outgoing(41);
+
+        assert!(tracker.observe_pubcomp(41), "the marker leaves the tracker");
+        let error = confirmation.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("requires QoS 1"), "{error}");
+        assert_eq!(tracker.len(), 0);
+        assert!(
+            !tracker.observe_pubcomp(41),
+            "a duplicate PUBCOMP frees nothing"
+        );
+    }
+
+    #[test]
+    fn every_qos_maps_onto_its_mqtt_counterpart() {
+        // The wire QoS is what the broker enforces; a mis-mapping would silently downgrade
+        // delivery guarantees.
+        assert_eq!(to_rumqttc_qos(Qos::AtMostOnce), QoS::AtMostOnce);
+        assert_eq!(to_rumqttc_qos(Qos::AtLeastOnce), QoS::AtLeastOnce);
+        assert_eq!(to_rumqttc_qos(Qos::ExactlyOnce), QoS::ExactlyOnce);
+    }
+
+    #[test]
+    fn a_dropped_subscribe_waiter_leaves_no_stale_fifo_entry() {
+        // A caller-side timeout drops the guard; the SUBACK FIFO must not keep the dead waiter,
+        // or the NEXT subscribe's SUBACK would be routed to a gone caller.
+        let pending: PendingSubacks = Arc::new(Mutex::new(VecDeque::new()));
+        let (tx, _rx) = oneshot::channel();
+        pending
+            .lock()
+            .unwrap()
+            .push_back(PendingSuback { id: 9, result: tx });
+        let guard = PendingSubackGuard {
+            pending: pending.clone(),
+            id: 9,
+        };
+        assert_eq!(pending.lock().unwrap().len(), 1);
+        drop(guard);
+        assert!(
+            pending.lock().unwrap().is_empty(),
+            "the abandoned waiter must be evicted from the FIFO"
+        );
+    }
 }

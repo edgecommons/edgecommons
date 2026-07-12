@@ -531,3 +531,468 @@ impl RegistryInner {
         self.remove(id);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::RecordingMessaging;
+
+    const REPLY_TO: &str = "edgecommons/reply-deferred-1";
+
+    fn registry() -> (Arc<RecordingMessaging>, DeferredReplyRegistry) {
+        let messaging = RecordingMessaging::new();
+        let config = Arc::new(ArcSwap::from_pointee(
+            Config::from_value("TestComponent", "test-thing", json!({})).unwrap(),
+        ));
+        let registry = DeferredReplyRegistry::new(messaging.clone(), config);
+        (messaging, registry)
+    }
+
+    /// A well-formed deferrable request: a verb, a correlation id and a `reply_to`.
+    fn request(verb: &str) -> Message {
+        MessageBuilder::new(verb, CMD_MESSAGE_VERSION)
+            .payload(json!({}))
+            .reply_to(REPLY_TO)
+            .build()
+    }
+
+    /// The single recorded reply body.
+    fn only_reply(messaging: &RecordingMessaging) -> Value {
+        let replies = messaging.replies();
+        assert_eq!(replies.len(), 1, "exactly one reply expected");
+        assert_eq!(replies[0].0, REPLY_TO, "the reply must go to reply_to");
+        replies[0].1.body.clone()
+    }
+
+    // ===================== defer() admission =====================
+
+    #[tokio::test]
+    async fn defer_rejects_a_non_positive_lifetime() {
+        let (_messaging, registry) = registry();
+        let error = registry
+            .defer(&request("sb/capture"), Duration::ZERO)
+            .unwrap_err();
+        assert_eq!(error.code, ERR_INVALID_DEFERRED_TOKEN);
+        assert!(error.message.contains("positive lifetime"));
+    }
+
+    #[tokio::test]
+    async fn defer_rejects_a_lifetime_that_overflows_the_clock() {
+        let (_messaging, registry) = registry();
+        let error = registry
+            .defer(&request("sb/capture"), Duration::MAX)
+            .unwrap_err();
+        assert_eq!(error.code, ERR_INVALID_DEFERRED_TOKEN);
+        assert!(
+            error.message.contains("too large"),
+            "an unrepresentable deadline must be refused, never silently truncated: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn defer_requires_an_active_runtime_for_the_expiry_timer() {
+        // No `#[tokio::test]`: without a runtime the expiry timer could never be armed, so a
+        // token that can never expire must not be handed out.
+        let (_messaging, registry) = registry();
+        let error = registry
+            .defer(&request("sb/capture"), Duration::from_secs(1))
+            .unwrap_err();
+        assert_eq!(error.code, ERR_INVALID_DEFERRED_TOKEN);
+        assert!(error.message.contains("Tokio runtime"));
+    }
+
+    #[tokio::test]
+    async fn defer_is_refused_once_the_registry_is_shutting_down() {
+        let (_messaging, registry) = registry();
+        registry.shutdown().await;
+        let error = registry
+            .defer(&request("sb/capture"), Duration::from_secs(5))
+            .unwrap_err();
+        assert_eq!(error.code, ERR_COMPONENT_STOPPING);
+    }
+
+    #[tokio::test]
+    async fn defer_is_bounded_by_the_registry_capacity() {
+        let (_messaging, registry) = registry();
+        let mut tokens = Vec::with_capacity(DEFERRED_REPLY_CAPACITY);
+        for _ in 0..DEFERRED_REPLY_CAPACITY {
+            tokens.push(
+                registry
+                    .defer(&request("sb/capture"), Duration::from_secs(30))
+                    .expect("capacity not yet reached"),
+            );
+        }
+        let error = registry
+            .defer(&request("sb/capture"), Duration::from_secs(30))
+            .unwrap_err();
+        assert_eq!(
+            error.code, ERR_DEFERRED_CAPACITY,
+            "the registry must shed load rather than grow without bound"
+        );
+
+        // Retiring one token frees exactly one slot.
+        tokens.pop().expect("a token to discard").discard().unwrap();
+        registry
+            .defer(&request("sb/capture"), Duration::from_secs(30))
+            .expect("the discarded token's slot is reusable");
+    }
+
+    // ===================== token state machine =====================
+
+    #[tokio::test]
+    async fn activate_requires_the_provisional_state() {
+        let (_messaging, registry) = registry();
+        let token = registry
+            .defer(&request("sb/capture"), Duration::from_secs(5))
+            .unwrap();
+        token.activate().unwrap();
+        let error = token.activate().unwrap_err();
+        assert!(
+            error.to_string().contains("was OPEN"),
+            "double activation must be refused: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn activate_is_refused_while_the_inbox_is_shutting_down() {
+        let (_messaging, registry) = registry();
+        let token = registry
+            .defer(&request("sb/capture"), Duration::from_secs(5))
+            .unwrap();
+        registry.shutdown().await;
+        let error = token.activate().unwrap_err();
+        assert!(
+            error.to_string().contains("shutting down"),
+            "a token cannot become settleable after the shutdown snapshot: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn discard_requires_the_provisional_state() {
+        let (_messaging, registry) = registry();
+        let token = registry
+            .defer(&request("sb/capture"), Duration::from_secs(5))
+            .unwrap();
+        token.activate().unwrap();
+        let error = token.discard().unwrap_err();
+        assert!(
+            error.to_string().contains("was OPEN"),
+            "an activated token must be settled, not discarded: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_discarded_token_is_forgotten_and_cannot_be_settled() {
+        let (messaging, registry) = registry();
+        let token = registry
+            .defer(&request("sb/capture"), Duration::from_secs(5))
+            .unwrap();
+        token.discard().unwrap();
+        let error = token.settle_success(None).await.unwrap_err();
+        assert!(
+            error.to_string().contains("unknown, expired, or discarded"),
+            "{error}"
+        );
+        assert!(messaging.replies().is_empty(), "a discard replies nothing");
+    }
+
+    #[tokio::test]
+    async fn settling_requires_an_activated_token() {
+        let (messaging, registry) = registry();
+        let token = registry
+            .defer(&request("sb/capture"), Duration::from_secs(5))
+            .unwrap();
+        let error = token.settle_success(None).await.unwrap_err();
+        assert!(
+            error.to_string().contains("was PROVISIONAL"),
+            "work must be durably accepted (activate) before it can reply: {error}"
+        );
+        assert!(messaging.replies().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_cloned_token_cannot_settle_twice() {
+        let (messaging, registry) = registry();
+        let token = registry
+            .defer(&request("sb/capture"), Duration::from_secs(5))
+            .unwrap();
+        token.activate().unwrap();
+        let clone = token.clone();
+        token
+            .settle_success(Some(json!({ "frames": 3 })))
+            .await
+            .unwrap();
+        let error = clone.settle_success(None).await.unwrap_err();
+        assert!(
+            error.to_string().contains("unknown, expired, or discarded")
+                || error.to_string().contains("already"),
+            "cloning a token must not authorize a duplicate reply: {error}"
+        );
+        assert_eq!(
+            only_reply(&messaging),
+            json!({ "ok": true, "result": { "frames": 3 } }),
+            "exactly one settlement reaches the requester"
+        );
+    }
+
+    #[tokio::test]
+    async fn settle_error_emits_the_standard_coded_error_wrapper() {
+        let (messaging, registry) = registry();
+        let token = registry
+            .defer(&request("sb/capture"), Duration::from_secs(5))
+            .unwrap();
+        token.activate().unwrap();
+        token
+            .settle_command_error(CommandError::new("DEVICE_BUSY", "the sensor is capturing"))
+            .await
+            .unwrap();
+        assert_eq!(
+            only_reply(&messaging),
+            json!({
+                "ok": false,
+                "error": { "code": "DEVICE_BUSY", "message": "the sensor is capturing" }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_token_is_useless_once_its_registry_is_gone() {
+        let (_messaging, registry) = registry();
+        let token = registry
+            .defer(&request("sb/capture"), Duration::from_secs(5))
+            .unwrap();
+        drop(registry);
+        let error = token.activate().unwrap_err();
+        assert!(
+            error.to_string().contains("no longer exists"),
+            "a token must not outlive its inbox: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_token_debug_form_leaks_no_request_correlation() {
+        let (_messaging, registry) = registry();
+        let request = request("sb/capture");
+        let token = registry.defer(&request, Duration::from_secs(5)).unwrap();
+        let rendered = format!("{token:?}");
+        assert_eq!(rendered, "DeferredReplyToken(..)");
+        assert!(
+            !rendered.contains(&request.header.correlation_id) && !rendered.contains(REPLY_TO),
+            "the token is an opaque capability — it must not expose reply_to or correlation"
+        );
+        assert!(
+            format!("{registry:?}").contains(&DEFERRED_REPLY_CAPACITY.to_string()),
+            "the registry's Debug form states its bound"
+        );
+    }
+
+    // ===================== settlement confirmation =====================
+
+    #[tokio::test]
+    async fn settlement_retries_until_the_reply_is_confirmed() {
+        let (messaging, registry) = registry();
+        messaging.fail_next_confirmed(2);
+        let token = registry
+            .defer(&request("sb/capture"), Duration::from_secs(10))
+            .unwrap();
+        token.activate().unwrap();
+        token.settle_success(None).await.unwrap();
+        assert_eq!(
+            only_reply(&messaging)["ok"],
+            json!(true),
+            "a transient publish failure must be retried, not dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn settlement_gives_up_when_the_token_expires_before_confirmation() {
+        let (messaging, registry) = registry();
+        messaging.fail_next_confirmed(usize::MAX);
+        let token = registry
+            .defer(&request("sb/capture"), Duration::from_millis(250))
+            .unwrap();
+        token.activate().unwrap();
+        let error = token.settle_success(None).await.unwrap_err();
+        let text = error.to_string();
+        assert!(
+            text.contains("expired"),
+            "settlement is bounded by the token's lifetime: {text}"
+        );
+        assert!(
+            text.contains("simulated confirmed reply failure"),
+            "the last transport error must be reported, not swallowed: {text}"
+        );
+        assert!(messaging.replies().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_expired_token_is_evicted_and_can_no_longer_settle() {
+        let (messaging, registry) = registry();
+        let token = registry
+            .defer(&request("sb/capture"), Duration::from_millis(50))
+            .unwrap();
+        token.activate().unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let error = token.settle_success(None).await.unwrap_err();
+        assert!(
+            error.to_string().contains("unknown, expired, or discarded"),
+            "the expiry timer must evict the entry, not leak it: {error}"
+        );
+        assert!(messaging.replies().is_empty());
+    }
+
+    // ===================== token/request binding =====================
+
+    #[tokio::test]
+    async fn validate_open_token_rejects_a_token_owned_by_another_inbox() {
+        let (_m1, first) = registry();
+        let (_m2, second) = registry();
+        let request = request("sb/capture");
+        let token = first.defer(&request, Duration::from_secs(5)).unwrap();
+        token.activate().unwrap();
+
+        let error = second.validate_open_token(&token, &request).unwrap_err();
+        assert!(
+            error.to_string().contains("another command inbox"),
+            "a token must only settle through the inbox that minted it: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_open_token_rejects_a_token_whose_owner_is_gone() {
+        let (_m1, first) = registry();
+        let (_m2, second) = registry();
+        let request = request("sb/capture");
+        let token = first.defer(&request, Duration::from_secs(5)).unwrap();
+        drop(first);
+
+        let error = second.validate_open_token(&token, &request).unwrap_err();
+        assert!(
+            error.to_string().contains("owner no longer exists"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_open_token_requires_the_open_state_and_the_exact_request() {
+        let (_messaging, registry) = registry();
+        let request = request("sb/capture");
+        let token = registry.defer(&request, Duration::from_secs(5)).unwrap();
+
+        let error = registry.validate_open_token(&token, &request).unwrap_err();
+        assert!(
+            error.to_string().contains("is PROVISIONAL, not OPEN"),
+            "an unactivated token is not an acceptable deferred outcome: {error}"
+        );
+
+        token.activate().unwrap();
+        registry.validate_open_token(&token, &request).unwrap();
+
+        // The same verb and reply_to, but a different message: a handler must not be able to
+        // hand back some *other* in-flight request's token.
+        let other = self::request("sb/capture");
+        let error = registry.validate_open_token(&token, &other).unwrap_err();
+        assert!(
+            error.to_string().contains("this exact request"),
+            "the token is bound to one request, not merely to its verb: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn discard_provisional_token_for_only_retires_the_matching_request() {
+        let (_messaging, registry) = registry();
+        let request = request("sb/capture");
+        let token = registry.defer(&request, Duration::from_secs(5)).unwrap();
+
+        // A mismatched request must not be able to cancel this provisional job...
+        let other = self::request("sb/capture");
+        registry.discard_provisional_token_for(&token, &other);
+        registry.validate_open_token(&token, &request).unwrap_err(); // still PROVISIONAL, not gone
+        token
+            .activate()
+            .expect("the token survived the wrong-request discard");
+
+        // ...and an already-activated token is not discardable either.
+        let second = registry.defer(&request, Duration::from_secs(5)).unwrap();
+        second.activate().unwrap();
+        registry.discard_provisional_token_for(&second, &request);
+        registry
+            .validate_open_token(&second, &request)
+            .expect("an OPEN token survives a provisional discard");
+    }
+
+    #[tokio::test]
+    async fn discard_provisional_token_for_ignores_a_foreign_or_orphaned_token() {
+        let (_m1, first) = registry();
+        let (_m2, second) = registry();
+        let request = request("sb/capture");
+        let token = first.defer(&request, Duration::from_secs(5)).unwrap();
+
+        // Another inbox holding the token must not be able to retire it.
+        second.discard_provisional_token_for(&token, &request);
+        token
+            .activate()
+            .expect("a foreign registry cannot discard this token");
+
+        // Nor may a token whose owner has been dropped affect anything.
+        let orphan = first.defer(&request, Duration::from_secs(5)).unwrap();
+        drop(first);
+        second.discard_provisional_token_for(&orphan, &request); // must be a silent no-op
+    }
+
+    // ===================== shutdown =====================
+
+    #[tokio::test]
+    async fn shutdown_cancels_provisional_tokens_and_stop_replies_to_open_ones() {
+        let (messaging, registry) = registry();
+        let open_request = request("sb/capture");
+        let open = registry
+            .defer(&open_request, Duration::from_secs(30))
+            .unwrap();
+        open.activate().unwrap();
+        let provisional = registry
+            .defer(&request("sb/capture"), Duration::from_secs(30))
+            .unwrap();
+
+        registry.shutdown().await;
+
+        assert_eq!(
+            only_reply(&messaging),
+            json!({
+                "ok": false,
+                "error": {
+                    "code": ERR_COMPONENT_STOPPING,
+                    "message": "the component stopped before the deferred command completed"
+                }
+            }),
+            "an accepted (OPEN) deferred command owes the requester a stop reply"
+        );
+        // Both entries are retired: neither token can settle after shutdown.
+        assert!(open.settle_success(None).await.is_err());
+        assert!(provisional.activate().is_err());
+
+        registry.shutdown().await; // idempotent
+        assert_eq!(
+            messaging.replies().len(),
+            1,
+            "shutdown replies exactly once"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_does_not_reply_for_an_open_token_that_already_expired() {
+        let (messaging, registry) = registry();
+        let token = registry
+            .defer(&request("sb/capture"), Duration::from_millis(60))
+            .unwrap();
+        token.activate().unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        registry.shutdown().await;
+        assert!(
+            messaging.replies().is_empty(),
+            "an already-expired token has no live requester left to answer"
+        );
+    }
+}
