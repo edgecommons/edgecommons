@@ -61,6 +61,12 @@
     ],
     "test-configs/standalone-messaging.json": [
       "COMPONENTNAME"
+    ],
+    "tests/conftest.py": [
+      "COMPONENTNAME"
+    ],
+    "tests/test_adapter.py": [
+      "COMPONENTNAME"
     ]
   },
   "renames": [

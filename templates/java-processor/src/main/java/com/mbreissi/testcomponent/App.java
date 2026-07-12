@@ -6,6 +6,7 @@ import com.mbreissi.edgecommons.EdgeCommonsBuilder;
 import com.mbreissi.edgecommons.config.ConfigManager;
 import com.mbreissi.edgecommons.facades.EventsFacade;
 import com.mbreissi.edgecommons.facades.Severity;
+import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.MessageIdentity;
@@ -104,6 +105,12 @@ public final class <<COMPONENTNAME>> {
                 .addMeasure("dropped", "Count", 60)
                 .addMeasure("errors", "Count", 60)
                 .build());
+
+        // ONE provider, TWO surfaces: the library pushes this sample into the `state` keepalive's
+        // instances[] every tick AND returns it from the built-in `status` verb when pulled, so a
+        // console that subscribes and a console that asks can never disagree. See
+        // instanceConnectivity() below for why a processor reports nothing.
+        edgeCommons.setInstanceConnectivityProvider(<<COMPONENTNAME>>::instanceConnectivity);
 
         routes = parseRoutes(config);
         if (routes.isEmpty()) {
@@ -253,6 +260,34 @@ public final class <<COMPONENTNAME>> {
         values.put("dropped", (float) stats.dropped.getAndSet(0));
         values.put("errors", (float) stats.errors.getAndSet(0));
         metrics.emitMetric(METRIC_NAME, values);
+    }
+
+    /**
+     * The per-instance connectivity this component reports — <b>none</b>. A processor's routes are
+     * not connections: it consumes off the bus and publishes back onto it, and the bus is the
+     * library's business, not an instance of ours. A component with no instances reports none — its
+     * {@code state} keepalive carries no {@code instances[]} section, and the built-in
+     * {@code status} verb answers exactly as {@code ping} does
+     * ({@code {"status":"RUNNING","uptimeSecs":n}}). That is the honest answer, not a gap.
+     *
+     * <p>If your processor <i>does</i> own a connection (an enrichment database, a model server it
+     * calls per message), return one entry per connection instead — each a cached status read, never
+     * live IO: this runs on the heartbeat thread every tick.
+     *
+     * <pre>{@code
+     * return List.of(InstanceConnectivity.of("enrichment-db", pool.isUp(), "postgres://…")
+     *         .withState("BACKOFF")                                              // OUR vocabulary
+     *         .withAttributes(Map.of("lastError", new JsonPrimitive("timeout")))); // domain data
+     * }</pre>
+     *
+     * <p>{@code connected} is the one <b>normalized</b> field and is always present, so any console
+     * renders a health dot for any component without knowing that component's vocabulary.
+     * {@code state} is our <i>own</i> token for what a boolean cannot say ("reconnecting" vs
+     * "administratively disabled"), and {@code attributes} is an open bag: domain data goes there,
+     * where it can never destabilize the fields every consumer relies on.
+     */
+    static List<InstanceConnectivity> instanceConnectivity() {
+        return List.of();
     }
 
     /**

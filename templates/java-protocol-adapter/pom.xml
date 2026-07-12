@@ -15,6 +15,7 @@
     <maven.compiler.target>25</maven.compiler.target>
     <junitVersion>5.9.2</junitVersion>
     <mavenPluginVersion>3.5.1</mavenPluginVersion>
+    <surefirePluginVersion>3.2.5</surefirePluginVersion>
   </properties>
 
   <dependencies>
@@ -103,6 +104,15 @@
           <source>${maven.compiler.source}</source>
           <target>${maven.compiler.target}</target>
         </configuration>
+      </plugin>
+      <plugin>
+        <!-- Pinned rather than left to the default lifecycle binding: the per-device connectivity
+             tests are this archetype's guard rail — an adapter that stops reporting a device it
+             cannot reach is an adapter that lies — and a Maven whose default surefire predates the
+             JUnit Platform would silently run none of them. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>${surefirePluginVersion}</version>
       </plugin>
     </plugins>
   </build>

@@ -88,6 +88,17 @@ pub enum DestinationConfig {
     Local { path: PathBuf },
 }
 
+impl DestinationConfig {
+    /// Where this sink delivers, as human text — the `detail` of its connectivity sample
+    /// ([`crate::app::connectivity_of`]).
+    #[must_use]
+    pub fn endpoint(&self) -> String {
+        match self {
+            Self::Local { path } => path.display().to_string(),
+        }
+    }
+}
+
 /// Build a destination from config.
 ///
 /// # Errors
@@ -246,5 +257,6 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "type": "local", "path": "/tmp/out" }))
                 .unwrap();
         assert_eq!(build(&cfg).unwrap().kind(), "local");
+        assert!(cfg.endpoint().contains("out"), "the endpoint names where the data goes");
     }
 }

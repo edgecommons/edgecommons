@@ -76,6 +76,19 @@ envelope. The heartbeat is an automatic UNS `state` keepalive (on, every 5 s, lo
 tuned by the optional `heartbeat` config block; the reserved classes
 (`state`/`metric`/`cfg`/`log`) are library-owned and rejected on direct publish.
 
+## Instance connectivity
+
+`App::new` registers an instance-connectivity provider — the one source the `state` keepalive reads
+(push) and the built-in `status` command verb reads (pull), so a console that watches and a console
+that asks cannot get different answers. This scaffold owns no southbound connections, so it reports
+none: the keepalive omits the `instances[]` section and `status` answers exactly what `ping`
+answers.
+
+When this component grows a connection (a device, a database, an upstream API), return one
+`InstanceConnectivity` per connection: `connected` is the normalized flag every console renders a
+health dot from, `state` is your own vocabulary (`ONLINE` / `CONNECTING` / `BACKOFF` / `DISABLED`),
+and `attributes` is an open bag for domain data. The comment in `App::new` shows the shape.
+
 ## Deploy to Greengrass
 
 The on-device build uses the GDK **custom** build system (`gdk-config.json` →

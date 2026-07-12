@@ -19,6 +19,9 @@ The ordering is the archetype, and every step earns its place:
   loses data a second attempt would have delivered. See :class:`~app.dest.DeliverError`.
 * **Report every transition.** A sink that fails quietly is indistinguishable from one that is idle.
   Started / completed / failed / exhausted all go out on the UNS event surface.
+* **Report each destination's health.** A sink's destinations *are* its instances:
+  :meth:`~<<COMPONENTNAME>>.instance_connectivity` reports one entry per configured destination —
+  the same sample the ``state`` keepalive pushes and the built-in ``status`` verb returns.
 
 Where the work comes from
 -------------------------
@@ -37,9 +40,10 @@ from edgecommons.config.manager.configuration_change_listener import (
     ConfigurationChangeListener,
 )
 from edgecommons.facades import Severity
+from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
 from edgecommons.metrics.metric_builder import MetricBuilder
 
-from app.dest import DeliverError, Item, key_for, parse_sink
+from app.dest import DeliverError, DestinationHealth, Item, key_for, parse_sink
 
 logger = logging.getLogger("<<COMPONENTNAME>>")
 
@@ -105,6 +109,34 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener):
                 logger.warning("skipping malformed sink `%s`: %s", instance_id, e)
         if not self._sinks:
             raise ValueError("no valid sinks in component.instances[]")
+
+        # A sink's destinations ARE its instances. One health per configured destination, built
+        # before a single message arrives, so a destination that is configured and unreachable is
+        # reported (connected=false / CONNECTING) rather than absent.
+        self.health = {s.id: DestinationHealth(s.id, s.destination.get("type")) for s in self._sinks}
+
+        # --- instance connectivity: ONE provider, TWO surfaces. Whatever it returns is pushed into
+        # the `state` keepalive's instances[] on every tick AND returned by the built-in `status`
+        # verb when a console asks — so whoever watches and whoever asks can never get different
+        # answers.
+        gg.set_instance_connectivity_provider(self.instance_connectivity)
+
+    def instance_connectivity(self) -> list:
+        """One entry per configured destination.
+
+        ``connected`` is the **normalized** flag — true only once a delivery has been *verified*, so
+        a console renders a health dot without knowing what this sink delivers to. ``state`` is this
+        sink's own vocabulary, and it is what separates ``BACKOFF`` (still trying) from ``FAILED``
+        (gave up; data did not arrive) — both are ``connected=False``, and they are not the same
+        thing. ``attributes`` is the open bag for domain data, so what only this sink understands
+        never destabilizes the fields everyone reads.
+        """
+        return [
+            InstanceConnectivity.of(h.sink_id, h.connected, h.detail)
+            .with_state(h.state)
+            .with_attributes({"destination": h.kind})
+            for h in self.health.values()
+        ]
 
     def on_configuration_change(self, configuration) -> bool:
         logger.info("configuration changed")
@@ -185,6 +217,7 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener):
         loud.
         """
         events = self._gg.instance(sink.id).events()
+        health = self.health[sink.id]
         started = time.monotonic()
         attempt = 0
 
@@ -214,6 +247,9 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener):
                     return
 
                 backoff_ms = sink.retry.delay_ms(attempt)
+                # Still trying — BACKOFF, not FAILED. Both are connected=false; only one of them
+                # means data was lost.
+                health.retrying(str(e))
                 self._stats.incr("retried")
                 logger.warning(
                     "[%s] transient failure on %s (attempt %d, retrying in %dms): %s",
@@ -236,6 +272,9 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener):
                 attempt += 1
                 continue
 
+            # Verified, and only now: ONLINE is reported on the same proof the source is released
+            # on. A destination is not healthy because `deliver` returned.
+            health.delivered(item.key)
             self._stats.incr("delivered")
             events.emit(
                 "delivery-completed",
@@ -250,6 +289,9 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener):
             return
 
     def _exhausted(self, sink, item: Item, attempt: int, message: str, error: Exception, events):
+        # Gave up: permanent, or the budget is spent. FAILED, not BACKOFF — a retry still in flight
+        # and data that did not arrive must not look alike on the console.
+        self.health[sink.id].failed(str(error))
         self._stats.incr("exhausted")
         logger.error("[%s] %s: %s", sink.id, message, error)
         # Critical, and an alarm rather than a one-shot event: this is data that did not arrive, and

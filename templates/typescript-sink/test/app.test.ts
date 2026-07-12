@@ -2,14 +2,16 @@ import { MessageBuilder, Severity } from "@edgecommons/edgecommons";
 import { describe, expect, it } from "vitest";
 
 import {
+  DestHealth,
   RetryConfig,
   RetryDeps,
   Stats,
+  connectivityOf,
   deliverWithRetry,
   keyFor,
   parseSink,
 } from "../src/app";
-import { DeliverError, Delivered, Destination, Item } from "../src/dest";
+import { DeliverError, Delivered, Destination, Item, buildDestination } from "../src/dest";
 
 // --- test doubles ------------------------------------------------------------------------------
 
@@ -172,7 +174,7 @@ describe("deliverWithRetry", () => {
     const stats = new Stats();
     const { events, emitted } = recorder();
 
-    await deliverWithRetry(sink, item("k.json", "hello"), dest, stats, events, fakeDeps());
+    await deliverWithRetry(sink, item("k.json", "hello"), dest, stats, new DestHealth(), events, fakeDeps());
 
     expect(stats.delivered).toBe(1);
     expect(emitted.map((e) => e.type)).toEqual(["delivery-started", "delivery-completed"]);
@@ -185,7 +187,7 @@ describe("deliverWithRetry", () => {
     const deps = fakeDeps(1.0);
     const { events, emitted } = recorder();
 
-    await deliverWithRetry(sink, item("k.json", "hello"), dest, stats, events, deps);
+    await deliverWithRetry(sink, item("k.json", "hello"), dest, stats, new DestHealth(), events, deps);
 
     expect(dest.attempts).toBe(4);
     expect(stats.retried).toBe(3);
@@ -206,8 +208,8 @@ describe("deliverWithRetry", () => {
     const dest = new FlakyDestination(1);
     const stats = new Stats();
 
-    await deliverWithRetry(sink, item("k.json", "v1"), dest, stats, undefined, fakeDeps());
-    await deliverWithRetry(sink, item("k.json", "v2"), dest, stats, undefined, fakeDeps());
+    await deliverWithRetry(sink, item("k.json", "v1"), dest, stats, new DestHealth(), undefined, fakeDeps());
+    await deliverWithRetry(sink, item("k.json", "v2"), dest, stats, new DestHealth(), undefined, fakeDeps());
 
     // Two deliveries, ONE object: a sink that cannot retry without duplicating cannot retry at all.
     expect(dest.stored.size).toBe(1);
@@ -221,7 +223,15 @@ describe("deliverWithRetry", () => {
     const { events, emitted } = recorder();
     const shortBudget = { id: "archive", retry: new RetryConfig(1_000, 1_000, 3_000) };
 
-    await deliverWithRetry(shortBudget, item("k.json", "hello"), new LyingDestination(), stats, events, fakeDeps());
+    await deliverWithRetry(
+      shortBudget,
+      item("k.json", "hello"),
+      new LyingDestination(),
+      stats,
+      new DestHealth(),
+      events,
+      fakeDeps(),
+    );
 
     expect(stats.delivered).toBe(0);
     expect(stats.exhausted).toBe(1);
@@ -235,7 +245,7 @@ describe("deliverWithRetry", () => {
     const deps = fakeDeps();
     const { events, emitted } = recorder();
 
-    await deliverWithRetry(sink, item("k.json", "hello"), dest, stats, events, deps);
+    await deliverWithRetry(sink, item("k.json", "hello"), dest, stats, new DestHealth(), events, deps);
 
     expect(dest.attempts).toBe(1);
     expect(deps.slept).toEqual([]);
@@ -253,7 +263,7 @@ describe("deliverWithRetry", () => {
     // 5s of budget, 1s base backoff: 1s + 2s -> the third check is past the budget.
     const impatient = { id: "archive", retry: new RetryConfig(1_000, 10_000, 5_000) };
 
-    await deliverWithRetry(impatient, item("k.json", "hello"), dest, stats, events, deps);
+    await deliverWithRetry(impatient, item("k.json", "hello"), dest, stats, new DestHealth(), events, deps);
 
     expect(deps.clock()).toBeGreaterThanOrEqual(5_000);
     expect(stats.exhausted).toBe(1);
@@ -261,6 +271,98 @@ describe("deliverWithRetry", () => {
     // Gave up must be LOUD: a sink that fails quietly is indistinguishable from one that is idle.
     expect(emitted.at(-1)?.type).toBe("delivery-exhausted");
     expect(emitted.at(-1)?.severity).toBe(Severity.Critical);
+  });
+});
+
+// --- per-destination connectivity ----------------------------------------------------------------
+
+describe("per-destination connectivity", () => {
+  // A sink's destinations ARE its instances: this is the config one of them is built from.
+  const sinkCfg = parseSink({
+    id: "archive",
+    subscribe: "ecv1/+/+/+/data/#",
+    destination: { type: "local", path: "/var/lib/out" },
+  });
+  const dest = buildDestination(sinkCfg.destination);
+
+  it("reports a configured destination that has taken no data yet", () => {
+    // An untried destination is not a broken one, so it is reported reachable — with the sink's own
+    // token saying it has simply not been used.
+    const c = connectivityOf(sinkCfg, dest, new DestHealth());
+
+    expect(c.instance).toBe("archive");
+    expect(c.connected).toBe(true);
+    expect(c.state).toBe("IDLE");
+    expect(c.detail).toBe("local:/var/lib/out"); // where the data goes, for a human
+    expect(c.attributes.destination).toBe("local"); // the open bag carries domain data
+  });
+
+  it("reports ONLINE only once a delivery is VERIFIED, never on deliver() alone", async () => {
+    // LyingDestination's deliver() resolves and its verify() catches the mismatch. Reporting the
+    // destination healthy on deliver() alone is the same lie as releasing the source on it.
+    const health = new DestHealth();
+    const impatient = { id: "archive", retry: new RetryConfig(1_000, 1_000, 3_000) };
+
+    await deliverWithRetry(
+      impatient,
+      item("k.json", "hello"),
+      new LyingDestination(),
+      new Stats(),
+      health,
+      undefined,
+      fakeDeps(),
+    );
+
+    expect(health.state).not.toBe("ONLINE");
+    expect(connectivityOf(sinkCfg, dest, health).connected).toBe(false);
+
+    const verified = new DestHealth();
+    await deliverWithRetry(
+      impatient,
+      item("k.json", "hello"),
+      new FlakyDestination(0),
+      new Stats(),
+      verified,
+      undefined,
+      fakeDeps(),
+    );
+    expect(verified.state).toBe("ONLINE");
+    expect(connectivityOf(sinkCfg, dest, verified).connected).toBe(true);
+  });
+
+  it("keeps 'still retrying' distinguishable from 'gave up'", async () => {
+    // Both are the same boolean to a console's health dot — which is exactly why the normalized flag
+    // is not enough on its own, and why `state` carries the sink's own vocabulary.
+    const health = new DestHealth();
+    const deps = fakeDeps(1.0);
+    const whileRetrying: string[] = [];
+    const spying: RetryDeps = {
+      ...deps,
+      sleep: async (ms: number): Promise<void> => {
+        whileRetrying.push(health.state);
+        await deps.sleep(ms);
+      },
+    };
+
+    await deliverWithRetry(
+      { id: "archive", retry: new RetryConfig(1_000, 10_000, 5_000) },
+      item("k.json", "hello"),
+      new FlakyDestination(99),
+      new Stats(),
+      health,
+      undefined,
+      spying,
+    );
+
+    expect(whileRetrying).toContain("BACKOFF"); // still trying
+    expect(health.state).toBe("FAILED"); // gave up — the one that must page someone
+
+    const retrying = new DestHealth();
+    retrying.set("BACKOFF");
+    expect(connectivityOf(sinkCfg, dest, retrying).connected).toBe(false);
+    expect(connectivityOf(sinkCfg, dest, health).connected).toBe(false);
+    expect(connectivityOf(sinkCfg, dest, retrying).state).toBe("BACKOFF");
+    expect(connectivityOf(sinkCfg, dest, health).state).toBe("FAILED");
   });
 });
 

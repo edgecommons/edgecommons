@@ -49,9 +49,11 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener, ABC):
     - a custom **command verb** (``set-greeting``), registered with
       ``gg.get_commands().register(...)`` alongside the automatic built-ins, that mutates a
       small piece of in-memory state which the periodic status publish below then reflects on
-      its very next tick — so invoking it from the console is visibly observable.
+      its very next tick — so invoking it from the console is visibly observable;
+    - an **instance-connectivity provider** (:meth:`instance_connectivity`) — the one source both
+      the ``state`` keepalive (push) and the built-in ``status`` verb (pull) read.
 
-    Replace all four with your own business metrics/signals/events/verbs; none of this is
+    Replace all of these with your own business metrics/signals/events/verbs; none of this is
     required by the library (a bare scaffold works fine without them), it exists so the
     demonstrated surface is live end-to-end out of the box.
     """
@@ -95,6 +97,40 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener, ABC):
         # on a mock/subclass bring-up that never initialized - guard defensively.
         if self._commands is not None:
             self._commands.register(SET_GREETING, self._handle_set_greeting)
+
+        # --- instance connectivity: ONE provider, TWO surfaces. Whatever it returns is pushed
+        # into the `state` keepalive's instances[] on every tick AND returned by the built-in
+        # `status` verb when a console asks — so whoever watches and whoever asks can never get
+        # different answers.
+        gg.set_instance_connectivity_provider(self.instance_connectivity)
+
+    def instance_connectivity(self) -> list:
+        """The per-instance connectivity this component reports.
+
+        This scaffold owns no southbound connections, so it reports **none**. That is a real
+        answer, not a missing one: with no instances the ``instances[]`` section is omitted and
+        ``status`` answers exactly as ``ping`` does. The provider is registered anyway, so the
+        seam is visible the day this component grows a connection of its own.
+
+        When it does (a device, a database, an upstream API), return one entry per connection::
+
+            from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
+
+            return [
+                InstanceConnectivity.of("plc-1", client.is_connected(), "opc.tcp://plc-1:4840")
+                .with_state("ONLINE")
+                .with_attributes({"sessionId": client.session_id})
+            ]
+
+        ``connected`` is the **normalized** flag — always present, so a console renders a health
+        dot without knowing this component's vocabulary. ``state`` is that vocabulary (``ONLINE`` /
+        ``CONNECTING`` / ``BACKOFF`` / ``DISABLED``: a boolean cannot tell "reconnecting" from
+        "gave up"). ``attributes`` is the open bag for domain data, so what only you understand
+        never destabilizes the two fields everyone reads.
+
+        Keep it cheap and non-blocking — it is sampled on every keepalive tick (5 s by default).
+        """
+        return []
 
     def _handle_set_greeting(self, request) -> dict:
         """The ``set-greeting`` custom command verb: ``{"greeting": "<new text>"}`` in,

@@ -60,6 +60,12 @@
     ],
     "test-configs/standalone-messaging.json": [
       "COMPONENTNAME"
+    ],
+    "tests/conftest.py": [
+      "COMPONENTNAME"
+    ],
+    "tests/test_app.py": [
+      "COMPONENTNAME"
     ]
   },
   "renames": [

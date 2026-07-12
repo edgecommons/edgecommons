@@ -22,12 +22,15 @@
 //!   `qualityRaw`.
 //! * Emit **`southbound_health`**, dimensioned by instance, so an operator can see a link go down
 //!   without reading logs.
+//! * Report **per-instance connectivity** ([`connectivity_of`]), so the fleet sees which devices
+//!   this adapter is actually talking to — pushed on every `state` keepalive and returned by the
+//!   built-in `status` verb, from one provider.
 //! * Serve **read/write commands** — and allow-list the writes. An adapter that will write any
 //!   address it is asked to is a control-system vulnerability, not a feature.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use edgecommons::prelude::*;
@@ -105,15 +108,91 @@ impl Backoff {
     }
 }
 
-/// The `southbound_health` measures, per instance (SOUTHBOUND.md §5).
+/// This adapter's **own vocabulary** for a link's condition — what it reports as
+/// `InstanceConnectivity::state`. A boolean cannot tell "still trying" from "backing off after a
+/// failure"; an operator needs to, so the richer token exists alongside the normalized flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum LinkState {
+    /// Connecting for the first time; nothing has failed yet.
+    #[default]
+    Connecting = 0,
+    /// The session is up and being polled.
+    Online = 1,
+    /// The link failed; reconnecting with backoff.
+    Backoff = 2,
+}
+
+impl LinkState {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Connecting => "CONNECTING",
+            Self::Online => "ONLINE",
+            Self::Backoff => "BACKOFF",
+        }
+    }
+
+    fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Online,
+            2 => Self::Backoff,
+            _ => Self::Connecting,
+        }
+    }
+}
+
+/// The `southbound_health` measures, per instance (SOUTHBOUND.md §5), plus the link condition the
+/// connectivity provider reports.
 #[derive(Default)]
 pub struct Health {
     /// 1 = connected, 0 = down.
     pub connection_state: AtomicU64,
+    /// The [`LinkState`], as a `u8`. Read it through [`Health::link`].
+    link: AtomicU8,
     pub poll_latency_ms: AtomicU64,
     pub read_errors: AtomicU64,
     pub reconnects: AtomicU64,
     pub signals_published: AtomicU64,
+}
+
+impl Health {
+    /// Record the link's condition. The metric's boolean and the reported state token move
+    /// **together**, so the health dot and the label a console shows can never disagree.
+    pub fn set_link(&self, state: LinkState) {
+        self.link.store(state as u8, Ordering::Relaxed);
+        self.connection_state
+            .store(u64::from(state == LinkState::Online), Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn link(&self) -> LinkState {
+        LinkState::from_u8(self.link.load(Ordering::Relaxed))
+    }
+}
+
+/// One device's connectivity sample, for the instance-connectivity provider registered in
+/// [`App::run`].
+///
+/// * `connected` is the **normalized** flag — always present, so a console renders a health dot for
+///   this adapter without knowing anything about its protocol.
+/// * `state` is *this adapter's* vocabulary ([`LinkState`]) for the richer condition.
+/// * `attributes` is the **open** bag: domain data only this adapter understands (here, which
+///   backend the device speaks), carried without touching the two fields above that every consumer
+///   relies on.
+#[must_use]
+pub fn connectivity_of(cfg: &DeviceConfig, health: &Health) -> InstanceConnectivity {
+    let link = health.link();
+    let mut attributes = serde_json::Map::new();
+    attributes.insert("adapter".to_string(), json!(cfg.adapter));
+
+    InstanceConnectivity::new(
+        &cfg.id,
+        link == LinkState::Online,
+        Some(cfg.connection.endpoint.clone()),
+    )
+    .with_state(link.as_str())
+    .with_attributes(attributes)
 }
 
 pub struct App {
@@ -161,6 +240,9 @@ impl App {
         // that task, which serializes it against the poll loop. This is why an adapter is one
         // task per device rather than a shared connection pool.
         let mut writers: HashMap<String, tokio::sync::mpsc::Sender<WriteRequest>> = HashMap::new();
+        // Each device's health, shared with its task: the task writes it, the connectivity
+        // provider below reads it.
+        let mut reported: Vec<(DeviceConfig, Arc<Health>)> = Vec::new();
 
         for device in &self.devices {
             // Per-instance facades: `data()` mints this device's topics and stamps its identity.
@@ -183,15 +265,31 @@ impl App {
             let (write_tx, write_rx) = tokio::sync::mpsc::channel::<WriteRequest>(16);
             writers.insert(device.id.clone(), write_tx);
 
+            let health = Arc::new(Health::default());
+            reported.push((device.clone(), Arc::clone(&health)));
+
             tokio::spawn(run_device(
                 device.clone(),
                 instance.data(),
                 instance.events(),
                 Arc::clone(&self.metrics),
-                Arc::new(Health::default()),
+                health,
                 write_rx,
             ));
         }
+
+        // ONE provider, TWO surfaces: the library pushes this sample into the `state` keepalive's
+        // `instances[]` every tick, and returns the very same sample from the built-in `status`
+        // command verb when a console asks for it. Whoever watches and whoever asks cannot get
+        // different answers. Keep it cheap — it is sampled on the keepalive interval.
+        //
+        // Reporting one entry per device is the whole point of the adapter archetype: the fleet
+        // sees which of THIS component's devices are reachable, without minting a UNS instance per
+        // connection.
+        let provider: Arc<InstanceConnectivityProvider> = Arc::new(move || {
+            reported.iter().map(|(cfg, health)| connectivity_of(cfg, health)).collect()
+        });
+        gg.set_instance_connectivity_provider(Some(provider));
 
         // The southbound command surface. `ping` / `reload-config` / `get-configuration` are
         // already live — the library registered them before we ran. These are the adapter's own.
@@ -304,7 +402,7 @@ async fn run_device(
         match backend.connect(&cfg.connection).await {
             Ok(session) => {
                 attempt = 0;
-                health.connection_state.store(1, Ordering::Relaxed);
+                health.set_link(LinkState::Online);
                 emit_health(&metrics, &health).await;
                 let _ = events
                     .emit(
@@ -323,7 +421,7 @@ async fn run_device(
                 )
                 .await;
 
-                health.connection_state.store(0, Ordering::Relaxed);
+                health.set_link(LinkState::Backoff);
                 health.reconnects.fetch_add(1, Ordering::Relaxed);
                 emit_health(&metrics, &health).await;
                 let _ = events
@@ -339,6 +437,7 @@ async fn run_device(
             // A permanent failure will fail identically forever, so back off to the ceiling
             // immediately rather than hammering a device that is never going to answer.
             Err(e) => {
+                health.set_link(LinkState::Backoff);
                 let permanent = !e.is_transient();
                 let wait = if permanent {
                     Duration::from_millis(backoff.max_ms)
@@ -523,5 +622,44 @@ mod tests {
             "pollIntervalMS": 1000
         }));
         assert!(bad.is_err(), "a typo'd key is a mistake, not a no-op");
+    }
+
+    #[test]
+    fn every_device_reports_its_own_connectivity() {
+        let cfg: DeviceConfig = serde_json::from_value(json!({
+            "id": "plc-1",
+            "adapter": "sim",
+            "connection": { "endpoint": "sim://plc-1" }
+        }))
+        .unwrap();
+        let health = Health::default();
+
+        // Before the first connect: not reachable, and the adapter's own token says why it is not
+        // yet — CONNECTING is not BACKOFF, and the boolean alone could not tell them apart.
+        let c = connectivity_of(&cfg, &health);
+        assert_eq!(c.instance, "plc-1");
+        assert!(!c.connected);
+        assert_eq!(c.state.as_deref(), Some("CONNECTING"));
+        assert_eq!(c.detail.as_deref(), Some("sim://plc-1"), "the endpoint, for a human");
+        assert_eq!(c.attributes["adapter"], json!("sim"), "the open bag carries domain data");
+
+        health.set_link(LinkState::Online);
+        let c = connectivity_of(&cfg, &health);
+        assert!(c.connected, "the normalized flag every console reads");
+        assert_eq!(c.state.as_deref(), Some("ONLINE"));
+
+        health.set_link(LinkState::Backoff);
+        assert!(!connectivity_of(&cfg, &health).connected);
+    }
+
+    #[test]
+    fn the_normalized_flag_and_the_health_metric_cannot_disagree() {
+        // Both move through set_link, so the metric an operator charts and the connectivity a
+        // console renders are the same fact.
+        let health = Health::default();
+        health.set_link(LinkState::Online);
+        assert_eq!(health.connection_state.load(Ordering::Relaxed), 1);
+        health.set_link(LinkState::Backoff);
+        assert_eq!(health.connection_state.load(Ordering::Relaxed), 0);
     }
 }

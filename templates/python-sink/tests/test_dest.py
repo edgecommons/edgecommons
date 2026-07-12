@@ -10,10 +10,15 @@ import os
 import pytest
 
 from app.dest import (
+    BACKOFF,
+    CONNECTING,
     DEFAULT_MAX_DELAY_MS,
     DEFAULT_MAX_QUEUE,
+    FAILED,
+    ONLINE,
     DeliverError,
     Delivered,
+    DestinationHealth,
     Item,
     LocalDestination,
     RetryPolicy,
@@ -106,6 +111,57 @@ def test_the_key_is_deterministic():
     assert a == b
     assert a.startswith("archive/temp/")
     assert key_for("archive", "ecv1/gw/x/main/data/temp", "uuid-2") != a
+
+
+# --- destination health: what the console reads --------------------------------------------------
+
+
+def test_a_configured_destination_is_reported_before_anything_is_delivered():
+    # A sink's destinations ARE its instances. A destination that is configured and unreachable must
+    # never be indistinguishable from one that was never configured -- so it is reported from the
+    # first keepalive: not connected, and CONNECTING says why not *yet*.
+    health = DestinationHealth("archive", "local")
+
+    assert health.connected is False
+    assert health.state == CONNECTING
+
+
+def test_a_destination_is_online_only_once_a_delivery_is_verified():
+    # Reporting a destination healthy because `deliver` returned -- without checking what landed --
+    # is the same mistake as releasing the source on it.
+    health = DestinationHealth("archive", "local")
+
+    health.delivered("archive/temp/uuid-1.json")
+
+    assert health.connected is True
+    assert health.state == ONLINE
+
+
+def test_backoff_and_failed_are_both_down_and_are_not_the_same_thing():
+    # THE distinction. Both are connected=false, so the normalized flag alone cannot tell them
+    # apart: one sink is still trying inside its budget, the other has given up and lost data. An
+    # operator who cannot see the difference cannot act on it.
+    retrying = DestinationHealth("archive", "local")
+    retrying.retrying("transient: connection reset")
+
+    gave_up = DestinationHealth("archive", "local")
+    gave_up.failed("permanent: bad credentials")
+
+    assert retrying.connected is gave_up.connected is False
+    assert retrying.state == BACKOFF
+    assert gave_up.state == FAILED
+    assert "connection reset" in retrying.detail
+    assert "bad credentials" in gave_up.detail
+
+
+def test_a_recovered_destination_stops_reporting_failed():
+    health = DestinationHealth("archive", "local")
+    health.failed("permanent: bad credentials")
+
+    health.delivered("archive/temp/uuid-1.json")
+
+    assert health.state == ONLINE
+    assert health.connected is True
 
 
 # --- retry ---------------------------------------------------------------------------------------

@@ -37,6 +37,7 @@ import {
   EdgeCommons,
   EventsFacade,
   IMessagingService,
+  InstanceConnectivity,
   Message,
   MessageBuilder,
   MetricBuilder,
@@ -224,6 +225,38 @@ export class Stats {
   }
 }
 
+// --- instance connectivity ---------------------------------------------------------------------
+
+/**
+ * The per-instance connectivity this component reports — **none**.
+ *
+ * A processor's routes are not connections: it consumes off the bus and publishes back onto it, and
+ * the bus is the library's business, not an instance of ours. A component with no instances reports
+ * none, and that is the honest answer rather than a gap — the `state` keepalive carries no
+ * `instances[]` section, and the built-in `status` verb answers exactly as `ping` does
+ * (`{"status":"RUNNING","uptimeSecs":n}`).
+ *
+ * If your processor *does* own a connection (an enrichment database, a model server it calls per
+ * message), return one entry per connection instead — each a **cached** status read, never live IO:
+ * the provider is sampled on the keepalive interval, and on the command path too.
+ *
+ * ```ts
+ * return [
+ *   InstanceConnectivity.of("enrichment-db", pool.isUp(), "postgres://…")
+ *     .withState("BACKOFF")                          // OUR vocabulary
+ *     .withAttributes({ lastError: "timeout" }),     // domain data
+ * ];
+ * ```
+ *
+ * `connected` is the one **normalized** field and is always present, so any console renders a health
+ * dot for any component without knowing that component's vocabulary. `state` is our *own* token for
+ * what a boolean cannot say ("reconnecting" vs "administratively disabled"), and `attributes` is an
+ * open bag: domain data goes there, where it can never destabilize the fields every consumer reads.
+ */
+export function instanceConnectivity(): InstanceConnectivity[] {
+  return [];
+}
+
 // --- the app ---------------------------------------------------------------------------------
 
 export class App {
@@ -271,6 +304,12 @@ export class App {
         .addMeasure("errors", "Count", 60)
         .build(),
     );
+
+    // ONE provider, TWO surfaces: the library pushes this sample into the `state` keepalive's
+    // `instances[]` every tick AND returns it from the built-in `status` verb when pulled, so a
+    // console that subscribes and a console that asks can never disagree. See instanceConnectivity()
+    // above for what a processor reports, and why.
+    gg.setInstanceConnectivityProvider(instanceConnectivity);
 
     // One route per instance. A malformed route is skipped with a warning rather than killing the
     // component — but if EVERY route is malformed there is nothing to run, and failing loudly beats

@@ -180,6 +180,28 @@ impl App {
         }
         anyhow::ensure!(!routes.is_empty(), "no valid routes in component.instances[]");
 
+        // ONE provider, TWO surfaces: whatever it returns is pushed into the `state` keepalive's
+        // `instances[]` on every tick AND returned by the built-in `status` command verb when a
+        // console asks. Whoever watches and whoever asks cannot get different answers.
+        //
+        // A processor owns no southbound links — its routes are message flows, not connections —
+        // so it reports NO instances. That is a real answer, not a missing one: with an empty vec
+        // the `instances[]` section is omitted and `status` says exactly what `ping` says. Register
+        // it anyway, so the seam is visible the day this component grows a connection of its own.
+        //
+        // When it does (an enrichment database, a model server), return one entry per connection:
+        //
+        //     InstanceConnectivity::of(&id, db.is_connected())      // the NORMALIZED flag: always
+        //         .with_state("ONLINE")                             // present, so any console can
+        //         .with_attributes(attributes)                      // render a health dot without
+        //                                                           // knowing this component
+        //
+        // `state` is your own vocabulary (ONLINE / CONNECTING / BACKOFF / DISABLED — a boolean
+        // cannot tell "reconnecting" from "administratively off"); `attributes` is the open bag for
+        // domain data, deliberately unconstrained so it never destabilizes the fields above.
+        let no_instances: Arc<InstanceConnectivityProvider> = Arc::new(Vec::new);
+        gg.set_instance_connectivity_provider(Some(no_instances));
+
         Ok(Self { config, metrics, routes, stats: Arc::new(Stats::default()) })
     }
 

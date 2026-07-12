@@ -64,6 +64,9 @@
     ],
     "test-configs/standalone-messaging.json": [
       "BINNAME"
+    ],
+    "tests/test_connectivity.py": [
+      "COMPONENTNAME"
     ]
   },
   "renames": [

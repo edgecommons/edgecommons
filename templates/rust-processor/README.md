@@ -72,6 +72,19 @@ blocked on. An unbounded queue does not remove backpressure; it relocates the fa
 and by then you have lost the ability to report it. The `dropped` measure of the
 `processorThroughput` metric is how you find out.
 
+## Instance connectivity: a processor reports none
+
+`App::new` registers an instance-connectivity provider that returns an empty list. A processor owns
+no southbound links — its routes are message flows, not connections — so it has no instances to
+report, and that is a real answer rather than a missing one: the `state` keepalive omits the
+`instances[]` section, and the built-in `status` verb answers exactly what `ping` answers.
+
+The seam is registered anyway, so it is visible the day this component grows a connection of its
+own (an enrichment database, a model server). Return one `InstanceConnectivity` per connection:
+`connected` is the normalized flag every console renders a health dot from, `state` is your own
+vocabulary (`ONLINE` / `CONNECTING` / `BACKOFF` / `DISABLED`), and `attributes` is an open bag for
+domain data. The comment in `App::new` shows the shape.
+
 ## Why this uses `messaging()` and not `data()`
 
 The `data()` facade is for a component that *produces* readings: it mints its own topic from a

@@ -113,5 +113,6 @@ Deployment needs no command-line args.
 |------|-----------|
 | `main.py` | Entry point — builds `EdgeCommons` and starts the app. |
 | `app/<<COMPONENTNAME>>.py` | Your business logic. |
+| `tests/` | `pytest` tests for the seams the app wires into the library — its command verb and the connectivity it reports. `python -m pytest` — no broker needed. |
 | `test-configs/` | Sample component-config files (`config_*.json`). |
 | `recipe.yaml`, `gdk-config.json` | Greengrass recipe + GDK build/publish config. |

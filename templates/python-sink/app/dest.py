@@ -188,6 +188,67 @@ def _unlink_quietly(path: str) -> None:
         pass
 
 
+# --- destination health --------------------------------------------------------------------------
+
+#: This sink's OWN vocabulary for a destination's condition. ``BACKOFF`` and ``FAILED`` are both
+#: "not delivering", and they are **not the same thing**: one is still trying, the other has given
+#: up and lost data. A boolean cannot tell them apart, and an operator must be able to.
+CONNECTING = "CONNECTING"   # configured; nothing has been delivered yet
+ONLINE = "ONLINE"           # a delivery landed AND was verified
+BACKOFF = "BACKOFF"         # a transient failure; retrying within the budget
+FAILED = "FAILED"           # permanent, or the budget is spent — data did not arrive
+
+
+class DestinationHealth:
+    """One configured destination's live condition — the sink's per-instance connectivity.
+
+    A sink's destinations **are** its instances, so one of these exists for every configured
+    destination from startup, before a single message arrives: a destination that is configured and
+    unreachable can never be mistaken for one that was never configured.
+
+    ``connected`` is only true once a delivery has been **verified**. Reporting a destination
+    healthy because ``deliver`` returned — without checking what landed — is the same mistake as
+    releasing the source on it.
+    """
+
+    __slots__ = ("sink_id", "kind", "_snapshot")
+
+    def __init__(self, sink_id: str, kind: Optional[str] = None):
+        self.sink_id = sink_id
+        self.kind = kind
+        # One tuple, swapped atomically: the sampling thread can never read a state from one moment
+        # and a detail from another.
+        self._snapshot = (CONNECTING, None)
+
+    @property
+    def state(self) -> str:
+        return self._snapshot[0]
+
+    @property
+    def detail(self) -> Optional[str]:
+        return self._snapshot[1]
+
+    @property
+    def connected(self) -> bool:
+        """The **normalized** flag: a console renders a health dot from this without knowing what a
+        destination is."""
+        return self._snapshot[0] == ONLINE
+
+    def delivered(self, key: str) -> None:
+        """A delivery landed and verified. Call it **after** :meth:`Destination.verify`, never
+        before."""
+        self._snapshot = (ONLINE, f"delivered {key}")
+
+    def retrying(self, reason: str) -> None:
+        """A transient failure: still trying, within the budget."""
+        self._snapshot = (BACKOFF, reason)
+
+    def failed(self, reason: str) -> None:
+        """Permanent, or the budget is spent. This is data that did not arrive, and it must not look
+        like a retry that is still in flight."""
+        self._snapshot = (FAILED, reason)
+
+
 # --- retry -------------------------------------------------------------------------------------
 
 DEFAULT_BASE_DELAY_MS = 1_000

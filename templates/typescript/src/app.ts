@@ -26,7 +26,10 @@
  * - a custom **command verb** ({@link SET_GREETING}), registered with
  *   `gg.commands().register(...)` alongside the automatic built-ins, that mutates a small piece
  *   of in-memory state which the periodic status publish then reflects on its very next tick —
- *   so invoking it from the console is visibly observable.
+ *   so invoking it from the console is visibly observable;
+ * - an **instance-connectivity provider** ({@link instanceConnectivity}) — the one source both the
+ *   `state` keepalive (push) and the built-in `status` verb (pull) read. This scaffold owns no
+ *   connections, so it reports none; the function's docs show where a component that does adds them.
  *
  * Replace all four with your own business metrics/signals/events/verbs; none of this is required
  * by the library (a bare scaffold works fine without them), it exists so the demonstrated surface
@@ -40,6 +43,7 @@ import {
   EventsFacade,
   EdgeCommons,
   IMessagingService,
+  InstanceConnectivity,
   Message,
   MessageBuilder,
   MetricBuilder,
@@ -60,6 +64,34 @@ const SET_GREETING = "set-greeting";
 const TICK_INTERVAL_MS = 10_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The per-instance connectivity this component reports — **none**.
+ *
+ * A component with no southbound connections has no instances to report, and reporting none is the
+ * honest answer rather than a gap: the `state` keepalive then carries no `instances[]` section, and
+ * the built-in `status` verb answers exactly as `ping` does (`{"status":"RUNNING","uptimeSecs":n}`).
+ *
+ * If this component grows a connection of its own (a device, a database, an upstream API), return
+ * one entry per connection instead — each a **cached** status read, never live IO: the provider is
+ * sampled on the keepalive interval, and on the command path too.
+ *
+ * ```ts
+ * return [
+ *   InstanceConnectivity.of("enrichment-db", pool.isUp(), "postgres://…")
+ *     .withState("BACKOFF")                          // OUR vocabulary
+ *     .withAttributes({ lastError: "timeout" }),     // domain data
+ * ];
+ * ```
+ *
+ * `connected` is the one **normalized** field and is always present, so any console renders a health
+ * dot for any component without knowing that component's vocabulary. `state` is our *own* token for
+ * what a boolean cannot say ("reconnecting" vs "administratively disabled"), and `attributes` is an
+ * open bag: domain data goes there, where it can never destabilize the fields every consumer reads.
+ */
+export function instanceConnectivity(): InstanceConnectivity[] {
+  return [];
+}
 
 /** The component's business logic and the `edgecommons` service handles it operates over. */
 export class App {
@@ -140,6 +172,12 @@ export class App {
         .addDimension("demo", "scaffold")
         .build(),
     );
+
+    // --- instance connectivity: ONE provider, TWO surfaces. Whatever it returns is pushed into
+    // the `state` keepalive's `instances[]` on every tick AND returned by the built-in `status`
+    // verb when a console asks — whoever watches and whoever asks cannot get different answers.
+    // See instanceConnectivity() above for what this scaffold reports, and why.
+    gg.setInstanceConnectivityProvider(instanceConnectivity);
 
     // --- commands: ping/reload-config/get-configuration are already live (wired by the library
     // before this constructor runs). Register ONE custom verb so there is something for the

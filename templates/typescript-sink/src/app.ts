@@ -19,7 +19,9 @@
  * * **Classify the failure.** Retrying a permanent error burns the budget; giving up on a transient
  *   one loses data a second attempt would have delivered. See {@link DeliverError}.
  * * **Report every transition.** A sink that fails quietly is indistinguishable from one that is
- *   idle. Started / completed / failed / exhausted all go out on the UNS event surface.
+ *   idle. Started / completed / failed / exhausted all go out on the UNS event surface — and the
+ *   same transitions move each destination's reported connectivity ({@link connectivityOf}), because
+ *   a sink's destinations **are** its instances.
  *
  * ## Where the work comes from
  *
@@ -34,6 +36,7 @@ import {
   EdgeCommons,
   EventsFacade,
   IMessagingService,
+  InstanceConnectivity,
   Message,
   MetricBuilder,
   MetricService,
@@ -182,6 +185,63 @@ export class Stats {
   }
 }
 
+// --- per-destination connectivity ----------------------------------------------------------------
+
+/**
+ * This sink's **own vocabulary** for a destination's condition — what it reports as
+ * `InstanceConnectivity.state`. The delivery ladder in {@link deliverWithRetry} moves it, so what
+ * the events say and what the connectivity says are the same story.
+ *
+ * `BACKOFF` (still trying) and `FAILED` (gave up) are the same boolean and very different pages at
+ * 3 a.m. — which is exactly why the normalized flag is not enough on its own.
+ */
+export type DestState = "IDLE" | "ONLINE" | "BACKOFF" | "FAILED";
+
+/** One destination's condition: written by the delivery ladder, read by the connectivity provider. */
+export class DestHealth {
+  /** Nothing delivered yet, so nothing has failed yet. */
+  state: DestState = "IDLE";
+
+  set(state: DestState): void {
+    this.state = state;
+  }
+
+  /**
+   * The normalized flag: is this destination taking data? An untried destination is not a broken
+   * one, so `IDLE` reports reachable until a delivery proves otherwise.
+   */
+  get connected(): boolean {
+    return this.state === "IDLE" || this.state === "ONLINE";
+  }
+}
+
+/** A human "where the data goes", for the connectivity detail: `local:/var/lib/out`. */
+export function destinationDetail(cfg: unknown): string | undefined {
+  const o = typeof cfg === "object" && cfg !== null ? (cfg as Record<string, unknown>) : undefined;
+  if (!o || typeof o.type !== "string") return undefined;
+  return typeof o.path === "string" ? `${o.type}:${o.path}` : o.type;
+}
+
+/**
+ * One destination's connectivity sample, for the provider registered in the {@link App} constructor.
+ *
+ * * `connected` is the **normalized** flag — always present, so a console renders a health dot for
+ *   this sink without knowing what an object store is.
+ * * `state` is *this sink's* vocabulary ({@link DestState}), which is what separates a destination
+ *   we are still retrying from one we have given up on.
+ * * `attributes` is the **open** bag: domain data only this sink understands (here, the kind of
+ *   backend), carried without destabilizing the two fields above that everyone reads.
+ */
+export function connectivityOf(
+  sink: SinkConfig,
+  destination: Destination,
+  health: DestHealth,
+): InstanceConnectivity {
+  return InstanceConnectivity.of(sink.id, health.connected, destinationDetail(sink.destination))
+    .withState(health.state)
+    .withAttributes({ destination: destination.kind });
+}
+
 /** The clock/sleep/jitter seam — injected so the retry ladder is testable without real waiting. */
 export interface RetryDeps {
   sleep: (ms: number) => Promise<void>;
@@ -202,12 +262,16 @@ export const defaultRetryDeps: RetryDeps = {
  * **delivery-completed**, or **delivery-failed** (with `willRetry`), and finally
  * **delivery-exhausted** (Critical) when the budget runs out. An operator must be able to tell
  * "still trying" from "gave up", and gave-up must be loud.
+ *
+ * Every rung of that ladder also moves `health` — the same distinction, reported as this
+ * destination's {@link DestState} on the `state` keepalive and to the `status` verb.
  */
 export async function deliverWithRetry(
   sink: Pick<SinkConfig, "id" | "retry">,
   item: Item,
   destination: Destination,
   stats: Stats,
+  health: DestHealth,
   events: Pick<EventsFacade, "emit"> | undefined,
   deps: RetryDeps = defaultRetryDeps,
 ): Promise<void> {
@@ -230,6 +294,9 @@ export async function deliverWithRetry(
       await destination.verify(item, delivered);
 
       stats.delivered += 1;
+      // ONLINE only once the delivery is VERIFIED — "deliver() resolved" is not yet a delivery, and
+      // reporting a destination healthy on that basis is the same lie as releasing the source on it.
+      health.set("ONLINE");
       await events
         ?.emit(Severity.Info, "delivery-completed", undefined, {
           sink: sink.id,
@@ -248,6 +315,7 @@ export async function deliverWithRetry(
     // log; give up now and say so.
     if (!DeliverError.isTransient(failure)) {
       stats.exhausted += 1;
+      health.set("FAILED");
       logger.error(`permanent failure sink=${sink.id} key=${item.key}: ${String(failure)}`);
       await events
         ?.emit(
@@ -262,6 +330,7 @@ export async function deliverWithRetry(
 
     if (sink.retry.budgetSpent(deps.now() - started)) {
       stats.exhausted += 1;
+      health.set("FAILED");
       logger.error(`retry budget spent sink=${sink.id} key=${item.key} attempts=${attempt + 1}`);
       await events
         ?.emit(Severity.Critical, "delivery-exhausted", `${sink.id} gave up on ${item.key}`, {
@@ -276,6 +345,7 @@ export async function deliverWithRetry(
 
     const backoff = sink.retry.delayMs(attempt, deps.rand01());
     stats.retried += 1;
+    health.set("BACKOFF");
     logger.warn(
       `transient failure sink=${sink.id} key=${item.key} attempt=${attempt} ` +
         `backoffMs=${backoff}; retrying: ${String(failure)}`,
@@ -304,6 +374,9 @@ export class App {
   private readonly events?: EventsFacade;
   private readonly sinks: SinkConfig[] = [];
   private readonly stats = new Stats();
+  /** Each destination, built once at startup, and the condition its delivery ladder reports. */
+  private readonly destinations = new Map<string, Destination>();
+  private readonly health = new Map<string, DestHealth>();
   private readonly inFlight: Promise<void>[] = [];
   private stopped = false;
 
@@ -351,6 +424,24 @@ export class App {
     if (this.sinks.length === 0) {
       throw new Error("no valid sinks in component.instances[]");
     }
+
+    // A sink's destinations ARE its instances, and they exist from the moment they are CONFIGURED —
+    // so every one of them is reported from the very first keepalive, before a single message has
+    // been delivered. The fleet sees a bucket stop accepting data without reading one log line.
+    //
+    // ONE provider, TWO surfaces: the library pushes this sample into the `state` keepalive's
+    // `instances[]` every tick, and returns the very same sample from the built-in `status` verb
+    // when a console asks. Whoever watches and whoever asks cannot get different answers. Keep it
+    // cheap — it is sampled on the keepalive interval, and it reads only cached state.
+    for (const sink of this.sinks) {
+      this.destinations.set(sink.id, buildDestination(sink.destination));
+      this.health.set(sink.id, new DestHealth());
+    }
+    gg.setInstanceConnectivityProvider(() =>
+      this.sinks.map((s) =>
+        connectivityOf(s, this.destinations.get(s.id) as Destination, this.health.get(s.id) as DestHealth),
+      ),
+    );
   }
 
   async run(): Promise<void> {
@@ -358,7 +449,8 @@ export class App {
     if (!messaging) throw new Error("no messaging transport");
 
     for (const sink of this.sinks) {
-      const destination = buildDestination(sink.destination);
+      const destination = this.destinations.get(sink.id) as Destination;
+      const health = this.health.get(sink.id) as DestHealth;
 
       // Deliveries run one at a time per sink (maxConcurrency 1): a bounded, ordered pipeline whose
       // backpressure is the transport's own queue bound rather than an unbounded heap of promises.
@@ -376,7 +468,7 @@ export class App {
             key: keyFor(sink.id, topic, msg),
             bytes: Buffer.from(JSON.stringify(msg.body ?? null), "utf8"),
           };
-          const delivery = deliverWithRetry(sink, item, destination, this.stats, this.events);
+          const delivery = deliverWithRetry(sink, item, destination, this.stats, health, this.events);
           this.inFlight.push(delivery);
           await delivery;
         },

@@ -8,6 +8,7 @@ import com.mbreissi.edgecommons.config.ConfigManager;
 import com.mbreissi.edgecommons.facades.DataFacade;
 import com.mbreissi.edgecommons.facades.EventsFacade;
 import com.mbreissi.edgecommons.facades.Severity;
+import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import com.mbreissi.edgecommons.messaging.MessagingClient;
@@ -19,6 +20,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -38,8 +40,8 @@ import static com.mbreissi.edgecommons.utils.Utils.sleep;
  * <b>automatic</b> (library-owned, no code here): the {@code state} keepalive publishes on
  * {@code ecv1/{device}/{component}/main/state} (on / 5 s / local by default), and the inbox
  * ({@code ecv1/{device}/{component}/main/cmd/#}, {@code gg.getCommands()}) already answers
- * {@code ping} / {@code reload-config} / {@code get-configuration} before this constructor even
- * runs.
+ * {@code ping} / {@code status} / {@code describe} / {@code reload-config} /
+ * {@code get-configuration} before this constructor even runs.
  *
  * <p>What this scaffold adds is the rest of the monitoring + command surface the edge-console
  * reads (DESIGN-uns §7/§9 — G-S1/S2), so a freshly generated component has something to show up
@@ -119,13 +121,20 @@ public class <<COMPONENTNAME>>
                 .addDimension("demo", "scaffold")
                 .build());
 
-        // --- commands: ping/reload-config/get-configuration are already live (wired by the
-        // library before this constructor runs). Register ONE custom verb so there is something
-        // for the console's "Send command" to invoke beyond the built-ins. `getCommands()` is
-        // only null on a mock/subclass bring-up that never initialized - guard defensively.
+        // --- commands: ping/status/describe/reload-config/get-configuration are already live
+        // (wired by the library before this constructor runs). Register ONE custom verb so there
+        // is something for the console's "Send command" to invoke beyond the built-ins.
+        // `getCommands()` is only null on a mock/subclass bring-up that never initialized - guard
+        // defensively.
         if (commands != null) {
             commands.register(SET_GREETING, this::handleSetGreeting);
         }
+
+        // --- per-instance connectivity: ONE provider, TWO surfaces. The library pushes this
+        // sample into the `state` keepalive's instances[] every tick AND returns it from the
+        // built-in `status` verb when pulled, so a console that subscribes and a console that
+        // asks can never disagree. See instanceConnectivity() below.
+        edgeCommons.setInstanceConnectivityProvider(<<COMPONENTNAME>>::instanceConnectivity);
 
         // The resolved UNS identity path (e.g. "site1/my-gw") and the topic minted from it. APP
         // is the free application class for this scaffold's status publish below; the data()
@@ -194,6 +203,34 @@ public class <<COMPONENTNAME>>
             LOGGER.info("Running... (seq={} uptimeSecs={} greeting='{}')", seq, uptimeSecs, greeting.get());
             sleep(10000);
         }
+    }
+
+    /**
+     * The per-instance connectivity this component reports — <b>none</b>, because a service owns no
+     * southbound connections. A component with no instances reports none: its {@code state}
+     * keepalive carries no {@code instances[]} section, and the built-in {@code status} verb answers
+     * exactly as {@code ping} does ({@code {"status":"RUNNING","uptimeSecs":n}}). That is the honest
+     * answer, not a gap.
+     *
+     * <p>If this component <i>does</i> own connections (a database pool, an upstream HTTP API, a
+     * device session), return one entry per connection instead — each entry is a cached status read,
+     * never live IO: this runs on the heartbeat thread every tick.
+     *
+     * <pre>{@code
+     * return List.of(InstanceConnectivity.of("db-1", pool.isUp(), "postgres://…")
+     *         .withState("BACKOFF")                                            // OUR vocabulary
+     *         .withAttributes(Map.of("lastError", new JsonPrimitive("timeout")))); // domain data
+     * }</pre>
+     *
+     * <p>{@code connected} is the one <b>normalized</b> field and is always present, so any console
+     * can render a health dot for any component without knowing that component's vocabulary.
+     * {@code state} is the component's <i>own</i> token for what a boolean cannot say ("reconnecting"
+     * vs "administratively disabled"), and {@code attributes} is an open bag: domain data goes there,
+     * where it can never destabilize the fields every consumer relies on.
+     */
+    static List<InstanceConnectivity> instanceConnectivity()
+    {
+        return List.of();
     }
 
     /**
