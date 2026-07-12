@@ -98,6 +98,8 @@ vi.mock("../src/streaming", () => ({
 
 // Import AFTER mocks are registered.
 import { EdgeCommonsBuilder, EdgeCommons } from "../src/edgecommons";
+import { ConfigurationValidationPhase } from "../src/config";
+import { CommandInboxState } from "../src/commands";
 import { EdgeCommonsError } from "../src/errors";
 
 const BASE = { component: { global: {} }, logging: { level: "INFO" } };
@@ -432,6 +434,60 @@ describe("EdgeCommons lifecycle (mocked)", () => {
       expect(gg.ready()).toBe(false);
       gg.setReady(true);
       expect(gg.ready()).toBe(true);
+    } finally {
+      await gg.close();
+    }
+  });
+
+  it("initialReady(false) retains the application readiness gate until explicitly opened", async () => {
+    process.env.EDGECOMMONS_INITIAL_READY_CFG = JSON.stringify(BASE);
+    const gg = await new EdgeCommonsBuilder("com.example.Lc")
+      .args(["--platform", "HOST", "--transport", "MQTT", "messaging.json", "-c", "ENV", "EDGECOMMONS_INITIAL_READY_CFG"])
+      .initialReady(false)
+      .build();
+    delete process.env.EDGECOMMONS_INITIAL_READY_CFG;
+    try {
+      expect(gg.ready()).toBe(false);
+      gg.setReady(true);
+      expect(gg.ready()).toBe(true);
+    } finally {
+      await gg.close();
+    }
+  });
+
+  it("runs initial candidate validators before any runtime becomes available", async () => {
+    process.env.EDGECOMMONS_VALIDATOR_CFG = JSON.stringify({ ...BASE, component: { global: { marker: "candidate" } } });
+    const validator = vi.fn((candidate: Record<string, unknown>, current: unknown, phase: ConfigurationValidationPhase) => {
+      expect((candidate.component as Record<string, unknown>).global).toEqual({ marker: "candidate" });
+      expect(current).toBeUndefined();
+      expect(phase).toBe(ConfigurationValidationPhase.Initial);
+      return { accepted: false as const, error: "camera inventory is invalid" };
+    });
+    await expect(
+      new EdgeCommonsBuilder("com.example.Lc")
+        .args(["--platform", "HOST", "--transport", "MQTT", "messaging.json", "-c", "ENV", "EDGECOMMONS_VALIDATOR_CFG"])
+        .configurationValidator("camera-inventory", validator)
+        .build(),
+    ).rejects.toThrow("CONFIGURATION_VALIDATOR_REJECTED: camera-inventory: camera inventory is invalid");
+    delete process.env.EDGECOMMONS_VALIDATOR_CFG;
+    expect(validator).toHaveBeenCalledTimes(1);
+  });
+
+  it("a pre-start command configuration failure is observable and gates readiness", async () => {
+    process.env.EDGECOMMONS_COMMAND_GATE_CFG = JSON.stringify(BASE);
+    const gg = await new EdgeCommonsBuilder("com.example.Lc")
+      .args(["--platform", "HOST", "--transport", "MQTT", "messaging.json", "-c", "ENV", "EDGECOMMONS_COMMAND_GATE_CFG"])
+      .configureCommands(() => {
+        throw new Error("must not leak this detail");
+      })
+      .build();
+    delete process.env.EDGECOMMONS_COMMAND_GATE_CFG;
+    try {
+      expect(gg.commands()?.state()).toBe(CommandInboxState.Failed);
+      expect(gg.commands()?.startupError()).toBe("COMMAND_INBOX_CONFIGURATION_FAILED");
+      expect(gg.ready()).toBe(false);
+      gg.setReady(true);
+      expect(gg.ready()).toBe(false);
     } finally {
       await gg.close();
     }

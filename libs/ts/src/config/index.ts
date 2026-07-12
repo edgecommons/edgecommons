@@ -6,6 +6,7 @@
  * hot-reload hook (mirrors the Java/Python/Rust contract).
  */
 import type { Config } from "./model";
+import type { JsonObject } from "./merge";
 
 export { Config, DEFAULT_REQUEST_TIMEOUT_SECONDS } from "./model";
 export type {
@@ -39,3 +40,24 @@ export { buildConfigSource } from "./source";
 export interface ConfigurationChangeListener {
   onConfigurationChange(config: Config): Promise<boolean> | boolean;
 }
+
+/** The lifecycle phase for a candidate configuration check. */
+export enum ConfigurationValidationPhase {
+  Initial = "INITIAL",
+  Reload = "RELOAD",
+}
+
+/** An application validator either accepts or returns an operator-safe stable error. */
+export type ConfigurationValidationResult =
+  | { readonly accepted: true }
+  | { readonly accepted: false; readonly error: string };
+
+/**
+ * Side-effect-free candidate validator invoked after schema validation but before the current
+ * snapshot swap. Both inputs are defensive immutable JSON snapshots; the current one is redacted.
+ */
+export type ConfigurationValidator = (
+  candidate: Readonly<JsonObject>,
+  redactedCurrent: Readonly<JsonObject> | undefined,
+  phase: ConfigurationValidationPhase,
+) => ConfigurationValidationResult | Promise<ConfigurationValidationResult>;

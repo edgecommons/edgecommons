@@ -7,6 +7,7 @@ package com.mbreissi.edgecommons.messaging.providers.standalone;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessagingConfiguration;
 import com.mbreissi.edgecommons.messaging.MessagingProvider;
+import com.mbreissi.edgecommons.messaging.PublishConfirmationException;
 import com.mbreissi.edgecommons.messaging.Qos;
 import com.mbreissi.edgecommons.messaging.ReplyFuture;
 import com.google.gson.Gson;
@@ -41,6 +42,10 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     private final int localSubscribeQos;
     private final int iotCorePublishQos;
     private final int iotCoreSubscribeQos;
+
+    /** Bounds QoS-1 operations waiting for PUBACK; callers experience blocking backpressure. */
+    private final Semaphore confirmedPublishPermits = new Semaphore(
+            DEFAULT_MAX_IN_FLIGHT_CONFIRMED_PUBLISHES);
 
     private static class QueueEntry
     {
@@ -529,6 +534,99 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     }
 
     @Override
+    public void publishConfirmed(String topic, byte[] encodedMessage, Qos qos, Duration timeout)
+    {
+        internalPublishConfirmed(localMqttClient, topic, encodedMessage, qos, timeout);
+    }
+
+    @Override
+    public void publishNorthboundConfirmed(String topic, byte[] encodedMessage, Qos qos,
+                                            Duration timeout)
+    {
+        internalPublishConfirmed(requireIotCore(), topic, encodedMessage, qos, timeout);
+    }
+
+    /**
+     * Paho's {@link MqttTopic#publish(MqttMessage)} returns the delivery token whose QoS-1
+     * completion is the matching broker PUBACK. Waiting on that token is the strict confirmation
+     * boundary; enqueueing through the ordinary client publish method is not enough.
+     */
+    private void internalPublishConfirmed(MqttClient client, String topic, byte[] encodedMessage,
+                                          Qos qos, Duration timeout)
+    {
+        long timeoutMillis = confirmedTimeoutMillis(encodedMessage, qos, timeout);
+        long timeoutNanos = TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        long started = System.nanoTime();
+        boolean acquired = false;
+        try
+        {
+            acquired = confirmedPublishPermits.tryAcquire(timeoutNanos, TimeUnit.NANOSECONDS);
+            if (!acquired)
+            {
+                throw confirmationFailure(PublishConfirmationException.Reason.TIMEOUT, topic,
+                        "timed out waiting for confirmed-publish capacity", null);
+            }
+
+            long elapsed = System.nanoTime() - started;
+            long remainingNanos = timeoutNanos - elapsed;
+            if (remainingNanos <= 0)
+            {
+                throw confirmationFailure(PublishConfirmationException.Reason.TIMEOUT, topic,
+                        "confirmed-publish timeout elapsed before send", null);
+            }
+
+            MqttMessage mqttMessage = new MqttMessage(encodedMessage.clone());
+            mqttMessage.setQos(Qos.AT_LEAST_ONCE.mqttLevel());
+            MqttDeliveryToken token = client.getTopic(topic).publish(mqttMessage);
+            long waitMillis = Math.max(1L,
+                    TimeUnit.NANOSECONDS.toMillis(remainingNanos - 1L) + 1L);
+            token.waitForCompletion(waitMillis);
+            if (!token.isComplete())
+            {
+                throw confirmationFailure(PublishConfirmationException.Reason.TIMEOUT, topic,
+                        "broker PUBACK was not observed before timeout", null);
+            }
+            if (token.getException() != null)
+            {
+                throw confirmationFailure(PublishConfirmationException.Reason.TRANSPORT_ERROR,
+                        topic, "broker did not acknowledge the publish", token.getException());
+            }
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            throw confirmationFailure(PublishConfirmationException.Reason.INTERRUPTED, topic,
+                    "interrupted while waiting for confirmed-publish capacity", e);
+        }
+        catch (MqttException e)
+        {
+            PublishConfirmationException.Reason reason =
+                    e.getReasonCode() == MqttException.REASON_CODE_CLIENT_TIMEOUT
+                            ? PublishConfirmationException.Reason.TIMEOUT
+                            : PublishConfirmationException.Reason.TRANSPORT_ERROR;
+            throw confirmationFailure(reason, topic,
+                    reason == PublishConfirmationException.Reason.TIMEOUT
+                            ? "broker PUBACK was not observed before timeout"
+                            : "MQTT publish failed before broker acknowledgement", e);
+        }
+        finally
+        {
+            if (acquired)
+            {
+                confirmedPublishPermits.release();
+            }
+        }
+    }
+
+    private static PublishConfirmationException confirmationFailure(
+            PublishConfirmationException.Reason reason, String topic, String detail,
+            Throwable cause)
+    {
+        return new PublishConfirmationException(reason,
+                "confirmed publish on '" + topic + "' failed: " + detail, cause);
+    }
+
+    @Override
     public void publishRaw(String topic, JsonObject payload)
     {
         try
@@ -571,6 +669,8 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         }
         catch (MqttException e)
         {
+            subscriptionMap.remove(topicFilter, subProcessor);
+            subProcessor.shutdown();
             LOGGER.error("Failed to subscribe to topicFilter '{}': {}", topicFilter, e.toString());
         }
     }
@@ -578,6 +678,95 @@ public final class StandaloneMessagingProvider extends MessagingProvider
     public void subscribe(String topicFilter, BiConsumer<String, Message> callback, int maxConcurrency, int maxMessages)
     {
         internalSubscribe(localMqttClient, topicFilter, callback, localSubscribeQos, maxConcurrency, maxMessages, localSubscriptionProcessors);
+    }
+
+    @Override
+    public void subscribeAcknowledged(String topicFilter,
+                                      BiConsumer<String, Message> callback,
+                                      int maxConcurrency,
+                                      int maxMessages,
+                                      Duration timeout)
+    {
+        long timeoutMillis = subscriptionTimeoutMillis(timeout);
+        SubscriptionProcessor processor = new SubscriptionProcessor(
+                localMqttClient, localSubscriptionProcessors, topicFilter, callback,
+                maxConcurrency, maxMessages);
+        processor.qos = localSubscribeQos;
+        SubscriptionProcessor existing = localSubscriptionProcessors.putIfAbsent(
+                topicFilter, processor);
+        if (existing != null)
+        {
+            processor.shutdown();
+            throw new IllegalStateException(
+                    "a local subscription already exists for '" + topicFilter + "'");
+        }
+
+        java.util.concurrent.atomic.AtomicBoolean abandoned =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        ExecutorService waiter = Executors.newVirtualThreadPerTaskExecutor();
+        Future<?> operation = waiter.submit(() -> {
+            localMqttClient.subscribe(topicFilter, localSubscribeQos);
+            if (abandoned.get())
+            {
+                abandonAcknowledgedSubscription(topicFilter, processor);
+            }
+            return null;
+        });
+        try
+        {
+            operation.get(timeoutMillis, TimeUnit.MILLISECONDS);
+        }
+        catch (TimeoutException e)
+        {
+            abandoned.set(true);
+            operation.cancel(true);
+            abandonAcknowledgedSubscription(topicFilter, processor);
+            throw new IllegalStateException(
+                    "MQTT SUBACK was not observed before the subscription deadline", e);
+        }
+        catch (InterruptedException e)
+        {
+            abandoned.set(true);
+            operation.cancel(true);
+            abandonAcknowledgedSubscription(topicFilter, processor);
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(
+                    "interrupted while waiting for MQTT SUBACK", e);
+        }
+        catch (ExecutionException e)
+        {
+            abandoned.set(true);
+            abandonAcknowledgedSubscription(topicFilter, processor);
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            throw new IllegalStateException("MQTT subscription failed before SUBACK", cause);
+        }
+        finally
+        {
+            waiter.shutdownNow();
+        }
+    }
+
+    private void abandonAcknowledgedSubscription(
+            String topicFilter, SubscriptionProcessor processor)
+    {
+        if (localSubscriptionProcessors.remove(topicFilter, processor))
+        {
+            processor.shutdown();
+        }
+        Thread.startVirtualThread(() -> {
+            try
+            {
+                if (localMqttClient.isConnected())
+                {
+                    localMqttClient.unsubscribe(topicFilter);
+                }
+            }
+            catch (Exception e)
+            {
+                LOGGER.debug("Best-effort cleanup of late subscription '{}' failed: {}",
+                        topicFilter, e.toString());
+            }
+        });
     }
 
     @Override
@@ -593,8 +782,8 @@ public final class StandaloneMessagingProvider extends MessagingProvider
         {
             SubscriptionProcessor subProcessor = subscriptionMap.get(topicFilter);
             if (subProcessor != null) {
-                subProcessor.queue.put(new QueueEntry(null, null));
-                subscriptionMap.remove(topicFilter);
+                subscriptionMap.remove(topicFilter, subProcessor);
+                subProcessor.shutdown();
                 client.unsubscribe(topicFilter);
             }
         }

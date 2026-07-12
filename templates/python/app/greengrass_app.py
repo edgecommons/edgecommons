@@ -1,5 +1,6 @@
 import logging
 import math
+import threading
 import time
 from abc import ABC
 
@@ -20,6 +21,27 @@ METRIC_NAME = "loopTicks"
 DATA_SIGNAL_ID = "demo-signal"
 # The custom command verb this scaffold registers (see the class docstring).
 SET_GREETING = "set-greeting"
+
+
+class GreetingState:
+    """Thread-safe demo state and its pre-activation command handler."""
+
+    def __init__(self):
+        self._value = "Hello from <<COMPONENTNAME>>"
+        self._lock = threading.Lock()
+
+    def handle(self, request) -> dict:
+        body = request.get_body()
+        if not isinstance(body, dict) or not isinstance(body.get("greeting"), str):
+            raise CommandException("BAD_ARGS", 'expected a JSON body {"greeting": "<text>"}')
+        with self._lock:
+            previous = self._value
+            self._value = body["greeting"]
+            return {"previousGreeting": previous, "greeting": self._value}
+
+    def value(self) -> str:
+        with self._lock:
+            return self._value
 
 
 class <<COMPONENTNAME>>(ConfigurationChangeListener, ABC):
@@ -47,7 +69,7 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener, ABC):
       ``EventsFacade`` derives the ``evt/{severity}/{type}`` channel from the body's own
       severity + type, so the topic and body can never disagree;
     - a custom **command verb** (``set-greeting``), registered with
-      ``gg.get_commands().register(...)`` alongside the automatic built-ins, that mutates a
+      ``EdgeCommonsBuilder.configure_commands(...)`` alongside the automatic built-ins, that mutates a
       small piece of in-memory state which the periodic status publish below then reflects on
       its very next tick — so invoking it from the console is visibly observable.
 
@@ -56,7 +78,7 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener, ABC):
     demonstrated surface is live end-to-end out of the box.
     """
 
-    def __init__(self, gg):
+    def __init__(self, gg, command_state: GreetingState):
         super().__init__()
         self._gg = gg
         self._config_manager = gg.get_config_manager()
@@ -64,6 +86,7 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener, ABC):
         self._messaging = gg.get_messaging()
         self._metrics = gg.get_metrics()
         self._commands = gg.get_commands()
+        self._command_state = command_state
         # The data()/events() publish facades (DESIGN-class-facades.md) — bound to this
         # component's `main` instance, same as get_metrics()/get_commands() above.
         self._data = gg.data()
@@ -73,8 +96,6 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener, ABC):
         # status publish in run() — so a console "Send command" has a visible effect without
         # needing a dedicated custom "get" verb (the built-in get-configuration already covers
         # reading config back).
-        self._greeting = "Hello from <<COMPONENTNAME>>"
-
         # --- metrics: define once, emit every tick in run(). MetricBuilder is the sanctioned
         # construction path (never construct Metric directly). Two measures show a metric isn't
         # just a single scalar: a monotonic counter (tickCount) and a gauge-like elapsed value
@@ -88,30 +109,6 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener, ABC):
             .add_dimension("demo", "scaffold")
             .build()
         )
-
-        # --- commands: ping/reload-config/get-configuration are already live (wired by the
-        # library before __init__ runs). Register ONE custom verb so there is something for the
-        # console's "Send command" to invoke beyond the built-ins. get_commands() is only None
-        # on a mock/subclass bring-up that never initialized - guard defensively.
-        if self._commands is not None:
-            self._commands.register(SET_GREETING, self._handle_set_greeting)
-
-    def _handle_set_greeting(self, request) -> dict:
-        """The ``set-greeting`` custom command verb: ``{"greeting": "<new text>"}`` in,
-        ``{"previousGreeting": ..., "greeting": ...}`` out. Raises :class:`CommandException`
-        (a coded error reply, ``BAD_ARGS``) on a missing/malformed argument, exactly like the
-        library's own built-ins do for their failure modes.
-
-        Try it from the CLI (fire-and-forget doesn't need a reply_to; the inbox still runs the
-        handler): publish ``{"header":{"name":"set-greeting","version":"1.0"},"body":
-        {"greeting":"Hi from mqttx"}}`` to ``ecv1/{device}/{component}/main/cmd/set-greeting``.
-        """
-        body = request.get_body()
-        if not isinstance(body, dict) or not isinstance(body.get("greeting"), str):
-            raise CommandException("BAD_ARGS", 'expected a JSON body {"greeting": "<text>"}')
-        previous = self._greeting
-        self._greeting = body["greeting"]
-        return {"previousGreeting": previous, "greeting": self._greeting}
 
     def on_configuration_change(self, configuration) -> bool:
         logger.info("Configuration changed.  Ignoring.")
@@ -136,7 +133,8 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener, ABC):
 
             # 1) app status - reflects the current greeting (mutable via the set-greeting
             # command above), so a console operator can watch a command's effect land.
-            status_body = {"seq": seq, "message": self._greeting}
+            greeting = self._command_state.value()
+            status_body = {"seq": seq, "message": greeting}
             status_msg = (
                 MessageBuilder.create("StatusUpdate", "1.0")
                 .with_payload(status_body)
@@ -174,11 +172,11 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener, ABC):
             self._events.emit(
                 "sample-event",
                 "sample event from <<COMPONENTNAME>>",
-                {"seq": seq, "greeting": self._greeting},
+                {"seq": seq, "greeting": greeting},
                 severity=Severity.INFO,
             )
 
             logger.info(
-                "Running... (seq=%s uptimeSecs=%s greeting=%r)", seq, uptime_secs, self._greeting
+                "Running... (seq=%s uptimeSecs=%s greeting=%r)", seq, uptime_secs, greeting
             )
             time.sleep(10)

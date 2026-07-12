@@ -13,10 +13,19 @@
  * is the message's own `context.topic`. Validated on a live nucleus.
  */
 import { greengrasscoreipc, eventstream_rpc } from "aws-iot-device-sdk-v2";
+import { performance } from "perf_hooks";
 
 import { EdgeCommonsError } from "../errors";
 import { logger } from "../logging";
-import { Destination, MessagingProvider, Qos, RawSubscription } from "./types";
+import {
+  Destination,
+  MAX_IN_FLIGHT_CONFIRMED_PUBLISHES,
+  MessagingProvider,
+  PublishConfirmationError,
+  Qos,
+  RawSubscription,
+  validateConfirmedPublish,
+} from "./types";
 
 import model = greengrasscoreipc.model;
 
@@ -71,6 +80,7 @@ export class IpcMessagingProvider implements MessagingProvider {
   private readonly streams = new Set<{ close(): Promise<void> }>();
   /** True once the IPC client is built/connected; flipped false on {@link disconnect}. */
   private open = true;
+  private confirmedInFlight = 0;
 
   private constructor(
     private readonly client: greengrasscoreipc.Client,
@@ -110,6 +120,84 @@ export class IpcMessagingProvider implements MessagingProvider {
       await this.client.publishToIoTCore({ topicName: topic, qos: ipcQos(qos), payload });
     } else {
       await this.client.publishToTopic({ topic, publishMessage: { binaryMessage: { message: payload } } });
+    }
+  }
+
+  /** Strict IPC publish: completion is the successful Greengrass operation response. */
+  async publishBytesConfirmed(
+    topic: string,
+    payload: Buffer,
+    dest: Destination,
+    qos: Qos,
+    timeoutMs: number,
+  ): Promise<void> {
+    validateConfirmedPublish(qos, timeoutMs);
+    if (this.confirmedInFlight >= MAX_IN_FLIGHT_CONFIRMED_PUBLISHES) {
+      throw new PublishConfirmationError(
+        "backpressure",
+        `confirmed publish capacity (${MAX_IN_FLIGHT_CONFIRMED_PUBLISHES}) is exhausted`,
+      );
+    }
+    if (!this.open) {
+      throw new PublishConfirmationError(
+        "transport",
+        `confirmed publish on '${topic}' cannot start after IPC disconnect`,
+      );
+    }
+
+    this.confirmedInFlight++;
+    const started = performance.now();
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const operation = dest === Destination.Northbound
+        ? this.client.publishToIoTCore({
+            topicName: topic,
+            qos: model.QOS.AT_LEAST_ONCE,
+            payload: Buffer.from(payload),
+          })
+        : this.client.publishToTopic({
+            topic,
+            publishMessage: { binaryMessage: { message: Buffer.from(payload) } },
+          });
+      const remaining = timeoutMs - (performance.now() - started);
+      if (remaining <= 0) {
+        throw new PublishConfirmationError(
+          "timeout",
+          `IPC confirmation timeout elapsed while starting publish on '${topic}'`,
+        );
+      }
+      await Promise.race([
+        operation.catch((e: unknown) => {
+          throw new PublishConfirmationError(
+            "transport",
+            `IPC publish operation failed before confirmation on '${topic}': ${String(e)}`,
+            { cause: e },
+          );
+        }),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new PublishConfirmationError(
+                  "timeout",
+                  `IPC publish operation did not complete within ${timeoutMs} ms on '${topic}'`,
+                ),
+              ),
+            remaining,
+          );
+          if (typeof timer.unref === "function") timer.unref();
+        }),
+      ]);
+    } catch (e) {
+      if (e instanceof PublishConfirmationError) throw e;
+      throw new PublishConfirmationError(
+        "transport",
+        `IPC publish operation could not be started on '${topic}': ${String(e)}`,
+        { cause: e },
+      );
+    } finally {
+      if (timer) clearTimeout(timer);
+      this.confirmedInFlight--;
     }
   }
 

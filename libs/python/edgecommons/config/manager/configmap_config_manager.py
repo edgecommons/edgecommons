@@ -70,8 +70,16 @@ class ConfigMapConfigManager(ConfigManager):
         mount_dir: str = None,
         key: str = None,
         platform=None,
+        candidate_validators=None,
+        validation_timeout_secs=5.0,
     ):
-        super().__init__(component_name, thing_name, platform=platform)
+        super().__init__(
+            component_name,
+            thing_name,
+            platform=platform,
+            candidate_validators=candidate_validators,
+            validation_timeout_secs=validation_timeout_secs,
+        )
         self._mount_dir = mount_dir if mount_dir is not None else DEFAULT_MOUNT_DIR
         self._key = key if key is not None else DEFAULT_KEY
         if is_projection_artifact(self._key):

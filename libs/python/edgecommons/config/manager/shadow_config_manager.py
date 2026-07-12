@@ -33,8 +33,16 @@ class ShadowConfigManager(ConfigManager):
         component_name: str,
         shadow_name: str,
         platform=None,
+        candidate_validators=None,
+        validation_timeout_secs=5.0,
     ):
-        super().__init__(component_name, thing_name, platform=platform)
+        super().__init__(
+            component_name,
+            thing_name,
+            platform=platform,
+            candidate_validators=candidate_validators,
+            validation_timeout_secs=validation_timeout_secs,
+        )
         self._shadow_name = (
             shadow_name if shadow_name is not None else _sanitize_shadow_name(component_name)
         )
@@ -48,8 +56,15 @@ class ShadowConfigManager(ConfigManager):
         self._shadow_topic_prefix = ShadowConfigManager._SHADOW_TOPIC_TEMPLATE.format(
             self.get_thing_name(), self._shadow_name
         )
-        self._subscribe_to_shadow_topics()
+        self._shadow_subscription_operation = None
         self.init()
+        # A candidate must be reported only after ``init`` has schema-validated it,
+        # run every pre-commit validator, and installed the accepted snapshot.  In
+        # particular, a rejected initial candidate must never become externally
+        # visible as this component's reported configuration.
+        self._report_updated_configuration(self.get_effective_config())
+        # Provider activity starts only after the INITIAL candidate committed.
+        self._subscribe_to_shadow_topics()
 
     def _subscribe_to_shadow_topics(self):
         logger.debug("Subscribing to shadow topics")
@@ -66,8 +81,18 @@ class ShadowConfigManager(ConfigManager):
                 on_stream_error=None,
                 on_stream_event=self._on_shadow_event,
             )
+            self._shadow_subscription_operation = operation
         except Exception as e:
             logger.error(f"Failed to subscribe to shadow topics: {e}")
+
+    def close(self) -> None:
+        operation = self._shadow_subscription_operation
+        self._shadow_subscription_operation = None
+        if operation is not None:
+            try:
+                operation.close()
+            except Exception as exc:  # noqa: BLE001 - shutdown remains best effort
+                logger.debug("Failed to close shadow config subscription: %s", exc)
 
     def _on_shadow_event(self, event: SubscriptionResponseMessage) -> None:
         payload_str = str(event.binary_message.message, "utf-8")
@@ -91,17 +116,22 @@ class ShadowConfigManager(ConfigManager):
             if desired_doc is not None:
                 logger.debug(f"Desired document: {desired_doc}")
                 component_config = json.loads(desired_doc["ComponentConfig"])
-                self.configuration_changed(component_config)
-                self._report_updated_configuration(component_config)
+                # Never acknowledge a rejected candidate as the component's
+                # externally visible reported configuration.  The configuration
+                # manager invokes listeners only after this returns true, so the
+                # reported document and every applied listener observe one accepted
+                # generation.
+                if self.configuration_changed(component_config):
+                    self._report_updated_configuration(self.get_effective_config())
         # else:
         #     logger.info(f"Received message for shadow action '{action}' result '{result}'.")
 
     def _load_configuration(self) -> dict:
         logger.debug(f"Loading configuration from named shadow ('{self._shadow_name}')")
-        config = self._get_configuration()
-        if config is not None:
-            self._report_updated_configuration(config)
-        return config
+        # ``ConfigManager.init`` owns the pre-commit validation and atomic install.
+        # Reporting here would publish an unvalidated source candidate before that
+        # process can reject it.
+        return self._get_configuration()
 
     def _report_updated_configuration(self, config: dict) -> None:
         shadow_doc = {

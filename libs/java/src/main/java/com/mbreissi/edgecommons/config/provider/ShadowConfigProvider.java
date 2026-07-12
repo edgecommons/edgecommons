@@ -31,6 +31,8 @@ final class ShadowConfigProvider extends ConfigProvider implements  StreamRespon
     private final String thingName;
     private final MessagingClient messagingClient;
     GreengrassCoreIPCClientV2 ipcClient;
+    private SubscribeToTopicResponseHandler shadowSubscription;
+    private boolean started;
 
     ShadowConfigProvider(ConfigManager configManager, String thingName, String shadowName, MessagingClient messagingClient)
     {
@@ -40,7 +42,27 @@ final class ShadowConfigProvider extends ConfigProvider implements  StreamRespon
         this.messagingClient = messagingClient;
         this.shadowTopicPrefix = String.format(SHADOW_TOPIC_TEMPLATE, thingName, shadowName);
         connectToIPC();
-        subscribeShadowTopics();
+    }
+
+    @Override
+    public synchronized void start()
+    {
+        if (!started)
+        {
+            subscribeShadowTopics();
+            started = true;
+        }
+    }
+
+    @Override
+    public synchronized void close()
+    {
+        if (shadowSubscription != null)
+        {
+            shadowSubscription.closeStream();
+            shadowSubscription = null;
+        }
+        started = false;
     }
 
     @Override
@@ -144,11 +166,13 @@ final class ShadowConfigProvider extends ConfigProvider implements  StreamRespon
             GreengrassCoreIPCClientV2.StreamingResponse<SubscribeToTopicResponse,
                     SubscribeToTopicResponseHandler> response =
                     ipcClient.subscribeToTopic(subRequest, this);
+            shadowSubscription = response.getHandler();
             LOGGER.info("Subscribed to IPC messages for shadow updates.");
         }
         catch (Exception e)
         {
             LOGGER.error("Failed to subscribe to IPC messages for shadow updates: {}", e.getMessage());
+            throw new RuntimeException("Failed to subscribe to IPC shadow updates", e);
         }
     }
 

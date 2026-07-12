@@ -109,6 +109,82 @@ public class MessagingClient
     }
 
     /**
+     * Strict local publish of a message envelope. Completion means the provider observed the
+     * transport acknowledgement required for QoS 1; timeout, disconnect, and unsupported
+     * transports throw and are never reported as success.
+     */
+    public void publishConfirmed(String topic, Message msg, Qos qos, Duration timeout)
+    {
+        if (msg == null)
+        {
+            throw new NullPointerException("msg must not be null");
+        }
+        publishConfirmed(topic, msg.toBytes(), qos, timeout);
+    }
+
+    /**
+     * Strict local publish of exact pre-encoded envelope bytes. This is the durable-outbox path:
+     * retries can reuse the identical bytes and envelope UUID.
+     */
+    public void publishConfirmed(String topic, byte[] encodedMessage, Qos qos, Duration timeout)
+    {
+        checkReservedTopic(topic);
+        validateConfirmedEnvelope(encodedMessage);
+        confirmedProvider().publishConfirmed(topic, encodedMessage.clone(), qos, timeout);
+        LOGGER.debug("Confirmed local publish on topic '{}'", topic);
+    }
+
+    /** Strict northbound publish of a message envelope at explicit QoS 1. */
+    public void publishNorthboundConfirmed(String topic, Message msg, Qos qos, Duration timeout)
+    {
+        if (msg == null)
+        {
+            throw new NullPointerException("msg must not be null");
+        }
+        publishNorthboundConfirmed(topic, msg.toBytes(), qos, timeout);
+    }
+
+    /** Strict northbound publish of exact pre-encoded envelope bytes at explicit QoS 1. */
+    public void publishNorthboundConfirmed(String topic, byte[] encodedMessage, Qos qos,
+                                            Duration timeout)
+    {
+        checkReservedTopic(topic);
+        validateConfirmedEnvelope(encodedMessage);
+        confirmedProvider().publishNorthboundConfirmed(
+                topic, encodedMessage.clone(), qos, timeout);
+        LOGGER.debug("Confirmed northbound publish on topic '{}'", topic);
+    }
+
+    private MessagingProvider confirmedProvider()
+    {
+        if (messagingProvider == null)
+        {
+            throw new UnsupportedOperationException(
+                    getClass().getName() + " has no confirmed-publish provider");
+        }
+        return messagingProvider;
+    }
+
+    private static void validateConfirmedEnvelope(byte[] encodedMessage)
+    {
+        if (encodedMessage == null)
+        {
+            throw new NullPointerException("encodedMessage must not be null");
+        }
+        try
+        {
+            // Parse and pass through the canonical encoder's structural checks without replacing
+            // the caller's bytes. Providers still receive the exact durable-outbox representation.
+            Message.fromBytes(encodedMessage).toBytes();
+        }
+        catch (RuntimeException e)
+        {
+            throw new IllegalArgumentException(
+                    "confirmed publish requires a valid EdgeCommons envelope", e);
+        }
+    }
+
+    /**
      * Publishes a raw JSON object to a topic without wrapping it in a Message. Reserved-class UNS
      * topics are rejected (§4.1, D-U8).
      *
@@ -161,6 +237,26 @@ public class MessagingClient
     {
         messagingProvider.subscribe(topicFilter, callback, maxConcurrency, maxMessages);
         LOGGER.debug("Subscribed to IPC messages on topic filter {}", topicFilter);
+    }
+
+    /**
+     * Bounded local subscription whose successful return proves MQTT SUBACK or Greengrass
+     * subscription-operation completion. There is deliberately no fallback to {@link #subscribe}.
+     */
+    public void subscribeAcknowledged(String topicFilter,
+                                      BiConsumer<String, Message> callback,
+                                      int maxConcurrency,
+                                      int maxMessages,
+                                      Duration timeout)
+    {
+        if (messagingProvider == null)
+        {
+            throw new UnsupportedOperationException(
+                    getClass().getName() + " has no acknowledged-subscription provider");
+        }
+        messagingProvider.subscribeAcknowledged(
+                topicFilter, callback, maxConcurrency, maxMessages, timeout);
+        LOGGER.debug("Acknowledged local subscription on topic filter {}", topicFilter);
     }
 
     /**
@@ -314,6 +410,34 @@ public class MessagingClient
     }
 
     /**
+     * Sends a guarded local reply and waits for positive QoS-1 transport confirmation. The reply
+     * inherits the request correlation before it is encoded.
+     */
+    public void replyConfirmed(Message request, Message reply, Duration timeout)
+    {
+        validateReplyTarget(request);
+        if (reply == null)
+        {
+            throw new NullPointerException("reply must not be null");
+        }
+        reply.setCorrelationId(request.getHeader().getCorrelationId());
+        publishConfirmed(request.getHeader().getReplyTo(), reply, Qos.AT_LEAST_ONCE, timeout);
+    }
+
+    /** Guarded northbound counterpart of {@link #replyConfirmed(Message, Message, Duration)}. */
+    public void replyNorthboundConfirmed(Message request, Message reply, Duration timeout)
+    {
+        validateReplyTarget(request);
+        if (reply == null)
+        {
+            throw new NullPointerException("reply must not be null");
+        }
+        reply.setCorrelationId(request.getHeader().getCorrelationId());
+        publishNorthboundConfirmed(
+                request.getHeader().getReplyTo(), reply, Qos.AT_LEAST_ONCE, timeout);
+    }
+
+    /**
      * IoT Core variant of {@link #reply(Message, Message)} — the request's {@code reply_to} topic
      * is guarded the same way.
      *
@@ -329,6 +453,24 @@ public class MessagingClient
     private static String replyTopicOf(Message request)
     {
         return request == null || request.getHeader() == null ? null : request.getHeader().getReplyTo();
+    }
+
+    /**
+     * Validates a received request's reply target through the same reserved-topic guard used by
+     * {@link #reply(Message, Message)}. Deferred-reply registries call this before provisioning a
+     * token, so a hostile target never becomes retained reply state.
+     *
+     * @throws IllegalArgumentException when the request has no non-empty {@code reply_to}
+     * @throws ReservedTopicException when the target is a library-owned UNS class
+     */
+    public void validateReplyTarget(Message request)
+    {
+        String replyTo = replyTopicOf(request);
+        if (replyTo == null || replyTo.isEmpty())
+        {
+            throw new IllegalArgumentException("request requires a non-empty reply_to");
+        }
+        checkReservedTopic(replyTo);
     }
 
     /**

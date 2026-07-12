@@ -32,6 +32,37 @@ exercises serialization in *both* directions for normal protobuf messages
 parsed back by the requester), proves raw/foreign payloads do not leak through
 normal `Message` subscriptions, and proves opaque body bytes survive exactly.
 
+## Deferred commands and strict QoS1 publication
+
+The P1 command/outbox roles run over the real public command and messaging APIs:
+
+- `deferred-responder <componentToken>` — starts a HOST/MQTT component command inbox,
+  registers `deferred`, creates and fsyncs a bounded uniquely named local acceptance marker,
+  activates the opaque deferred token only after that write succeeds, and settles it only from
+  the inbox-owned post-accept continuation. The marker is cleaned up after terminal settlement.
+- `deferred-request <commandTopic> <token>` — subscribes to its own reply topic, publishes
+  a `cmd/deferred` envelope, then retains that subscription for a duplicate-detection
+  window. It emits the reply count, correlation comparison, and reply body.
+- `confirmed-pub <topic> <token>` — publishes one envelope through the strict public
+  confirmed-publish API at QoS 1. It prints success only after that API returns, which
+  requires the local MQTT broker's PUBACK.
+- `confirmed-sub <topic> <token>` — receives the envelope and retains its subscription
+  for the same duplicate-detection window, failing if more than one arrives.
+
+`test_interop_deferred_command` and `test_interop_confirmed_qos1_publish` execute all
+16 ordered requester/responder and publisher/subscriber pairs. They prove an accepted
+deferred command returns exactly one correlated reply and that every library's strict
+QoS1 path completes against the actual EMQX broker without a duplicate envelope.
+
+The deployed Greengrass equivalent is `gg-p1-matrix` in `gg_ipc/package.ps1`. It uses real
+GREENGRASS/IPC command runtimes and strict IPC publish confirmation, emits one machine-readable
+result per actor, and is verified as the same four-language 16-by-16 matrix. `rustpeer` is a
+second Rust component used only for the Rust-to-Rust edge; it does not create an extra logical
+language row. Its verifier checks each deferred edge's correlated terminal body (token,
+responder, responder actor, and `durablyAccepted:true`) and exactly one reply observed through a
+750 ms duplicate window. See `FULL_INTEROP_GREENGRASS_K8S.md` for the package, deployment,
+evidence, and separate-argument cleanup commands.
+
 ## UNS roles (M14 — UNS-CANONICAL-DESIGN §7)
 
 Each node additionally implements three UNS roles over its library's real UNS surface:

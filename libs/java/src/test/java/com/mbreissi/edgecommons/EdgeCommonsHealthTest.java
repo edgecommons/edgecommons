@@ -4,10 +4,12 @@
  */
 package com.mbreissi.edgecommons;
 
+import com.mbreissi.edgecommons.commands.CommandInbox;
 import com.mbreissi.edgecommons.config.HealthConfiguration;
 import com.mbreissi.edgecommons.platform.Platform;
 import com.mbreissi.edgecommons.test.MockConfigurationService;
 import com.mbreissi.edgecommons.test.MockMessagingService;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -102,6 +104,20 @@ class EdgeCommonsHealthTest {
         g.configManager = new MockConfigurationService();
         assertFalse(g.messagingConnected());
         assertFalse(g.isReadyz());
+    }
+
+    @Test
+    void readyzRequiresAcknowledgedActiveCommandInbox() {
+        MockMessagingService msg = new MockMessagingService();
+        MockConfigurationService cfg = new MockConfigurationService();
+        gg = bare(msg, cfg);
+        gg.commandInbox = new CommandInbox(cfg, msg, () -> 0L, () -> true, JsonObject::new);
+
+        assertFalse(gg.isReadyz(), "STOPPED command inbox must gate readiness");
+        gg.commandInbox.start(Duration.ofSeconds(1));
+        assertTrue(gg.isReadyz(), "acknowledged ACTIVE command inbox releases the runtime gate");
+        gg.commandInbox.stop();
+        assertFalse(gg.isReadyz(), "stopping the inbox must immediately fail readiness");
     }
 
     @Test

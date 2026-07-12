@@ -12,7 +12,7 @@ binds `0.0.0.0` on the configured port (default `8081`) and serves three GET rou
 | Route       | Default path | Behavior |
 |-------------|--------------|----------|
 | liveness    | `/livez`     | `200 ok` while the process is alive. **Never** checks the broker — a broker/cloud outage must not fail liveness (that would cause restart storms). |
-| readiness   | `/readyz`    | `200 ok` only when `messagingConnected && readyFlag && !shuttingDown`; otherwise `503 not ready`. |
+| readiness   | `/readyz`    | `200 ok` only when `messagingConnected && readyFlag && commandInboxActive && !shuttingDown`; otherwise `503 not ready`. |
 | startup     | `/startupz`  | Reuses the readiness semantics (for slow connects). |
 
 Any other path returns `404 not found`.
@@ -24,8 +24,12 @@ Readiness is tracked in a thread-safe `ReadinessState`:
 - **messagingConnected** — queried live via `MessagingClient.connected()` (which delegates to the
   provider's `connected()`: paho `is_connected()` for MQTT, "IPC client built" for Greengrass). If no
   messaging is wired it reports `False` (not ready).
-- **readyFlag** — defaults to `True`; an app can gate readiness on its own setup by calling
-  `gg.set_ready(False)` early and `gg.set_ready(True)` once its required subscriptions are confirmed.
+- **readyFlag** — defaults to `True`. Components with mandatory startup gates select
+  `EdgeCommonsBuilder.initial_ready(False)`, which is applied before parsing, transport/config startup,
+  or the health endpoint; they call `gg.set_ready(True)` only after their gates pass.
+- **commandInboxActive** — the command plane must report `ACTIVE`, meaning every built-in/component
+  handler is installed and MQTT SUBACK or the Greengrass subscription operation succeeded. A later
+  `FAILED`/`STOPPED` transition immediately makes readiness false.
 - **shuttingDown** — latched at the start of the shutdown/SIGTERM path so `/readyz` flips to `503`
   immediately.
 

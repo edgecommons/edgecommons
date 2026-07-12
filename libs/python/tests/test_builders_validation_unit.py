@@ -92,11 +92,14 @@ class TestEdgeCommonsBuilderValidation:
         captured = {}
 
         class FakeEdgeCommons:
-            def __init__(self, component_name, args, app_options, receive_own_messages):
+            def __init__(
+                self, component_name, args, app_options, receive_own_messages, **lifecycle
+            ):
                 captured["component_name"] = component_name
                 captured["args"] = args
                 captured["app_options"] = app_options
                 captured["receive_own_messages"] = receive_own_messages
+                captured["lifecycle"] = lifecycle
 
         monkeypatch.setattr(edgecommons, "EdgeCommons", FakeEdgeCommons)
 
@@ -113,6 +116,7 @@ class TestEdgeCommonsBuilderValidation:
         assert captured["args"] == ["-c", "FILE", "x.json"]
         assert captured["app_options"] is parser
         assert captured["receive_own_messages"] is False
+        assert captured["lifecycle"]["initial_ready"] is True
 
     def test_build_defaults_to_empty_args(self, monkeypatch):
         import edgecommons
@@ -120,7 +124,9 @@ class TestEdgeCommonsBuilderValidation:
         captured = {}
 
         class FakeEdgeCommons:
-            def __init__(self, component_name, args, app_options, receive_own_messages):
+            def __init__(
+                self, component_name, args, app_options, receive_own_messages, **lifecycle
+            ):
                 captured["args"] = args
                 captured["receive_own_messages"] = receive_own_messages
 

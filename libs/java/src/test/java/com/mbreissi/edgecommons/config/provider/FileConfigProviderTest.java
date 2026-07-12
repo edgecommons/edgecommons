@@ -22,8 +22,8 @@ import static org.mockito.Mockito.*;
  * {@code onChange()} reload callback (L77-L80) that the existing provider tests
  * leave uncovered.
  *
- * <p>The provider starts a {@link com.mbreissi.edgecommons.utils.FileWatcher} daemon
- * thread in its constructor; every test {@code close()}s the provider so no thread leaks.
+ * <p>The provider constructor is side-effect free; {@code start()} owns the watcher lifecycle.
+ * Every test {@code close()}s the provider so no thread leaks.
  * The {@link ConfigManager} is a Mockito mock so {@code reloadFromProvider()} can be verified
  * without exercising the real schema validator or logging reconfiguration.
  */

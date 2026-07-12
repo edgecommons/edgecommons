@@ -37,9 +37,11 @@
 
 #![cfg(feature = "greengrass")]
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 
-use crate::error::Result;
+use crate::error::{EdgeCommonsError, Result};
 use crate::ipc;
 use crate::messaging::{Destination, MessagingProvider, Qos, Subscription};
 
@@ -84,6 +86,38 @@ impl MessagingProvider for IpcProvider {
         ipc::global().publish(topic, payload, dest, qos).await
     }
 
+    async fn publish_confirmed(
+        &self,
+        topic: &str,
+        payload: Vec<u8>,
+        dest: Destination,
+        qos: Qos,
+        timeout: Duration,
+    ) -> Result<()> {
+        if qos != Qos::AtLeastOnce {
+            return Err(EdgeCommonsError::Messaging(
+                "confirmed Greengrass publish requires QoS 1".to_string(),
+            ));
+        }
+        if timeout.is_zero() {
+            return Err(EdgeCommonsError::Messaging(
+                "confirmed Greengrass publish requires a positive timeout".to_string(),
+            ));
+        }
+        match tokio::time::timeout(
+            timeout,
+            ipc::global().publish(topic, payload, dest, Qos::AtLeastOnce),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(EdgeCommonsError::Messaging(format!(
+                "confirmed Greengrass publish to '{topic}' timed out after {}s; outcome is ambiguous",
+                timeout.as_secs_f64()
+            ))),
+        }
+    }
+
     async fn subscribe(
         &self,
         filter: &str,
@@ -94,6 +128,28 @@ impl MessagingProvider for IpcProvider {
         let (tx, rx) = tokio::sync::mpsc::channel(max_messages.max(1));
         let id = ipc::global().subscribe(filter, dest, qos, tx).await?;
         Ok(Subscription::new(rx, Box::new(IpcSubGuard { id })))
+    }
+
+    async fn subscribe_acknowledged(
+        &self,
+        filter: &str,
+        dest: Destination,
+        qos: Qos,
+        max_messages: usize,
+        timeout: Duration,
+    ) -> Result<Subscription> {
+        if timeout.is_zero() {
+            return Err(EdgeCommonsError::Messaging(
+                "acknowledged Greengrass subscribe requires a positive timeout".to_string(),
+            ));
+        }
+        match tokio::time::timeout(timeout, self.subscribe(filter, dest, qos, max_messages)).await {
+            Ok(result) => result,
+            Err(_) => Err(EdgeCommonsError::Messaging(format!(
+                "Greengrass subscription operation for '{filter}' timed out after {}s",
+                timeout.as_secs_f64()
+            ))),
+        }
     }
 
     async fn unsubscribe(&self, _filter: &str, _dest: Destination) -> Result<()> {

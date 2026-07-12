@@ -16,8 +16,10 @@ from edgecommons.messaging.message import Message
 def no_subscribe(monkeypatch):
     subscribed = {}
     monkeypatch.setattr(
-        ccm.MessagingClient, "subscribe",
-        staticmethod(lambda topic, cb: subscribed.update(topic=topic, cb=cb)),
+        ccm.MessagingClient, "subscribe_acknowledged",
+        staticmethod(
+            lambda topic, cb, **kwargs: subscribed.update(topic=topic, cb=cb)
+        ),
     )
     return subscribed
 

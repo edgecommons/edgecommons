@@ -1,8 +1,16 @@
 import logging
 import json
+import threading
 import time
 from typing import Callable, Optional
 from edgecommons.messaging.messaging_provider import MessagingProvider
+from edgecommons.messaging.errors import (
+    PublishConfirmationError,
+    PublishConfirmationReason,
+)
+from edgecommons.messaging.messaging_provider import (
+    DEFAULT_MAX_IN_FLIGHT_CONFIRMED_PUBLISHES,
+)
 from edgecommons.messaging.message import Message
 from edgecommons.messaging.qos import Qos
 import awsiot.greengrasscoreipc
@@ -37,6 +45,9 @@ class GreengrassIpcProvider(MessagingProvider):
         if receive_own_messages:
             self._receive_mode = "RECEIVE_ALL_MESSAGES"
         self._ipc_client = self._connect_with_retry()
+        self._confirmed_publish_permits = threading.BoundedSemaphore(
+            DEFAULT_MAX_IN_FLIGHT_CONFIRMED_PUBLISHES
+        )
 
     @staticmethod
     def _greengrass_qos(qos: Qos):
@@ -99,6 +110,71 @@ class GreengrassIpcProvider(MessagingProvider):
             ),
         )
 
+    def _await_confirmed(
+        self, topic: str, timeout_secs: float, start_operation
+    ) -> None:
+        """Waits for an IPC operation response inside one overall deadline."""
+        started = time.monotonic()
+        acquired = self._confirmed_publish_permits.acquire(timeout=timeout_secs)
+        if not acquired:
+            raise PublishConfirmationError(
+                PublishConfirmationReason.TIMEOUT,
+                f"confirmed publish on '{topic}' timed out waiting for capacity",
+            )
+        operation = None
+        try:
+            remaining = timeout_secs - (time.monotonic() - started)
+            if remaining <= 0:
+                raise PublishConfirmationError(
+                    PublishConfirmationReason.TIMEOUT,
+                    f"confirmed publish on '{topic}' timed out before send",
+                )
+            try:
+                operation = start_operation()
+                remaining = timeout_secs - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise TimeoutError()
+                operation.result(timeout=remaining)
+            except TimeoutError as exc:
+                if operation is not None:
+                    operation.cancel()
+                raise PublishConfirmationError(
+                    PublishConfirmationReason.TIMEOUT,
+                    f"IPC publish operation on '{topic}' did not complete before timeout",
+                ) from exc
+            except PublishConfirmationError:
+                raise
+            except Exception as exc:
+                raise PublishConfirmationError(
+                    PublishConfirmationReason.TRANSPORT_ERROR,
+                    f"IPC publish operation on '{topic}' failed: {exc}",
+                ) from exc
+        finally:
+            self._confirmed_publish_permits.release()
+
+    def publish_confirmed(
+        self, topic: str, encoded_message: bytes, qos: Qos, timeout_secs: float
+    ) -> None:
+        timeout = self._validated_confirmation_timeout(
+            encoded_message, qos, timeout_secs
+        )
+        if self._ipc_client is None:
+            raise PublishConfirmationError(
+                PublishConfirmationReason.TRANSPORT_ERROR,
+                f"IPC publish operation on '{topic}' failed: client is disconnected",
+            )
+        payload = bytes(encoded_message)
+        self._await_confirmed(
+            topic,
+            timeout,
+            lambda: self._ipc_client.publish_to_topic_async(
+                topic=topic,
+                publish_message=PublishMessage(
+                    binary_message=BinaryMessage(message=payload)
+                ),
+            ),
+        )
+
     def publish_raw(self, topic: str, msg: dict):
         self._ipc_client.publish_to_topic(
             topic=topic,
@@ -109,6 +185,28 @@ class GreengrassIpcProvider(MessagingProvider):
         payload = msg.to_bytes()
         self._ipc_client.publish_to_iot_core(
             topic_name=topic, payload=payload, qos=self._greengrass_qos(qos)
+        )
+
+    def publish_northbound_confirmed(
+        self, topic: str, encoded_message: bytes, qos: Qos, timeout_secs: float
+    ) -> None:
+        timeout = self._validated_confirmation_timeout(
+            encoded_message, qos, timeout_secs
+        )
+        if self._ipc_client is None:
+            raise PublishConfirmationError(
+                PublishConfirmationReason.TRANSPORT_ERROR,
+                f"IPC publish operation on '{topic}' failed: client is disconnected",
+            )
+        payload = bytes(encoded_message)
+        self._await_confirmed(
+            topic,
+            timeout,
+            lambda: self._ipc_client.publish_to_iot_core_async(
+                topic_name=topic,
+                payload=payload,
+                qos=GreengrassQOS.AT_LEAST_ONCE,
+            ),
         )
 
     def publish_northbound_raw(self, topic: str, msg: dict, qos: Qos):
@@ -149,6 +247,57 @@ class GreengrassIpcProvider(MessagingProvider):
             logger.error(
                 f"Unable to subscribe to IPC topic filter ({topic_filter}): {error}"
             )
+
+    def subscribe_acknowledged(
+        self,
+        topic_filter: str,
+        callback: Callable[[str, Message], None],
+        max_concurrency: int = None,
+        max_messages: int = None,
+        timeout_secs: float = 10.0,
+    ) -> None:
+        """Wait for the Greengrass SubscribeToTopic initial response."""
+
+        timeout = self._validated_subscribe_timeout(timeout_secs)
+        if self._ipc_client is None:
+            raise RuntimeError("Greengrass IPC client is disconnected")
+        if topic_filter in self._ipc_subscription_operations:
+            raise RuntimeError(f"IPC topic filter is already subscribed: {topic_filter}")
+
+        handler = IpcSubscriptionHandler(
+            topic_filter, callback, max_concurrency, max_messages
+        )
+        operation = None
+        try:
+            response_future, operation = self._ipc_client.subscribe_to_topic_async(
+                topic=topic_filter,
+                receive_mode=self._receive_mode,
+                on_stream_event=handler.on_stream_event,
+                on_stream_error=handler.on_stream_error,
+                on_stream_closed=handler.on_stream_closed,
+            )
+            # Install before waiting: stream deliveries may race the initial response.
+            self._ipc_subscription_operations[topic_filter] = operation
+            self._ipc_subscription_handlers[topic_filter] = handler
+            response_future.result(timeout=timeout)
+            logger.debug(
+                "Acknowledged IPC subscription to topic filter: %s", topic_filter
+            )
+        except Exception as error:
+            self._ipc_subscription_operations.pop(topic_filter, None)
+            self._ipc_subscription_handlers.pop(topic_filter, None)
+            if operation is not None:
+                try:
+                    operation.close()
+                except Exception:  # noqa: BLE001 - preserve acknowledgement failure
+                    pass
+            try:
+                handler.close()
+            except Exception:  # noqa: BLE001 - preserve acknowledgement failure
+                pass
+            raise RuntimeError(
+                f"IPC subscription to {topic_filter} was not acknowledged: {error}"
+            ) from error
 
     def subscribe_northbound(
         self,

@@ -64,21 +64,26 @@
 //! - [`crate::messaging`] — subscribe/reply.
 //! - [`crate::config::effective`] — the redaction shared with the `cfg` push.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use tokio::sync::{Semaphore, watch};
 
 use crate::config::model::Config;
 use crate::error::{EdgeCommonsError, Result};
 use crate::messaging::message::{Message, MessageBuilder};
 use crate::messaging::{MessagingService, message_handler};
 use crate::uns::{Uns, UnsClass, UnsScope};
+
+mod deferred;
+pub use deferred::{DEFERRED_REPLY_CAPACITY, DeferredReplyRegistry, DeferredReplyToken};
 
 /// The liveness/echo built-in verb.
 pub const PING: &str = "ping";
@@ -99,6 +104,20 @@ pub const ERR_HANDLER_ERROR: &str = "HANDLER_ERROR";
 pub const ERR_RELOAD_FAILED: &str = "RELOAD_FAILED";
 /// Error code: [`GET_CONFIGURATION`] found no effective configuration to return.
 pub const ERR_NO_CONFIG: &str = "NO_CONFIG";
+/// Error code: a deferred outcome was requested for a fire-and-forget command.
+pub const ERR_REPLY_REQUIRED: &str = "REPLY_REQUIRED";
+/// Error code: the inbox-owned deferred registry reached its fixed capacity.
+pub const ERR_DEFERRED_CAPACITY: &str = "DEFERRED_CAPACITY";
+/// Error code: a handler returned a token that was not open for this exact request.
+pub const ERR_INVALID_DEFERRED_TOKEN: &str = "INVALID_DEFERRED_TOKEN";
+/// Maximum inbox-owned post-accept continuations that may be running or queued.
+///
+/// This bound is deliberately smaller than [`DEFERRED_REPLY_CAPACITY`]: accepting a deferred
+/// reply must not turn an unbounded stream of commands into an unbounded amount of application
+/// work. Components should use their own durable queue for longer-lived work.
+pub const POST_ACCEPT_CONTINUATION_CAPACITY: usize = 256;
+/// Error code: command/deferred acceptance raced component shutdown.
+pub const ERR_COMPONENT_STOPPING: &str = "COMPONENT_STOPPING";
 
 /// The `set-config` push verb — delegated: the `CONFIG_COMPONENT` config source maintains its
 /// own subscription for it on the same inbox path, so the inbox must never dispatch or
@@ -111,10 +130,39 @@ pub const BUILT_IN_VERBS: [&str; 4] = [PING, DESCRIBE, RELOAD_CONFIG, GET_CONFIG
 pub const DELEGATED_VERBS: [&str; 1] = [SET_CONFIG_VERB];
 
 /// The bounded client-side delivery queue for the inbox's single wildcard subscription.
-const SUBSCRIBE_MAX_MESSAGES: usize = 32;
-/// How many queued command deliveries the inbox processes concurrently (unlike the two-verb
-/// `_bcast` republish listener, a busy console may address several distinct verbs at once).
-const SUBSCRIBE_MAX_CONCURRENCY: usize = 4;
+const SUBSCRIBE_MAX_MESSAGES: usize = MAX_PENDING_STARTUP_DELIVERIES;
+/// Serial delivery preserves broker arrival order through the STARTING -> ACTIVE gate.
+const SUBSCRIBE_MAX_CONCURRENCY: usize = 1;
+/// Default bounded acknowledgement deadline for command-inbox startup.
+pub const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(10);
+/// Strict maximum retained between subscription acknowledgement and ACTIVE dispatch.
+pub const MAX_PENDING_STARTUP_DELIVERIES: usize = 256;
+const MAX_START_ERROR_CHARS: usize = 256;
+
+/// Observable command-plane lifecycle state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandInboxStartupState {
+    /// One acknowledged-subscribe attempt is in progress.
+    Starting,
+    /// Handlers are installed and the transport has acknowledged the subscription.
+    Active,
+    /// Startup failed; `error` contains a bounded sanitized diagnostic.
+    Failed,
+    /// No active start generation exists.
+    Stopped,
+}
+
+/// Immutable lifecycle status returned by startup and queried by readiness.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandInboxStartupStatus {
+    /// Current lifecycle state.
+    pub state: CommandInboxStartupState,
+    /// Sanitized stable startup error; empty outside `Failed`.
+    pub error: String,
+}
+
+/// Internal observer used to make runtime readiness follow command-plane lifecycle.
+pub(crate) type StartupObserver = Arc<dyn Fn(CommandInboxStartupState) + Send + Sync>;
 
 /// A coded command failure (DESIGN-uns §9.5): returned by a [`CommandHandler`] to produce a
 /// structured error reply `{"ok": false, "error": {"code": <code>, "message": <message>}}` with
@@ -205,6 +253,103 @@ where
     Arc::new(FnCommandHandler(f))
 }
 
+/// The explicit outcome of a long- or short-running command handler.
+///
+/// This is parallel to, and does not change, the legacy [`CommandHandler`] result contract.
+#[non_exhaustive]
+pub enum CommandOutcome {
+    /// Send the ordinary success wrapper immediately (`None` means an empty result object).
+    ImmediateSuccess(Option<Value>),
+    /// Send the ordinary coded error wrapper immediately.
+    ImmediateError(CommandError),
+    /// Suppress automatic reply; the already-activated opaque token will settle it later.
+    Deferred(DeferredReplyToken),
+    /// Suppress the automatic reply and run `continuation` only after the inbox has accepted the
+    /// already-open token for this exact request.
+    ///
+    /// The inbox owns scheduling the continuation, so application code cannot race token
+    /// validation by spawning work before returning from the handler. The continuation must
+    /// settle the captured token (or arrange durable work that does so) through the normal
+    /// [`DeferredReplyToken`] API. Returning a [`CommandError`] produces one guarded error
+    /// settlement rather than leaving an open token to expire.
+    DeferredWithContinuation {
+        /// The activated reply token returned by the handler.
+        token: DeferredReplyToken,
+        /// Work to begin after the inbox accepts `token`.
+        continuation: PostAcceptContinuation,
+    },
+}
+
+impl CommandOutcome {
+    /// Builds a deferred outcome whose continuation begins only after inbox acceptance.
+    ///
+    /// This is the race-free construction path for a command that durably accepts work and then
+    /// needs to start an asynchronous operation. `token` must already be activated.
+    pub fn deferred_with_continuation<F>(token: DeferredReplyToken, continuation: F) -> Self
+    where
+        F: Future<Output = std::result::Result<(), CommandError>> + Send + 'static,
+    {
+        Self::DeferredWithContinuation {
+            token,
+            continuation: Box::pin(continuation),
+        }
+    }
+}
+
+impl std::fmt::Debug for CommandOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ImmediateSuccess(result) => {
+                f.debug_tuple("ImmediateSuccess").field(result).finish()
+            }
+            Self::ImmediateError(error) => f.debug_tuple("ImmediateError").field(error).finish(),
+            Self::Deferred(token) => f.debug_tuple("Deferred").field(token).finish(),
+            Self::DeferredWithContinuation { token, .. } => f
+                .debug_struct("DeferredWithContinuation")
+                .field("token", token)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
+/// A bounded, inbox-owned asynchronous action that starts after a deferred token is accepted.
+pub type PostAcceptContinuation =
+    Pin<Box<dyn Future<Output = std::result::Result<(), CommandError>> + Send + 'static>>;
+
+/// A command handler that can explicitly defer its reply.
+///
+/// The inbox supplies a clone of its bounded [`DeferredReplyRegistry`] for provisional token
+/// creation. The handler must durably accept its application work, call
+/// [`DeferredReplyToken::activate`], then return [`CommandOutcome::Deferred`].
+#[async_trait]
+pub trait OutcomeCommandHandler: Send + Sync + 'static {
+    /// Handle one request and select immediate or deferred settlement.
+    async fn handle(&self, request: Message, deferred: DeferredReplyRegistry) -> CommandOutcome;
+}
+
+/// Adapts an async closure into an [`OutcomeCommandHandler`].
+struct FnOutcomeCommandHandler<F>(F);
+
+#[async_trait]
+impl<F, Fut> OutcomeCommandHandler for FnOutcomeCommandHandler<F>
+where
+    F: Fn(Message, DeferredReplyRegistry) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = CommandOutcome> + Send + 'static,
+{
+    async fn handle(&self, request: Message, deferred: DeferredReplyRegistry) -> CommandOutcome {
+        (self.0)(request, deferred).await
+    }
+}
+
+/// Wrap an async closure for [`CommandInbox::register_outcome`].
+pub fn outcome_handler<F, Fut>(f: F) -> Arc<dyn OutcomeCommandHandler>
+where
+    F: Fn(Message, DeferredReplyRegistry) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = CommandOutcome> + Send + 'static,
+{
+    Arc::new(FnOutcomeCommandHandler(f))
+}
+
 /// One out-of-band re-fetch-and-apply action (the [`RELOAD_CONFIG`] verb's action): re-invokes
 /// the active config source's `load()`, validates, and — only on success — atomically applies the
 /// new snapshot and notifies listeners (production: [`crate::apply_reloaded_config`] over the
@@ -215,9 +360,7 @@ pub(crate) type ReloadAction =
 
 /// Lifecycle flags + the resolved inbox topic, behind one lock (no `.await` ever happens while
 /// holding it) — mirrors [`crate::uns::RepublishListener`]'s `Inner`.
-#[derive(Default)]
 struct Inner {
-    started: bool,
     closed: bool,
     /// The subscribed inbox filter (`…/cmd/#`); `None` until [`CommandInbox::start`] builds it.
     inbox_filter: Option<String>,
@@ -225,6 +368,28 @@ struct Inner {
     /// subscribing (mirrors the Java canonical) so a delivery racing the subscribe call still
     /// resolves the verb correctly.
     inbox_prefix: Option<String>,
+    startup_state: CommandInboxStartupState,
+    startup_error: String,
+    startup_generation: u64,
+    pending: VecDeque<(String, Message)>,
+    retained: usize,
+    draining: bool,
+}
+
+impl Default for Inner {
+    fn default() -> Self {
+        Self {
+            closed: false,
+            inbox_filter: None,
+            inbox_prefix: None,
+            startup_state: CommandInboxStartupState::Stopped,
+            startup_error: String::new(),
+            startup_generation: 0,
+            pending: VecDeque::new(),
+            retained: 0,
+            draining: false,
+        }
+    }
 }
 
 /// The library-owned component **command inbox** — see the [module docs](self).
@@ -233,8 +398,18 @@ pub struct CommandInbox {
     config: Arc<ArcSwap<Config>>,
     /// verb → handler; built-ins seeded at construction, custom verbs via [`Self::register`].
     handlers: Mutex<HashMap<String, Arc<dyn CommandHandler>>>,
+    /// verb → explicit outcome handler; kept separate so the legacy handler trait is untouched.
+    outcome_handlers: Mutex<HashMap<String, Arc<dyn OutcomeCommandHandler>>>,
+    /// Serializes cross-map registration/unregistration so one verb can never enter both maps.
+    registration: Mutex<()>,
     /// Component-provided edge-console panel descriptors, registered via [`Self::register_panel`].
     panels: Mutex<Vec<Value>>,
+    deferred: DeferredReplyRegistry,
+    /// Capacity for inbox-owned continuations that start only after deferred acceptance.
+    post_accept_capacity: Arc<Semaphore>,
+    /// Broadcast cancellation for owned continuations during terminal inbox shutdown.
+    post_accept_shutdown: watch::Sender<bool>,
+    startup_observer: StartupObserver,
     inner: Mutex<Inner>,
 }
 
@@ -252,12 +427,31 @@ impl CommandInbox {
     ///   over the live config snapshot — always `Some` once `build()` has succeeded; kept
     ///   optional for parity with the Java canonical's mock/test bring-up case and so
     ///   [`ERR_NO_CONFIG`] is directly testable).
+    #[cfg(test)]
     pub(crate) fn new(
         messaging: Arc<dyn MessagingService>,
         config: Arc<ArcSwap<Config>>,
         uptime_secs: Arc<dyn Fn() -> u64 + Send + Sync>,
         reload_action: ReloadAction,
         redacted_config: Arc<dyn Fn() -> Option<Value> + Send + Sync>,
+    ) -> Arc<CommandInbox> {
+        Self::new_with_startup_observer(
+            messaging,
+            config,
+            uptime_secs,
+            reload_action,
+            redacted_config,
+            Arc::new(|_| {}),
+        )
+    }
+
+    pub(crate) fn new_with_startup_observer(
+        messaging: Arc<dyn MessagingService>,
+        config: Arc<ArcSwap<Config>>,
+        uptime_secs: Arc<dyn Fn() -> u64 + Send + Sync>,
+        reload_action: ReloadAction,
+        redacted_config: Arc<dyn Fn() -> Option<Value> + Send + Sync>,
+        startup_observer: StartupObserver,
     ) -> Arc<CommandInbox> {
         let mut handlers: HashMap<String, Arc<dyn CommandHandler>> = HashMap::new();
 
@@ -312,11 +506,19 @@ impl CommandInbox {
             }),
         );
 
+        let deferred = DeferredReplyRegistry::new(messaging.clone(), config.clone());
+        let (post_accept_shutdown, _) = watch::channel(false);
         let inbox = Arc::new(CommandInbox {
             messaging,
             config,
             handlers: Mutex::new(handlers),
+            outcome_handlers: Mutex::new(HashMap::new()),
+            registration: Mutex::new(()),
             panels: Mutex::new(Vec::new()),
+            deferred,
+            post_accept_capacity: Arc::new(Semaphore::new(POST_ACCEPT_CONTINUATION_CAPACITY)),
+            post_accept_shutdown,
+            startup_observer,
             inner: Mutex::new(Inner::default()),
         });
 
@@ -363,8 +565,11 @@ impl CommandInbox {
                 "verb '{verb}' is owned by another library subsystem and cannot be registered"
             )));
         }
+        let _registration = self.registration.lock().map_err(|_| {
+            EdgeCommonsError::Command("command registration lock is poisoned".to_string())
+        })?;
         let mut handlers = self.handlers.lock().unwrap();
-        if handlers.contains_key(verb) {
+        if handlers.contains_key(verb) || self.outcome_handlers.lock().unwrap().contains_key(verb) {
             return Err(EdgeCommonsError::Command(format!(
                 "verb '{verb}' is already registered - unregister it first to replace the handler"
             )));
@@ -372,6 +577,56 @@ impl CommandInbox {
         handlers.insert(verb.to_string(), handler);
         tracing::debug!(verb, "command verb registered");
         Ok(())
+    }
+
+    /// Registers an explicit immediate/deferred outcome handler.
+    ///
+    /// Validation, namespaced verbs, precedence, and replacement rules are identical to
+    /// [`Self::register`]. The legacy [`CommandHandler`] path remains unchanged and separate.
+    pub fn register_outcome(
+        &self,
+        verb: &str,
+        handler: Arc<dyn OutcomeCommandHandler>,
+    ) -> Result<()> {
+        for token in verb.split('/') {
+            crate::uns::check_token(token, "verb token")?;
+        }
+        if BUILT_IN_VERBS.contains(&verb) {
+            return Err(EdgeCommonsError::Command(format!(
+                "verb '{verb}' is a built-in verb and cannot be shadowed"
+            )));
+        }
+        if DELEGATED_VERBS.contains(&verb) {
+            return Err(EdgeCommonsError::Command(format!(
+                "verb '{verb}' is owned by another library subsystem and cannot be registered"
+            )));
+        }
+        let _registration = self.registration.lock().map_err(|_| {
+            EdgeCommonsError::Command("command registration lock is poisoned".to_string())
+        })?;
+        let mut outcome_handlers = self.outcome_handlers.lock().unwrap();
+        if outcome_handlers.contains_key(verb) || self.handlers.lock().unwrap().contains_key(verb) {
+            return Err(EdgeCommonsError::Command(format!(
+                "verb '{verb}' is already registered - unregister it first to replace the handler"
+            )));
+        }
+        outcome_handlers.insert(verb.to_string(), handler);
+        tracing::debug!(verb, "outcome command verb registered");
+        Ok(())
+    }
+
+    /// A clone of this inbox's bounded deferred-reply registry.
+    pub fn deferred_replies(&self) -> DeferredReplyRegistry {
+        self.deferred.clone()
+    }
+
+    /// Create a provisional deferred token owned by this inbox.
+    pub fn defer(
+        &self,
+        request: &Message,
+        lifetime: std::time::Duration,
+    ) -> std::result::Result<DeferredReplyToken, CommandError> {
+        self.deferred.defer(request, lifetime)
     }
 
     /// Removes a previously registered custom verb handler. Unknown verbs are a no-op; built-in
@@ -385,7 +640,12 @@ impl CommandInbox {
                 "verb '{verb}' is a built-in verb and cannot be unregistered"
             )));
         }
-        if self.handlers.lock().unwrap().remove(verb).is_some() {
+        let _registration = self.registration.lock().map_err(|_| {
+            EdgeCommonsError::Command("command registration lock is poisoned".to_string())
+        })?;
+        let removed = self.handlers.lock().unwrap().remove(verb).is_some()
+            || self.outcome_handlers.lock().unwrap().remove(verb).is_some();
+        if removed {
             tracing::debug!(verb, "command verb unregistered");
         }
         Ok(())
@@ -393,7 +653,56 @@ impl CommandInbox {
 
     /// The currently registered verbs (built-ins + custom) — a snapshot copy.
     pub fn verbs(&self) -> std::collections::HashSet<String> {
-        self.handlers.lock().unwrap().keys().cloned().collect()
+        let mut verbs: std::collections::HashSet<String> =
+            self.handlers.lock().unwrap().keys().cloned().collect();
+        verbs.extend(self.outcome_handlers.lock().unwrap().keys().cloned());
+        verbs
+    }
+
+    /// Starts a continuation only after its token has been accepted for a specific command.
+    ///
+    /// The caller has already checked token ownership, request metadata, and `OPEN` state. A
+    /// full continuation queue settles the otherwise-valid token with a standard error on a
+    /// detached task; it never blocks command dispatch or leaves a silent open reply.
+    fn start_post_accept_continuation(
+        &self,
+        token: DeferredReplyToken,
+        continuation: PostAcceptContinuation,
+    ) {
+        let Ok(permit) = self.post_accept_capacity.clone().try_acquire_owned() else {
+            tracing::warn!("post-accept deferred continuation capacity exhausted");
+            tokio::spawn(async move {
+                if let Err(error) = token
+                    .settle_error(
+                        ERR_HANDLER_ERROR,
+                        "the deferred command continuation could not be started",
+                    )
+                    .await
+                {
+                    tracing::debug!(error = %error, "could not settle rejected deferred continuation");
+                }
+            });
+            return;
+        };
+
+        let mut shutdown = self.post_accept_shutdown.subscribe();
+        let settlement = token.clone();
+        tokio::spawn(async move {
+            let _permit = permit;
+            if *shutdown.borrow() {
+                return;
+            }
+            tokio::select! {
+                result = continuation => {
+                    if let Err(error) = result {
+                        if let Err(settlement_error) = settlement.settle_command_error(error).await {
+                            tracing::debug!(error = %settlement_error, "could not settle failed post-accept continuation");
+                        }
+                    }
+                },
+                _ = shutdown.changed() => {},
+            }
+        });
     }
 
     /// Registers a component-provided edge-console panel descriptor for [`DESCRIBE`].
@@ -448,9 +757,7 @@ impl CommandInbox {
     }
 
     fn describe(&self) -> Value {
-        let handler_keys: std::collections::HashSet<String> =
-            self.handlers.lock().unwrap().keys().cloned().collect();
-        let mut verbs: Vec<String> = handler_keys.into_iter().collect();
+        let mut verbs: Vec<String> = self.verbs().into_iter().collect();
         verbs.sort();
         let commands = verbs
             .into_iter()
@@ -472,28 +779,52 @@ impl CommandInbox {
         describe_payload(commands, self.panels(), Some(component))
     }
 
-    /// Builds the own-inbox wildcard (`ecv1/{device}/{component}/main/cmd/#`, through the topic
-    /// builder under this component's identity + root mode) and subscribes it on the PRIMARY
-    /// connection. Best-effort and idempotent: on any topic-build or subscribe failure the inbox
-    /// logs a WARN and disables itself (returns without setting `started`) — the component must
-    /// come up regardless.
-    ///
-    /// The subscribe handler holds only a [`std::sync::Weak`] reference back to this inbox
-    /// (never a strong one) — otherwise the inbox could never be dropped while its own
-    /// subscription is live, and [`Drop::drop`] (which unsubscribes it) would never run.
-    pub(crate) async fn start(self: Arc<Self>) {
-        {
-            let inner = self.inner.lock().unwrap();
-            if inner.started || inner.closed {
-                return;
-            }
+    /// Start with the default bounded acknowledgement deadline.
+    pub async fn start(self: Arc<Self>) -> CommandInboxStartupStatus {
+        self.start_with_timeout(DEFAULT_START_TIMEOUT).await
+    }
+
+    /// Start one retryable lifecycle generation. `Active` is published only after strict
+    /// transport acknowledgement and while the bounded activation gate can accept work.
+    pub async fn start_with_timeout(
+        self: Arc<Self>,
+        timeout: Duration,
+    ) -> CommandInboxStartupStatus {
+        if timeout.is_zero() {
+            let mut inner = self.inner.lock().unwrap();
+            inner.startup_state = CommandInboxStartupState::Failed;
+            inner.startup_error = "command inbox start timeout must be positive".to_string();
+            (self.startup_observer)(inner.startup_state);
+            return Self::status_locked(&inner);
         }
+
+        let generation = {
+            let mut inner = self.inner.lock().unwrap();
+            if inner.closed {
+                return CommandInboxStartupStatus {
+                    state: CommandInboxStartupState::Stopped,
+                    error: "command inbox is closed".to_string(),
+                };
+            }
+            if matches!(
+                inner.startup_state,
+                CommandInboxStartupState::Starting | CommandInboxStartupState::Active
+            ) {
+                return Self::status_locked(&inner);
+            }
+            inner.startup_generation += 1;
+            inner.startup_state = CommandInboxStartupState::Starting;
+            inner.startup_error.clear();
+            inner.pending.clear();
+            inner.retained = 0;
+            inner.draining = false;
+            (self.startup_observer)(inner.startup_state);
+            inner.startup_generation
+        };
 
         let snapshot = self.config.load_full();
         let identity = snapshot.identity();
         let uns = Uns::new(identity.clone(), snapshot.topic_include_root());
-        // Pin every scope token to this component's own identity: the site value is consulted
-        // only under an effective root mode (D-U25 makes it a no-op otherwise).
         let site = if identity.hier().len() >= 2 {
             Some(identity.hier()[0].value.clone())
         } else {
@@ -506,76 +837,223 @@ impl CommandInbox {
             instance: Some(identity.instance().to_string()),
         };
         let filter = match uns.filter(UnsClass::Cmd, &scope) {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "failed to build the command inbox filter - the command inbox is disabled"
-                );
-                return;
+            Ok(filter) => filter,
+            Err(error) => {
+                self.fail_start(generation, &error.to_string());
+                return self.startup_status();
             }
         };
-
-        // ".../cmd/#" -> ".../cmd/" - the verb is the topic's remainder after this prefix.
-        // Assigned BEFORE subscribing so a delivery racing the subscribe call sees it.
         let prefix = filter[..filter.len() - 1].to_string();
         {
             let mut inner = self.inner.lock().unwrap();
+            if inner.closed
+                || inner.startup_generation != generation
+                || inner.startup_state != CommandInboxStartupState::Starting
+            {
+                return Self::status_locked(&inner);
+            }
             inner.inbox_filter = Some(filter.clone());
-            inner.inbox_prefix = Some(prefix);
+            inner.inbox_prefix = Some(prefix.clone());
         }
 
         let weak = Arc::downgrade(&self);
+        let callback_prefix = prefix.clone();
         let handler = message_handler(move |topic, message| {
             let weak = weak.clone();
+            let prefix = callback_prefix.clone();
             async move {
                 if let Some(inbox) = weak.upgrade() {
-                    CommandInbox::handle(inbox, topic, message).await;
+                    inbox
+                        .receive_during_activation(generation, prefix, topic, message)
+                        .await;
                 }
             }
         });
-        if let Err(e) = self
+        if let Err(error) = self
             .messaging
-            .subscribe(
+            .subscribe_acknowledged(
                 &filter,
                 handler,
                 SUBSCRIBE_MAX_MESSAGES,
                 SUBSCRIBE_MAX_CONCURRENCY,
+                timeout,
             )
             .await
         {
-            tracing::warn!(
-                error = %e,
-                filter,
-                "failed to subscribe the command inbox - continuing without it"
-            );
-            return;
+            let _ = self.messaging.unsubscribe(&filter).await;
+            self.fail_start(generation, &error.to_string());
+            tracing::warn!(error = %error, filter, "command inbox startup failed");
+            return self.startup_status();
         }
 
-        let mut inner = self.inner.lock().unwrap();
-        inner.started = true;
-        drop(inner);
+        let should_drain = {
+            let mut inner = self.inner.lock().unwrap();
+            if inner.closed
+                || inner.startup_generation != generation
+                || inner.startup_state != CommandInboxStartupState::Starting
+            {
+                false
+            } else {
+                inner.startup_state = CommandInboxStartupState::Active;
+                inner.startup_error.clear();
+                inner.draining = !inner.pending.is_empty();
+                (self.startup_observer)(inner.startup_state);
+                inner.draining
+            }
+        };
+
+        if self.startup_status().state != CommandInboxStartupState::Active {
+            let _ = self.messaging.unsubscribe(&filter).await;
+            return self.startup_status();
+        }
+        if should_drain {
+            let inbox = self.clone();
+            tokio::spawn(async move { inbox.drain_activation_gate(generation, prefix).await });
+        }
         tracing::info!(filter, verbs = ?self.verbs(), "command inbox subscribed");
+        self.startup_status()
     }
 
-    /// One received `cmd` envelope: extract the verb from the topic, validate the envelope
-    /// (`header.name` must equal the verb), dispatch, reply. Never panics — a malformed or
-    /// foreign payload is ignored at DEBUG.
-    async fn handle(inbox: Arc<Self>, topic: String, message: Message) {
-        let (closed, prefix) = {
-            let inner = inbox.inner.lock().unwrap();
-            (inner.closed, inner.inbox_prefix.clone())
+    /// Current immutable lifecycle status.
+    pub fn startup_status(&self) -> CommandInboxStartupStatus {
+        let inner = self.inner.lock().unwrap();
+        Self::status_locked(&inner)
+    }
+
+    /// Stop the current generation and clean its subscription. A later start may retry.
+    pub async fn stop(&self) -> CommandInboxStartupStatus {
+        let filter = {
+            let mut inner = self.inner.lock().unwrap();
+            inner.startup_generation += 1;
+            inner.startup_state = CommandInboxStartupState::Stopped;
+            inner.startup_error.clear();
+            inner.pending.clear();
+            inner.retained = 0;
+            inner.draining = false;
+            inner.inbox_prefix = None;
+            let filter = inner.inbox_filter.take();
+            (self.startup_observer)(inner.startup_state);
+            filter
         };
-        if closed {
+        if let Some(filter) = filter {
+            let _ = self.messaging.unsubscribe(&filter).await;
+        }
+        self.startup_status()
+    }
+
+    fn status_locked(inner: &Inner) -> CommandInboxStartupStatus {
+        CommandInboxStartupStatus {
+            state: inner.startup_state,
+            error: inner.startup_error.clone(),
+        }
+    }
+
+    fn fail_start(&self, generation: u64, error: &str) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.startup_generation != generation
+            || inner.startup_state != CommandInboxStartupState::Starting
+        {
             return;
         }
-        let Some(prefix) = prefix else {
-            // Should not happen (the prefix is set before the subscribe callback can fire), but
-            // guards against any future re-ordering.
-            tracing::debug!(topic = %topic, "command inbox delivery before the prefix was set; ignoring");
-            return;
+        inner.startup_state = CommandInboxStartupState::Failed;
+        inner.startup_error = sanitize_start_error(error);
+        inner.inbox_filter = None;
+        inner.inbox_prefix = None;
+        inner.pending.clear();
+        inner.retained = 0;
+        inner.draining = false;
+        (self.startup_observer)(inner.startup_state);
+    }
+
+    async fn receive_during_activation(
+        self: Arc<Self>,
+        generation: u64,
+        prefix: String,
+        topic: String,
+        message: Message,
+    ) {
+        let mut delivery = Some((topic, message));
+        let dispatch_now = {
+            let mut inner = self.inner.lock().unwrap();
+            if inner.closed || inner.startup_generation != generation {
+                false
+            } else if inner.startup_state == CommandInboxStartupState::Starting
+                || (inner.startup_state == CommandInboxStartupState::Active && inner.draining)
+            {
+                if inner.retained >= MAX_PENDING_STARTUP_DELIVERIES {
+                    tracing::warn!(
+                        capacity = MAX_PENDING_STARTUP_DELIVERIES,
+                        "dropping command delivery because the startup activation gate is full"
+                    );
+                } else {
+                    inner.pending.push_back(delivery.take().unwrap());
+                    inner.retained += 1;
+                }
+                false
+            } else {
+                inner.startup_state == CommandInboxStartupState::Active
+            }
         };
-        if !topic.starts_with(&prefix) {
+        if dispatch_now {
+            let (topic, message) = delivery.unwrap();
+            self.dispatch_delivery(generation, &prefix, topic, message)
+                .await;
+        }
+    }
+
+    async fn drain_activation_gate(self: Arc<Self>, generation: u64, prefix: String) {
+        loop {
+            let next = {
+                let mut inner = self.inner.lock().unwrap();
+                if inner.closed
+                    || inner.startup_generation != generation
+                    || inner.startup_state != CommandInboxStartupState::Active
+                {
+                    inner.pending.clear();
+                    inner.retained = 0;
+                    inner.draining = false;
+                    return;
+                }
+                match inner.pending.pop_front() {
+                    Some(delivery) => Some(delivery),
+                    None => {
+                        inner.retained = 0;
+                        inner.draining = false;
+                        None
+                    }
+                }
+            };
+            let Some((topic, message)) = next else {
+                return;
+            };
+            self.clone()
+                .dispatch_delivery(generation, &prefix, topic, message)
+                .await;
+            let mut inner = self.inner.lock().unwrap();
+            if inner.startup_generation == generation && inner.retained > 0 {
+                inner.retained -= 1;
+            }
+        }
+    }
+
+    /// One received `cmd` envelope after lifecycle gating.
+    async fn dispatch_delivery(
+        self: Arc<Self>,
+        generation: u64,
+        prefix: &str,
+        topic: String,
+        message: Message,
+    ) {
+        {
+            let inner = self.inner.lock().unwrap();
+            if inner.closed
+                || inner.startup_generation != generation
+                || inner.startup_state != CommandInboxStartupState::Active
+            {
+                return;
+            }
+        }
+        if !topic.starts_with(prefix) {
             // ".../cmd/#" also matches the bare ".../cmd" parent level - nothing to dispatch.
             tracing::debug!(topic = %topic, "ignoring cmd delivery outside the inbox prefix");
             return;
@@ -600,7 +1078,7 @@ impl CommandInbox {
             );
             return;
         }
-        Self::dispatch(inbox, verb.to_string(), message).await;
+        Self::dispatch(self, verb.to_string(), message).await;
     }
 
     /// Dispatches a well-formed request to its handler and replies (when `reply_to` is set).
@@ -611,7 +1089,8 @@ impl CommandInbox {
             .as_deref()
             .is_some_and(|s| !s.is_empty());
         let handler = { inbox.handlers.lock().unwrap().get(&verb).cloned() };
-        let Some(handler) = handler else {
+        let outcome_handler = { inbox.outcome_handlers.lock().unwrap().get(&verb).cloned() };
+        if handler.is_none() && outcome_handler.is_none() {
             if wants_reply {
                 tracing::debug!(
                     verb,
@@ -632,26 +1111,111 @@ impl CommandInbox {
                 tracing::debug!(verb, "ignoring unknown fire-and-forget verb");
             }
             return;
-        };
+        }
 
-        // One clone: the handler takes ownership of its request, while `request` is kept for
-        // the reply (which needs the ORIGINAL request's reply_to/correlation_id).
-        match handler.handle(request.clone()).await {
-            Ok(result) => {
+        if let Some(handler) = handler {
+            // Legacy path, intentionally unchanged: one clone for handler ownership, immediate
+            // best-effort reply, and fire-and-forget result discard.
+            match handler.handle(request.clone()).await {
+                Ok(result) => {
+                    if wants_reply {
+                        let body =
+                            json!({ "ok": true, "result": result.unwrap_or_else(|| json!({})) });
+                        inbox.send_reply(&request, &verb, body).await;
+                    }
+                }
+                Err(e) => {
+                    if wants_reply {
+                        inbox
+                            .send_reply(&request, &verb, error_body(&e.code, e.message))
+                            .await;
+                    } else {
+                        tracing::warn!(verb, code = %e.code, message = %e.message, "fire-and-forget verb failed");
+                    }
+                }
+            }
+            return;
+        }
+
+        let Some(outcome_handler) = outcome_handler else {
+            return;
+        };
+        let outcome = outcome_handler
+            .handle(request.clone(), inbox.deferred.clone())
+            .await;
+        match outcome {
+            CommandOutcome::ImmediateSuccess(result) => {
                 if wants_reply {
                     let body = json!({ "ok": true, "result": result.unwrap_or_else(|| json!({})) });
                     inbox.send_reply(&request, &verb, body).await;
                 }
             }
-            Err(e) => {
+            CommandOutcome::ImmediateError(error) => {
                 if wants_reply {
                     inbox
-                        .send_reply(&request, &verb, error_body(&e.code, e.message))
+                        .send_reply(&request, &verb, error_body(&error.code, error.message))
                         .await;
                 } else {
-                    tracing::warn!(verb, code = %e.code, message = %e.message, "fire-and-forget verb failed");
+                    tracing::warn!(verb, code = %error.code, message = %error.message, "fire-and-forget outcome verb failed");
                 }
             }
+            CommandOutcome::Deferred(token) => {
+                if inbox
+                    .accept_deferred_token(&token, &request, &verb, wants_reply)
+                    .await
+                {
+                    tracing::debug!(verb, "command reply deferred; dispatcher permit released");
+                }
+            }
+            CommandOutcome::DeferredWithContinuation {
+                token,
+                continuation,
+            } => {
+                if inbox
+                    .accept_deferred_token(&token, &request, &verb, wants_reply)
+                    .await
+                {
+                    // `accept_deferred_token` proved this exact token OPEN before any application
+                    // continuation can run. Scheduling is inbox-owned to close the handler-return
+                    // race while still releasing the normal dispatch permit immediately.
+                    inbox.start_post_accept_continuation(token, continuation);
+                    tracing::debug!(
+                        verb,
+                        "command reply deferred; post-accept continuation scheduled"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Validates a returned deferred token and emits the standard invalid-outcome reply on error.
+    ///
+    /// `true` means the token was `OPEN` and belonged to this inbox, request, and verb at the
+    /// point of acceptance. Callers must not start application continuations unless this returns
+    /// `true`.
+    async fn accept_deferred_token(
+        &self,
+        token: &DeferredReplyToken,
+        request: &Message,
+        verb: &str,
+        wants_reply: bool,
+    ) -> bool {
+        if let Err(error) = self.deferred.validate_open_token(token, request) {
+            // A same-request provisional token is safely discarded; an OPEN token for a
+            // different request is left untouched rather than cancelling unrelated work.
+            self.deferred.discard_provisional_token_for(token, request);
+            tracing::warn!(verb, error = %error, "handler returned an invalid deferred token");
+            if wants_reply {
+                self.send_reply(
+                    request,
+                    verb,
+                    error_body(ERR_INVALID_DEFERRED_TOKEN, error.to_string()),
+                )
+                .await;
+            }
+            false
+        } else {
+            true
         }
     }
 
@@ -679,11 +1243,26 @@ impl CommandInbox {
             return None;
         }
         inner.closed = true;
-        if inner.started {
-            inner.inbox_filter.clone()
-        } else {
-            None
-        }
+        inner.startup_generation += 1;
+        inner.startup_state = CommandInboxStartupState::Stopped;
+        inner.startup_error.clear();
+        inner.pending.clear();
+        inner.retained = 0;
+        inner.draining = false;
+        inner.inbox_prefix = None;
+        let filter = inner.inbox_filter.take();
+        (self.startup_observer)(inner.startup_state);
+        filter
+    }
+
+    /// Stop deferred acceptance, attempt `COMPONENT_STOPPING` replies for open tokens, and cancel
+    /// the remaining registry entries. Idempotent.
+    ///
+    /// Applications with an explicit shutdown sequence should await this before dropping the
+    /// messaging transport. [`Drop`] also schedules the same bounded cleanup as a fallback.
+    pub async fn shutdown_deferred(&self) {
+        self.post_accept_shutdown.send_replace(true);
+        self.deferred.shutdown().await;
     }
 
     /// Test-only deterministic teardown: the same unsubscribe-before-exit logic as
@@ -693,6 +1272,7 @@ impl CommandInbox {
     /// production wiring, hence `#[cfg(test)]`.
     #[cfg(test)]
     pub(crate) async fn close(&self) {
+        self.shutdown_deferred().await;
         if let Some(filter) = self.mark_closed() {
             if let Err(e) = self.messaging.unsubscribe(&filter).await {
                 tracing::debug!(error = %e, filter, "command-inbox unsubscribe failed");
@@ -707,18 +1287,38 @@ impl Drop for CommandInbox {
     /// rule) — on a spawned fire-and-forget task, since `Drop` cannot `.await`. A no-op when
     /// never started, already closed, or no `tokio` runtime is available to spawn on.
     fn drop(&mut self) {
-        let Some(filter) = self.mark_closed() else {
-            return;
-        };
+        let filter = self.mark_closed();
         let messaging = self.messaging.clone();
+        let deferred = self.deferred.clone();
+        self.post_accept_shutdown.send_replace(true);
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
-                if let Err(e) = messaging.unsubscribe(&filter).await {
-                    tracing::debug!(error = %e, filter, "command-inbox unsubscribe failed");
+                deferred.shutdown().await;
+                if let Some(filter) = filter {
+                    if let Err(e) = messaging.unsubscribe(&filter).await {
+                        tracing::debug!(error = %e, filter, "command-inbox unsubscribe failed");
+                    }
                 }
             });
         }
     }
+}
+
+fn sanitize_start_error(error: &str) -> String {
+    let safe: String = error
+        .chars()
+        .take(MAX_START_ERROR_CHARS)
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let redacted = regex::Regex::new(r"(?i)(password|passwd|token|secret)\s*[=:]\s*[^,; ]+")
+        .map(|pattern| pattern.replace_all(&safe, "$1=***").into_owned())
+        .unwrap_or(safe);
+    regex::Regex::new(r"://[^/@ ]+@")
+        .map(|pattern| pattern.replace_all(&redacted, "://***@").into_owned())
+        .unwrap_or(redacted)
 }
 
 /// The error reply body `{"ok": false, "error": {"code", "message"}}`.
@@ -916,6 +1516,7 @@ mod tests {
     use crate::testutil::RecordingMessaging;
     use serde_json::json;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::time::Duration;
 
     const INBOX_FILTER: &str = "ecv1/test-thing/TestComponent/main/cmd/#";
     const REPLY_TO: &str = "edgecommons/reply-test-1";
@@ -1406,6 +2007,416 @@ mod tests {
         );
     }
 
+    // ===================== explicit outcomes + deferred replies =====================
+
+    #[tokio::test]
+    async fn outcome_handler_immediate_result_uses_the_standard_wrapper() {
+        let f = fixture();
+        f.inbox
+            .register_outcome(
+                "sb/status",
+                outcome_handler(|_request, _deferred| async move {
+                    CommandOutcome::ImmediateSuccess(Some(json!({ "online": true })))
+                }),
+            )
+            .unwrap();
+        assert!(
+            f.inbox
+                .register(
+                    "sb/status",
+                    command_handler(|_request| async move { Ok(None) })
+                )
+                .is_err(),
+            "legacy and outcome handlers share one no-shadowing verb namespace"
+        );
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(&topic("sb/status"), request("sb/status"))
+            .await;
+
+        let body = only_reply_body(&f.messaging);
+        assert_eq!(body, json!({ "ok": true, "result": { "online": true } }));
+    }
+
+    #[test]
+    fn defer_rejects_a_request_without_reply_to() {
+        let f = fixture();
+        let error = f
+            .inbox
+            .defer(&notification("sb/capture"), Duration::from_secs(1))
+            .unwrap_err();
+        assert_eq!(error.code, ERR_REPLY_REQUIRED);
+    }
+
+    #[test]
+    fn defer_rejects_missing_correlation_or_verb() {
+        let f = fixture();
+        let mut missing_correlation = request("sb/capture");
+        missing_correlation.header.correlation_id.clear();
+        let error = f
+            .inbox
+            .defer(&missing_correlation, Duration::from_secs(1))
+            .unwrap_err();
+        assert_eq!(error.code, ERR_INVALID_DEFERRED_TOKEN);
+
+        let mut missing_verb = request("sb/capture");
+        missing_verb.header.name.clear();
+        let error = f
+            .inbox
+            .defer(&missing_verb, Duration::from_secs(1))
+            .unwrap_err();
+        assert_eq!(error.code, ERR_INVALID_DEFERRED_TOKEN);
+    }
+
+    #[tokio::test]
+    async fn deferred_outcome_suppresses_automatic_reply_and_settles_later() {
+        let f = fixture();
+        let token_slot = Arc::new(Mutex::new(None::<DeferredReplyToken>));
+        let token_slot_handler = token_slot.clone();
+        f.inbox
+            .register_outcome(
+                "sb/capture",
+                outcome_handler(move |request, deferred| {
+                    let token_slot = token_slot_handler.clone();
+                    async move {
+                        let token = match deferred.defer(&request, Duration::from_secs(2)) {
+                            Ok(token) => token,
+                            Err(error) => return CommandOutcome::ImmediateError(error),
+                        };
+                        // Represents the application job insert/commit.
+                        token.activate().unwrap();
+                        *token_slot.lock().unwrap() = Some(token.clone());
+                        CommandOutcome::Deferred(token)
+                    }
+                }),
+            )
+            .unwrap();
+        f.inbox.clone().start().await;
+        let capture = request("sb/capture");
+
+        f.messaging
+            .simulate_message(&topic("sb/capture"), capture.clone())
+            .await;
+        assert!(
+            f.messaging.replies().is_empty(),
+            "returning Deferred must release dispatch without an automatic reply"
+        );
+
+        let token = token_slot.lock().unwrap().take().unwrap();
+        token
+            .settle_success(Some(json!({ "captureId": "cap-1" })))
+            .await
+            .unwrap();
+        let replies = f.messaging.replies();
+        assert_eq!(replies.len(), 1);
+        assert_eq!(
+            replies[0].1.header.correlation_id,
+            capture.header.correlation_id
+        );
+        assert_eq!(replies[0].1.body["result"]["captureId"], "cap-1");
+    }
+
+    #[tokio::test]
+    async fn post_accept_continuation_runs_only_after_the_open_token_is_accepted() {
+        let f = fixture();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let started_tx = Arc::new(Mutex::new(Some(started_tx)));
+        let started_tx_handler = started_tx.clone();
+        f.inbox
+            .register_outcome(
+                "sb/capture",
+                outcome_handler(move |request, deferred| {
+                    let started_tx = started_tx_handler.clone();
+                    async move {
+                        let token = match deferred.defer(&request, Duration::from_secs(2)) {
+                            Ok(token) => token,
+                            Err(error) => return CommandOutcome::ImmediateError(error),
+                        };
+                        if let Err(error) = token.activate() {
+                            return CommandOutcome::ImmediateError(CommandError::handler_error(
+                                error.to_string(),
+                            ));
+                        }
+                        let settlement = token.clone();
+                        CommandOutcome::deferred_with_continuation(token, async move {
+                            if let Some(sender) =
+                                started_tx.lock().ok().and_then(|mut slot| slot.take())
+                            {
+                                let _ = sender.send(());
+                            }
+                            let _ = settlement
+                                .settle_success(Some(json!({ "captureId": "cap-post-accept" })))
+                                .await;
+                            Ok(())
+                        })
+                    }
+                }),
+            )
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(&topic("sb/capture"), request("sb/capture"))
+            .await;
+
+        tokio::time::timeout(Duration::from_secs(1), started_rx)
+            .await
+            .expect("the inbox-owned continuation should start")
+            .expect("the continuation should report its start");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if !f.messaging.replies().is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the continuation should settle through the guarded token");
+        assert_eq!(
+            only_reply_body(&f.messaging),
+            json!({ "ok": true, "result": { "captureId": "cap-post-accept" } })
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_post_accept_token_never_starts_its_continuation() {
+        let f = fixture();
+        let ran = Arc::new(AtomicBool::new(false));
+        let ran_handler = ran.clone();
+        f.inbox
+            .register_outcome(
+                "sb/capture",
+                outcome_handler(move |request, deferred| {
+                    let ran = ran_handler.clone();
+                    async move {
+                        let token = match deferred.defer(&request, Duration::from_secs(2)) {
+                            Ok(token) => token,
+                            Err(error) => return CommandOutcome::ImmediateError(error),
+                        };
+                        // Intentionally leave the token PROVISIONAL. The inbox must reject it
+                        // before the continuation can run.
+                        CommandOutcome::deferred_with_continuation(token, async move {
+                            ran.store(true, Ordering::SeqCst);
+                            Ok(())
+                        })
+                    }
+                }),
+            )
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(&topic("sb/capture"), request("sb/capture"))
+            .await;
+        tokio::task::yield_now().await;
+
+        assert!(!ran.load(Ordering::SeqCst));
+        assert_eq!(
+            only_reply_body(&f.messaging)["error"]["code"],
+            ERR_INVALID_DEFERRED_TOKEN
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_post_accept_continuation_settles_through_the_guarded_error_path() {
+        let f = fixture();
+        f.inbox
+            .register_outcome(
+                "sb/capture",
+                outcome_handler(|request, deferred| async move {
+                    let token = match deferred.defer(&request, Duration::from_secs(2)) {
+                        Ok(token) => token,
+                        Err(error) => return CommandOutcome::ImmediateError(error),
+                    };
+                    if let Err(error) = token.activate() {
+                        return CommandOutcome::ImmediateError(CommandError::handler_error(
+                            error.to_string(),
+                        ));
+                    }
+                    CommandOutcome::deferred_with_continuation(token, async move {
+                        Err(CommandError::new(
+                            "CAMERA_FAILED",
+                            "simulated camera worker failure",
+                        ))
+                    })
+                }),
+            )
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(&topic("sb/capture"), request("sb/capture"))
+            .await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if !f.messaging.replies().is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("failed continuation should settle through the guarded token");
+        assert_eq!(
+            only_reply_body(&f.messaging)["error"]["code"],
+            "CAMERA_FAILED"
+        );
+    }
+
+    #[tokio::test]
+    async fn provisional_token_returned_as_deferred_is_rejected_and_discarded() {
+        let f = fixture();
+        f.inbox
+            .register_outcome(
+                "sb/capture",
+                outcome_handler(|request, deferred| async move {
+                    let token = deferred.defer(&request, Duration::from_secs(1)).unwrap();
+                    CommandOutcome::Deferred(token)
+                }),
+            )
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(&topic("sb/capture"), request("sb/capture"))
+            .await;
+
+        assert_eq!(
+            only_reply_body(&f.messaging)["error"]["code"],
+            ERR_INVALID_DEFERRED_TOKEN
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_outcome_does_not_discard_an_unrelated_provisional_token() {
+        let f = fixture();
+        let unrelated_request = request("sb/other");
+        let unrelated = f
+            .inbox
+            .defer(&unrelated_request, Duration::from_secs(1))
+            .unwrap();
+        let returned = unrelated.clone();
+        f.inbox
+            .register_outcome(
+                "sb/capture",
+                outcome_handler(move |_request, _deferred| {
+                    let returned = returned.clone();
+                    async move { CommandOutcome::Deferred(returned) }
+                }),
+            )
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(&topic("sb/capture"), request("sb/capture"))
+            .await;
+
+        assert_eq!(
+            only_reply_body(&f.messaging)["error"]["code"],
+            ERR_INVALID_DEFERRED_TOKEN
+        );
+        unrelated
+            .discard()
+            .expect("the unrelated provisional token must remain untouched");
+    }
+
+    #[tokio::test]
+    async fn cloned_deferred_tokens_can_settle_at_most_once() {
+        let f = fixture();
+        let request = request("sb/capture");
+        let token = f.inbox.defer(&request, Duration::from_secs(1)).unwrap();
+        token.activate().unwrap();
+        let other = token.clone();
+
+        let (first, second) = tokio::join!(
+            token.settle_success(Some(json!({ "winner": 1 }))),
+            other.settle_success(Some(json!({ "winner": 2 })))
+        );
+
+        assert_ne!(first.is_ok(), second.is_ok(), "exactly one CAS winner");
+        let loser = first.err().or_else(|| second.err()).unwrap();
+        assert_eq!(
+            loser.to_string(),
+            "command error: deferred reply is already being settled or has settled"
+        );
+        assert_eq!(f.messaging.replies().len(), 1, "exactly one reply");
+    }
+
+    #[tokio::test]
+    async fn deferred_settlement_retries_confirmed_reply_until_success() {
+        let f = fixture();
+        f.messaging.fail_next_confirmed(2);
+        let request = request("sb/capture");
+        let token = f.inbox.defer(&request, Duration::from_secs(2)).unwrap();
+        token.activate().unwrap();
+
+        token
+            .settle_success(Some(json!({ "captureId": "cap-retry" })))
+            .await
+            .unwrap();
+
+        assert_eq!(f.messaging.replies().len(), 1);
+        assert_eq!(
+            f.messaging.replies()[0].1.body["result"]["captureId"],
+            "cap-retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn open_deferred_token_expires_by_timer() {
+        let f = fixture();
+        let request = request("sb/capture");
+        let token = f.inbox.defer(&request, Duration::from_millis(20)).unwrap();
+        token.activate().unwrap();
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(token.settle_success(None).await.is_err());
+        assert!(f.messaging.replies().is_empty());
+    }
+
+    #[tokio::test]
+    async fn deferred_registry_is_bounded_to_1024_entries() {
+        let f = fixture();
+        let request = request("sb/capture");
+        let mut tokens = Vec::with_capacity(DEFERRED_REPLY_CAPACITY);
+        for _ in 0..DEFERRED_REPLY_CAPACITY {
+            tokens.push(f.inbox.defer(&request, Duration::from_secs(60)).unwrap());
+        }
+
+        let error = f
+            .inbox
+            .defer(&request, Duration::from_secs(60))
+            .unwrap_err();
+        assert_eq!(error.code, ERR_DEFERRED_CAPACITY);
+        for token in tokens {
+            token.discard().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_attempts_component_stopping_reply_then_cancels_open_token() {
+        let f = fixture();
+        let request = request("sb/capture");
+        let token = f.inbox.defer(&request, Duration::from_secs(2)).unwrap();
+        token.activate().unwrap();
+
+        f.inbox.shutdown_deferred().await;
+
+        let body = only_reply_body(&f.messaging);
+        assert_eq!(body["error"]["code"], ERR_COMPONENT_STOPPING);
+        assert!(token.settle_success(None).await.is_err());
+        assert_eq!(
+            f.inbox
+                .defer(&request, Duration::from_secs(1))
+                .unwrap_err()
+                .code,
+            ERR_COMPONENT_STOPPING
+        );
+    }
+
     // ===================== unknown / fire-and-forget / malformed =====================
 
     #[tokio::test]
@@ -1529,6 +2540,178 @@ mod tests {
             .simulate_message(&topic(PING), request(PING))
             .await;
         assert!(f.messaging.replies().is_empty());
+    }
+
+    #[tokio::test]
+    async fn acknowledged_start_gates_pre_active_deliveries_in_order() {
+        let f = fixture();
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_handler = observed.clone();
+        f.inbox
+            .register(
+                "capture",
+                command_handler(move |request| {
+                    let observed = observed_handler.clone();
+                    async move {
+                        observed
+                            .lock()
+                            .unwrap()
+                            .push(request.body["seq"].as_u64().unwrap());
+                        Ok(None)
+                    }
+                }),
+            )
+            .unwrap();
+        f.messaging
+            .block_subscribe_ack
+            .store(true, Ordering::SeqCst);
+        *f.messaging.deliver_during_subscribe_ack.lock().unwrap() = (0..6)
+            .map(|seq| {
+                (
+                    topic("capture"),
+                    MessageBuilder::new("capture", "1.0")
+                        .payload(json!({ "seq": seq }))
+                        .build(),
+                )
+            })
+            .collect();
+
+        let inbox = f.inbox.clone();
+        let start = tokio::spawn(async move { inbox.start().await });
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            f.messaging.subscribe_ack_entered.notified(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            f.inbox.startup_status().state,
+            CommandInboxStartupState::Starting
+        );
+        assert!(observed.lock().unwrap().is_empty());
+
+        f.messaging.subscribe_ack_release.notify_one();
+        assert_eq!(start.await.unwrap().state, CommandInboxStartupState::Active);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if observed.lock().unwrap().len() == 6 {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(*observed.lock().unwrap(), vec![0, 1, 2, 3, 4, 5]);
+    }
+
+    #[tokio::test]
+    async fn activation_gate_is_strictly_bounded_and_drops_newest() {
+        let f = fixture();
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_handler = observed.clone();
+        f.inbox
+            .register(
+                "capture",
+                command_handler(move |request| {
+                    let observed = observed_handler.clone();
+                    async move {
+                        observed
+                            .lock()
+                            .unwrap()
+                            .push(request.body["seq"].as_u64().unwrap());
+                        Ok(None)
+                    }
+                }),
+            )
+            .unwrap();
+        f.messaging
+            .block_subscribe_ack
+            .store(true, Ordering::SeqCst);
+        *f.messaging.deliver_during_subscribe_ack.lock().unwrap() = (0
+            ..=MAX_PENDING_STARTUP_DELIVERIES)
+            .map(|seq| {
+                (
+                    topic("capture"),
+                    MessageBuilder::new("capture", "1.0")
+                        .payload(json!({ "seq": seq }))
+                        .build(),
+                )
+            })
+            .collect();
+
+        let inbox = f.inbox.clone();
+        let start = tokio::spawn(async move { inbox.start().await });
+        f.messaging.subscribe_ack_entered.notified().await;
+        f.messaging.subscribe_ack_release.notify_one();
+        assert_eq!(start.await.unwrap().state, CommandInboxStartupState::Active);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if observed.lock().unwrap().len() == MAX_PENDING_STARTUP_DELIVERIES {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            *observed.lock().unwrap(),
+            (0..MAX_PENDING_STARTUP_DELIVERIES as u64).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_during_ack_invalidates_generation_and_restart_is_clean() {
+        let f = fixture();
+        f.messaging
+            .block_subscribe_ack
+            .store(true, Ordering::SeqCst);
+        let inbox = f.inbox.clone();
+        let start = tokio::spawn(async move { inbox.start().await });
+        f.messaging.subscribe_ack_entered.notified().await;
+
+        assert_eq!(
+            f.inbox.stop().await.state,
+            CommandInboxStartupState::Stopped
+        );
+        f.messaging.subscribe_ack_release.notify_one();
+        assert_eq!(
+            start.await.unwrap().state,
+            CommandInboxStartupState::Stopped
+        );
+        assert!(f.messaging.subscribed_topics().is_empty());
+
+        f.messaging
+            .block_subscribe_ack
+            .store(false, Ordering::SeqCst);
+        assert_eq!(
+            f.inbox.clone().start().await.state,
+            CommandInboxStartupState::Active
+        );
+        assert_eq!(
+            f.messaging.subscribed_topics(),
+            [INBOX_FILTER.to_string()].into()
+        );
+    }
+
+    #[tokio::test]
+    async fn ack_failure_is_sanitized_and_retryable() {
+        let f = fixture();
+        *f.messaging.subscribe_ack_failure.lock().unwrap() =
+            Some("token=secret mqtt://user:password@broker\nfailed".to_string());
+        let failed = f.inbox.clone().start().await;
+        assert_eq!(failed.state, CommandInboxStartupState::Failed);
+        assert!(!failed.error.contains("secret"));
+        assert!(!failed.error.contains("user:password"));
+        assert!(!failed.error.contains('\n'));
+        assert!(f.messaging.subscribed_topics().is_empty());
+
+        *f.messaging.subscribe_ack_failure.lock().unwrap() = None;
+        assert_eq!(
+            f.inbox.clone().start().await.state,
+            CommandInboxStartupState::Active
+        );
     }
 }
 

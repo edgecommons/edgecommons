@@ -1,5 +1,6 @@
 import json
 import logging
+import copy
 
 
 class MetricConfiguration:
@@ -104,7 +105,7 @@ class MetricConfiguration:
                     self._interval_secs = self.DEFAULT_INTERVAL_SECS
                 buffer = cw_config.get("buffer")
                 if isinstance(buffer, dict):
-                    self._cloudwatch_buffer = buffer
+                    self._cloudwatch_buffer = copy.deepcopy(buffer)
 
             self.logger.debug(
                 f"Metric configuration: target={self._target}, namespace={self._namespace}, logFileName={self._log_file_name_template}, topic={self._topic}, intervalSecs={self._interval_secs}"
@@ -190,7 +191,7 @@ class MetricConfiguration:
         target (`type: durable|memory`, `path`, `maxDiskBytes`, `onFull`, `fsync`). Absent => the
         legacy in-memory batching path.
         """
-        return self._cloudwatch_buffer
+        return copy.deepcopy(self._cloudwatch_buffer)
 
     def get_destination(self) -> str:
         return self._destination

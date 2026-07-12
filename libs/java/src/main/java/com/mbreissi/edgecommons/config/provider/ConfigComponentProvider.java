@@ -16,6 +16,7 @@ import org.apache.logging.log4j.Logger;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.time.Duration;
 
 /**
  * The {@code CONFIG_COMPONENT} config source: fetches this component's configuration from an
@@ -74,6 +75,7 @@ public final class ConfigComponentProvider extends ConfigProvider {
     /** The sanitized short component name — the body self-identification token (§1.5). */
     private final String componentToken;
     private final MessagingClient messagingClient;
+    private boolean started;
 
 
     /**
@@ -100,7 +102,14 @@ public final class ConfigComponentProvider extends ConfigProvider {
         this.componentToken = ConfigManager.sanitize(shortComponentName(componentName));
         this.source = mintTopic(GET_TOPIC_TEMPLATE, deviceToken, componentToken);
         this.setConfigTopic = mintTopic(SET_CONFIG_TOPIC_TEMPLATE, deviceToken, componentToken);
-        messagingClient.subscribe(setConfigTopic, (topic, msg) -> {
+    }
+
+    @Override
+    public synchronized void start() {
+        if (started) {
+            return;
+        }
+        messagingClient.subscribeAcknowledged(setConfigTopic, (topic, msg) -> {
             ConfigManager manager = parentConfigManager;
             if (manager == null) {
                 // Bootstrap race: the push arrived before the ConfigManager was constructed and
@@ -111,7 +120,16 @@ public final class ConfigComponentProvider extends ConfigProvider {
                 return;
             }
             manager.applyConfigFromProvider((JsonObject) msg.getBody());
-        });
+        }, 1, MessagingClient.DEFAULT_MAX_MESSAGES, Duration.ofSeconds(10));
+        started = true;
+    }
+
+    @Override
+    public synchronized void close() {
+        if (started) {
+            messagingClient.unsubscribe(setConfigTopic);
+            started = false;
+        }
     }
 
     @Override

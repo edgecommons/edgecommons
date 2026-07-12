@@ -8,6 +8,7 @@ from edgecommons.config.manager.config_manager import ConfigManager
 from edgecommons.config.manager.hierarchical_config import (
     HierarchicalConfigError,
     deep_merge_layers,
+    derive_catalog_version,
     parse_config_component_payload,
 )
 
@@ -152,3 +153,216 @@ def test_cli_no_shared_config_flag_is_removed():
             ["--platform", "HOST", "--no-shared-config", "-c", "FILE", "config.json"],
             None,
         )
+
+
+# ===================== client-side bundle/merge validation =====================
+#
+# The JSON vectors above pin the cross-language happy paths and the shared error cases.
+# What follows pins the client-side guards the vectors do not reach: the shapes a buggy
+# or hostile CONFIG_COMPONENT provider could put on the wire, and the merge semantics a
+# component author depends on. Each must surface as a typed HierarchicalConfigError with
+# a code -- never a raw KeyError/TypeError escaping into the component's startup path.
+
+
+def _valid_bundle():
+    return {
+        "lineageVersion": 1,
+        "catalogVersion": "sha256:cafe",
+        "component": "com.example.opcua-adapter",
+        "layers": [
+            {"id": "site", "kind": "scope", "scope": {"site": "plant-1"},
+             "config": {"a": 1}},
+            {"id": "comp", "kind": "component",
+             "component": "com.example.opcua-adapter", "config": {"b": 2}},
+        ],
+    }
+
+
+def _failure(fn, *args):
+    with pytest.raises(HierarchicalConfigError) as exc:
+        fn(*args)
+    return exc.value.code, str(exc.value)
+
+
+class TestDeepMergeLayers:
+    def test_absent_layers_are_skipped_rather_than_failing(self):
+        assert deep_merge_layers([None, {"a": 1}, None, {"b": 2}]) == {"a": 1, "b": 2}
+
+    def test_a_layer_that_is_not_an_object_is_a_typed_error(self):
+        code, message = _failure(deep_merge_layers, [{"a": 1}, ["not", "an", "object"]])
+        assert code == "CONFIG_LAYER_INVALID"
+        assert "JSON object" in message
+
+    def test_later_layers_win_and_inputs_are_never_mutated(self):
+        base = {"nested": {"keep": 1, "override": "old"}, "arr": [1, 2]}
+        top = {"nested": {"override": "new"}, "arr": [3]}
+
+        merged = deep_merge_layers([base, top])
+
+        assert merged == {"nested": {"keep": 1, "override": "new"}, "arr": [3]}, (
+            "objects merge recursively; arrays replace wholesale"
+        )
+        assert base == {"nested": {"keep": 1, "override": "old"}, "arr": [1, 2]}, (
+            "the caller's layer must not be mutated"
+        )
+
+    def test_a_type_conflict_is_reported_to_the_warn_hook_with_both_json_types(self):
+        # An operator overriding a string with a number (etc.) is legal but almost always
+        # a mistake -- this hook is how the component surfaces it.
+        seen = []
+
+        deep_merge_layers(
+            [
+                {"port": "1883", "debug": 1, "retries": True},
+                {"port": 1883, "debug": False, "retries": "3"},
+            ],
+            warn=lambda path, left, right: seen.append((path, left, right)),
+        )
+
+        assert ("$.port", "string", "number") in seen
+        assert ("$.debug", "number", "boolean") in seen
+        assert ("$.retries", "boolean", "string") in seen
+
+    def test_arrays_and_absent_values_do_not_trip_the_conflict_warning(self):
+        seen = []
+
+        deep_merge_layers(
+            [{"arr": [1], "gone": None}, {"arr": {"now": "object"}, "gone": "value"}],
+            warn=lambda *a: seen.append(a),
+        )
+
+        assert seen == [], "list/null transitions are legal replacements, not conflicts"
+
+
+class TestParseConfigComponentPayloadRejectsBadBundles:
+    def test_a_json_string_payload_is_parsed(self):
+        parsed = parse_config_component_payload(json.dumps(_valid_bundle()))
+        assert parsed.catalog_version == "sha256:cafe"
+        assert parsed.component == "com.example.opcua-adapter"
+        assert parsed.configs == [{"a": 1}, {"b": 2}]
+
+    def test_a_malformed_json_string_is_a_typed_error(self):
+        code, message = _failure(parse_config_component_payload, "{not json")
+        assert code == "LINEAGE_BUNDLE_INVALID"
+        assert "malformed JSON" in message
+
+    @pytest.mark.parametrize("payload", [["a", "list"], 42, None])
+    def test_a_payload_that_is_not_an_object_is_a_typed_error(self, payload):
+        code, _ = _failure(parse_config_component_payload, payload)
+        assert code == "LINEAGE_BUNDLE_INVALID"
+
+    def test_a_structured_provider_error_surfaces_its_own_code(self):
+        code, message = _failure(
+            parse_config_component_payload,
+            {"ok": False,
+             "error": {"code": "CATALOG_UNAVAILABLE", "message": "no catalog"}},
+        )
+        assert code == "CATALOG_UNAVAILABLE"
+        assert message == "no catalog"
+
+    def test_an_unversioned_bundle_is_rejected(self):
+        bundle = _valid_bundle()
+        del bundle["lineageVersion"]
+        code, message = _failure(parse_config_component_payload, bundle)
+        assert code == "LINEAGE_BUNDLE_INVALID"
+        assert "lineageVersion 1" in message
+
+    @pytest.mark.parametrize("catalog_version", ["", 1, None])
+    def test_a_bundle_without_a_usable_catalog_version_is_rejected(self, catalog_version):
+        # The catalog version pins a deployment to an exact config; a blank one would
+        # make that pin unverifiable.
+        bundle = _valid_bundle()
+        bundle["catalogVersion"] = catalog_version
+        code, message = _failure(parse_config_component_payload, bundle)
+        assert code == "LINEAGE_BUNDLE_INVALID"
+        assert "catalogVersion" in message
+
+    @pytest.mark.parametrize("component", ["", 7, None])
+    def test_a_bundle_without_a_usable_component_is_rejected(self, component):
+        bundle = _valid_bundle()
+        bundle["component"] = component
+        code, message = _failure(parse_config_component_payload, bundle)
+        assert code == "LINEAGE_BUNDLE_INVALID"
+        assert "component" in message
+
+    def test_a_layer_that_is_not_an_object_is_rejected_with_its_index(self):
+        bundle = _valid_bundle()
+        bundle["layers"] = ["nope", bundle["layers"][1]]
+        code, message = _failure(parse_config_component_payload, bundle)
+        assert code == "LINEAGE_BUNDLE_INVALID"
+        assert "index 0" in message
+
+    def test_the_component_layer_must_be_final(self):
+        # A lineage whose last word is a scope would let a broader scope override the
+        # component's own config -- precedence inverted.
+        bundle = _valid_bundle()
+        bundle["layers"] = [bundle["layers"][1], bundle["layers"][0]]
+        code, message = _failure(parse_config_component_payload, bundle)
+        assert code == "LINEAGE_BUNDLE_INVALID"
+        assert "component layer must be final" in message
+
+    def test_a_lineage_that_never_reaches_the_component_is_rejected(self):
+        bundle = _valid_bundle()
+        bundle["layers"] = [bundle["layers"][0]]
+        code, message = _failure(parse_config_component_payload, bundle)
+        assert code == "LINEAGE_BUNDLE_INVALID"
+        assert "final layer must be kind 'component'" in message
+
+    def test_a_component_layer_naming_a_different_component_is_rejected(self):
+        bundle = _valid_bundle()
+        bundle["layers"][1]["component"] = "com.example.other"
+        code, message = _failure(parse_config_component_payload, bundle)
+        assert code == "LINEAGE_BUNDLE_INVALID"
+        assert "does not match bundle component" in message
+
+    def test_a_component_layer_scope_must_still_be_an_object_when_present(self):
+        bundle = _valid_bundle()
+        bundle["layers"][1]["scope"] = "plant-1"
+        code, message = _failure(parse_config_component_payload, bundle)
+        assert code == "LINEAGE_BUNDLE_INVALID"
+        assert "scope must be a JSON object when present" in message
+
+    def test_a_scope_layer_without_an_object_scope_is_rejected(self):
+        bundle = _valid_bundle()
+        bundle["layers"][0]["scope"] = "plant-1"
+        code, message = _failure(parse_config_component_payload, bundle)
+        assert code == "LINEAGE_BUNDLE_INVALID"
+        assert "must contain object scope" in message
+
+    @pytest.mark.parametrize("kind", ["site", "", None])
+    def test_an_unknown_layer_kind_is_rejected(self, kind):
+        bundle = _valid_bundle()
+        bundle["layers"][0]["kind"] = kind
+        code, message = _failure(parse_config_component_payload, bundle)
+        assert code == "LINEAGE_BUNDLE_INVALID"
+        assert "kind 'scope' or 'component'" in message
+
+    def test_a_layer_config_that_is_not_an_object_is_rejected(self):
+        bundle = _valid_bundle()
+        bundle["layers"][0]["config"] = ["a"]
+        code, message = _failure(parse_config_component_payload, bundle)
+        assert code == "LINEAGE_BUNDLE_INVALID"
+        assert "config must be a JSON object" in message
+
+    def test_the_parsed_layers_are_copies_so_a_caller_cannot_mutate_the_bundle(self):
+        bundle = _valid_bundle()
+        parsed = parse_config_component_payload(bundle)
+
+        parsed.layers[0]["config"]["a"] = "tampered"
+
+        assert bundle["layers"][0]["config"]["a"] == 1
+
+
+class TestDeriveCatalogVersion:
+    def test_it_is_a_stable_content_digest_independent_of_key_order(self):
+        one = derive_catalog_version({"a": 1, "b": 2}, "")
+        two = derive_catalog_version({"b": 2, "a": 1}, "")
+        assert one == two, "the digest must not depend on dict ordering"
+        assert one.startswith("sha256:")
+
+    def test_a_different_catalog_yields_a_different_digest(self):
+        assert derive_catalog_version({"a": 1}, "") != derive_catalog_version({"a": 2}, "")
+
+    def test_a_source_uri_is_prefixed_onto_the_digest(self):
+        version = derive_catalog_version({"a": 1}, "s3://bucket/catalog.json")
+        assert version.startswith("s3://bucket/catalog.json#sha256:")

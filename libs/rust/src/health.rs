@@ -63,6 +63,8 @@ const READ_TIMEOUT: Duration = Duration::from_secs(2);
 pub struct HealthState {
     /// The app-controllable readiness flag (defaults to `true`).
     ready: Arc<AtomicBool>,
+    /// Required command-plane gate. Builder runtimes seed this false until acknowledged startup.
+    command_plane_ready: Arc<AtomicBool>,
     /// Set `true` at the start of the shutdown/SIGTERM path so `/readyz` flips to 503 at once.
     shutting_down: Arc<AtomicBool>,
     /// Messaging handle for the connected() query; `None` when no messaging is wired (→ not ready).
@@ -75,8 +77,21 @@ impl HealthState {
     /// `ready` starts `true` and `shutting_down` starts `false`, so readiness is gated only by the
     /// messaging connection until the app calls [`Self::set_ready`] or shutdown begins.
     pub fn new(messaging: Option<Arc<dyn MessagingService>>) -> Self {
+        Self::new_with_initial(messaging, true, true)
+    }
+
+    /// Build with explicit application and command-plane readiness seeds.
+    ///
+    /// Runtime construction uses `command_plane_ready = false` before the health endpoint starts,
+    /// preventing a transient ready response before the command subscription is acknowledged.
+    pub(crate) fn new_with_initial(
+        messaging: Option<Arc<dyn MessagingService>>,
+        initial_ready: bool,
+        command_plane_ready: bool,
+    ) -> Self {
         Self {
-            ready: Arc::new(AtomicBool::new(true)),
+            ready: Arc::new(AtomicBool::new(initial_ready)),
+            command_plane_ready: Arc::new(AtomicBool::new(command_plane_ready)),
             shutting_down: Arc::new(AtomicBool::new(false)),
             messaging,
         }
@@ -85,6 +100,11 @@ impl HealthState {
     /// Set the app-controlled readiness flag (the `readyFlag` of the readiness model). Idempotent.
     pub fn set_ready(&self, ready: bool) {
         self.ready.store(ready, Ordering::SeqCst);
+    }
+
+    /// Update the required command-plane gate after STARTING/ACTIVE/FAILED/STOPPED transitions.
+    pub(crate) fn set_command_plane_ready(&self, ready: bool) {
+        self.command_plane_ready.store(ready, Ordering::SeqCst);
     }
 
     /// Mark the runtime as shutting down so `/readyz` returns 503 immediately. Idempotent.
@@ -116,6 +136,7 @@ impl HealthState {
     pub fn readyz_ok(&self) -> bool {
         self.messaging_connected()
             && self.ready.load(Ordering::SeqCst)
+            && self.command_plane_ready.load(Ordering::SeqCst)
             && !self.shutting_down.load(Ordering::SeqCst)
     }
 }
@@ -366,6 +387,25 @@ mod tests {
     fn readyz_is_503_when_no_messaging_wired() {
         let state = HealthState::new(None);
         assert!(!state.readyz_ok(), "an unwired runtime is not ready");
+    }
+
+    #[test]
+    fn explicit_initial_and_command_plane_gates_prevent_startup_ready_flicker() {
+        let messaging = RecordingMessaging::new();
+        messaging.set_connected(true);
+        let svc: Arc<dyn MessagingService> = messaging;
+        let state = HealthState::new_with_initial(Some(svc), false, false);
+
+        assert!(!state.readyz_ok());
+        state.set_command_plane_ready(true);
+        assert!(!state.readyz_ok(), "application gate is still false");
+        state.set_ready(true);
+        assert!(state.readyz_ok());
+        state.set_command_plane_ready(false);
+        assert!(
+            !state.readyz_ok(),
+            "STOPPED/FAILED command plane must remove readiness"
+        );
     }
 
     #[test]

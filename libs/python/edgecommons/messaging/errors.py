@@ -1,5 +1,6 @@
-"""Messaging error types for the UNS reserved-class publish guard and the
-framework-owned ``request()`` deadline (UNS-CANONICAL-DESIGN §4/§5, D-U23)."""
+"""Messaging error types for guarded requests and confirmed publication."""
+
+from enum import Enum
 
 
 class ReservedTopicError(ValueError):
@@ -30,3 +31,29 @@ class RequestTimeoutError(TimeoutError):
     ``request()`` deadline fires before a reply arrives (UNS-CANONICAL-DESIGN §5,
     D-U5/D-U23). The deadline winner has already cleaned up the ephemeral reply
     subscription and removed the pending entry; a retry must issue a FRESH request."""
+
+
+class PublishConfirmationReason(Enum):
+    """Why a strict publish did not produce positive delivery evidence."""
+
+    TIMEOUT = "TIMEOUT"
+    TRANSPORT_ERROR = "TRANSPORT_ERROR"
+    INTERRUPTED = "INTERRUPTED"
+
+
+class PublishConfirmationError(RuntimeError):
+    """A strict publish whose transport acknowledgement was not observed.
+
+    The caller must treat delivery as unsuccessful or ambiguous and may retry the
+    exact same serialized envelope.  In particular, a timeout is never success.
+    """
+
+    def __init__(
+        self,
+        reason: PublishConfirmationReason,
+        message: str,
+    ):
+        if not isinstance(reason, PublishConfirmationReason):
+            raise ValueError("reason must be a PublishConfirmationReason")
+        super().__init__(message)
+        self.reason = reason

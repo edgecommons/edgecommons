@@ -204,6 +204,7 @@ class ConfigMapConfigProviderTest {
         ConfigMapConfigProvider provider =
                 new ConfigMapConfigProvider(cm, mount.toString(), "config.json");
         try {
+            provider.start();
             Thread.sleep(2_000); // let the directory watch arm before mutating
             write(key, configJson(2));
             Thread.sleep(1_500);
@@ -241,6 +242,7 @@ class ConfigMapConfigProviderTest {
                 new ConfigMapConfigProvider(cm, mount.toString(), "config.json");
         try {
             assertEquals(1, provider.loadConfiguration().get("version").getAsInt());
+            provider.start();
             Thread.sleep(2_000); // let the directory watch arm before the swap
 
             // Kubelet swap: new timestamped dir, stage ..data_tmp -> it, atomic rename onto ..data.

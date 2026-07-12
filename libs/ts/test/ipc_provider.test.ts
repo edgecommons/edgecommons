@@ -33,6 +33,121 @@ describe("IpcMessagingProvider (fake client)", () => {
     expect(client.publishedIot[0].topicName).toBe("iot/topic");
   });
 
+  it("strict local publish waits for Greengrass operation completion and preserves exact bytes", async () => {
+    const client = new FakeIpcClient();
+    let complete!: (value: unknown) => void;
+    client.publishToTopic = (req) => {
+      client.publishedTopic.push({
+        topic: req.topic,
+        message: req.publishMessage.binaryMessage?.message as Buffer,
+      });
+      return new Promise((resolve) => {
+        complete = resolve;
+      });
+    };
+    const p = provider(client);
+    const exact = Buffer.from([0, 1, 2, 255]);
+    let settled = false;
+    const pending = p
+      .publishBytesConfirmed("local/confirmed", exact, Destination.Local, Qos.AtLeastOnce, 1_000)
+      .then(() => {
+        settled = true;
+      });
+    exact.fill(7);
+    await tick();
+
+    expect(settled).toBe(false);
+    expect(client.publishedTopic[0].message.equals(Buffer.from([0, 1, 2, 255]))).toBe(true);
+    complete({});
+    await pending;
+    expect(settled).toBe(true);
+  });
+
+  it("strict northbound publish forces QoS1 and waits for operation completion", async () => {
+    const client = new FakeIpcClient();
+    let complete!: (value: unknown) => void;
+    client.publishToIoTCore = (req) => {
+      client.publishedIot.push(req);
+      return new Promise((resolve) => {
+        complete = resolve;
+      });
+    };
+    const p = provider(client);
+    const pending = p.publishBytesConfirmed(
+      "iot/confirmed",
+      Buffer.from("exact"),
+      Destination.Northbound,
+      Qos.AtLeastOnce,
+      1_000,
+    );
+    await tick();
+    expect(client.publishedIot).toHaveLength(1);
+    expect(client.publishedIot[0].qos).toBe(model.QOS.AT_LEAST_ONCE);
+    complete({});
+    await pending;
+  });
+
+  it("strict publish reports operation rejection, synchronous start failure, and timeout", async () => {
+    const rejectedClient = new FakeIpcClient();
+    rejectedClient.publishToTopic = async () => {
+      throw new Error("nucleus rejected operation");
+    };
+    await expect(
+      provider(rejectedClient).publishBytesConfirmed(
+        "local/rejected",
+        Buffer.from("x"),
+        Destination.Local,
+        Qos.AtLeastOnce,
+        100,
+      ),
+    ).rejects.toMatchObject({ reason: "transport" });
+
+    const throwingClient = new FakeIpcClient();
+    throwingClient.publishToTopic = (() => {
+      throw new Error("socket closed while starting");
+    }) as FakeIpcClient["publishToTopic"];
+    await expect(
+      provider(throwingClient).publishBytesConfirmed(
+        "local/start-failed",
+        Buffer.from("x"),
+        Destination.Local,
+        Qos.AtLeastOnce,
+        100,
+      ),
+    ).rejects.toMatchObject({ reason: "transport" });
+
+    const timeoutClient = new FakeIpcClient();
+    timeoutClient.publishToTopic = () => new Promise(() => undefined);
+    await expect(
+      provider(timeoutClient).publishBytesConfirmed(
+        "local/timeout",
+        Buffer.from("x"),
+        Destination.Local,
+        Qos.AtLeastOnce,
+        20,
+      ),
+    ).rejects.toMatchObject({ reason: "timeout" });
+  });
+
+  it("strict publish rejects non-QoS1, post-disconnect use, and bounded-capacity overflow", async () => {
+    const client = new FakeIpcClient();
+    const p = provider(client);
+    await expect(
+      p.publishBytesConfirmed("local/x", Buffer.from("x"), Destination.Local, Qos.AtMostOnce, 100),
+    ).rejects.toThrow(/QoS 1/);
+
+    (p as unknown as { confirmedInFlight: number }).confirmedInFlight = 1024;
+    await expect(
+      p.publishBytesConfirmed("local/x", Buffer.from("x"), Destination.Local, Qos.AtLeastOnce, 100),
+    ).rejects.toMatchObject({ reason: "backpressure" });
+    (p as unknown as { confirmedInFlight: number }).confirmedInFlight = 0;
+
+    await p.disconnect();
+    await expect(
+      p.publishBytesConfirmed("local/x", Buffer.from("x"), Destination.Local, Qos.AtLeastOnce, 100),
+    ).rejects.toMatchObject({ reason: "transport" });
+  });
+
   it("rejects QoS 2 for Greengrass IoT Core IPC publish and subscribe", async () => {
     const client = new FakeIpcClient();
     const p = provider(client);

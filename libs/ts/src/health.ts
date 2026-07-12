@@ -43,6 +43,8 @@ import { logger } from "./logging";
  */
 export class ReadinessState {
   private readyFlag = true;
+  /** Library-owned readiness gates, kept separate from the application's ready flag. */
+  private dependenciesReady = true;
   private shuttingDown = false;
 
   /**
@@ -57,6 +59,11 @@ export class ReadinessState {
    */
   setReady(ready: boolean): void {
     this.readyFlag = ready;
+  }
+
+  /** @internal Set readiness of required library-owned infrastructure. */
+  setDependenciesReady(ready: boolean): void {
+    this.dependenciesReady = ready;
   }
 
   /** Begin shutdown: flip the shutting-down flag so `/readyz` returns 503 immediately (FR-HB-2). */
@@ -74,7 +81,7 @@ export class ReadinessState {
    * `messagingConnected() && readyFlag && !shuttingDown`.
    */
   isReady(): boolean {
-    return this.messagingConnected() && this.readyFlag && !this.shuttingDown;
+    return this.messagingConnected() && this.readyFlag && this.dependenciesReady && !this.shuttingDown;
   }
 }
 

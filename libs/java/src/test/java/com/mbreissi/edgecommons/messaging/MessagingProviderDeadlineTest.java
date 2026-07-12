@@ -237,4 +237,47 @@ class MessagingProviderDeadlineTest {
         assertEquals(2, cleanups.get());
         p.close();
     }
+
+    @Test
+    void aFailingCleanupStillTimesOutTheCaller() throws Exception {
+        // The cleanup is provider-supplied (unsubscribe + pending-entry removal). If it blows up,
+        // the caller must still be released with a TimeoutException — a broken unsubscribe must
+        // never strand a request on a reply that is no longer coming.
+        NoopProvider p = new NoopProvider();
+        ReplyFuture future = new ReplyFuture("edgecommons/reply-badcleanup");
+
+        p.armRequestDeadline(future, Duration.ofMillis(50), () -> {
+            throw new IllegalStateException("unsubscribe failed");
+        });
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!future.isDone() && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        assertTrue(future.isCompletedExceptionally(),
+                "a failing cleanup must not suppress the deadline");
+        ExecutionException ex = assertThrows(ExecutionException.class, future::get);
+        assertInstanceOf(TimeoutException.class, ex.getCause());
+        p.close();
+    }
+
+    @Test
+    void aRequestArmedWhileTheProviderIsClosingProceedsWithoutADeadline() throws Exception {
+        // Shutdown races an in-flight request: the deadline scheduler is already gone, so no timer
+        // can be armed. Arming must degrade to "no deadline" rather than throwing the shutdown's
+        // RejectedExecutionException back at the caller.
+        NoopProvider p = new NoopProvider();
+        ReplyFuture warmUp = new ReplyFuture("edgecommons/reply-warmup");
+        p.armRequestDeadline(warmUp, Duration.ofMillis(20), () -> { });
+        p.close();
+
+        ReplyFuture late = new ReplyFuture("edgecommons/reply-late");
+        AtomicInteger cleanups = new AtomicInteger();
+        assertDoesNotThrow(() -> p.armRequestDeadline(late, Duration.ofMillis(20),
+                cleanups::incrementAndGet));
+
+        Thread.sleep(150);
+        assertFalse(late.isDone(), "no deadline could be armed, so nothing times the request out");
+        assertEquals(0, cleanups.get());
+    }
 }

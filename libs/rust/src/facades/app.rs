@@ -14,13 +14,14 @@
 //! **rejected** (same reasoning as `events()`).
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::Value;
 
 use crate::config::model::Config;
 use crate::config::template::sanitize;
 use crate::error::{EdgeCommonsError, Result};
-use crate::messaging::message::MessageBuilder;
+use crate::messaging::message::{Message, MessageBuilder};
 use crate::messaging::{MessagingService, Qos};
 use crate::uns::{Uns, UnsClass};
 
@@ -28,6 +29,60 @@ use super::Channel;
 
 /// The app envelope header version (the header `name` is the caller's chosen name).
 pub const APP_MESSAGE_VERSION: &str = "1.0";
+
+/// A correlation source for [`AppFacade::prepare_correlated`].
+///
+/// Construct it implicitly from a received [`Message`], `&str`, or [`String`]. A request supplies
+/// its standard envelope correlation id; no request body or reply path is retained.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppCorrelation(String);
+
+impl From<&Message> for AppCorrelation {
+    fn from(request: &Message) -> Self {
+        Self(request.header.correlation_id.clone())
+    }
+}
+
+impl From<&str> for AppCorrelation {
+    fn from(correlation_id: &str) -> Self {
+        Self(correlation_id.to_string())
+    }
+}
+
+impl From<String> for AppCorrelation {
+    fn from(correlation_id: String) -> Self {
+        Self(correlation_id)
+    }
+}
+
+/// One immutable application message ready for ordinary or confirmed publication.
+///
+/// `encoded` is produced exactly once from `message`. Confirmed prepared publication sends these
+/// bytes verbatim, which lets a durable outbox persist and retry one stable envelope UUID without
+/// rebuilding or reserializing it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedAppMessage {
+    topic: String,
+    message: Message,
+    encoded: Vec<u8>,
+}
+
+impl PreparedAppMessage {
+    /// The final `app/{channel}` topic.
+    pub fn topic(&self) -> &str {
+        &self.topic
+    }
+
+    /// The identity- and correlation-stamped envelope.
+    pub fn message(&self) -> &Message {
+        &self.message
+    }
+
+    /// The exact protobuf envelope bytes used by confirmed publication.
+    pub fn encoded(&self) -> &[u8] {
+        &self.encoded
+    }
+}
 
 /// The `app()` publish facade bound to one instance — see the [module docs](self). Obtain via
 /// [`crate::EdgeCommonsInstance::app`] (or the `main`-instance convenience [`crate::EdgeCommons::app`]).
@@ -65,7 +120,8 @@ impl AppFacade {
         channel: impl Into<String>,
         body: Value,
     ) -> Result<()> {
-        self.publish_via(name, channel, body, None).await
+        let prepared = self.prepare(name, channel, body)?;
+        self.publish_prepared(&prepared).await
     }
 
     /// [`Self::publish`] with an explicit LOCAL/NORTHBOUND routing.
@@ -79,8 +135,49 @@ impl AppFacade {
         body: Value,
         routing: Option<Channel>,
     ) -> Result<()> {
-        let name = name.into();
-        let channel = channel.into();
+        let prepared = self.prepare(name, channel, body)?;
+        self.publish_prepared_via(&prepared, routing).await
+    }
+
+    /// Build and serialize one local application message without publishing it.
+    ///
+    /// The returned [`PreparedAppMessage`] owns the exact bytes used by confirmed publication.
+    pub fn prepare(
+        &self,
+        name: impl Into<String>,
+        channel: impl Into<String>,
+        body: Value,
+    ) -> Result<PreparedAppMessage> {
+        self.prepare_inner(name.into(), channel.into(), body, None)
+    }
+
+    /// Build and serialize one application message with an explicit correlation source.
+    ///
+    /// `correlation` accepts either a received request (`&Message`) or an explicit correlation id
+    /// (`&str`/`String`). The supplied value is stamped on the standard envelope header.
+    pub fn prepare_correlated(
+        &self,
+        name: impl Into<String>,
+        channel: impl Into<String>,
+        body: Value,
+        correlation: impl Into<AppCorrelation>,
+    ) -> Result<PreparedAppMessage> {
+        let correlation = correlation.into().0;
+        if correlation.is_empty() {
+            return Err(EdgeCommonsError::Facade(
+                "app correlation id must be non-empty".to_string(),
+            ));
+        }
+        self.prepare_inner(name.into(), channel.into(), body, Some(correlation))
+    }
+
+    fn prepare_inner(
+        &self,
+        name: String,
+        channel: String,
+        body: Value,
+        correlation_id: Option<String>,
+    ) -> Result<PreparedAppMessage> {
         if name.is_empty() {
             return Err(EdgeCommonsError::Facade(
                 "app publish requires a non-empty header name".to_string(),
@@ -91,38 +188,101 @@ impl AppFacade {
                 "app publish requires a non-empty channel".to_string(),
             ));
         }
-        if routing.as_ref().is_some_and(Channel::is_stream) {
-            return Err(EdgeCommonsError::Facade(
-                "app() does not support the stream channel - use data() for streamed telemetry"
-                    .to_string(),
-            ));
-        }
         let token = channel
             .split('/')
             .map(sanitize)
             .collect::<Vec<_>>()
             .join("/");
         let topic = self.uns.topic_with_channel(UnsClass::App, &token)?;
-        let msg = MessageBuilder::new(name, APP_MESSAGE_VERSION)
+        let mut builder = MessageBuilder::new(name, APP_MESSAGE_VERSION)
             .from_config(&self.config)
             .instance(self.instance_id.clone())
-            .payload(body)
-            .build();
+            .payload(body);
+        if let Some(correlation_id) = correlation_id {
+            builder = builder.correlation_id(correlation_id);
+        }
+        let message = builder.build();
+        let encoded = message.to_vec()?;
+        Ok(PreparedAppMessage {
+            topic,
+            message,
+            encoded,
+        })
+    }
+
+    /// Publish a prepared message locally using the legacy enqueue-confirmed publish path.
+    pub async fn publish_prepared(&self, prepared: &PreparedAppMessage) -> Result<()> {
+        self.publish_prepared_via(prepared, None).await
+    }
+
+    /// Publish a prepared message using legacy LOCAL/NORTHBOUND routing semantics.
+    ///
+    /// Northbound failures remain logged and swallowed for compatibility with [`Self::publish_via`].
+    pub async fn publish_prepared_via(
+        &self,
+        prepared: &PreparedAppMessage,
+        routing: Option<Channel>,
+    ) -> Result<()> {
+        if routing.as_ref().is_some_and(Channel::is_stream) {
+            return Err(EdgeCommonsError::Facade(
+                "app() does not support the stream channel - use data() for streamed telemetry"
+                    .to_string(),
+            ));
+        }
         if matches!(routing, Some(Channel::Northbound)) {
             let messaging = self.messaging()?;
             if let Err(e) = messaging
-                .publish_northbound(&topic, &msg, Qos::AtLeastOnce)
+                .publish_northbound(&prepared.topic, &prepared.message, Qos::AtLeastOnce)
                 .await
             {
                 tracing::warn!(
-                    topic,
+                    topic = prepared.topic,
                     error = %e,
                     "northbound app publish failed (local readiness unaffected)"
                 );
             }
             Ok(())
         } else {
-            self.messaging()?.publish(&topic, &msg).await
+            self.messaging()?
+                .publish(&prepared.topic, &prepared.message)
+                .await
+        }
+    }
+
+    /// Publish prepared bytes locally and await strict QoS 1 transport confirmation.
+    pub async fn publish_prepared_confirmed(
+        &self,
+        prepared: &PreparedAppMessage,
+        timeout: Duration,
+    ) -> Result<()> {
+        self.publish_prepared_confirmed_via(prepared, None, timeout)
+            .await
+    }
+
+    /// Confirmed LOCAL/NORTHBOUND publication of one prepared envelope.
+    ///
+    /// Unlike legacy northbound routing, confirmation failures are returned to the caller. The
+    /// stored bytes are sent verbatim and never regenerated from [`PreparedAppMessage::message`].
+    pub async fn publish_prepared_confirmed_via(
+        &self,
+        prepared: &PreparedAppMessage,
+        routing: Option<Channel>,
+        timeout: Duration,
+    ) -> Result<()> {
+        if routing.as_ref().is_some_and(Channel::is_stream) {
+            return Err(EdgeCommonsError::Facade(
+                "app() does not support the stream channel - use data() for streamed telemetry"
+                    .to_string(),
+            ));
+        }
+        if matches!(routing, Some(Channel::Northbound)) {
+            self.messaging()?
+                .publish_northbound_encoded_confirmed(&prepared.topic, &prepared.encoded, timeout)
+                .await
+        } else {
+            self.messaging()?
+                .publish_encoded_confirmed(&prepared.topic, &prepared.encoded, timeout)
+                .await
         }
     }
 
@@ -225,5 +385,111 @@ mod tests {
         .unwrap();
         assert!(messaging.local().is_empty());
         assert_eq!(messaging.iot().len(), 1);
+    }
+
+    #[test]
+    fn prepare_correlated_accepts_request_or_explicit_id() {
+        let messaging = RecordingMessaging::new();
+        let f = facade(messaging);
+        let request = MessageBuilder::new("sb/capture", "1.0")
+            .correlation_id("request-correlation")
+            .command(json!({}))
+            .build();
+
+        let from_request = f
+            .prepare_correlated(
+                "ImageCaptured",
+                "image/captured",
+                json!({ "captureId": "cap-1" }),
+                &request,
+            )
+            .unwrap();
+        let from_id = f
+            .prepare_correlated(
+                "ImageCaptured",
+                "image/captured",
+                json!({ "captureId": "cap-2" }),
+                "explicit-correlation",
+            )
+            .unwrap();
+
+        assert_eq!(
+            from_request.message().header.correlation_id,
+            "request-correlation"
+        );
+        assert_eq!(
+            from_id.message().header.correlation_id,
+            "explicit-correlation"
+        );
+        assert_eq!(
+            from_request.encoded(),
+            from_request.message().to_vec().unwrap()
+        );
+    }
+
+    #[test]
+    fn prepare_correlated_rejects_an_empty_correlation_id() {
+        let messaging = RecordingMessaging::new();
+        let f = facade(messaging);
+
+        let error = f
+            .prepare_correlated("ImageCaptured", "image/captured", json!({}), "")
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("correlation id must be non-empty")
+        );
+    }
+
+    #[tokio::test]
+    async fn confirmed_prepared_publish_sends_the_stored_bytes_without_reserialization() {
+        let messaging = RecordingMessaging::new();
+        let f = facade(messaging.clone());
+        let mut prepared = f
+            .prepare_correlated(
+                "ImageCaptured",
+                "image/captured",
+                json!({ "captureId": "cap-1" }),
+                "corr-1",
+            )
+            .unwrap();
+        let expected = prepared.encoded().to_vec();
+
+        // A durable outbox owns the encoded envelope. Even if another in-memory Message copy is
+        // later changed, confirmed publication must send the persisted bytes, not reserialize it.
+        prepared.message.header.name = "MutatedAfterPrepare".to_string();
+        f.publish_prepared_confirmed(&prepared, Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        let confirmed = messaging.confirmed_local();
+        assert_eq!(confirmed.len(), 1);
+        assert_eq!(confirmed[0].0, prepared.topic());
+        assert_eq!(confirmed[0].1, expected);
+        assert_eq!(
+            Message::from_slice(&confirmed[0].1).unwrap().header.name,
+            "ImageCaptured"
+        );
+    }
+
+    #[tokio::test]
+    async fn confirmed_northbound_failure_is_returned_not_swallowed() {
+        let messaging = RecordingMessaging::new();
+        messaging.fail_next_confirmed(1);
+        let f = facade(messaging.clone());
+        let prepared = f.prepare("CloudEvent", "cloud", json!({})).unwrap();
+
+        assert!(
+            f.publish_prepared_confirmed_via(
+                &prepared,
+                Some(Channel::Northbound),
+                Duration::from_secs(1),
+            )
+            .await
+            .is_err()
+        );
+        assert!(messaging.confirmed_iot().is_empty());
     }
 }

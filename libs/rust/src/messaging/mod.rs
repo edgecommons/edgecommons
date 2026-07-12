@@ -91,10 +91,11 @@ pub use service::{
 };
 
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::error::Result;
+use crate::error::{EdgeCommonsError, Result};
 
 /// Which broker a message targets. Used by the lower-level [`MessagingProvider`];
 /// the user-facing [`MessagingService`] exposes explicit method pairs instead.
@@ -182,6 +183,27 @@ pub trait MessagingProvider: Send + Sync {
         qos: Qos,
     ) -> Result<()>;
 
+    /// Publish raw bytes and return only after the transport confirms QoS 1 delivery.
+    ///
+    /// A successful return is strict: MQTT providers must observe the matching broker PUBACK;
+    /// Greengrass providers must await successful completion of the IPC publish operation. Queueing
+    /// the request locally is not confirmation. Timeout or disconnect is an ambiguous failure.
+    ///
+    /// Providers which cannot prove this contract deliberately return an error. They must never
+    /// delegate to [`Self::publish`] and report its enqueue success as confirmation.
+    async fn publish_confirmed(
+        &self,
+        _topic: &str,
+        _payload: Vec<u8>,
+        _dest: Destination,
+        _qos: Qos,
+        _timeout: Duration,
+    ) -> Result<()> {
+        Err(EdgeCommonsError::Messaging(
+            "confirmed publish is not supported by this messaging provider".to_string(),
+        ))
+    }
+
     /// Subscribe to `filter` on `dest`, returning a [`Subscription`] whose internal
     /// queue is bounded to `max_messages` entries.
     async fn subscribe(
@@ -191,6 +213,23 @@ pub trait MessagingProvider: Send + Sync {
         qos: Qos,
         max_messages: usize,
     ) -> Result<Subscription>;
+
+    /// Subscribe and return only after the transport positively acknowledges activation.
+    ///
+    /// MQTT implementations must observe a successful SUBACK; Greengrass implementations must
+    /// await subscription-operation completion. Unsupported providers fail closed.
+    async fn subscribe_acknowledged(
+        &self,
+        _filter: &str,
+        _dest: Destination,
+        _qos: Qos,
+        _max_messages: usize,
+        _timeout: Duration,
+    ) -> Result<Subscription> {
+        Err(EdgeCommonsError::Messaging(
+            "acknowledged subscribe is not supported by this messaging provider".to_string(),
+        ))
+    }
 
     /// Unsubscribe from `filter` on `dest`.
     async fn unsubscribe(&self, filter: &str, dest: Destination) -> Result<()>;

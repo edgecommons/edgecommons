@@ -4,7 +4,7 @@ param(
   [string]$OutputRoot = "",
   [string]$BinaryHex = "000102030a0d1f207f80feff",
   [string]$Langs = "python,java,rust,ts",
-  [ValidateSet("gg-binary-matrix", "gg-log-matrix")]
+  [ValidateSet("gg-binary-matrix", "gg-log-matrix", "gg-p1-matrix")]
   [string]$Role = "gg-binary-matrix"
 )
 
@@ -13,7 +13,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 if ($OutputRoot -eq "") {
-  $OutputRoot = Join-Path $repoRoot "build\gg-ipc-binary-interop\$RunId"
+  $OutputRoot = Join-Path $repoRoot "build\gg-ipc-interop\$RunId"
 }
 $outputRootPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputRoot)
 $repoPrefix = $repoRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
@@ -34,12 +34,24 @@ $artifactsDir = Join-Path $outputRootPath "artifacts"
 $stageDir = Join-Path $outputRootPath "stage"
 New-Item -ItemType Directory -Force -Path $recipesDir, $artifactsDir, $stageDir | Out-Null
 
-$components = @{
-  python = "com.mbreissi.edgecommons.InteropBinaryPython"
-  java = "com.mbreissi.edgecommons.InteropBinaryJava"
-  rust = "com.mbreissi.edgecommons.InteropBinaryRust"
-  rustpeer = "com.mbreissi.edgecommons.InteropBinaryRustPeer"
-  ts = "com.mbreissi.edgecommons.InteropBinaryTs"
+if ($Role -eq "gg-p1-matrix") {
+  $components = @{
+    python = "com.mbreissi.edgecommons.InteropP1Python"
+    java = "com.mbreissi.edgecommons.InteropP1Java"
+    rust = "com.mbreissi.edgecommons.InteropP1Rust"
+    rustpeer = "com.mbreissi.edgecommons.InteropP1RustPeer"
+    ts = "com.mbreissi.edgecommons.InteropP1Ts"
+  }
+  $verificationDescription = "Greengrass IPC P1 command and strict-publish interop verifier."
+} else {
+  $components = @{
+    python = "com.mbreissi.edgecommons.InteropBinaryPython"
+    java = "com.mbreissi.edgecommons.InteropBinaryJava"
+    rust = "com.mbreissi.edgecommons.InteropBinaryRust"
+    rustpeer = "com.mbreissi.edgecommons.InteropBinaryRustPeer"
+    ts = "com.mbreissi.edgecommons.InteropBinaryTs"
+  }
+  $verificationDescription = "Greengrass IPC binary and logging interop verifier."
 }
 
 function Copy-DirectoryContents {
@@ -109,7 +121,7 @@ ComponentConfiguration:
     accessControl:
       aws.greengrass.ipc.pubsub:
         "__COMPONENT__:pubsub:1":
-          policyDescription: "Allow local IPC pub/sub for binary interop verification."
+          policyDescription: "Allow local IPC pub/sub for EdgeCommons interop verification."
           operations:
             - "aws.greengrass#PublishToTopic"
             - "aws.greengrass#SubscribeToTopic"
@@ -189,6 +201,12 @@ $tsPackage = @'
 Write-Utf8NoBom -Path (Join-Path $tsStage "package.json") -Content $tsPackage
 New-ZipArtifact -ComponentName $components.ts -ZipName "ts.zip" -SourcePath $tsStage | Out-Null
 
+$resultVerifier = $null
+if ($Role -eq "gg-p1-matrix") {
+  $resultVerifier = Join-Path $outputRootPath "verify-p1-results.py"
+  Copy-Item -LiteralPath (Join-Path $repoRoot "test-infra\interop\gg_ipc\verify_p1_results.py") -Destination $resultVerifier -Force
+}
+
 $envPrefix = "export EDGECOMMONS_GG_READY_LANGS=python,java,rust,rustpeer,ts`n          export EDGECOMMONS_GG_READY_WAIT_SECS=240`n          export EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS=2`n          export EDGECOMMONS_GG_WAIT_SECS=90"
 
 $pythonLifecycle = @"
@@ -248,11 +266,11 @@ $tsLifecycle = @"
           exec node test-infra/interop/ts_node/dist/interop_node.js "$Role" "$RunId" "$Langs" "$BinaryHex"
 "@
 
-New-Recipe -ComponentName $components.python -ZipName "python.zip" -Description "Python Greengrass IPC binary message interop verifier." -Lifecycle $pythonLifecycle
-New-Recipe -ComponentName $components.java -ZipName "java.zip" -Description "Java Greengrass IPC binary message interop verifier." -Lifecycle $javaLifecycle
-New-Recipe -ComponentName $components.rust -ZipName "rust.zip" -Description "Rust Greengrass IPC binary message interop verifier." -Lifecycle $rustLifecycle
-New-Recipe -ComponentName $components.rustpeer -ZipName "rust.zip" -Description "Rust peer Greengrass IPC binary message interop verifier." -Lifecycle $rustPeerLifecycle
-New-Recipe -ComponentName $components.ts -ZipName "ts.zip" -Description "TypeScript Greengrass IPC binary message interop verifier." -Lifecycle $tsLifecycle
+New-Recipe -ComponentName $components.python -ZipName "python.zip" -Description "Python $verificationDescription" -Lifecycle $pythonLifecycle
+New-Recipe -ComponentName $components.java -ZipName "java.zip" -Description "Java $verificationDescription" -Lifecycle $javaLifecycle
+New-Recipe -ComponentName $components.rust -ZipName "rust.zip" -Description "Rust $verificationDescription" -Lifecycle $rustLifecycle
+New-Recipe -ComponentName $components.rustpeer -ZipName "rust.zip" -Description "Rust peer $verificationDescription" -Lifecycle $rustPeerLifecycle
+New-Recipe -ComponentName $components.ts -ZipName "ts.zip" -Description "TypeScript $verificationDescription" -Lifecycle $tsLifecycle
 
 [pscustomobject]@{
   RunId = $RunId
@@ -263,4 +281,6 @@ New-Recipe -ComponentName $components.ts -ZipName "ts.zip" -Description "TypeScr
   BinaryHex = $BinaryHex
   Langs = $Langs
   Role = $Role
+  Components = $components
+  ResultVerifier = $resultVerifier
 }

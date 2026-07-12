@@ -1,6 +1,6 @@
 import logging
 from argparse import Namespace
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 from edgecommons.messaging.errors import ReservedTopicError
 from edgecommons.messaging.message import Message
@@ -222,6 +222,45 @@ class MessagingClient:
         MessagingClient._messaging_provider.publish(topic, msg)
 
     @staticmethod
+    def publish_confirmed(
+        topic: str,
+        message: Union[Message, bytes],
+        qos: Qos,
+        timeout_secs: float,
+    ) -> None:
+        """Strict local publication with positive QoS-1 transport confirmation.
+
+        ``message`` may be a :class:`Message` or exact serialized envelope bytes.
+        Durable outboxes use the byte form so retries preserve every byte and the
+        envelope UUID.  Timeout, disconnect, and unsupported transports raise.
+        """
+        MessagingClient._check_reserved_topic(topic)
+        if isinstance(message, Message):
+            encoded = message.to_bytes()
+        elif isinstance(message, bytes):
+            encoded = message
+        else:
+            raise TypeError("message must be a Message or exact bytes")
+        MessagingClient._validate_confirmed_envelope(encoded)
+        MessagingClient._messaging_provider.publish_confirmed(
+            topic, encoded, qos, timeout_secs
+        )
+
+    @staticmethod
+    def _validate_confirmed_envelope(encoded: bytes) -> None:
+        """Parses exact outbox bytes through the canonical envelope codec.
+
+        Validation never replaces the caller's representation: providers still
+        receive the original bytes so retries remain byte-for-byte identical.
+        """
+        try:
+            Message.from_bytes(encoded).to_bytes()
+        except Exception as exc:  # noqa: BLE001 - normalize codec failures for callers
+            raise ValueError(
+                "confirmed publish requires a valid EdgeCommons envelope"
+            ) from exc
+
+    @staticmethod
     def publish_raw(topic: str, msg: dict):
         """Publishes a raw dict. Reserved-class UNS topics are rejected (§4.1, D-U8).
 
@@ -241,6 +280,26 @@ class MessagingClient:
         MessagingClient._messaging_provider.publish_northbound(topic, msg, qos)
 
     @staticmethod
+    def publish_northbound_confirmed(
+        topic: str,
+        message: Union[Message, bytes],
+        qos: Qos,
+        timeout_secs: float,
+    ) -> None:
+        """Strict northbound publication of a message or exact envelope bytes."""
+        MessagingClient._check_reserved_topic(topic)
+        if isinstance(message, Message):
+            encoded = message.to_bytes()
+        elif isinstance(message, bytes):
+            encoded = message
+        else:
+            raise TypeError("message must be a Message or exact bytes")
+        MessagingClient._validate_confirmed_envelope(encoded)
+        MessagingClient._messaging_provider.publish_northbound_confirmed(
+            topic, encoded, qos, timeout_secs
+        )
+
+    @staticmethod
     def publish_northbound_raw(topic: str, msg: dict, qos: Qos):
         """Raw northbound publish. Reserved-class UNS topics are rejected (§4.1, D-U8).
 
@@ -258,6 +317,27 @@ class MessagingClient:
     ):
         logger.debug(f"Subscribing to topic: {topic}, max_concurrency: {max_concurrency}, max_messages: {max_messages}")
         MessagingClient._messaging_provider.subscribe(topic, callback, max_concurrency, max_messages)
+
+    @staticmethod
+    def subscribe_acknowledged(
+        topic: str,
+        callback: Callable[[str, Message], None],
+        max_concurrency: int = None,
+        max_messages: int = None,
+        timeout_secs: float = 10.0,
+    ) -> None:
+        """Lifecycle-critical local subscribe with positive transport acknowledgement."""
+
+        provider = MessagingClient._messaging_provider
+        if provider is None:
+            raise RuntimeError("messaging provider is not initialized")
+        provider.subscribe_acknowledged(
+            topic,
+            callback,
+            max_concurrency,
+            max_messages,
+            timeout_secs,
+        )
 
     @staticmethod
     def subscribe_northbound(
@@ -352,6 +432,32 @@ class MessagingClient:
         MessagingClient._messaging_provider.reply(request, reply)
 
     @staticmethod
+    def validate_reply_target(request: Message) -> str:
+        """Validates and returns a received request's guarded ``reply_to`` topic.
+
+        Deferred registries call this before retaining any request metadata so a
+        missing or hostile target never becomes server-side reply state.
+        """
+        topic = MessagingClient._reply_topic_of(request)
+        if not topic:
+            raise ValueError("request requires a non-empty reply_to")
+        MessagingClient._check_reserved_topic(topic)
+        return topic
+
+    @staticmethod
+    def reply_confirmed(
+        request: Message, reply: Message, timeout_secs: float
+    ) -> None:
+        """Sends a guarded local reply and waits for QoS-1 confirmation."""
+        topic = MessagingClient.validate_reply_target(request)
+        if reply is None:
+            raise ValueError("reply must not be None")
+        reply.set_correlation_id(request.get_correlation_id())
+        MessagingClient.publish_confirmed(
+            topic, reply, Qos.AT_LEAST_ONCE, timeout_secs
+        )
+
+    @staticmethod
     def reply_northbound(request: Message, reply: Message):
         """Northbound variant of :meth:`reply` — the request's ``reply_to`` topic is
         guarded the same way.
@@ -361,6 +467,19 @@ class MessagingClient:
         """
         MessagingClient._check_reserved_topic(MessagingClient._reply_topic_of(request))
         MessagingClient._messaging_provider.reply_northbound(request, reply)
+
+    @staticmethod
+    def reply_northbound_confirmed(
+        request: Message, reply: Message, timeout_secs: float
+    ) -> None:
+        """Guarded northbound counterpart of :meth:`reply_confirmed`."""
+        topic = MessagingClient.validate_reply_target(request)
+        if reply is None:
+            raise ValueError("reply must not be None")
+        reply.set_correlation_id(request.get_correlation_id())
+        MessagingClient.publish_northbound_confirmed(
+            topic, reply, Qos.AT_LEAST_ONCE, timeout_secs
+        )
 
     @staticmethod
     def topic_matches_sub(sub: str, topic: str) -> bool:

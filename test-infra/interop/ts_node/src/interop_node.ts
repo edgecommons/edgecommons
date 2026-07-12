@@ -20,6 +20,7 @@ import {
   MessageBuilder,
   MessageBodyCase,
   MessageIdentity,
+  CommandOutcomes,
   DefaultMessagingService,
   IpcMessagingProvider,
   StandaloneMqttProvider,
@@ -27,9 +28,11 @@ import {
   Uns,
   unsClassFromToken,
   EdgeCommonsBuilder,
+  Qos,
 } from "../../../../libs/ts/dist/index";
 import type { MessagingConfig } from "../../../../libs/ts/dist/index";
-import { existsSync, unlinkSync, writeFileSync } from "fs";
+import { closeSync, existsSync, fsyncSync, openSync, unlinkSync, writeFileSync, writeSync } from "fs";
+import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -69,6 +72,59 @@ async function ipcService(): Promise<DefaultMessagingService> {
 
 function logComponentToken(): string {
   return `interop-log-${LANG}`;
+}
+
+function writeCommandRuntimeConfig(componentToken: string): string {
+  const path = join(tmpdir(), `edgecommons-deferred-${LANG}-${process.pid}-${Date.now()}.json`);
+  writeFileSync(
+    path,
+    JSON.stringify({
+      component: { token: componentToken },
+      messaging: {
+        local: {
+          type: "mqtt",
+          host: HOST,
+          port: PORT,
+          clientId: `interop-${LANG}-deferred-runtime-${process.pid}`,
+        },
+        requestTimeoutSeconds: 4,
+      },
+      heartbeat: { enabled: false },
+      health: { enabled: false },
+    }),
+    "utf8",
+  );
+  return path;
+}
+
+function writeDurableAcceptanceMarker(): string {
+  const marker = join(
+    tmpdir(),
+    `edgecommons-p1-accept-${LANG}-${process.pid}-${randomUUID()}.marker`,
+  );
+  const descriptor = openSync(marker, "wx", 0o600);
+  try {
+    writeSync(descriptor, "accepted\n", undefined, "utf8");
+    fsyncSync(descriptor);
+  } catch (error) {
+    try {
+      unlinkSync(marker);
+    } catch {
+      // The original persistence error remains authoritative.
+    }
+    throw error;
+  } finally {
+    closeSync(descriptor);
+  }
+  return marker;
+}
+
+function removeDurableAcceptanceMarker(marker: string): void {
+  try {
+    unlinkSync(marker);
+  } catch {
+    // Cleanup is best effort after the terminal response has been attempted.
+  }
 }
 
 function writeLogRuntimeConfig(): string {
@@ -165,6 +221,144 @@ async function runRequest(topic: string, token: string): Promise<number> {
     const echo = body && (body.echo as Record<string, unknown> | undefined);
     const ok = match && !!body && !!body.responder && !!echo && echo.token === token;
     return ok ? 0 : 1;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
+async function runDeferredResponder(componentToken: string): Promise<never> {
+  const path = writeCommandRuntimeConfig(componentToken);
+  let gg: Awaited<ReturnType<EdgeCommonsBuilder["build"]>> | undefined;
+  try {
+    gg = await new EdgeCommonsBuilder(`com.mbreissi.edgecommons.interop.${LANG}.DeferredResponder`)
+      .args(logRuntimeArgs(path))
+      .configureCommands((inbox) => {
+        inbox.registerOutcome("deferred", (request) => {
+          const token = inbox.defer(request, 4_000);
+          let acceptanceMarker: string;
+          try {
+            acceptanceMarker = writeDurableAcceptanceMarker();
+          } catch {
+            token.discard();
+            return CommandOutcomes.error("ACCEPTANCE_FAILED", "work was not accepted");
+          }
+          if (!token.activate()) {
+            removeDurableAcceptanceMarker(acceptanceMarker);
+            return CommandOutcomes.error("ACTIVATION_FAILED", "deferred token was not open");
+          }
+          return CommandOutcomes.deferredWithContinuation(token, () => {
+            try {
+              token.settleSuccess({
+                token: (request.getBody() as Record<string, unknown>).token,
+                responder: LANG,
+                durablyAccepted: true,
+              });
+            } finally {
+              removeDurableAcceptanceMarker(acceptanceMarker);
+            }
+          });
+        });
+      })
+      .build();
+    process.stdout.write("READY\n");
+    // A pending Promise alone does not keep Node's event loop alive. Retain a bounded-footprint
+    // timer so the real runtime remains subscribed until the harness terminates this role.
+    await new Promise<never>(() => {
+      setInterval(() => undefined, 3_600_000);
+    });
+  } finally {
+    if (gg) await gg.close();
+    try {
+      unlinkSync(path);
+    } catch {
+      // best effort after a failed startup
+    }
+  }
+  throw new Error("unreachable deferred responder completion");
+}
+
+async function runDeferredRequest(topic: string, token: string): Promise<number> {
+  const svc = await service("deferredreq");
+  const replyTopic = `interop/deferred/reply/${LANG}/${process.pid}-${Date.now()}`;
+  const replies: Message[] = [];
+  try {
+    await svc.subscribe(replyTopic, (_topic, reply) => {
+      replies.push(reply);
+    });
+    const request = MessageBuilder.create("deferred", "1.0")
+      .withCommand({ token, from: LANG })
+      .withReplyTo(replyTopic)
+      .withTags({})
+      .build();
+    const correlation = request.getCorrelationId();
+    await svc.publish(topic, request);
+    const deadline = Date.now() + 8_000;
+    while (replies.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (replies.length === 0) {
+      emit({ ok: false, error: "timeout" });
+      return 1;
+    }
+    // Keep receiving after the first response, making a duplicate settlement observable.
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    const reply = replies[0];
+    const body = reply.getBody() as Record<string, unknown>;
+    const result = body.result as Record<string, unknown> | undefined;
+    const correlationMatch = reply.getCorrelationId() === correlation;
+    const ok = replies.length === 1
+      && correlationMatch
+      && body.ok === true
+      && result?.token === token
+      && result?.durablyAccepted === true
+      && typeof result?.responder === "string";
+    emit({ ok, reply_count: replies.length, correlation_match: correlationMatch, reply_body: body });
+    return ok ? 0 : 1;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
+async function runConfirmedSub(topic: string, token: string): Promise<number> {
+  const svc = await service("confirmedsub");
+  const messages: Message[] = [];
+  try {
+    await svc.subscribe(topic, (_topic, message) => {
+      messages.push(message);
+    });
+    process.stdout.write("READY\n");
+    const deadline = Date.now() + 8_000;
+    while (messages.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (messages.length === 0) {
+      emit({ ok: false, error: "timeout" });
+      return 1;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    const body = messages[0].getBody() as Record<string, unknown>;
+    const ok = messages.length === 1 && body.token === token && typeof body.from === "string";
+    emit({ ok, message_count: messages.length, body });
+    return ok ? 0 : 1;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
+async function runConfirmedPub(topic: string, token: string): Promise<number> {
+  const svc = await service("confirmedpub");
+  try {
+    const message = MessageBuilder.create("InteropConfirmed", "1.0")
+      .withPayload({ token, from: LANG })
+      .withTags({})
+      .build();
+    // The strict standalone path resolves only after its QoS1 PUBACK callback fires.
+    await svc.publishConfirmed(topic, message, Qos.AtLeastOnce, 5_000);
+    emit({ ok: true, confirmed: true, qos: 1 });
+    return 0;
+  } catch (e) {
+    emit({ ok: false, error: String(e) });
+    return 1;
   } finally {
     await svc.disconnect();
   }
@@ -437,6 +631,247 @@ function ggLogRuntimeArgs(path: string): string[] {
     "-t",
     "interop-device",
   ];
+}
+
+function ggP1ReadyPath(runId: string, actor: string): string {
+  return `/tmp/edgecommons_gg_ipc_p1_ready_${actor}_${runId}`;
+}
+
+async function waitForGgP1Ready(runId: string, expectedActors: string[]): Promise<string[]> {
+  const readyWaitSecs = Number(process.env.EDGECOMMONS_GG_READY_WAIT_SECS ?? "180");
+  const deadline = Date.now() + readyWaitSecs * 1000;
+  while (Date.now() < deadline) {
+    const missing = expectedActors.filter((actor) => !existsSync(ggP1ReadyPath(runId, actor)));
+    if (missing.length === 0) return [];
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return expectedActors.filter((actor) => !existsSync(ggP1ReadyPath(runId, actor)));
+}
+
+function ggP1TargetActor(targetLanguage: string, senderActor: string): string {
+  return targetLanguage === "rust" && senderActor === "rust" ? "rustpeer" : targetLanguage;
+}
+
+function ggP1CommandTopic(actor: string): string {
+  return `ecv1/interop-device/interop-p1-${actor}/main/cmd/deferred`;
+}
+
+function ggP1ConfirmedTopic(runId: string, publisher: string, targetActor: string): string {
+  return `edgecommons/interop/p1/${runId}/confirmed/${publisher}/${targetActor}`;
+}
+
+async function sendGgP1Deferred(
+  svc: DefaultMessagingService,
+  runId: string,
+  senderActor: string,
+  targetLanguage: string,
+  targetActor: string,
+): Promise<Record<string, unknown>> {
+  const token = `${runId}:${senderActor}->${targetLanguage}`;
+  const replyTopic = `edgecommons/interop/p1/${runId}/reply/${senderActor}/${targetActor}/${process.pid}-${Date.now()}-${Math.random()}`;
+  const replies: Message[] = [];
+  await svc.subscribe(replyTopic, (_topic, reply) => {
+    replies.push(reply);
+  }, 2, 1);
+  const request = MessageBuilder.create("deferred", "1.0")
+    .withCommand({ token, from: LANG, actor: senderActor })
+    .withReplyTo(replyTopic)
+    .withTags({})
+    .build();
+  const correlation = request.getCorrelationId();
+  await svc.publish(ggP1CommandTopic(targetActor), request);
+  const deadline = Date.now() + 8_000;
+  while (replies.length === 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (replies.length === 0) return { ok: false, target_actor: targetActor, error: "timeout" };
+  await new Promise((resolve) => setTimeout(resolve, 750));
+  const reply = replies[0];
+  const body = reply.getBody() as Record<string, unknown>;
+  const result = body.result as Record<string, unknown> | undefined;
+  const correlationMatch = reply.getCorrelationId() === correlation;
+  const ok = replies.length === 1
+    && correlationMatch
+    && body.ok === true
+    && result?.token === token
+    && result?.durablyAccepted === true
+    && result?.responder === targetLanguage
+    && result?.responderActor === targetActor;
+  return {
+    ok,
+    target_actor: targetActor,
+    expected_token: token,
+    expected_responder: targetLanguage,
+    expected_responder_actor: targetActor,
+    reply_count: replies.length,
+    correlation_match: correlationMatch,
+    duplicate_window_ms: 750,
+    reply_body: body,
+  };
+}
+
+async function runGgP1Matrix(runId: string, langsCsv: string): Promise<number> {
+  const languages = langsCsv.split(",").filter(Boolean);
+  const expectedActors = (process.env.EDGECOMMONS_GG_READY_LANGS ?? langsCsv).split(",").filter(Boolean);
+  const actor = process.env.EDGECOMMONS_GG_READY_LANG ?? LANG;
+  const canonicalActor = actor !== "rustpeer";
+  const subscribeDelaySecs = Number(process.env.EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS ?? "2");
+  const waitSecs = Number(process.env.EDGECOMMONS_GG_WAIT_SECS ?? "90");
+  const expectedPublishers = actor === "rust"
+    ? languages.filter((publisher) => publisher !== "rust")
+    : canonicalActor ? languages : ["rust"];
+  const svc = await ipcService();
+  const received = new Map<string, Array<Record<string, unknown>>>();
+  const errors = new Map<string, string>();
+  let gg: Awaited<ReturnType<EdgeCommonsBuilder["build"]>> | undefined;
+  let path: string | undefined;
+  try {
+    path = writeCommandRuntimeConfig(`interop-p1-${actor}`);
+    gg = await new EdgeCommonsBuilder(`com.mbreissi.edgecommons.interop.${LANG}.P1Responder`)
+      .args(ggLogRuntimeArgs(path))
+      .configureCommands((inbox) => {
+        inbox.registerOutcome("deferred", (request) => {
+          const token = inbox.defer(request, 4_000);
+          const requestBody = request.getBody() as Record<string, unknown>;
+          let acceptanceMarker: string;
+          try {
+            acceptanceMarker = writeDurableAcceptanceMarker();
+          } catch {
+            token.discard();
+            return CommandOutcomes.error("ACCEPTANCE_FAILED", "work was not accepted");
+          }
+          if (!token.activate()) {
+            removeDurableAcceptanceMarker(acceptanceMarker);
+            return CommandOutcomes.error("ACTIVATION_FAILED", "deferred token was not open");
+          }
+          return CommandOutcomes.deferredWithContinuation(token, () => {
+            try {
+              token.settleSuccess({
+                token: requestBody.token,
+                responder: LANG,
+                responderActor: actor,
+                durablyAccepted: true,
+              });
+            } finally {
+              removeDurableAcceptanceMarker(acceptanceMarker);
+            }
+          });
+        });
+      })
+      .build();
+    await svc.subscribe(
+      `edgecommons/interop/p1/${runId}/confirmed/+/${actor}`,
+      (topic, message) => {
+        const publisher = publisherFromGgTopic(topic);
+        try {
+          const body = message.getBody() as Record<string, unknown>;
+          const valid = body.runId === runId
+            && body.publisher === publisher
+            && body.targetActor === actor
+            && body.strict === true;
+          const items = received.get(publisher) ?? [];
+          items.push({ ok: valid, topic, body });
+          received.set(publisher, items);
+        } catch (error) {
+          errors.set(`confirmed:${publisher}`, String(error));
+        }
+      },
+      32,
+      1,
+    );
+    process.stdout.write("READY\n");
+    writeFileSync(ggP1ReadyPath(runId, actor), String(Date.now()), "utf8");
+    const readyMissing = await waitForGgP1Ready(runId, expectedActors);
+    const deferredRequests: Record<string, Record<string, unknown>> = {};
+    const confirmedPublishes: Record<string, Record<string, unknown>> = {};
+    if (readyMissing.length === 0 && canonicalActor) {
+      await new Promise((resolve) => setTimeout(resolve, subscribeDelaySecs * 1000));
+      for (const targetLanguage of languages) {
+        const targetActor = ggP1TargetActor(targetLanguage, actor);
+        try {
+          deferredRequests[targetLanguage] = await sendGgP1Deferred(
+            svc, runId, actor, targetLanguage, targetActor,
+          );
+        } catch (error) {
+          deferredRequests[targetLanguage] = {
+            ok: false, target_actor: targetActor, error: String(error),
+          };
+        }
+        const message = MessageBuilder.create("InteropConfirmed", "1.0")
+          .withPayload({
+            runId,
+            publisher: LANG,
+            publisherActor: actor,
+            targetLanguage,
+            targetActor,
+            strict: true,
+          })
+          .withTags({})
+          .build();
+        try {
+          await svc.publishConfirmed(
+            ggP1ConfirmedTopic(runId, LANG, targetActor), message, Qos.AtLeastOnce, 5_000,
+          );
+          confirmedPublishes[targetLanguage] = {
+            ok: true, target_actor: targetActor, confirmed: true, qos: 1,
+          };
+        } catch (error) {
+          confirmedPublishes[targetLanguage] = {
+            ok: false, target_actor: targetActor, error: String(error),
+          };
+        }
+      }
+    }
+    const deadline = Date.now() + waitSecs * 1000;
+    while (Date.now() < deadline && !expectedPublishers.every((publisher) => received.has(publisher))) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    const confirmedReceived: Record<string, unknown> = {};
+    const confirmedMissing = expectedPublishers.filter((publisher) => !received.has(publisher));
+    let receiveOk = confirmedMissing.length === 0;
+    for (const [publisher, items] of received) {
+      const ok = items.length === 1 && items[0].ok === true && expectedPublishers.includes(publisher);
+      confirmedReceived[publisher] = { count: items.length, items, ok };
+      receiveOk = receiveOk && ok;
+    }
+    const requestsOk = !canonicalActor || (
+      Object.keys(deferredRequests).length === languages.length
+      && Object.values(deferredRequests).every((item) => item.ok === true)
+    );
+    const publishesOk = !canonicalActor || (
+      Object.keys(confirmedPublishes).length === languages.length
+      && Object.values(confirmedPublishes).every((item) => item.ok === true)
+    );
+    const ok = readyMissing.length === 0 && errors.size === 0 && requestsOk && publishesOk && receiveOk;
+    const result = {
+      schema: "edgecommons.gg-ipc-p1.v1",
+      ok,
+      run_id: runId,
+      actor,
+      language: LANG,
+      canonical_actor: canonicalActor,
+      ready_missing: readyMissing,
+      deferred_requests: deferredRequests,
+      confirmed_publishes: confirmedPublishes,
+      confirmed_received: confirmedReceived,
+      confirmed_missing: confirmedMissing,
+      errors: Object.fromEntries(errors),
+    };
+    writeFileSync(`/tmp/edgecommons_gg_ipc_p1_${actor}_${runId}.json`, JSON.stringify(result), "utf8");
+    emit(result);
+    return ok ? 0 : 1;
+  } finally {
+    if (gg) await gg.close();
+    if (path) {
+      try {
+        unlinkSync(path);
+      } catch {
+        // best effort after a failed runtime startup
+      }
+    }
+    await svc.disconnect();
+  }
 }
 
 async function runGgLogMatrix(runId: string, langsCsv: string): Promise<number> {
@@ -751,6 +1186,15 @@ async function main(): Promise<void> {
       return;
     case "request":
       process.exit(await runRequest(a, b));
+    case "deferred-responder":
+      await runDeferredResponder(a);
+      return;
+    case "deferred-request":
+      process.exit(await runDeferredRequest(a, b));
+    case "confirmed-sub":
+      process.exit(await runConfirmedSub(a, b));
+    case "confirmed-pub":
+      process.exit(await runConfirmedPub(a, b));
     case "raw-sub":
       process.exit(await runRawSub(a, b));
     case "raw-pub":
@@ -771,6 +1215,8 @@ async function main(): Promise<void> {
       process.exit(await runGgLogMatrix(a, b));
     case "gg-binary-matrix":
       process.exit(await runGgBinaryMatrix(a, b, c));
+    case "gg-p1-matrix":
+      process.exit(await runGgP1Matrix(a, b));
     case "uns-pub":
       process.exit(await runUnsPub(a, b, c));
     case "uns-sub":

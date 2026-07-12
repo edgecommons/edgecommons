@@ -70,7 +70,7 @@ mod severity;
 mod signal_update;
 mod stream_sink;
 
-pub use app::{APP_MESSAGE_VERSION, AppFacade};
+pub use app::{APP_MESSAGE_VERSION, AppCorrelation, AppFacade, PreparedAppMessage};
 pub use channel::Channel;
 pub use data::{DATA_MESSAGE_NAME, DATA_MESSAGE_VERSION, DataFacade, QUALITY_UNSPECIFIED};
 pub use events::{EVT_MESSAGE_NAME, EVT_MESSAGE_VERSION, EventsFacade};

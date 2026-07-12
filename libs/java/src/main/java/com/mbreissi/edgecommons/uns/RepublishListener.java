@@ -282,7 +282,7 @@ public final class RepublishListener implements AutoCloseable {
             command.lastAcceptedMs = now;
             delayMillis = jitter.applyAsLong(JITTER_WINDOW_MS);
         }
-        LOGGER.info("'{}' broadcast accepted - re-announcing in {} ms", command.verb, delayMillis);
+        LOGGER.debug("'{}' broadcast accepted - re-announcing in {} ms", command.verb, delayMillis);
         delayer.schedule(() -> fire(command), delayMillis);
     }
 

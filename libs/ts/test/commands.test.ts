@@ -24,13 +24,21 @@
  * snapshot always carries a resolved identity (the same divergence already documented on
  * `RepublishListener` / `republish_listener.test.ts`).
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 import { Config } from "../src/config/model";
-import { CommandInbox, CommandException } from "../src/commands";
+import {
+  CommandInbox,
+  CommandInboxState,
+  CommandException,
+  CommandOutcomes,
+  DeferredReply,
+  DeferredReplyState,
+  SettlementResult,
+} from "../src/commands";
 import { Message, MessageBuilder } from "../src/message";
 import { UnsValidationError } from "../src/uns";
-import { RecordingMessagingService } from "./_fakes";
+import { RecordingMessagingService, tick } from "./_fakes";
 
 /** The default test identity: device `test-thing`, component `TestComponent` (single level). */
 const INBOX_FILTER = "ecv1/test-thing/TestComponent/main/cmd/#";
@@ -62,6 +70,24 @@ function handlerFor(svc: RecordingMessagingService): (topic: string, message: Me
 /** Delivers one message to the inbox's handler and awaits dispatch completion. */
 async function deliver(svc: RecordingMessagingService, deliveredTopic: string, message: Message | null): Promise<void> {
   await handlerFor(svc)(deliveredTopic, message as unknown as Message);
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("condition was not satisfied before timeout");
+    await tick(5);
+  }
+}
+
+function expectCommandExceptionCode(action: () => unknown, code: string): void {
+  try {
+    action();
+    throw new Error(`expected CommandException(${code})`);
+  } catch (error) {
+    expect(error).toBeInstanceOf(CommandException);
+    expect((error as CommandException).code).toBe(code);
+  }
 }
 
 /** The single recorded reply (topic must be the request's `reply_to`). */
@@ -96,14 +122,147 @@ describe("CommandInbox", () => {
   // ===================== subscription lifecycle =====================
 
   it("start() subscribes the own-inbox wildcard", async () => {
+    expect(inbox.state()).toBe(CommandInboxState.Stopped);
     await inbox.start();
     expect(new Set(messaging.subscriptions.keys())).toEqual(new Set([INBOX_FILTER]));
+    expect(inbox.state()).toBe(CommandInboxState.Active);
+  });
+
+  it("reports a stable FAILED state and tears down the exact filter after a subscription failure", async () => {
+    messaging.subscribe = async () => {
+      throw new Error("broker rejected subscription with sensitive detail");
+    };
+    await inbox.start();
+    expect(inbox.state()).toBe(CommandInboxState.Failed);
+    expect(inbox.startupError()).toBe("COMMAND_INBOX_SUBSCRIPTION_FAILED");
+    expect(messaging.unsubscribed).toEqual([INBOX_FILTER]);
+    await inbox.close();
+    expect(inbox.state()).toBe(CommandInboxState.Stopped);
+    expect(inbox.startupError()).toBeUndefined();
+  });
+
+  it("notifies lifecycle observers in the STARTING, ACTIVE, STOPPED order", async () => {
+    const states: CommandInboxState[] = [];
+    const observed = new CommandInbox(
+      config,
+      messaging,
+      () => uptime,
+      () => reloadResult,
+      () => redactedConfig,
+      (state) => states.push(state),
+    );
+    await observed.start();
+    await observed.close();
+    expect(states).toEqual([CommandInboxState.Starting, CommandInboxState.Active, CommandInboxState.Stopped]);
   });
 
   it("start() is idempotent", async () => {
     await inbox.start();
     await inbox.start();
     expect(new Set(messaging.subscriptions.keys())).toEqual(new Set([INBOX_FILTER]));
+  });
+
+  it("shares one bounded startup attempt across concurrent callers", async () => {
+    let releaseSubscription!: () => void;
+    let subscribeCalls = 0;
+    messaging.subscribe = async (filter, handler) => {
+      subscribeCalls++;
+      messaging.subscriptions.set(filter, handler);
+      await new Promise<void>((resolve) => {
+        releaseSubscription = resolve;
+      });
+    };
+
+    const first = inbox.start(100);
+    const second = inbox.start(100);
+    await Promise.resolve();
+    expect(subscribeCalls).toBe(1);
+    expect(inbox.state()).toBe(CommandInboxState.Starting);
+
+    releaseSubscription();
+    await Promise.all([first, second]);
+    expect(inbox.state()).toBe(CommandInboxState.Active);
+    expect(subscribeCalls).toBe(1);
+  });
+
+  it("retains a delivery racing subscription acknowledgement until ACTIVE", async () => {
+    let releaseSubscription!: () => void;
+    let handlerRan = false;
+    inbox.register("startup-race", () => {
+      handlerRan = true;
+      return {};
+    });
+    messaging.subscribe = async (filter, handler) => {
+      messaging.subscriptions.set(filter, handler);
+      await new Promise<void>((resolve) => {
+        releaseSubscription = resolve;
+      });
+    };
+
+    const starting = inbox.start(100);
+    await Promise.resolve();
+    await deliver(messaging, topic("startup-race"), notification("startup-race"));
+    expect(inbox.state()).toBe(CommandInboxState.Starting);
+    expect(handlerRan).toBe(false);
+
+    releaseSubscription();
+    await starting;
+    expect(inbox.state()).toBe(CommandInboxState.Active);
+    await waitFor(() => handlerRan);
+  });
+
+  it("times out with a stable error and removes a late successful subscription", async () => {
+    let releaseSubscription!: () => void;
+    let lateHandler!: (deliveredTopic: string, message: Message) => void | Promise<void>;
+    messaging.subscribe = (filter, handler) => new Promise<void>((resolve) => {
+      lateHandler = handler;
+      releaseSubscription = () => {
+        messaging.subscriptions.set(filter, handler);
+        resolve();
+      };
+    });
+
+    await inbox.start(10);
+    expect(inbox.state()).toBe(CommandInboxState.Failed);
+    expect(inbox.startupError()).toBe("COMMAND_INBOX_SUBSCRIPTION_FAILED");
+    expect(messaging.unsubscribed).toContain(INBOX_FILTER);
+
+    releaseSubscription();
+    await waitFor(() => messaging.unsubscribed.filter((filter) => filter === INBOX_FILTER).length >= 2);
+    expect(inbox.state()).toBe(CommandInboxState.Failed);
+    await lateHandler(topic(CommandInbox.PING), request(CommandInbox.PING));
+    expect(messaging.published).toHaveLength(0);
+    expect(messaging.subscriptions.has(INBOX_FILTER)).toBe(false);
+  });
+
+  it("close racing startup remains STOPPED after a late acknowledgement", async () => {
+    let releaseSubscription!: () => void;
+    const states: CommandInboxState[] = [];
+    const observed = new CommandInbox(
+      config,
+      messaging,
+      () => uptime,
+      () => reloadResult,
+      () => redactedConfig,
+      (state) => states.push(state),
+    );
+    messaging.subscribe = async (filter, handler) => {
+      messaging.subscriptions.set(filter, handler);
+      await new Promise<void>((resolve) => {
+        releaseSubscription = resolve;
+      });
+    };
+
+    const starting = observed.start(100);
+    await Promise.resolve();
+    await observed.close();
+    expect(observed.state()).toBe(CommandInboxState.Stopped);
+
+    releaseSubscription();
+    await starting;
+    expect(observed.state()).toBe(CommandInboxState.Stopped);
+    expect(states).toEqual([CommandInboxState.Starting, CommandInboxState.Stopped]);
+    expect(messaging.subscriptions.has(INBOX_FILTER)).toBe(false);
   });
 
   it("close() unsubscribes and stops dispatch", async () => {
@@ -356,6 +515,10 @@ describe("CommandInbox", () => {
     );
   });
 
+  afterEach(async () => {
+    await inbox.close();
+  });
+
   it("registerPanel rejects invalid panels and duplicate ids", () => {
     expect(() => inbox.registerPanel(null as unknown as Record<string, unknown>)).toThrow(/JSON object/);
     expect(() => inbox.registerPanel([] as unknown as Record<string, unknown>)).toThrow(/JSON object/);
@@ -367,6 +530,345 @@ describe("CommandInbox", () => {
     inbox.registerPanel({ id: "overview", title: "Overview" });
     expect(inbox.panels()).toEqual([{ id: "overview", title: "Overview" }]);
     expect(() => inbox.registerPanel({ id: "overview", title: "Other" })).toThrow(/already registered/);
+  });
+
+  // ===================== explicit outcomes + deferred replies =====================
+
+  it("explicit immediate outcomes preserve the standard success and coded-error bodies", async () => {
+    inbox.registerOutcome("accepted", () => CommandOutcomes.success({ durable: true }));
+    inbox.registerOutcome("rejected", () => CommandOutcomes.error("NOT_ACCEPTED", "queue is draining"));
+    await inbox.start();
+
+    await deliver(messaging, topic("accepted"), request("accepted"));
+    expect(onlyReplyBody(messaging)).toEqual({ ok: true, result: { durable: true } });
+
+    messaging.published.length = 0;
+    await deliver(messaging, topic("rejected"), request("rejected"));
+    expect(onlyReplyBody(messaging)).toEqual({
+      ok: false,
+      error: { code: "NOT_ACCEPTED", message: "queue is draining" },
+    });
+  });
+
+  it("legacy and explicit-outcome registrations share one no-shadowing namespace", () => {
+    inbox.registerOutcome("job", () => CommandOutcomes.success());
+    expect(() => inbox.register("job", () => null)).toThrow(/already registered/);
+    expect(inbox.verbs()).toContain("job");
+    inbox.unregister("job");
+    expect(inbox.verbs()).not.toContain("job");
+    inbox.register("job", () => null);
+    expect(() => inbox.registerOutcome("job", () => CommandOutcomes.success())).toThrow(/already registered/);
+  });
+
+  it("provisions before durable commit, activates after commit, and confirms exactly one reply", async () => {
+    let token: DeferredReply | undefined;
+    inbox.registerOutcome("capture", (req) => {
+      token = inbox.defer(req, 2_000);
+      expect(token.state()).toBe(DeferredReplyState.Provisional);
+      // This line represents the application durable-acceptance commit boundary.
+      expect(token.activate()).toBe(true);
+      return CommandOutcomes.deferred(token);
+    });
+    await inbox.start();
+    const original = request("capture");
+    await deliver(messaging, topic("capture"), original);
+
+    expect(messaging.published).toHaveLength(0);
+    expect(token?.state()).toBe(DeferredReplyState.Open);
+    expect(inbox.deferredReplySnapshot().active).toBe(1);
+    expect(token?.settleSuccess({ imageId: "frame-7" })).toBe(SettlementResult.Accepted);
+    expect(token?.state()).toBe(DeferredReplyState.Settling);
+    await waitFor(() => token?.state() === DeferredReplyState.Settled);
+
+    expect(token?.settleError("TOO_LATE", "second settler")).toBe(SettlementResult.AlreadySettled);
+    expect(messaging.published).toHaveLength(1);
+    const confirmed = messaging.published[0];
+    expect(confirmed.kind).toBe("replyConfirmed");
+    expect(confirmed.topic).toBe(REPLY_TO);
+    expect(confirmed.message?.getCorrelationId()).toBe(original.getCorrelationId());
+    expect(confirmed.message?.getBody()).toEqual({ verb: "capture", ok: true, result: { imageId: "frame-7" } });
+    expect(inbox.deferredReplySnapshot()).toMatchObject({ active: 0, provisioned: 1, settled: 1 });
+  });
+
+  it("starts a post-accept continuation only after the inbox accepts an open token", async () => {
+    let token: DeferredReply | undefined;
+    let continuationRan = false;
+    inbox.registerOutcome("post-accept", (req) => {
+      token = inbox.defer(req, 2_000);
+      expect(token.activate()).toBe(true);
+      const settlement = token;
+      return CommandOutcomes.deferredWithContinuation(token, async () => {
+        continuationRan = true;
+        expect(settlement.settleSuccess({ imageId: "frame-post-accept" })).toBe(SettlementResult.Accepted);
+      });
+    });
+    await inbox.start();
+
+    await deliver(messaging, topic("post-accept"), request("post-accept"));
+
+    await waitFor(() => continuationRan && token?.state() === DeferredReplyState.Settled);
+    expect(onlyReplyBody(messaging)).toEqual({
+      verb: "post-accept",
+      ok: true,
+      result: { imageId: "frame-post-accept" },
+    });
+  });
+
+  it("does not start a post-accept continuation for an invalid token", async () => {
+    let continuationRan = false;
+    inbox.registerOutcome("post-accept-invalid", (req) => {
+      const token = inbox.defer(req, 1_000);
+      // Deliberately leave this token PROVISIONAL.
+      return CommandOutcomes.deferredWithContinuation(token, () => {
+        continuationRan = true;
+      });
+    });
+    await inbox.start();
+
+    await deliver(messaging, topic("post-accept-invalid"), request("post-accept-invalid"));
+    await tick();
+
+    expect(continuationRan).toBe(false);
+    expect((onlyReplyBody(messaging).error as Record<string, unknown>).code)
+      .toBe(CommandInbox.ERR_HANDLER_ERROR);
+  });
+
+  it("settles a failed post-accept continuation through the guarded error path", async () => {
+    let token: DeferredReply | undefined;
+    inbox.registerOutcome("post-accept-failure", (req) => {
+      token = inbox.defer(req, 2_000);
+      expect(token.activate()).toBe(true);
+      return CommandOutcomes.deferredWithContinuation(token, async () => {
+        throw new Error("simulated camera worker failure");
+      });
+    });
+    await inbox.start();
+
+    await deliver(messaging, topic("post-accept-failure"), request("post-accept-failure"));
+
+    await waitFor(() => token?.state() === DeferredReplyState.Settled);
+    expect((onlyReplyBody(messaging).error as Record<string, unknown>).code)
+      .toBe(CommandInbox.ERR_HANDLER_ERROR);
+  });
+
+  it("discards a provisional token when a handler returns it without durable activation", async () => {
+    let token: DeferredReply | undefined;
+    inbox.registerOutcome("bad-defer", (req) => {
+      token = inbox.defer(req, 1_000);
+      return CommandOutcomes.deferred(token);
+    });
+    await inbox.start();
+    await deliver(messaging, topic("bad-defer"), request("bad-defer"));
+
+    expect(token?.state()).toBe(DeferredReplyState.Discarded);
+    expect((onlyReplyBody(messaging).error as Record<string, unknown>).code).toBe(CommandInbox.ERR_HANDLER_ERROR);
+    expect(inbox.deferredReplySnapshot()).toMatchObject({ active: 0, discarded: 1 });
+  });
+
+  it("rejects unsafe or incomplete deferred requests without consuming registry capacity", () => {
+    expectCommandExceptionCode(
+      () => inbox.defer(notification("job"), 1_000),
+      CommandInbox.ERR_REPLY_REQUIRED,
+    );
+    const hostile = MessageBuilder.create("job", "1.0")
+      .withPayload({})
+      .withReplyTo("ecv1/test-thing/TestComponent/main/state")
+      .build();
+    expect(() => inbox.defer(hostile, 1_000)).toThrow(/reserved/);
+    expect(() => inbox.defer(request("job"), 0)).toThrow(/lifetimeMs/);
+    expect(() => inbox.defer(request("job"), CommandInbox.MAX_DEFERRED_REPLY_LIFETIME_MS + 1)).toThrow(
+      /lifetimeMs/,
+    );
+    expect(inbox.deferredReplySnapshot().active).toBe(0);
+  });
+
+  it("retries failed confirmed replies with the same settlement until one is confirmed", async () => {
+    const originalConfirmed = messaging.replyConfirmed.bind(messaging);
+    let attempts = 0;
+    messaging.replyConfirmed = async (...args) => {
+      attempts++;
+      if (attempts < 3) throw new Error("ambiguous disconnect");
+      await originalConfirmed(...args);
+    };
+    const token = inbox.defer(request("retry-job"), 2_000);
+    expect(token.activate()).toBe(true);
+    expect(token.settleError("CAMERA_BUSY", "retry later")).toBe(SettlementResult.Accepted);
+
+    await waitFor(() => token.state() === DeferredReplyState.Settled);
+    expect(attempts).toBe(3);
+    expect(messaging.published).toHaveLength(1);
+    expect(messaging.published[0].message?.getBody()).toEqual({
+      verb: "retry-job",
+      ok: false,
+      error: { code: "CAMERA_BUSY", message: "retry later" },
+    });
+  });
+
+  it("floors a fractional remaining deferred lifetime before strict confirmation", async () => {
+    const now = vi.spyOn(performance, "now");
+    now.mockReturnValueOnce(1_000.25).mockReturnValue(1_000.75);
+    try {
+      const originalConfirmed = messaging.replyConfirmed.bind(messaging);
+      let observedTimeout: number | undefined;
+      messaging.replyConfirmed = async (...args) => {
+        observedTimeout = args[2];
+        expect(Number.isInteger(observedTimeout)).toBe(true);
+        await originalConfirmed(...args);
+      };
+
+      const token = inbox.defer(request("fractional-timeout"), 2_000);
+      expect(token.activate()).toBe(true);
+      expect(token.settleSuccess({ accepted: true })).toBe(SettlementResult.Accepted);
+
+      await waitFor(() => token.state() === DeferredReplyState.Settled);
+      expect(observedTimeout).toBe(1_999);
+      expect(messaging.published).toHaveLength(1);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("expires a deferred settlement when less than one whole millisecond remains", async () => {
+    const now = vi.spyOn(performance, "now");
+    now.mockReturnValueOnce(1_000).mockReturnValue(1_000.75);
+    try {
+      const token = inbox.defer(request("sub-millisecond-timeout"), 1);
+      expect(token.activate()).toBe(true);
+      expect(token.settleSuccess({ mustNotPublish: true })).toBe(SettlementResult.Accepted);
+
+      await waitFor(() => token.state() === DeferredReplyState.Expired);
+      expect(messaging.published).toHaveLength(0);
+      expect(inbox.deferredReplySnapshot()).toMatchObject({ active: 0, expired: 1 });
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("floors a fractional remaining deferred lifetime during shutdown confirmation", async () => {
+    const now = vi.spyOn(performance, "now");
+    now.mockReturnValueOnce(2_000.25).mockReturnValue(2_000.75);
+    try {
+      const originalConfirmed = messaging.replyConfirmed.bind(messaging);
+      let observedTimeout: number | undefined;
+      messaging.replyConfirmed = async (...args) => {
+        observedTimeout = args[2];
+        expect(Number.isInteger(observedTimeout)).toBe(true);
+        await originalConfirmed(...args);
+      };
+
+      const token = inbox.defer(request("fractional-shutdown"), 500);
+      expect(token.activate()).toBe(true);
+      await inbox.close();
+
+      expect(observedTimeout).toBe(499);
+      expect(messaging.published).toHaveLength(1);
+      expect((messaging.published[0].message?.getBody() as Record<string, unknown>).error)
+        .toMatchObject({ code: CommandInbox.ERR_COMPONENT_STOPPING });
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("does not extend a shutdown confirmation beyond a sub-millisecond deferred lifetime", async () => {
+    const now = vi.spyOn(performance, "now");
+    now.mockReturnValueOnce(2_000).mockReturnValue(2_000.75);
+    try {
+      const token = inbox.defer(request("sub-millisecond-shutdown"), 1);
+      expect(token.activate()).toBe(true);
+      await inbox.close();
+
+      expect(token.state()).toBe(DeferredReplyState.CancelledOnShutdown);
+      expect(messaging.published).toHaveLength(0);
+      expect(inbox.deferredReplySnapshot()).toMatchObject({ active: 0, cancelledOnShutdown: 1 });
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("expires an open deferred reply with stable counters and terminal settlement result", async () => {
+    const token = inbox.defer(request("expires"), 25);
+    expect(token.activate()).toBe(true);
+    await waitFor(() => token.state() === DeferredReplyState.Expired);
+
+    expect(token.settleSuccess()).toBe(SettlementResult.Expired);
+    expect(inbox.deferredReplySnapshot()).toMatchObject({ active: 0, expired: 1, openExpired: 1 });
+  });
+
+  it("gives exactly one winner to concurrent settlers", async () => {
+    const token = inbox.defer(request("race"), 1_000);
+    token.activate();
+    const results = await Promise.all([
+      Promise.resolve().then(() => token.settleSuccess({ winner: "success" })),
+      Promise.resolve().then(() => token.settleError("LOSER", "must not publish")),
+    ]);
+
+    expect(results.filter((r) => r === SettlementResult.Accepted)).toHaveLength(1);
+    expect(results.filter((r) => r === SettlementResult.AlreadySettled)).toHaveLength(1);
+    await waitFor(() => token.state() === DeferredReplyState.Settled);
+    expect(messaging.published).toHaveLength(1);
+  });
+
+  it("uses one atomic winner when settlement and expiration become runnable together", async () => {
+    vi.useFakeTimers();
+    try {
+      // The expiration timer is registered first; a settler registered for the same deadline
+      // therefore observes the already-terminal state and cannot publish.
+      const expirationWins = inbox.defer(request("expiry-race"), 10);
+      expirationWins.activate();
+      let lateResult: SettlementResult | undefined;
+      setTimeout(() => {
+        lateResult = expirationWins.settleSuccess({ mustNotPublish: true });
+      }, 10);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(expirationWins.state()).toBe(DeferredReplyState.Expired);
+      expect(lateResult).toBe(SettlementResult.Expired);
+      expect(messaging.published).toHaveLength(0);
+
+      // Conversely, a synchronous OPEN -> SETTLING winner owns the result; advancing through
+      // the same deadline cannot overwrite the confirmed SETTLED terminal state.
+      const settlementWins = inbox.defer(request("settlement-race"), 10);
+      settlementWins.activate();
+      expect(settlementWins.settleSuccess({ winner: true })).toBe(SettlementResult.Accepted);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(settlementWins.state()).toBe(DeferredReplyState.Settled);
+      expect(messaging.published).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("attempts COMPONENT_STOPPING for open work, cancels all tokens, and rejects new deferrals", async () => {
+    const open = inbox.defer(request("open-job"), 5_000);
+    const provisional = inbox.defer(request("provisional-job"), 5_000);
+    open.activate();
+    await inbox.close();
+
+    expect(open.state()).toBe(DeferredReplyState.CancelledOnShutdown);
+    expect(provisional.state()).toBe(DeferredReplyState.CancelledOnShutdown);
+    expect(messaging.published).toHaveLength(1);
+    expect(messaging.published[0].kind).toBe("replyConfirmed");
+    expect((messaging.published[0].message?.getBody() as Record<string, unknown>).error).toEqual({
+      code: CommandInbox.ERR_COMPONENT_STOPPING,
+      message: "the component stopped before the deferred command could reply",
+    });
+    expect(inbox.deferredReplySnapshot()).toMatchObject({ active: 0, cancelledOnShutdown: 2 });
+    expectCommandExceptionCode(
+      () => inbox.defer(request("late"), 100),
+      CommandInbox.ERR_COMPONENT_STOPPING,
+    );
+  });
+
+  it("bounds the deferred registry at 1024 entries and reports capacity rejection", async () => {
+    const req = request("capacity");
+    for (let i = 0; i < CommandInbox.MAX_DEFERRED_REPLIES; i++) inbox.defer(req, 30_000);
+    expect(inbox.deferredReplySnapshot().active).toBe(CommandInbox.MAX_DEFERRED_REPLIES);
+    expectCommandExceptionCode(
+      () => inbox.defer(req, 30_000),
+      CommandInbox.ERR_DEFERRED_REPLY_CAPACITY,
+    );
+    expect(inbox.deferredReplySnapshot().capacityRejected).toBe(1);
+    await inbox.close();
+    expect(inbox.deferredReplySnapshot()).toMatchObject({ active: 0, cancelledOnShutdown: 1024 });
   });
 
   // ===================== unknown / fire-and-forget / malformed =====================

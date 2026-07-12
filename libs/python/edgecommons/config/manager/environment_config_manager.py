@@ -14,9 +14,17 @@ class EnvironmentConfigManager(ConfigManager):
         component_name: str,
         environment_variable_name: str,
         platform=None,
+        candidate_validators=None,
+        validation_timeout_secs=5.0,
     ):
         self._environment_variable_name = environment_variable_name
-        super().__init__(component_name, thing_name, platform=platform)
+        super().__init__(
+            component_name,
+            thing_name,
+            platform=platform,
+            candidate_validators=candidate_validators,
+            validation_timeout_secs=validation_timeout_secs,
+        )
         self._config_source = f"Environment (var name: {environment_variable_name})"
         self._config_provider_family = "ENV"
         self.init()

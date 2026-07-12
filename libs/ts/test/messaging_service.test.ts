@@ -5,9 +5,11 @@ import { DefaultMessagingService } from "../src/messaging/service";
 import {
   Destination,
   MessagingProvider,
+  PublishConfirmationError,
   Qos,
   RawSubscription,
 } from "../src/messaging/types";
+import { FakeMessagingProvider } from "./_fakes";
 
 /**
  * A simple in-memory MessagingProvider: a Map of topic -> subscribers, with
@@ -111,6 +113,59 @@ describe("DefaultMessagingService over a fake provider", () => {
     const parsed = Message.fromBytes(payload);
     expect(parsed.header.name).toBe("evt");
     expect(parsed.getBody()).toEqual({ n: 1 });
+  });
+
+  it("confirmed publish validates and preserves exact encoded envelope bytes", async () => {
+    const provider = new FakeMessagingProvider();
+    const svc = new DefaultMessagingService(provider);
+    const msg = MessageBuilder.create("ImageCaptured", "1.0")
+      .withCorrelationId("corr-1")
+      .withPayload({ captureId: "cap-1" })
+      .build();
+    const exact = msg.toBytes();
+
+    await svc.publishConfirmed("app/image/captured", exact, Qos.AtLeastOnce, 500);
+
+    expect(provider.published).toHaveLength(1);
+    expect(provider.published[0].payload.equals(exact)).toBe(true);
+    expect(provider.published[0].payload).not.toBe(exact);
+    expect(provider.published[0].qos).toBe(Qos.AtLeastOnce);
+  });
+
+  it("confirmed exact-byte publish rejects malformed and incomplete envelopes before transport", async () => {
+    const provider = new FakeMessagingProvider();
+    const svc = new DefaultMessagingService(provider);
+
+    await expect(
+      svc.publishConfirmed("app/image/captured", Buffer.from([0xff, 0xff, 0xff]), Qos.AtLeastOnce, 100),
+    ).rejects.toMatchObject({ reason: "invalidEnvelope" });
+    const incomplete = Message.envelope(
+      { name: "ImageCaptured", version: "1.0", timestamp: "", correlation_id: "", uuid: "" },
+      undefined,
+      {},
+    ).toBytes();
+    await expect(
+      svc.publishConfirmed("app/image/captured", incomplete, Qos.AtLeastOnce, 100),
+    ).rejects.toMatchObject({ reason: "invalidEnvelope" });
+    expect(provider.published).toHaveLength(0);
+  });
+
+  it("confirmed publish rejects unsupported providers instead of delegating", async () => {
+    const provider = new FakeProvider();
+    const svc = new DefaultMessagingService(provider);
+    const msg = MessageBuilder.create("ImageCaptured", "1.0").withPayload({}).build();
+
+    await expect(
+      svc.publishConfirmed("app/image/captured", msg, Qos.AtLeastOnce, 100),
+    ).rejects.toBeInstanceOf(PublishConfirmationError);
+    expect(provider.publishedPayloads).toHaveLength(0);
+  });
+
+  it("confirmed publish requires explicit QoS 1 and positive timeout", async () => {
+    const svc = new DefaultMessagingService(new FakeMessagingProvider());
+    const msg = MessageBuilder.create("ImageCaptured", "1.0").withPayload({}).build();
+    await expect(svc.publishConfirmed("app/x", msg, Qos.AtMostOnce, 100)).rejects.toThrow(/QoS 1/);
+    await expect(svc.publishConfirmed("app/x", msg, Qos.AtLeastOnce, 0)).rejects.toThrow(/positive integer/);
   });
 
   it("request/reply correlation round-trips", async () => {
