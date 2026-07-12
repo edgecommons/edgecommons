@@ -173,6 +173,8 @@
     --ec-chart-8: #d36f90;
 
     --ec-chart-surface: var(--ec-night-iris);
+    --ec-chart-ink: var(--ec-color-text);
+    --ec-chart-ink-muted: var(--ec-color-text-muted);
     --ec-chart-grid: #383954;
     --ec-chart-axis: #a2a5bb;
   }
@@ -216,6 +218,8 @@
   --ec-chart-8: #d36f90;
 
   --ec-chart-surface: var(--ec-night-iris);
+  --ec-chart-ink: var(--ec-color-text);
+  --ec-chart-ink-muted: var(--ec-color-text-muted);
   --ec-chart-grid: #383954;
   --ec-chart-axis: #a2a5bb;
 }
