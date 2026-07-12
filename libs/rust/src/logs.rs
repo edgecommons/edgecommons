@@ -5,9 +5,9 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use regex::Regex;
 use serde_json::{Map, Value};
@@ -32,14 +32,42 @@ const LOG_MESSAGE_NAME: &str = "log";
 const LOG_MESSAGE_VERSION: &str = "1.0";
 const LOG_SCHEMA: &str = "edgecommons.log.v1";
 
-static CAPTURE_SERVICE: OnceLock<ArcSwapOption<DefaultLogService>> = OnceLock::new();
+static CAPTURE_SERVICE: OnceLock<Mutex<Option<Weak<DefaultLogService>>>> = OnceLock::new();
 
 tokio::task_local! {
     static LOG_PUBLISHING: ();
 }
 
-fn capture_service() -> &'static ArcSwapOption<DefaultLogService> {
-    CAPTURE_SERVICE.get_or_init(|| ArcSwapOption::from(None))
+fn capture_service() -> &'static Mutex<Option<Weak<DefaultLogService>>> {
+    CAPTURE_SERVICE.get_or_init(|| Mutex::new(None))
+}
+
+fn set_capture_service(service: &Arc<DefaultLogService>) {
+    if let Ok(mut slot) = capture_service().lock() {
+        *slot = Some(Arc::downgrade(service));
+    }
+}
+
+fn current_capture_service() -> Option<Arc<DefaultLogService>> {
+    let mut slot = capture_service().lock().ok()?;
+    match slot.as_ref().and_then(Weak::upgrade) {
+        Some(service) => Some(service),
+        None => {
+            *slot = None;
+            None
+        }
+    }
+}
+
+fn clear_capture_service(service: *const DefaultLogService) {
+    if let Ok(mut slot) = capture_service().lock() {
+        if slot
+            .as_ref()
+            .is_some_and(|current| std::ptr::eq(current.as_ptr(), service))
+        {
+            *slot = None;
+        }
+    }
 }
 
 fn is_log_publishing_task() -> bool {
@@ -257,15 +285,6 @@ impl DefaultLogService {
         config: Arc<ArcSwap<Config>>,
         reserved: Option<Arc<dyn ReservedMessaging>>,
     ) -> Result<Arc<Self>> {
-        let service = Self::start_unregistered(config, reserved)?;
-        capture_service().store(Some(service.clone()));
-        Ok(service)
-    }
-
-    fn start_unregistered(
-        config: Arc<ArcSwap<Config>>,
-        reserved: Option<Arc<dyn ReservedMessaging>>,
-    ) -> Result<Arc<Self>> {
         let settings = LogPublishSettings::from_config(&config.load_full())?;
         let service = Arc::new(Self {
             config,
@@ -284,15 +303,8 @@ impl DefaultLogService {
         if let Ok(mut slot) = service.worker.lock() {
             *slot = Some(handle);
         }
+        set_capture_service(&service);
         Ok(service)
-    }
-
-    #[cfg(test)]
-    fn start_for_isolated_capture_test(
-        config: Arc<ArcSwap<Config>>,
-        reserved: Option<Arc<dyn ReservedMessaging>>,
-    ) -> Result<Arc<Self>> {
-        Self::start_unregistered(config, reserved)
     }
 
     fn capture(&self, record: LogRecord) {
@@ -441,6 +453,7 @@ impl DefaultLogService {
 
 impl Drop for DefaultLogService {
     fn drop(&mut self) {
+        clear_capture_service(self as *const DefaultLogService);
         if let Ok(mut worker) = self.worker.lock() {
             if let Some(handle) = worker.take() {
                 handle.abort();
@@ -479,28 +492,12 @@ impl ConfigurationChangeListener for DefaultLogService {
 }
 
 /// Tracing layer that captures native Rust tracing events into the log bus.
-#[derive(Default)]
-pub struct LogCaptureLayer {
-    #[cfg(test)]
-    service: Option<Arc<DefaultLogService>>,
-}
-
-impl std::fmt::Debug for LogCaptureLayer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LogCaptureLayer").finish()
-    }
-}
+#[derive(Debug, Default)]
+pub struct LogCaptureLayer;
 
 impl LogCaptureLayer {
     pub fn new() -> Self {
-        Self::default()
-    }
-
-    #[cfg(test)]
-    fn for_isolated_capture_test(service: Arc<DefaultLogService>) -> Self {
-        Self {
-            service: Some(service),
-        }
+        Self
     }
 }
 
@@ -512,17 +509,7 @@ where
         if is_log_publishing_task() {
             return;
         }
-        #[cfg(test)]
-        let service = self
-            .service
-            .clone()
-            .or_else(|| capture_service().load_full());
-        #[cfg(not(test))]
-        let Some(service) = capture_service().load_full() else {
-            return;
-        };
-        #[cfg(test)]
-        let Some(service) = service else {
+        let Some(service) = current_capture_service() else {
             return;
         };
         let level = match *event.metadata().level() {
@@ -752,8 +739,18 @@ mod tests {
     use crate::testutil::RecordingMessaging;
     use async_trait::async_trait;
     use serde_json::json;
+    use std::sync::OnceLock;
     use std::time::Duration;
     use tracing_subscriber::prelude::*;
+
+    static TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+    async fn test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        TEST_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await
+    }
 
     fn config(raw: Value) -> Arc<ArcSwap<Config>> {
         Arc::new(ArcSwap::from_pointee(
@@ -769,8 +766,9 @@ mod tests {
 
     #[tokio::test]
     async fn explicit_publish_uses_reserved_log_topic_and_body_schema() {
+        let _guard = test_lock().await;
         let messaging = connected_messaging();
-        let service = DefaultLogService::start_for_isolated_capture_test(
+        let service = DefaultLogService::start(
             config(json!({ "logging": { "publish": { "enabled": true } } })),
             Some(messaging.clone() as Arc<dyn ReservedMessaging>),
         )
@@ -805,8 +803,9 @@ mod tests {
 
     #[tokio::test]
     async fn northbound_destination_uses_reserved_northbound_path() {
+        let _guard = test_lock().await;
         let messaging = connected_messaging();
-        let service = DefaultLogService::start_for_isolated_capture_test(
+        let service = DefaultLogService::start(
             config(json!({ "logging": { "publish": { "destination": "northbound" } } })),
             Some(messaging.clone() as Arc<dyn ReservedMessaging>),
         )
@@ -824,8 +823,9 @@ mod tests {
 
     #[tokio::test]
     async fn disconnected_transport_counts_failure_without_reserved_publish() {
+        let _guard = test_lock().await;
         let messaging = RecordingMessaging::new();
-        let service = DefaultLogService::start_for_isolated_capture_test(
+        let service = DefaultLogService::start(
             config(json!({ "logging": { "publish": { "enabled": true } } })),
             Some(messaging.clone() as Arc<dyn ReservedMessaging>),
         )
@@ -842,8 +842,9 @@ mod tests {
 
     #[tokio::test]
     async fn redaction_applies_extra_patterns() {
+        let _guard = test_lock().await;
         let messaging = connected_messaging();
-        let service = DefaultLogService::start_for_isolated_capture_test(
+        let service = DefaultLogService::start(
             config(json!({ "logging": { "publish": { "redaction": {
                 "extraPatterns": ["token=[A-Za-z0-9]+"]
             } } } })),
@@ -866,8 +867,9 @@ mod tests {
 
     #[tokio::test]
     async fn truncation_marks_record_and_preserves_required_fields() {
+        let _guard = test_lock().await;
         let messaging = connected_messaging();
-        let service = DefaultLogService::start_for_isolated_capture_test(
+        let service = DefaultLogService::start(
             config(json!({ "logging": { "publish": { "maxRecordBytes": 180 } } })),
             Some(messaging.clone() as Arc<dyn ReservedMessaging>),
         )
@@ -884,8 +886,9 @@ mod tests {
 
     #[tokio::test]
     async fn queue_drop_oldest_is_nonblocking_and_reports_dropped() {
+        let _guard = test_lock().await;
         let messaging = connected_messaging();
-        let service = DefaultLogService::start_for_isolated_capture_test(
+        let service = DefaultLogService::start(
             config(json!({ "logging": { "publish": { "queue": { "maxRecords": 1 } } } })),
             Some(messaging.clone() as Arc<dyn ReservedMessaging>),
         )
@@ -913,8 +916,9 @@ mod tests {
 
     #[tokio::test]
     async fn capture_layer_builds_record_when_enabled() {
+        let _guard = test_lock().await;
         let messaging = connected_messaging();
-        let service = DefaultLogService::start_for_isolated_capture_test(
+        let service = DefaultLogService::start(
             config(json!({ "logging": { "publish": {
                 "enabled": true,
                 "minLevel": "DEBUG"
@@ -922,9 +926,10 @@ mod tests {
             Some(messaging as Arc<dyn ReservedMessaging>),
         )
         .unwrap();
+        let layer = LogCaptureLayer::new();
         let subscriber = tracing_subscriber::registry()
             .with(tracing_subscriber::EnvFilter::new("trace"))
-            .with(LogCaptureLayer::for_isolated_capture_test(service.clone()));
+            .with(layer);
         tracing::subscriber::with_default(subscriber, || {
             tracing::info!(answer = 42_u64, "hello");
         });
@@ -960,11 +965,12 @@ mod tests {
 
     #[tokio::test]
     async fn capture_layer_suppresses_events_emitted_by_log_publisher() {
+        let _guard = test_lock().await;
         let inner = connected_messaging();
         let reserved = Arc::new(LoggingReserved {
             inner: inner.clone(),
         });
-        let service = DefaultLogService::start_for_isolated_capture_test(
+        let service = DefaultLogService::start(
             config(json!({ "logging": { "publish": {
                 "enabled": true,
                 "minLevel": "TRACE"
@@ -974,7 +980,7 @@ mod tests {
         .unwrap();
         let subscriber = tracing_subscriber::registry()
             .with(tracing_subscriber::EnvFilter::new("trace"))
-            .with(LogCaptureLayer::for_isolated_capture_test(service.clone()));
+            .with(LogCaptureLayer::new());
 
         let _subscriber = tracing::subscriber::set_default(subscriber);
         service
@@ -982,7 +988,19 @@ mod tests {
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(inner.reserved_local().len(), 1);
-        assert_eq!(service.stats().queued, 0);
+        let published = inner.reserved_local();
+        let explicit_records = published
+            .iter()
+            .filter(|(_, msg)| msg.body["message"] == "one")
+            .count();
+        let recursive_provider_records = published
+            .iter()
+            .filter(|(_, msg)| msg.body["message"] == "provider publish warning should not recurse")
+            .count();
+        assert_eq!(explicit_records, 1);
+        assert_eq!(
+            recursive_provider_records, 0,
+            "events emitted by the reserved log publisher must not be captured and re-published"
+        );
     }
 }
