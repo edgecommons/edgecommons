@@ -24,6 +24,7 @@ import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -103,6 +104,52 @@ public class Heartbeat implements ConfigurationChangeListener
     public void setInstanceConnectivityProvider(InstanceConnectivityProvider provider)
     {
         this.connectivityProvider = provider;
+    }
+
+    /**
+     * Samples the registered per-instance connectivity provider, once.
+     *
+     * <p>This is the single sampling seam, and it deliberately serves <b>both</b> surfaces: the
+     * {@code state} keepalive pushes it in {@code instances[]}, and the built-in {@code status} verb
+     * ({@link com.mbreissi.edgecommons.commands.CommandInbox#STATUS}) returns it when pulled. One
+     * component-supplied provider; two surfaces; no second copy of the data to drift out of step.
+     *
+     * <p>Best-effort by contract: no provider, a {@code null} result, or a throwing provider all yield
+     * an empty list. A component's provider bug must never suppress the keepalive or fail the command
+     * — it can only cost the {@code instances[]} section for that sample.
+     *
+     * @return the live per-instance connectivity; never {@code null}, possibly empty
+     */
+    public List<InstanceConnectivity> sampleInstanceConnectivity()
+    {
+        InstanceConnectivityProvider provider = connectivityProvider;
+        if (provider == null)
+        {
+            return List.of();
+        }
+        try
+        {
+            List<InstanceConnectivity> conns = provider.instanceConnectivity();
+            if (conns == null || conns.isEmpty())
+            {
+                return List.of();
+            }
+            List<InstanceConnectivity> out = new ArrayList<>(conns.size());
+            for (InstanceConnectivity c : conns)
+            {
+                if (c != null)
+                {
+                    out.add(c);
+                }
+            }
+            return List.copyOf(out);
+        }
+        catch (Exception e)
+        {
+            LOGGER.warn("Instance connectivity provider failed; omitting instances[] this sample: {}",
+                    e.toString());
+            return List.of();
+        }
     }
 
     /**
@@ -219,34 +266,17 @@ public class Heartbeat implements ConfigurationChangeListener
             body.addProperty("uptimeSecs", getUptimeSecs());
         }
         // Per-instance connectivity — the state body's instances[] (only on the RUNNING keepalive; a
-        // STOPPED state carries no live instances). Best-effort: a null/throwing provider simply omits
-        // the section — a provider bug must never suppress the keepalive itself.
-        InstanceConnectivityProvider provider = connectivityProvider;
-        if (includeUptime && provider != null)
+        // STOPPED state carries no live instances).
+        if (includeUptime)
         {
-            try
+            JsonArray instances = new JsonArray();
+            for (InstanceConnectivity c : sampleInstanceConnectivity())
             {
-                List<InstanceConnectivity> conns = provider.instanceConnectivity();
-                if (conns != null && !conns.isEmpty())
-                {
-                    JsonArray instances = new JsonArray();
-                    for (InstanceConnectivity c : conns)
-                    {
-                        if (c != null)
-                        {
-                            instances.add(c.toJson());
-                        }
-                    }
-                    if (!instances.isEmpty())
-                    {
-                        body.add("instances", instances);
-                    }
-                }
+                instances.add(c.toJson());
             }
-            catch (Exception e)
+            if (!instances.isEmpty())
             {
-                LOGGER.warn("Instance connectivity provider failed; omitting instances[] this tick: {}",
-                        e.toString());
+                body.add("instances", instances);
             }
         }
         Message stateMessage = MessageBuilder.create(STATE_MESSAGE_NAME, STATE_MESSAGE_VERSION)

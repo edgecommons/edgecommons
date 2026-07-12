@@ -254,9 +254,9 @@ final class UnsTestVectors {
 
         // ---- a LIVE inbox with the pinned action seams the vectors document ----
         JsonArray verbs = doc.getAsJsonArray("verbs");
-        assertEquals(4, verbs.size(), "commands.json must pin exactly the four built-in verbs");
+        assertEquals(5, verbs.size(), "commands.json must pin exactly the five built-in verbs");
         String[] expectedVerbs = {CommandInbox.PING, CommandInbox.DESCRIBE, CommandInbox.RELOAD_CONFIG,
-                CommandInbox.GET_CONFIGURATION};
+                CommandInbox.GET_CONFIGURATION, CommandInbox.STATUS};
         JsonObject pinnedConfig = findCommandCase(verbs, CommandInbox.GET_CONFIGURATION)
                 .getAsJsonObject("reply").getAsJsonObject("body")
                 .getAsJsonObject("result").getAsJsonObject("config");

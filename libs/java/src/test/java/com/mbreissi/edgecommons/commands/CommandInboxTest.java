@@ -11,11 +11,13 @@ import com.mbreissi.edgecommons.test.MockMessagingService;
 import com.mbreissi.edgecommons.uns.UnsValidationException;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -169,6 +171,83 @@ class CommandInboxTest {
         JsonObject result = body.getAsJsonObject("result");
         assertEquals("RUNNING", result.get("status").getAsString());
         assertEquals(1234, result.get("uptimeSecs").getAsLong());
+    }
+
+    /** With no provider registered — a plain service — `status` answers exactly as `ping` does. */
+    @Test
+    void statusWithoutAProviderAnswersLikePingAndOmitsInstances() {
+        uptime.set(77);
+        inbox.start();
+        messaging.simulateMessage(topic(CommandInbox.STATUS), request(CommandInbox.STATUS));
+        JsonObject result = onlyReplyBody().getAsJsonObject("result");
+        assertEquals("RUNNING", result.get("status").getAsString());
+        assertEquals(77, result.get("uptimeSecs").getAsLong());
+        assertFalse(result.has("instances"),
+                "a component with no instances must omit the section, not emit an empty array");
+    }
+
+    /** The pulled answer is the provider sample — the same one the state keepalive pushes. */
+    @Test
+    void statusReturnsTheProviderSampleIncludingStateAndAttributes() {
+        JsonObject attrs = new JsonObject();
+        attrs.add("capabilities", JsonParser.parseString("[\"ptz\",\"snapshot\"]"));
+        attrs.addProperty("lastError", "CAMERA_UNAVAILABLE");
+
+        CommandInbox withInstances = new CommandInbox(config, messaging,
+                uptime::get, reloadResult::get, redactedConfig::get,
+                () -> List.of(
+                        InstanceConnectivity.of("cam-01", true).withState("ONLINE"),
+                        new InstanceConnectivity("cam-02", false, "BACKOFF", "connect timed out",
+                                Map.of("capabilities", attrs.get("capabilities"),
+                                        "lastError", attrs.get("lastError")))));
+        withInstances.start();
+        messaging.simulateMessage(topic(CommandInbox.STATUS), request(CommandInbox.STATUS));
+
+        JsonObject result = onlyReplyBody().getAsJsonObject("result");
+        JsonArray instances = result.getAsJsonArray("instances");
+        assertEquals(2, instances.size());
+
+        JsonObject first = instances.get(0).getAsJsonObject();
+        assertEquals("cam-01", first.get("instance").getAsString());
+        assertTrue(first.get("connected").getAsBoolean());
+        assertEquals("ONLINE", first.get("state").getAsString());
+        assertFalse(first.has("attributes"), "an empty attribute bag is omitted");
+
+        JsonObject second = instances.get(1).getAsJsonObject();
+        assertFalse(second.get("connected").getAsBoolean());
+        assertEquals("BACKOFF", second.get("state").getAsString());
+        assertEquals("connect timed out", second.get("detail").getAsString());
+        assertEquals("CAMERA_UNAVAILABLE",
+                second.getAsJsonObject("attributes").get("lastError").getAsString());
+    }
+
+    /**
+     * A throwing connectivity source must never crash the inbox — it degrades to the standard
+     * uncoded-failure reply. (In production the source is {@code Heartbeat::sampleInstanceConnectivity},
+     * which swallows a component's provider bug and yields an empty list, so `status` still answers;
+     * this asserts the inbox is safe even if a caller wires a raw throwing supplier.)
+     */
+    @Test
+    void statusSurvivesAThrowingProvider() {
+        CommandInbox throwing = new CommandInbox(config, messaging,
+                uptime::get, reloadResult::get, redactedConfig::get,
+                () -> {
+                    throw new IllegalStateException("provider blew up");
+                });
+        throwing.start();
+        assertDoesNotThrow(() -> messaging.simulateMessage(topic(CommandInbox.STATUS),
+                request(CommandInbox.STATUS)));
+        JsonObject body = onlyReplyBody();
+        assertFalse(body.get("ok").getAsBoolean());
+        assertEquals(CommandInbox.ERR_HANDLER_ERROR,
+                body.getAsJsonObject("error").get("code").getAsString());
+    }
+
+    /** `status` is a built-in: a component cannot shadow it. */
+    @Test
+    void statusCannotBeShadowedByACustomVerb() {
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.register(CommandInbox.STATUS, req -> null));
     }
 
     @Test
@@ -373,7 +452,8 @@ class CommandInboxTest {
     void verbsSnapshotContainsBuiltInsAndCustoms() {
         inbox.register("mine", req -> null);
         assertEquals(Set.of(CommandInbox.PING, CommandInbox.RELOAD_CONFIG,
-                CommandInbox.GET_CONFIGURATION, CommandInbox.DESCRIBE, "mine"), inbox.verbs());
+                CommandInbox.GET_CONFIGURATION, CommandInbox.DESCRIBE, CommandInbox.STATUS, "mine"),
+                inbox.verbs());
     }
 
     @Test
