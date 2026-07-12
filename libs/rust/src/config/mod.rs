@@ -66,3 +66,85 @@ pub trait ConfigurationChangeListener: Send + Sync {
     /// Called with the new configuration snapshot after a successful reload.
     async fn on_configuration_change(&self, config: Arc<Config>) -> bool;
 }
+
+/// A listener that prepares an atomic configuration application transaction.
+///
+/// Register exactly one coordinator with
+/// [`crate::EdgeCommons::add_config_apply_listener`] when a dependent runtime must either accept
+/// the entire candidate or keep operating on its existing generation. A coordinator, rather than
+/// independently-applied listeners, makes a rejection atomic: a later listener cannot reject a
+/// candidate after an earlier listener has already changed its runtime. The coordinator must
+/// prepare without changing its live runtime; Core calls the returned transaction's `commit` while
+/// the old Core snapshot remains active, then publishes the new snapshot only after commit
+/// succeeds. On a failed commit, Core calls `rollback` before rejecting the candidate. `commit`
+/// is deliberately not externally cancelled: it performs a potentially destructive runtime
+/// transition and must use its own bounded stages and return only after success or restoration.
+#[async_trait]
+pub trait ConfigurationApplyListener: Send + Sync {
+    /// Prepares an application transaction for `config` without changing the live runtime.
+    ///
+    /// The returned transaction owns all staged resources. If preparation fails, it must leave
+    /// the existing runtime intact; if it succeeds, its [`PreparedConfigurationApply::commit`]
+    /// and [`PreparedConfigurationApply::rollback`] methods are called while the configuration
+    /// lifecycle remains serialized.
+    async fn prepare_configuration_apply(
+        &self,
+        config: Arc<Config>,
+    ) -> ConfigurationApplicationResult<Box<dyn PreparedConfigurationApply>>;
+}
+
+/// A prepared, rollback-capable configuration application transaction.
+///
+/// Core invokes `commit` before it stores the candidate as the active configuration. If `commit`
+/// fails, Core invokes `rollback` and keeps the prior snapshot and generation. `commit` and
+/// `rollback` must apply their own bounded deadlines: Core awaits them rather than dropping either
+/// future midway through a destructive transition. Implementations must make `rollback` restore
+/// the prior runtime before reporting success; cleanup of staged-but-never-committed resources
+/// belongs in `Drop`.
+#[async_trait]
+pub trait PreparedConfigurationApply: Send {
+    /// Transitions the prepared runtime to the candidate configuration.
+    async fn commit(&mut self) -> ConfigurationApplicationResult<()>;
+
+    /// Restores the runtime that was active before [`Self::commit`] was attempted.
+    async fn rollback(&mut self) -> ConfigurationApplicationResult<()>;
+}
+
+/// An operator-safe failure from a configuration application transaction.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("configuration application failed [{code}]: {message}")]
+pub struct ConfigurationApplicationError {
+    /// Stable machine-readable failure code.
+    pub code: String,
+    /// Sanitized, bounded diagnostic suitable for operators.
+    pub message: String,
+}
+
+impl ConfigurationApplicationError {
+    /// Constructs an operator-safe transaction failure.
+    #[must_use]
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: candidate::sanitize(&message.into()),
+        }
+    }
+}
+
+/// Result returned by [`ConfigurationApplyListener`] and [`PreparedConfigurationApply`].
+pub type ConfigurationApplicationResult<T> = std::result::Result<T, ConfigurationApplicationError>;
+
+/// Why installing a pre-commit configuration coordinator failed.
+///
+/// There can be only one [`ConfigurationApplyListener`]. A runtime that owns several dependent
+/// services must coordinate them inside that one listener so it can keep its own generation
+/// atomic when a candidate is rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ConfigurationApplyListenerRegistrationError {
+    /// A coordinator is already installed for this [`crate::EdgeCommons`] instance.
+    #[error("a configuration-application coordinator is already registered")]
+    AlreadyRegistered,
+    /// The listener registry was poisoned by a panic and can no longer be trusted.
+    #[error("the configuration-application coordinator registry is unavailable")]
+    RegistryUnavailable,
+}

@@ -1,11 +1,11 @@
 """Cross-language interoperability test for the edgecommons libraries.
 
-Runs request/reply, raw-publish drop policy, opaque binary body, and UNS
-round-trips over the shared local MQTT broker for every ordered pair of
-languages (python, java, rust, ts) using the per-language "interop node"
-programs. A passing pair proves normal protobuf messages are mutually
-intelligible in both directions and that raw/foreign payloads do not leak
-through normal Message subscriptions.
+Runs request/reply, deferred command outcomes, QoS1 confirmed publication,
+raw-publish drop policy, opaque binary body, and UNS round-trips over the
+shared local MQTT broker for every ordered pair of languages (python, java,
+rust, ts) using the per-language "interop node" programs. A passing pair
+proves normal protobuf messages are mutually intelligible in both directions
+and that raw/foreign payloads do not leak through normal Message subscriptions.
 
 Prereqs (each self-skips if missing):
 - a local MQTT broker on localhost:1883 (docker start edgecommons-emqx)
@@ -286,6 +286,98 @@ def test_interop_request_reply(commands, requester, responder):
             resp_proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             resp_proc.kill()
+
+
+@pytest.mark.parametrize("responder", LANGS)
+@pytest.mark.parametrize("requester", LANGS)
+def test_interop_deferred_command(commands, requester, responder):
+    """A real command inbox accepts work before activation, then sends exactly one
+    confirmed deferred reply with the original correlation id.  Every ordered pair
+    validates requester parsing as well as responder settlement over EMQX."""
+    for lang in (requester, responder):
+        if lang not in commands:
+            pytest.skip(f"{lang} toolchain/artifact unavailable")
+
+    component = f"interop-deferred-{responder}-{uuid.uuid4().hex}"
+    topic = f"ecv1/interop-device/{component}/main/cmd/deferred"
+    token = uuid.uuid4().hex
+    resp_proc, lines, ready = _launch(commands[responder]("deferred-responder", component))
+    try:
+        assert ready.wait(25), f"{responder} deferred responder never signalled READY; lines={lines}"
+        result = subprocess.run(
+            commands[requester]("deferred-request", topic, token),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            cwd=str(RUN_DIR),
+        )
+        payload = _last_json(result.stdout.splitlines())
+        assert result.returncode == 0, (
+            f"{requester}->{responder} deferred request failed: {result.stdout}\n{result.stderr}"
+        )
+        assert payload is not None, f"no JSON from {requester} deferred request: {result.stdout}"
+        assert payload["ok"] is True
+        assert payload["reply_count"] == 1, "one deferred command must settle exactly once"
+        assert payload["correlation_match"] is True, "deferred reply must preserve request correlation"
+        body = payload["reply_body"]
+        assert body["ok"] is True
+        result_body = body["result"]
+        assert result_body["token"] == token
+        assert result_body["responder"] == responder
+        assert result_body["durablyAccepted"] is True
+    finally:
+        if resp_proc.poll() is None:
+            resp_proc.terminate()
+            try:
+                resp_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                resp_proc.kill()
+
+
+@pytest.mark.parametrize("subscriber", LANGS)
+@pytest.mark.parametrize("publisher", LANGS)
+def test_interop_confirmed_qos1_publish(commands, publisher, subscriber):
+    """A publisher reports success only after its strict public QoS1 path returns;
+    the receiver keeps a duplicate-detection window and rejects a second envelope."""
+    for lang in (publisher, subscriber):
+        if lang not in commands:
+            pytest.skip(f"{lang} toolchain/artifact unavailable")
+
+    topic = f"interop/confirmed/{subscriber}/{uuid.uuid4()}"
+    token = uuid.uuid4().hex
+    sub_proc, lines, ready = _launch(commands[subscriber]("confirmed-sub", topic, token))
+    try:
+        assert ready.wait(25), f"{subscriber} confirmed subscriber never signalled READY; lines={lines}"
+        published = subprocess.run(
+            commands[publisher]("confirmed-pub", topic, token),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            cwd=str(RUN_DIR),
+        )
+        pub_payload = _last_json(published.stdout.splitlines())
+        assert published.returncode == 0, (
+            f"{publisher} confirmed publish failed: {published.stdout}\n{published.stderr}"
+        )
+        assert pub_payload == {"ok": True, "confirmed": True, "qos": 1}, (
+            "publisher may report success only after its strict QoS1 confirmation returns"
+        )
+        sub_proc.wait(timeout=15)
+        payload = _last_json(lines)
+        assert payload is not None, f"no JSON from {subscriber} confirmed subscriber; lines={lines}"
+        assert payload["ok"] is True
+        assert payload["message_count"] == 1, "QoS1 probe must not emit a duplicate envelope"
+        assert payload["body"]["token"] == token
+        assert payload["body"]["from"] == publisher
+    finally:
+        if sub_proc.poll() is None:
+            sub_proc.terminate()
+            try:
+                sub_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                sub_proc.kill()
 
 
 @pytest.mark.parametrize("subscriber", LANGS)

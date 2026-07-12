@@ -145,6 +145,39 @@ def _write_log_runtime_config():
         return f.name
 
 
+def _write_durable_acceptance_marker():
+    """Persist the tiny P1 acceptance record before a deferred reply is activated.
+
+    The interop role intentionally uses a fixed-size, uniquely named local marker rather
+    than an in-memory flag, so the response's ``durablyAccepted`` claim follows a real
+    filesystem durability boundary.  It is deleted only after the terminal reply has
+    been attempted.
+    """
+    fd, marker_path = tempfile.mkstemp(
+        prefix=f"edgecommons-p1-accept-{LANG}-", suffix=".marker"
+    )
+    try:
+        with os.fdopen(fd, "wb") as marker:
+            marker.write(b"accepted\n")
+            marker.flush()
+            os.fsync(marker.fileno())
+    except BaseException:
+        try:
+            os.unlink(marker_path)
+        except OSError:
+            pass
+        raise
+    return marker_path
+
+
+def _remove_durable_acceptance_marker(marker_path):
+    """Best-effort cleanup after the accepted command has reached a terminal response."""
+    try:
+        os.unlink(marker_path)
+    except OSError:
+        pass
+
+
 def _log_runtime_args(path):
     return [
         "--platform",
@@ -396,22 +429,24 @@ def run_deferred_responder(component_token):
 
         def deferred_handler(request):
             token = inbox.defer(request, 4)
-            accepted = {
-                "durablyAccepted": True,
-                "token": request.get_body().get("token"),
-            }
-            if not accepted["durablyAccepted"]:
+            try:
+                acceptance_marker = _write_durable_acceptance_marker()
+            except OSError:
                 token.discard()
                 return CommandOutcome.error("ACCEPTANCE_FAILED", "work was not accepted")
             if not token.activate():
+                _remove_durable_acceptance_marker(acceptance_marker)
                 return CommandOutcome.error("ACTIVATION_FAILED", "deferred token was not open")
 
             def settle_after_acceptance():
-                token.settle_success({
-                    "token": accepted["token"],
-                    "responder": LANG,
-                    "durablyAccepted": accepted["durablyAccepted"],
-                })
+                try:
+                    token.settle_success({
+                        "token": request.get_body().get("token"),
+                        "responder": LANG,
+                        "durablyAccepted": True,
+                    })
+                finally:
+                    _remove_durable_acceptance_marker(acceptance_marker)
 
             return CommandOutcome.deferred_with_continuation(token, settle_after_acceptance)
 
@@ -447,7 +482,7 @@ def run_deferred_request(topic, token):
         prov.subscribe(reply_topic, on_reply)
         request = (
             MessageBuilder.create("deferred", "1.0")
-            .with_payload({"token": token, "from": LANG})
+            .with_command({"token": token, "from": LANG})
             .with_reply_to(reply_topic)
             .with_tags({})
             .build()
@@ -693,6 +728,338 @@ def _gg_log_runtime_args(path):
         "-t",
         "interop-device",
     ]
+
+
+def _gg_p1_ready_path(run_id, actor):
+    return f"/tmp/edgecommons_gg_ipc_p1_ready_{actor}_{run_id}"
+
+
+def _gg_p1_wait_for_ready(run_id, expected_actors):
+    ready_wait = float(os.environ.get("EDGECOMMONS_GG_READY_WAIT_SECS", "180"))
+    deadline = time.monotonic() + ready_wait
+    while time.monotonic() < deadline:
+        missing = [
+            actor for actor in expected_actors
+            if not os.path.exists(_gg_p1_ready_path(run_id, actor))
+        ]
+        if not missing:
+            return []
+        time.sleep(0.2)
+    return [
+        actor for actor in expected_actors
+        if not os.path.exists(_gg_p1_ready_path(run_id, actor))
+    ]
+
+
+def _gg_p1_runtime_config(component_token):
+    """Create a real GREENGRASS/IPC command-runtime configuration."""
+    cfg = {
+        "component": {"token": component_token},
+        "messaging": {"requestTimeoutSeconds": 4},
+        "heartbeat": {"enabled": False},
+        "health": {"enabled": False},
+    }
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(cfg, f)
+        return f.name
+
+
+def _gg_p1_runtime_args(path):
+    return [
+        "--platform",
+        "GREENGRASS",
+        "--transport",
+        "IPC",
+        "-c",
+        "FILE",
+        path,
+        "-t",
+        "interop-device",
+    ]
+
+
+def _gg_p1_target_actor(target_language, sender_actor):
+    """Route the Rust self-pair through its separate deployed Rust principal."""
+    if target_language == "rust" and sender_actor == "rust":
+        return "rustpeer"
+    return target_language
+
+
+
+def _gg_p1_command_topic(actor):
+    return f"ecv1/interop-device/interop-p1-{actor}/main/cmd/deferred"
+
+
+
+def _gg_p1_confirmed_topic(run_id, publisher, target_actor):
+    return f"edgecommons/interop/p1/{run_id}/confirmed/{publisher}/{target_actor}"
+
+
+def run_gg_p1_matrix(run_id, langs_csv, _unused=None):
+    """Run real IPC deferred-command and strict-confirmed-publish P1 behavior.
+
+    Four canonical components act as requesters and strict publishers.  A second Rust
+    component is deliberately used only for the Rust-to-Rust leg, giving that logical
+    pair two distinct Greengrass principals instead of relying on self-delivery.
+    """
+    from edgecommons.messaging.providers.greengrass.greengrass_ipc import GreengrassIpcProvider
+
+    languages = [part for part in langs_csv.split(",") if part]
+    expected_actors = [
+        part for part in os.environ.get(
+            "EDGECOMMONS_GG_READY_LANGS", langs_csv
+        ).split(",") if part
+    ]
+    actor = os.environ.get("EDGECOMMONS_GG_READY_LANG", LANG)
+    canonical_actor = actor != "rustpeer"
+    subscribe_delay = float(os.environ.get("EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS", "2"))
+    wait_secs = float(os.environ.get("EDGECOMMONS_GG_WAIT_SECS", "90"))
+    duplicate_window = 0.75
+    provider = GreengrassIpcProvider(receive_own_messages=True)
+    received_confirmed = {}
+    errors = {}
+    received_lock = threading.Lock()
+    first_confirmed = threading.Event()
+    runtime = None
+    config_path = None
+
+    # Rust publishes its logical self-pair to the separate ``rustpeer`` component.  The
+    # canonical Rust component therefore receives the other three logical publishers;
+    # rustpeer's evidence carries the Rust-to-Rust receipt.
+    expected_publishers = (
+        [publisher for publisher in languages if publisher != "rust"]
+        if actor == "rust"
+        else (languages if canonical_actor else ["rust"])
+    )
+
+    def confirmed_handler(topic, message):
+        publisher = _publisher_from_gg_topic(topic) or "unknown"
+        try:
+            body = message.get_body()
+            valid = (
+                isinstance(body, dict)
+                and body.get("runId") == run_id
+                and body.get("publisher") == publisher
+                and body.get("targetActor") == actor
+                and body.get("strict") is True
+            )
+            with received_lock:
+                received_confirmed.setdefault(publisher, []).append({
+                    "ok": bool(valid), "body": body, "topic": topic,
+                })
+            first_confirmed.set()
+        except Exception as exc:  # pragma: no cover - exercised on device
+            with received_lock:
+                errors[f"confirmed:{publisher}"] = str(exc)
+            first_confirmed.set()
+
+    def send_deferred(target_language, target_actor):
+        token = f"{run_id}:{actor}->{target_language}"
+        reply_topic = (
+            f"edgecommons/interop/p1/{run_id}/reply/{actor}/"
+            f"{target_actor}/{uuid.uuid4().hex}"
+        )
+        replies = []
+        reply_lock = threading.Lock()
+        first_reply = threading.Event()
+
+        def on_reply(_topic, reply):
+            with reply_lock:
+                replies.append({
+                    "correlation": reply.get_correlation_id(),
+                    "body": reply.get_body(),
+                })
+            first_reply.set()
+
+        provider.subscribe(reply_topic, on_reply, max_concurrency=1, max_messages=2)
+        request = (
+            MessageBuilder.create("deferred", "1.0")
+            .with_command({"token": token, "from": LANG, "actor": actor})
+            .with_reply_to(reply_topic)
+            .with_tags({})
+            .build()
+        )
+        correlation = request.get_correlation_id()
+        provider.publish(_gg_p1_command_topic(target_actor), request)
+        if not first_reply.wait(8):
+            return {"ok": False, "target_actor": target_actor, "error": "timeout"}
+        time.sleep(duplicate_window)
+        with reply_lock:
+            captured = list(replies)
+        first = captured[0]
+        body = first["body"]
+        result = body.get("result") if isinstance(body, dict) else None
+        correlation_match = first["correlation"] == correlation
+        ok = (
+            len(captured) == 1
+            and correlation_match
+            and isinstance(body, dict)
+            and body.get("ok") is True
+            and isinstance(result, dict)
+            and result.get("token") == token
+            and result.get("durablyAccepted") is True
+            and result.get("responder") == target_language
+            and result.get("responderActor") == target_actor
+        )
+        return {
+            "ok": bool(ok),
+            "target_actor": target_actor,
+            "expected_token": token,
+            "expected_responder": target_language,
+            "expected_responder_actor": target_actor,
+            "reply_count": len(captured),
+            "correlation_match": correlation_match,
+            "duplicate_window_ms": int(duplicate_window * 1000),
+            "reply_body": body,
+        }
+
+    try:
+        config_path = _gg_p1_runtime_config(f"interop-p1-{actor}")
+        runtime = EdgeCommons(
+            f"com.mbreissi.edgecommons.interop.{LANG}.P1Responder",
+            _gg_p1_runtime_args(config_path),
+        )
+        inbox = runtime.get_commands()
+        if inbox is None:
+            raise RuntimeError("runtime did not expose command inbox")
+
+        def deferred_handler(request):
+            token = inbox.defer(request, 4)
+            request_body = request.get_body()
+            try:
+                acceptance_marker = _write_durable_acceptance_marker()
+            except OSError:
+                token.discard()
+                return CommandOutcome.error("ACCEPTANCE_FAILED", "work was not accepted")
+            if not token.activate():
+                _remove_durable_acceptance_marker(acceptance_marker)
+                return CommandOutcome.error("ACTIVATION_FAILED", "deferred token was not open")
+
+            def settle_after_acceptance():
+                try:
+                    token.settle_success({
+                        "token": request_body.get("token") if isinstance(request_body, dict) else None,
+                        "responder": LANG,
+                        "responderActor": actor,
+                        "durablyAccepted": True,
+                    })
+                finally:
+                    _remove_durable_acceptance_marker(acceptance_marker)
+
+            return CommandOutcome.deferred_with_continuation(token, settle_after_acceptance)
+
+        inbox.register_outcome("deferred", deferred_handler)
+        provider.subscribe(
+            f"edgecommons/interop/p1/{run_id}/confirmed/+/{actor}",
+            confirmed_handler,
+            max_concurrency=1,
+            max_messages=32,
+        )
+        print("READY", flush=True)
+        with open(_gg_p1_ready_path(run_id, actor), "w", encoding="utf-8") as f:
+            f.write(str(time.time()))
+
+        ready_missing = _gg_p1_wait_for_ready(run_id, expected_actors)
+        deferred_requests = {}
+        confirmed_publishes = {}
+        if not ready_missing and canonical_actor:
+            time.sleep(subscribe_delay)
+            for target_language in languages:
+                target_actor = _gg_p1_target_actor(target_language, actor)
+                try:
+                    deferred_requests[target_language] = send_deferred(
+                        target_language, target_actor
+                    )
+                except Exception as exc:  # pragma: no cover - exercised on device
+                    deferred_requests[target_language] = {
+                        "ok": False, "target_actor": target_actor, "error": type(exc).__name__,
+                    }
+                message = (
+                    MessageBuilder.create("InteropConfirmed", "1.0")
+                    .with_payload({
+                        "runId": run_id,
+                        "publisher": LANG,
+                        "publisherActor": actor,
+                        "targetLanguage": target_language,
+                        "targetActor": target_actor,
+                        "strict": True,
+                    })
+                    .with_tags({})
+                    .build()
+                )
+                try:
+                    provider.publish_confirmed(
+                        _gg_p1_confirmed_topic(run_id, LANG, target_actor),
+                        message.to_bytes(), Qos.AT_LEAST_ONCE, 5,
+                    )
+                    confirmed_publishes[target_language] = {
+                        "ok": True, "target_actor": target_actor, "confirmed": True, "qos": 1,
+                    }
+                except Exception as exc:  # pragma: no cover - exercised on device
+                    confirmed_publishes[target_language] = {
+                        "ok": False, "target_actor": target_actor, "error": type(exc).__name__,
+                    }
+
+        first_confirmed.wait(wait_secs)
+        deadline = time.monotonic() + wait_secs
+        while time.monotonic() < deadline:
+            with received_lock:
+                complete = all(publisher in received_confirmed for publisher in expected_publishers)
+            if complete:
+                break
+            time.sleep(0.05)
+        time.sleep(duplicate_window)
+        with received_lock:
+            received = {
+                publisher: {"count": len(items), "items": items,
+                            "ok": len(items) == 1 and items[0].get("ok") is True}
+                for publisher, items in received_confirmed.items()
+            }
+            confirmed_missing = [
+                publisher for publisher in expected_publishers if publisher not in received
+            ]
+            receive_ok = not confirmed_missing and all(
+                received[publisher]["ok"] for publisher in expected_publishers
+            )
+            requests_ok = (not canonical_actor) or (
+                len(deferred_requests) == len(languages)
+                and all(item.get("ok") for item in deferred_requests.values())
+            )
+            publishes_ok = (not canonical_actor) or (
+                len(confirmed_publishes) == len(languages)
+                and all(item.get("ok") for item in confirmed_publishes.values())
+            )
+            ok = bool(
+                not ready_missing and not errors and requests_ok and publishes_ok and receive_ok
+            )
+            result = {
+                "schema": "edgecommons.gg-ipc-p1.v1",
+                "ok": ok,
+                "run_id": run_id,
+                "actor": actor,
+                "language": LANG,
+                "canonical_actor": canonical_actor,
+                "ready_missing": ready_missing,
+                "deferred_requests": deferred_requests,
+                "confirmed_publishes": confirmed_publishes,
+                "confirmed_received": received,
+                "confirmed_missing": confirmed_missing,
+                "errors": errors,
+            }
+        result_path = f"/tmp/edgecommons_gg_ipc_p1_{actor}_{run_id}.json"
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, sort_keys=True)
+        print(json.dumps(result, sort_keys=True), flush=True)
+        return 0 if ok else 1
+    finally:
+        if runtime is not None:
+            runtime.shutdown()
+        if config_path:
+            try:
+                os.unlink(config_path)
+            except OSError:
+                pass
+        provider.disconnect()
 
 
 def run_gg_log_matrix(run_id, langs_csv, _unused=None):
@@ -1059,6 +1426,8 @@ if __name__ == "__main__":
         sys.exit(run_gg_log_matrix(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else None))
     elif role == "gg-binary-matrix":
         sys.exit(run_gg_binary_matrix(sys.argv[2], sys.argv[3], sys.argv[4]))
+    elif role == "gg-p1-matrix":
+        sys.exit(run_gg_p1_matrix(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else None))
     elif role == "uns-pub":
         sys.exit(run_uns_pub(sys.argv[2], sys.argv[3],
                              sys.argv[4] if len(sys.argv) > 4 else None))

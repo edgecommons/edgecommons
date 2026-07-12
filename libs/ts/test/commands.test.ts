@@ -704,6 +704,87 @@ describe("CommandInbox", () => {
     });
   });
 
+  it("floors a fractional remaining deferred lifetime before strict confirmation", async () => {
+    const now = vi.spyOn(performance, "now");
+    now.mockReturnValueOnce(1_000.25).mockReturnValue(1_000.75);
+    try {
+      const originalConfirmed = messaging.replyConfirmed.bind(messaging);
+      let observedTimeout: number | undefined;
+      messaging.replyConfirmed = async (...args) => {
+        observedTimeout = args[2];
+        expect(Number.isInteger(observedTimeout)).toBe(true);
+        await originalConfirmed(...args);
+      };
+
+      const token = inbox.defer(request("fractional-timeout"), 2_000);
+      expect(token.activate()).toBe(true);
+      expect(token.settleSuccess({ accepted: true })).toBe(SettlementResult.Accepted);
+
+      await waitFor(() => token.state() === DeferredReplyState.Settled);
+      expect(observedTimeout).toBe(1_999);
+      expect(messaging.published).toHaveLength(1);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("expires a deferred settlement when less than one whole millisecond remains", async () => {
+    const now = vi.spyOn(performance, "now");
+    now.mockReturnValueOnce(1_000).mockReturnValue(1_000.75);
+    try {
+      const token = inbox.defer(request("sub-millisecond-timeout"), 1);
+      expect(token.activate()).toBe(true);
+      expect(token.settleSuccess({ mustNotPublish: true })).toBe(SettlementResult.Accepted);
+
+      await waitFor(() => token.state() === DeferredReplyState.Expired);
+      expect(messaging.published).toHaveLength(0);
+      expect(inbox.deferredReplySnapshot()).toMatchObject({ active: 0, expired: 1 });
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("floors a fractional remaining deferred lifetime during shutdown confirmation", async () => {
+    const now = vi.spyOn(performance, "now");
+    now.mockReturnValueOnce(2_000.25).mockReturnValue(2_000.75);
+    try {
+      const originalConfirmed = messaging.replyConfirmed.bind(messaging);
+      let observedTimeout: number | undefined;
+      messaging.replyConfirmed = async (...args) => {
+        observedTimeout = args[2];
+        expect(Number.isInteger(observedTimeout)).toBe(true);
+        await originalConfirmed(...args);
+      };
+
+      const token = inbox.defer(request("fractional-shutdown"), 500);
+      expect(token.activate()).toBe(true);
+      await inbox.close();
+
+      expect(observedTimeout).toBe(499);
+      expect(messaging.published).toHaveLength(1);
+      expect((messaging.published[0].message?.getBody() as Record<string, unknown>).error)
+        .toMatchObject({ code: CommandInbox.ERR_COMPONENT_STOPPING });
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("does not extend a shutdown confirmation beyond a sub-millisecond deferred lifetime", async () => {
+    const now = vi.spyOn(performance, "now");
+    now.mockReturnValueOnce(2_000).mockReturnValue(2_000.75);
+    try {
+      const token = inbox.defer(request("sub-millisecond-shutdown"), 1);
+      expect(token.activate()).toBe(true);
+      await inbox.close();
+
+      expect(token.state()).toBe(DeferredReplyState.CancelledOnShutdown);
+      expect(messaging.published).toHaveLength(0);
+      expect(inbox.deferredReplySnapshot()).toMatchObject({ active: 0, cancelledOnShutdown: 1 });
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("expires an open deferred reply with stable counters and terminal settlement result", async () => {
     const token = inbox.defer(request("expires"), 25);
     expect(token.activate()).toBe(true);

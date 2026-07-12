@@ -102,6 +102,8 @@ pub struct EdgeCommons {
     parameters: Option<Arc<dyn parameters::ParameterService>>,
     /// Config-change listeners notified on hot reload.
     listeners: ConfigListeners,
+    /// Candidate-application coordinator that can reject a reload before its snapshot commits.
+    apply_listener: ConfigApplyListenerSlot,
     /// Shared readiness state (FR-HB-1/2): [`Self::set_ready`] toggles the ready flag, the SIGTERM
     /// watcher flips "shutting down", and the health server reads both (+ messaging connected) to
     /// answer `/readyz`.
@@ -155,13 +157,37 @@ pub struct EdgeCommons {
 /// Shared, mutable set of config-change listeners.
 type ConfigListeners = Arc<std::sync::Mutex<Vec<Arc<dyn config::ConfigurationChangeListener>>>>;
 
-/// Shared pre-commit lifecycle state. The short commit lock is never held across `.await`.
+/// The one pre-commit configuration application coordinator.
+///
+/// A single coordinator is intentional: applying unrelated listeners in sequence cannot be made
+/// atomic if a later listener rejects after an earlier listener has changed its runtime.
+type ConfigApplyListenerSlot =
+    Arc<std::sync::Mutex<Option<Arc<dyn config::ConfigurationApplyListener>>>>;
+
+fn install_config_apply_listener(
+    slot: &ConfigApplyListenerSlot,
+    listener: Arc<dyn config::ConfigurationApplyListener>,
+) -> std::result::Result<(), config::ConfigurationApplyListenerRegistrationError> {
+    let mut slot = slot
+        .lock()
+        .map_err(|_| config::ConfigurationApplyListenerRegistrationError::RegistryUnavailable)?;
+    if slot.is_some() {
+        return Err(config::ConfigurationApplyListenerRegistrationError::AlreadyRegistered);
+    }
+    *slot = Some(listener);
+    Ok(())
+}
+
+/// Shared configuration lifecycle state.
 struct ConfigLifecycle {
     validators: Arc<Vec<config::candidate::NamedValidator>>,
     validation_timeout: Duration,
     generation: AtomicU64,
     last_errors: Mutex<Vec<config::ConfigurationValidationError>>,
-    commit_lock: Mutex<()>,
+    /// Serializes validation, pre-commit application, and the final snapshot swap. A pre-commit
+    /// listener may await while applying its own runtime, so this is asynchronous rather than a
+    /// blocking mutex.
+    apply_lock: tokio::sync::Mutex<()>,
 }
 
 impl ConfigLifecycle {
@@ -174,7 +200,7 @@ impl ConfigLifecycle {
             validation_timeout,
             generation: AtomicU64::new(1),
             last_errors: Mutex::new(Vec::new()),
-            commit_lock: Mutex::new(()),
+            apply_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -306,8 +332,26 @@ impl EdgeCommons {
     /// # Errors
     /// [`EdgeCommonsError::UnsValidation`] when the token violates the §2.2 token rule.
     pub fn instance(&self, instance_id: &str) -> Result<EdgeCommonsInstance> {
-        uns::check_token(instance_id, "instance id")?;
         let cfg = self.config.load_full();
+        self.instance_from_config_snapshot(instance_id, cfg)
+    }
+
+    /// Build an instance-scoped facade handle from a validated configuration snapshot.
+    ///
+    /// This is intended for a [`config::ConfigurationApplyListener`] that needs to prepare a
+    /// candidate runtime before the core publishes that candidate as its current snapshot. The
+    /// returned facades retain the supplied immutable snapshot, so a successful pre-commit
+    /// application and the later core swap cannot produce mismatched identity or topic settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EdgeCommonsError::UnsValidation`] when `instance_id` violates the UNS token rule.
+    pub fn instance_from_config_snapshot(
+        &self,
+        instance_id: &str,
+        cfg: Arc<Config>,
+    ) -> Result<EdgeCommonsInstance> {
+        uns::check_token(instance_id, "instance id")?;
         let configured = cfg.instance_ids();
         if !configured.iter().any(|id| id == instance_id) {
             tracing::debug!(
@@ -434,6 +478,38 @@ impl EdgeCommons {
     ) {
         if let Ok(mut listeners) = self.listeners.lock() {
             listeners.retain(|existing| !Arc::ptr_eq(existing, listener));
+        }
+    }
+
+    /// Register the coordinator that applies a candidate before its configuration snapshot commits.
+    ///
+    /// Core prepares and commits this coordinator's transaction before it stores a candidate
+    /// snapshot. A preparation error or timeout, or a commit error, rejects the complete
+    /// candidate; a failed commit is followed by a fully-awaited rollback. Transactions must bound
+    /// their own commit/rollback stages because Core intentionally does not cancel a potentially
+    /// destructive transition midway. In every rejection case the current snapshot and generation
+    /// remain active and ordinary config-change listeners, including the effective-config
+    /// publisher, are not invoked. Only one coordinator may be registered; coordinate dependent
+    /// runtime services within it rather than registering multiple callbacks.
+    pub fn add_config_apply_listener(
+        &self,
+        listener: Arc<dyn config::ConfigurationApplyListener>,
+    ) -> std::result::Result<(), config::ConfigurationApplyListenerRegistrationError> {
+        install_config_apply_listener(&self.apply_listener, listener)
+    }
+
+    /// Remove a previously-registered pre-commit configuration application listener by identity.
+    pub fn remove_config_apply_listener(
+        &self,
+        listener: &Arc<dyn config::ConfigurationApplyListener>,
+    ) {
+        if let Ok(mut slot) = self.apply_listener.lock() {
+            if slot
+                .as_ref()
+                .is_some_and(|existing| Arc::ptr_eq(existing, listener))
+            {
+                *slot = None;
+            }
         }
     }
 }
@@ -870,6 +946,7 @@ impl EdgeCommonsBuilder {
 
         // Internal listeners reconfigure the metric target and logging on hot reload.
         let listeners: ConfigListeners = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let apply_listener: ConfigApplyListenerSlot = Arc::new(std::sync::Mutex::new(None));
         if let Ok(mut l) = listeners.lock() {
             l.push(emitter as Arc<dyn config::ConfigurationChangeListener>);
             l.push(logs.clone() as Arc<dyn config::ConfigurationChangeListener>);
@@ -934,6 +1011,7 @@ impl EdgeCommonsBuilder {
                 let source = source.clone();
                 let config = config.clone();
                 let listeners = listeners.clone();
+                let apply_listener = apply_listener.clone();
                 let lifecycle = config_lifecycle.clone();
                 let component_name = self.component_name.clone();
                 let thing_name = thing_name.clone();
@@ -941,6 +1019,7 @@ impl EdgeCommonsBuilder {
                     let source = source.clone();
                     let config = config.clone();
                     let listeners = listeners.clone();
+                    let apply_listener = apply_listener.clone();
                     let lifecycle = lifecycle.clone();
                     let component_name = component_name.clone();
                     let thing_name = thing_name.clone();
@@ -949,6 +1028,7 @@ impl EdgeCommonsBuilder {
                             source.as_ref(),
                             &config,
                             &listeners,
+                            &apply_listener,
                             &lifecycle,
                             &component_name,
                             &thing_name,
@@ -995,6 +1075,7 @@ impl EdgeCommonsBuilder {
                 updates,
                 config.clone(),
                 listeners.clone(),
+                apply_listener.clone(),
                 config_lifecycle.clone(),
                 self.component_name.clone(),
                 thing_name,
@@ -1020,6 +1101,7 @@ impl EdgeCommonsBuilder {
             #[cfg(feature = "parameters")]
             parameters: params,
             listeners,
+            apply_listener,
             health_state,
             shutdown_rx,
             _health_server: health_server,
@@ -1041,6 +1123,7 @@ fn spawn_config_reload(
     mut updates: tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>,
     config: Arc<ArcSwap<Config>>,
     listeners: ConfigListeners,
+    apply_listener: ConfigApplyListenerSlot,
     lifecycle: Arc<ConfigLifecycle>,
     component_name: String,
     thing_name: String,
@@ -1051,6 +1134,7 @@ fn spawn_config_reload(
                 raw,
                 &config,
                 &listeners,
+                &apply_listener,
                 &lifecycle,
                 &component_name,
                 &thing_name,
@@ -1074,6 +1158,7 @@ async fn apply_reloaded_config(
     raw: serde_json::Value,
     config: &Arc<ArcSwap<Config>>,
     listeners: &ConfigListeners,
+    apply_listener: &ConfigApplyListenerSlot,
     lifecycle: &Arc<ConfigLifecycle>,
     component_name: &str,
     thing_name: &str,
@@ -1094,99 +1179,181 @@ async fn apply_reloaded_config(
         return false;
     }
 
-    // Optimistic validation avoids holding a lock across the blocking callback deadline or async
-    // listener notifications. If another reload commits first, validate again against that exact
-    // newly-redacted prior before attempting the one atomic swap.
-    loop {
-        let prior = config.load_full();
-        let redacted_prior = config::effective::redact(&prior.raw);
-        let validators = lifecycle.validators.clone();
-        let candidate = raw.clone();
-        let timeout = lifecycle.validation_timeout;
-        let errors = match tokio::task::spawn_blocking(move || {
-            config::candidate::validate_candidate(
-                validators.as_slice(),
-                &candidate,
-                Some(&redacted_prior),
-                config::ConfigurationValidationPhase::Reload,
-                timeout,
-            )
-        })
-        .await
-        {
-            Ok(errors) => errors,
-            Err(error) => vec![config::ConfigurationValidationError {
-                validator: "runtime".to_string(),
-                code: "VALIDATOR_FAILED".to_string(),
+    // Candidate application may await while it prepares a dependent runtime. Serialize the full
+    // validation -> application -> store sequence so it cannot apply against one generation and
+    // commit after another one wins. Ordinary post-commit listeners run after this guard is dropped.
+    let apply_guard = lifecycle.apply_lock.lock().await;
+    let prior = config.load_full();
+    let redacted_prior = config::effective::redact(&prior.raw);
+    let validators = lifecycle.validators.clone();
+    let candidate = raw.clone();
+    let timeout = lifecycle.validation_timeout;
+    let errors = match tokio::task::spawn_blocking(move || {
+        config::candidate::validate_candidate(
+            validators.as_slice(),
+            &candidate,
+            Some(&redacted_prior),
+            config::ConfigurationValidationPhase::Reload,
+            timeout,
+        )
+    })
+    .await
+    {
+        Ok(errors) => errors,
+        Err(error) => vec![config::ConfigurationValidationError {
+            validator: "runtime".to_string(),
+            code: "VALIDATOR_FAILED".to_string(),
+            message: config::candidate::sanitize(&error.to_string()),
+        }],
+    };
+    if !errors.is_empty() {
+        tracing::warn!(
+            errors = %format_validation_errors(&errors),
+            generation = lifecycle.generation.load(Ordering::Acquire),
+            "configuration candidate rejected; keeping previous"
+        );
+        lifecycle.set_errors(errors);
+        return false;
+    }
+
+    let new_config = match Config::from_value(
+        component_name.to_string(),
+        thing_name.to_string(),
+        raw.clone(),
+    ) {
+        Ok(config) => config,
+        Err(error) => {
+            lifecycle.set_errors(vec![config::ConfigurationValidationError {
+                validator: "configuration".to_string(),
+                code: "CONFIG_PREPARATION_FAILED".to_string(),
                 message: config::candidate::sanitize(&error.to_string()),
-            }],
-        };
-        if !errors.is_empty() {
+            }]);
             tracing::warn!(
-                errors = %format_validation_errors(&errors),
-                generation = lifecycle.generation.load(Ordering::Acquire),
-                "configuration candidate rejected; keeping previous"
+                error = %error,
+                "reloaded config could not be parsed; keeping previous"
             );
-            lifecycle.set_errors(errors);
             return false;
         }
+    };
 
-        let new_config = match Config::from_value(
-            component_name.to_string(),
-            thing_name.to_string(),
-            raw.clone(),
-        ) {
-            Ok(config) => config,
-            Err(error) => {
-                lifecycle.set_errors(vec![config::ConfigurationValidationError {
-                    validator: "configuration".to_string(),
-                    code: "CONFIG_PREPARATION_FAILED".to_string(),
-                    message: config::candidate::sanitize(&error.to_string()),
-                }]);
-                tracing::warn!(
-                    error = %error,
-                    "reloaded config could not be parsed; keeping previous"
+    let snapshot = Arc::new(new_config);
+    let applying = match apply_listener.lock() {
+        Ok(listener) => listener.clone(),
+        Err(_) => {
+            lifecycle.set_errors(vec![config::ConfigurationValidationError {
+                validator: "runtime".to_string(),
+                code: "CONFIG_APPLICATION_REJECTED".to_string(),
+                message: "configuration application listener registry is unavailable".to_string(),
+            }]);
+            tracing::error!(
+                "configuration application listener registry is unavailable; keeping previous"
+            );
+            return false;
+        }
+    };
+    if let Some(listener) = applying {
+        let mut transaction = match tokio::time::timeout(
+            lifecycle.validation_timeout,
+            listener.prepare_configuration_apply(snapshot.clone()),
+        )
+        .await
+        {
+            Ok(Ok(transaction)) => transaction,
+            Ok(Err(error)) => {
+                reject_configuration_application(lifecycle, application_error(error));
+                return false;
+            }
+            Err(_) => {
+                reject_configuration_application(
+                    lifecycle,
+                    application_timeout_error("preparing the candidate runtime"),
                 );
                 return false;
             }
         };
 
-        let snapshot = Arc::new(new_config);
-        let committed = match lifecycle.commit_lock.lock() {
-            Ok(_commit) => {
-                let current = config.load_full();
-                if Arc::ptr_eq(&current, &prior) {
-                    config.store(snapshot.clone());
-                    lifecycle.generation.fetch_add(1, Ordering::AcqRel);
-                    lifecycle.set_errors(Vec::new());
-                    true
-                } else {
-                    false
-                }
-            }
-            Err(_) => {
-                lifecycle.set_errors(vec![config::ConfigurationValidationError {
-                    validator: "runtime".to_string(),
-                    code: "CONFIG_COMMIT_FAILED".to_string(),
-                    message: "configuration commit lock is poisoned".to_string(),
-                }]);
-                return false;
-            }
-        };
-        if !committed {
-            continue;
+        if let Err(error) = transaction.commit().await {
+            reject_configuration_application_with_rollback(
+                lifecycle,
+                transaction.as_mut(),
+                application_error(error),
+            )
+            .await;
+            return false;
         }
-
-        tracing::info!(
-            generation = lifecycle.generation.load(Ordering::Acquire),
-            "configuration reloaded"
-        );
-        let current = listeners.lock().map(|l| l.clone()).unwrap_or_default();
-        for listener in current {
-            let _ = listener.on_configuration_change(snapshot.clone()).await;
-        }
-        return true;
     }
+
+    config.store(snapshot.clone());
+    lifecycle.generation.fetch_add(1, Ordering::AcqRel);
+    lifecycle.set_errors(Vec::new());
+    drop(apply_guard);
+    tracing::info!(
+        generation = lifecycle.generation.load(Ordering::Acquire),
+        "configuration reloaded"
+    );
+    let current = listeners.lock().map(|l| l.clone()).unwrap_or_default();
+    for listener in current {
+        let _ = listener.on_configuration_change(snapshot.clone()).await;
+    }
+    true
+}
+
+fn application_error(
+    error: config::ConfigurationApplicationError,
+) -> config::ConfigurationValidationError {
+    config::ConfigurationValidationError {
+        validator: "runtime".to_string(),
+        code: error.code,
+        message: error.message,
+    }
+}
+
+fn application_timeout_error(stage: &str) -> config::ConfigurationValidationError {
+    config::ConfigurationValidationError {
+        validator: "runtime".to_string(),
+        code: "CONFIG_APPLICATION_TIMED_OUT".to_string(),
+        message: format!(
+            "the pre-commit configuration application coordinator exceeded the configured validation timeout while {stage}"
+        ),
+    }
+}
+
+fn reject_configuration_application(
+    lifecycle: &ConfigLifecycle,
+    error: config::ConfigurationValidationError,
+) {
+    tracing::warn!(
+        generation = lifecycle.generation.load(Ordering::Acquire),
+        code = %error.code,
+        "configuration candidate application rejected; keeping previous"
+    );
+    lifecycle.set_errors(vec![error]);
+}
+
+async fn reject_configuration_application_with_rollback(
+    lifecycle: &ConfigLifecycle,
+    transaction: &mut dyn config::PreparedConfigurationApply,
+    initial_error: config::ConfigurationValidationError,
+) {
+    let mut errors = vec![initial_error];
+    match transaction.rollback().await {
+        Ok(()) => {}
+        Err(error) => errors.push(config::ConfigurationValidationError {
+            validator: "runtime".to_string(),
+            code: "CONFIG_APPLICATION_ROLLBACK_FAILED".to_string(),
+            message: config::candidate::sanitize(&format!(
+                "runtime rollback failed [{}]: {}",
+                error.code, error.message
+            )),
+        }),
+    }
+    tracing::warn!(
+        generation = lifecycle.generation.load(Ordering::Acquire),
+        primary_code = %errors[0].code,
+        rollback_ok = errors.len() == 1,
+        "configuration candidate application failed; prior Core snapshot retained"
+    );
+    lifecycle.set_errors(errors);
 }
 
 /// Re-fetches the configuration from the active config source and re-applies it — the
@@ -1201,6 +1368,7 @@ async fn reload_from_provider(
     source: &dyn config::source::ConfigSource,
     config: &Arc<ArcSwap<Config>>,
     listeners: &ConfigListeners,
+    apply_listener: &ConfigApplyListenerSlot,
     lifecycle: &Arc<ConfigLifecycle>,
     component_name: &str,
     thing_name: &str,
@@ -1211,6 +1379,7 @@ async fn reload_from_provider(
                 raw,
                 config,
                 listeners,
+                apply_listener,
                 lifecycle,
                 component_name,
                 thing_name,
@@ -1398,8 +1567,10 @@ pub mod prelude {
     };
     pub use crate::config::model::Config;
     pub use crate::config::{
-        ConfigurationCandidateValidator, ConfigurationChangeListener, ConfigurationValidationError,
-        ConfigurationValidationPhase, ConfigurationValidationResult,
+        ConfigurationApplicationError, ConfigurationApplicationResult, ConfigurationApplyListener,
+        ConfigurationApplyListenerRegistrationError, ConfigurationCandidateValidator,
+        ConfigurationChangeListener, ConfigurationValidationError, ConfigurationValidationPhase,
+        ConfigurationValidationResult, PreparedConfigurationApply,
     };
     pub use crate::facades::{
         AppCorrelation, AppFacade, Channel, DataFacade, EventsFacade, PreparedAppMessage, Quality,
@@ -1503,6 +1674,10 @@ mod reload_tests {
         Arc::new(std::sync::Mutex::new(Vec::new()))
     }
 
+    fn empty_apply_listener() -> ConfigApplyListenerSlot {
+        Arc::new(std::sync::Mutex::new(None))
+    }
+
     fn lifecycle() -> Arc<ConfigLifecycle> {
         Arc::new(ConfigLifecycle::new(
             Arc::new(Vec::new()),
@@ -1530,6 +1705,136 @@ mod reload_tests {
         async fn on_configuration_change(&self, _config: Arc<Config>) -> bool {
             self.0.fetch_add(1, Ordering::SeqCst);
             true
+        }
+    }
+
+    struct RejectingApplyListener {
+        commits: Arc<AtomicUsize>,
+        rollbacks: Arc<AtomicUsize>,
+    }
+
+    struct RejectingPreparedApply {
+        commits: Arc<AtomicUsize>,
+        rollbacks: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl config::ConfigurationApplyListener for RejectingApplyListener {
+        async fn prepare_configuration_apply(
+            &self,
+            _config: Arc<Config>,
+        ) -> config::ConfigurationApplicationResult<Box<dyn config::PreparedConfigurationApply>>
+        {
+            Ok(Box::new(RejectingPreparedApply {
+                commits: Arc::clone(&self.commits),
+                rollbacks: Arc::clone(&self.rollbacks),
+            }))
+        }
+    }
+
+    #[async_trait]
+    impl config::PreparedConfigurationApply for RejectingPreparedApply {
+        async fn commit(&mut self) -> config::ConfigurationApplicationResult<()> {
+            self.commits.fetch_add(1, Ordering::SeqCst);
+            Err(config::ConfigurationApplicationError::new(
+                "CONFIG_APPLICATION_REJECTED",
+                "the test runtime rejected the candidate",
+            ))
+        }
+
+        async fn rollback(&mut self) -> config::ConfigurationApplicationResult<()> {
+            self.rollbacks.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct AcceptingApplyListener;
+
+    struct AcceptingPreparedApply;
+
+    #[async_trait]
+    impl config::ConfigurationApplyListener for AcceptingApplyListener {
+        async fn prepare_configuration_apply(
+            &self,
+            _config: Arc<Config>,
+        ) -> config::ConfigurationApplicationResult<Box<dyn config::PreparedConfigurationApply>>
+        {
+            Ok(Box::new(AcceptingPreparedApply))
+        }
+    }
+
+    #[async_trait]
+    impl config::PreparedConfigurationApply for AcceptingPreparedApply {
+        async fn commit(&mut self) -> config::ConfigurationApplicationResult<()> {
+            Ok(())
+        }
+
+        async fn rollback(&mut self) -> config::ConfigurationApplicationResult<()> {
+            Ok(())
+        }
+    }
+
+    struct OrderingApplyListener {
+        live_config: Arc<ArcSwap<Config>>,
+        previous: Arc<Config>,
+        commits: Arc<AtomicUsize>,
+    }
+
+    struct OrderingPreparedApply {
+        live_config: Arc<ArcSwap<Config>>,
+        previous: Arc<Config>,
+        commits: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl config::ConfigurationApplyListener for OrderingApplyListener {
+        async fn prepare_configuration_apply(
+            &self,
+            candidate: Arc<Config>,
+        ) -> config::ConfigurationApplicationResult<Box<dyn config::PreparedConfigurationApply>>
+        {
+            if candidate.raw["component"]["global"]["v"] != 2 {
+                return Err(config::ConfigurationApplicationError::new(
+                    "CONFIG_APPLICATION_TEST_FAILURE",
+                    "unexpected candidate supplied to prepared transaction",
+                ));
+            }
+            Ok(Box::new(OrderingPreparedApply {
+                live_config: Arc::clone(&self.live_config),
+                previous: Arc::clone(&self.previous),
+                commits: Arc::clone(&self.commits),
+            }))
+        }
+    }
+
+    #[async_trait]
+    impl config::PreparedConfigurationApply for OrderingPreparedApply {
+        async fn commit(&mut self) -> config::ConfigurationApplicationResult<()> {
+            if !Arc::ptr_eq(&self.live_config.load_full(), &self.previous) {
+                return Err(config::ConfigurationApplicationError::new(
+                    "CONFIG_APPLICATION_ORDERING_FAILED",
+                    "Core stored the candidate before the runtime transaction committed",
+                ));
+            }
+            self.commits.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn rollback(&mut self) -> config::ConfigurationApplicationResult<()> {
+            Ok(())
+        }
+    }
+
+    struct HangingPrepareApplyListener;
+
+    #[async_trait]
+    impl config::ConfigurationApplyListener for HangingPrepareApplyListener {
+        async fn prepare_configuration_apply(
+            &self,
+            _config: Arc<Config>,
+        ) -> config::ConfigurationApplicationResult<Box<dyn config::PreparedConfigurationApply>>
+        {
+            std::future::pending().await
         }
     }
 
@@ -1587,6 +1892,7 @@ mod reload_tests {
             json!({ "metricEmission": { "target": "nope" } }),
             &config,
             &empty_listeners(),
+            &empty_apply_listener(),
             &lifecycle,
             "C",
             "t",
@@ -1615,6 +1921,7 @@ mod reload_tests {
             json!({ "component": { "global": { "v": 2 } } }),
             &config,
             &listeners,
+            &empty_apply_listener(),
             &lifecycle,
             "C",
             "t",
@@ -1638,6 +1945,177 @@ mod reload_tests {
     }
 
     #[tokio::test]
+    async fn prepared_commit_observes_the_prior_core_snapshot_before_candidate_store() {
+        let original = Arc::new(
+            Config::from_value("C", "t", json!({ "component": { "global": { "v": 1 } } })).unwrap(),
+        );
+        let config = Arc::new(ArcSwap::from(original.clone()));
+        let apply_listener = empty_apply_listener();
+        let commits = Arc::new(AtomicUsize::new(0));
+        *apply_listener.lock().unwrap() = Some(Arc::new(OrderingApplyListener {
+            live_config: Arc::clone(&config),
+            previous: Arc::clone(&original),
+            commits: Arc::clone(&commits),
+        }));
+
+        assert!(
+            apply_reloaded_config(
+                json!({ "component": { "global": { "v": 2 } } }),
+                &config,
+                &empty_listeners(),
+                &apply_listener,
+                &lifecycle(),
+                "C",
+                "t",
+            )
+            .await
+        );
+        assert_eq!(commits.load(Ordering::SeqCst), 1);
+        assert_eq!(config.load_full().raw["component"]["global"]["v"], 2);
+    }
+
+    #[tokio::test]
+    async fn rejected_precommit_application_keeps_prior_snapshot_and_skips_applied_listeners() {
+        let original = Arc::new(
+            Config::from_value("C", "t", json!({ "component": { "global": { "v": 1 } } })).unwrap(),
+        );
+        let config = Arc::new(ArcSwap::from(original.clone()));
+        let lifecycle = lifecycle();
+        let post_commit_calls = Arc::new(AtomicUsize::new(0));
+        let listeners = empty_listeners();
+        listeners
+            .lock()
+            .unwrap()
+            .push(Arc::new(CountingListener(Arc::clone(&post_commit_calls))) as _);
+        let commit_calls = Arc::new(AtomicUsize::new(0));
+        let rollback_calls = Arc::new(AtomicUsize::new(0));
+        let apply_listener = empty_apply_listener();
+        *apply_listener.lock().unwrap() = Some(Arc::new(RejectingApplyListener {
+            commits: Arc::clone(&commit_calls),
+            rollbacks: Arc::clone(&rollback_calls),
+        }) as _);
+
+        let applied = apply_reloaded_config(
+            json!({ "component": { "global": { "v": 2 } } }),
+            &config,
+            &listeners,
+            &apply_listener,
+            &lifecycle,
+            "C",
+            "t",
+        )
+        .await;
+
+        assert!(!applied);
+        assert!(
+            Arc::ptr_eq(&config.load_full(), &original),
+            "a rejected runtime application must leave the current core snapshot intact"
+        );
+        assert_eq!(lifecycle.generation.load(Ordering::SeqCst), 1);
+        assert_eq!(commit_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            rollback_calls.load(Ordering::SeqCst),
+            1,
+            "Core must restore the prior runtime before rejecting a failed commit"
+        );
+        assert_eq!(
+            post_commit_calls.load(Ordering::SeqCst),
+            0,
+            "a rejected candidate must not reach applied-config listeners"
+        );
+        assert_eq!(
+            lifecycle.last_errors.lock().unwrap()[0].code,
+            "CONFIG_APPLICATION_REJECTED"
+        );
+
+        *apply_listener.lock().unwrap() = None;
+        let retried = tokio::time::timeout(
+            Duration::from_millis(250),
+            apply_reloaded_config(
+                json!({ "component": { "global": { "v": 3 } } }),
+                &config,
+                &listeners,
+                &apply_listener,
+                &lifecycle,
+                "C",
+                "t",
+            ),
+        )
+        .await
+        .expect("a failed commit and rollback must release the lifecycle lock");
+        assert!(retried);
+        assert_eq!(config.load_full().raw["component"]["global"]["v"], 3);
+    }
+
+    #[test]
+    fn only_one_config_apply_coordinator_can_be_registered() {
+        let slot = empty_apply_listener();
+        install_config_apply_listener(&slot, Arc::new(AcceptingApplyListener)).unwrap();
+
+        assert_eq!(
+            install_config_apply_listener(&slot, Arc::new(AcceptingApplyListener)),
+            Err(config::ConfigurationApplyListenerRegistrationError::AlreadyRegistered),
+            "a second coordinator would make runtime application non-atomic"
+        );
+    }
+
+    #[tokio::test]
+    async fn timed_out_precommit_prepare_keeps_previous_snapshot_and_releases_apply_lock() {
+        let original = Arc::new(
+            Config::from_value("C", "t", json!({ "component": { "global": { "v": 1 } } })).unwrap(),
+        );
+        let config = Arc::new(ArcSwap::from(original.clone()));
+        let lifecycle = Arc::new(ConfigLifecycle::new(
+            Arc::new(Vec::new()),
+            Duration::from_millis(10),
+        ));
+        let apply_listener = empty_apply_listener();
+        *apply_listener.lock().unwrap() = Some(Arc::new(HangingPrepareApplyListener));
+
+        let applied = tokio::time::timeout(
+            Duration::from_millis(250),
+            apply_reloaded_config(
+                json!({ "component": { "global": { "v": 2 } } }),
+                &config,
+                &empty_listeners(),
+                &apply_listener,
+                &lifecycle,
+                "C",
+                "t",
+            ),
+        )
+        .await
+        .expect("a hung coordinator must not hold the apply lock indefinitely");
+
+        assert!(!applied);
+        assert!(Arc::ptr_eq(&config.load_full(), &original));
+        assert_eq!(lifecycle.generation.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            lifecycle.last_errors.lock().unwrap()[0].code,
+            "CONFIG_APPLICATION_TIMED_OUT"
+        );
+
+        *apply_listener.lock().unwrap() = None;
+        let retried = tokio::time::timeout(
+            Duration::from_millis(250),
+            apply_reloaded_config(
+                json!({ "component": { "global": { "v": 3 } } }),
+                &config,
+                &empty_listeners(),
+                &apply_listener,
+                &lifecycle,
+                "C",
+                "t",
+            ),
+        )
+        .await
+        .expect("a timed-out coordinator must release the apply lock");
+
+        assert!(retried);
+        assert_eq!(config.load_full().raw["component"]["global"]["v"], 3);
+    }
+
+    #[tokio::test]
     async fn reload_from_provider_keeps_previous_on_fetch_failure() {
         let original = Arc::new(Config::from_value("C", "t", json!({ "component": {} })).unwrap());
         let config = Arc::new(ArcSwap::from(original.clone()));
@@ -1646,8 +2124,16 @@ mod reload_tests {
         ))]);
         let lifecycle = lifecycle();
 
-        let ok =
-            reload_from_provider(&source, &config, &empty_listeners(), &lifecycle, "C", "t").await;
+        let ok = reload_from_provider(
+            &source,
+            &config,
+            &empty_listeners(),
+            &empty_apply_listener(),
+            &lifecycle,
+            "C",
+            "t",
+        )
+        .await;
 
         assert!(!ok);
         assert!(Arc::ptr_eq(&config.load_full(), &original));
@@ -1661,8 +2147,16 @@ mod reload_tests {
         let source = FakeSource::new(vec![Ok(json!({ "metricEmission": { "target": "nope" } }))]);
         let lifecycle = lifecycle();
 
-        let ok =
-            reload_from_provider(&source, &config, &empty_listeners(), &lifecycle, "C", "t").await;
+        let ok = reload_from_provider(
+            &source,
+            &config,
+            &empty_listeners(),
+            &empty_apply_listener(),
+            &lifecycle,
+            "C",
+            "t",
+        )
+        .await;
 
         assert!(!ok);
         assert!(Arc::ptr_eq(&config.load_full(), &original));
@@ -1676,8 +2170,16 @@ mod reload_tests {
         let source = FakeSource::new(vec![Ok(json!({ "component": { "global": { "v": 99 } } }))]);
         let lifecycle = lifecycle();
 
-        let ok =
-            reload_from_provider(&source, &config, &empty_listeners(), &lifecycle, "C", "t").await;
+        let ok = reload_from_provider(
+            &source,
+            &config,
+            &empty_listeners(),
+            &empty_apply_listener(),
+            &lifecycle,
+            "C",
+            "t",
+        )
+        .await;
 
         assert!(ok);
         // Same fullConfig-staleness guarantee as above, exercised through the reload-config
@@ -1727,6 +2229,7 @@ mod reload_tests {
             json!({ "component": { "global": { "v": 2 } } }),
             &config,
             &listeners,
+            &empty_apply_listener(),
             &lifecycle,
             "C",
             "t",
@@ -1760,6 +2263,7 @@ mod reload_tests {
                 json!({ "notComponent": true }),
                 &config,
                 &empty_listeners(),
+                &empty_apply_listener(),
                 &lifecycle,
                 "C",
                 "t",

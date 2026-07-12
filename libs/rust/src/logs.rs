@@ -374,16 +374,20 @@ impl DefaultLogService {
             record.dropped = Some(dropped);
         }
         let (message, topic) = self.build_message(&config, &settings, record)?;
-        let outcome = LOG_PUBLISHING.scope((), async {
-            match settings.destination {
-                LoggingPublishDestination::Local => reserved.publish_reserved(&topic, &message).await,
-                LoggingPublishDestination::Northbound => {
-                    reserved
-                        .publish_reserved_northbound(&topic, &message, Qos::AtLeastOnce)
-                        .await
+        let outcome = LOG_PUBLISHING
+            .scope((), async {
+                match settings.destination {
+                    LoggingPublishDestination::Local => {
+                        reserved.publish_reserved(&topic, &message).await
+                    }
+                    LoggingPublishDestination::Northbound => {
+                        reserved
+                            .publish_reserved_northbound(&topic, &message, Qos::AtLeastOnce)
+                            .await
+                    }
                 }
-            }
-        }).await;
+            })
+            .await;
         match outcome {
             Ok(()) => {
                 self.counters.published.fetch_add(1, Ordering::Relaxed);
@@ -944,7 +948,9 @@ mod tests {
             msg: &Message,
             qos: Qos,
         ) -> Result<()> {
-            self.inner.publish_reserved_northbound(topic, msg, qos).await
+            self.inner
+                .publish_reserved_northbound(topic, msg, qos)
+                .await
         }
 
         fn connected(&self) -> bool {
@@ -972,9 +978,7 @@ mod tests {
 
         let _subscriber = tracing::subscriber::set_default(subscriber);
         service
-            .publish(
-                LogRecord::builder(LogLevel::Info, "app", "one").build(),
-            )
+            .publish(LogRecord::builder(LogLevel::Info, "app", "one").build())
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;

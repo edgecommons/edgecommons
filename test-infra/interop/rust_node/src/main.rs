@@ -16,7 +16,9 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
-use edgecommons::prelude::{EdgeCommonsBuilder, LogLevel, LogRecord};
+use edgecommons::prelude::{
+    outcome_handler, CommandError, CommandOutcome, EdgeCommonsBuilder, LogLevel, LogRecord,
+};
 use serde_json::json;
 #[cfg(feature = "greengrass")]
 use serde_json::{Map, Value};
@@ -36,6 +38,9 @@ use edgecommons::messaging::service::{DefaultMessagingService, MessagingService}
 use edgecommons::uns::{Uns, UnsClass};
 
 const LANG: &str = "rust";
+
+static ACCEPTANCE_MARKER_SEQUENCE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 #[cfg(feature = "greengrass")]
 fn deep_merge_value(left: Value, right: Value) -> Value {
@@ -166,6 +171,63 @@ async fn provider(suffix: &str) -> Arc<DefaultMessagingService> {
 
 fn log_component_token() -> String {
     format!("interop-log-{LANG}")
+}
+
+fn write_command_runtime_config(component_token: &str) -> std::path::PathBuf {
+    let host =
+        std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT")
+        .unwrap_or_else(|_| "1883".to_string())
+        .parse::<u16>()
+        .expect("valid MQTT port");
+    let path = std::env::temp_dir().join(format!(
+        "edgecommons-deferred-{LANG}-{}-{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos()
+    ));
+    let cfg = json!({
+        "component": { "token": component_token },
+        "messaging": {
+            "local": {
+                "type": "mqtt",
+                "host": host,
+                "port": port,
+                "clientId": format!("interop-{LANG}-deferred-runtime-{}", std::process::id())
+            },
+            "requestTimeoutSeconds": 4
+        },
+        "heartbeat": { "enabled": false },
+        "health": { "enabled": false }
+    });
+    std::fs::write(&path, serde_json::to_vec(&cfg).expect("serialize config"))
+        .expect("write deferred runtime config");
+    path
+}
+
+fn write_durable_acceptance_marker() -> std::io::Result<std::path::PathBuf> {
+    let sequence = ACCEPTANCE_MARKER_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let marker = std::env::temp_dir().join(format!(
+        "edgecommons-p1-accept-{LANG}-{}-{sequence}.marker",
+        std::process::id()
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marker)?;
+    if let Err(error) =
+        std::io::Write::write_all(&mut file, b"accepted\n").and_then(|()| file.sync_all())
+    {
+        let _ = std::fs::remove_file(&marker);
+        return Err(error);
+    }
+    Ok(marker)
+}
+
+fn remove_durable_acceptance_marker(marker: &std::path::Path) {
+    let _ = std::fs::remove_file(marker);
 }
 
 fn write_log_runtime_config() -> std::path::PathBuf {
@@ -736,6 +798,420 @@ async fn run_gg_binary_matrix(args: &[String]) -> ! {
     std::process::exit(if ok { 0 } else { 1 });
 }
 
+#[cfg(feature = "greengrass")]
+fn gg_p1_ready_path(run_id: &str, actor: &str) -> String {
+    format!("/tmp/edgecommons_gg_ipc_p1_ready_{actor}_{run_id}")
+}
+
+#[cfg(feature = "greengrass")]
+async fn wait_for_gg_p1_ready(run_id: &str, expected_actors: &[String]) -> Vec<String> {
+    let ready_wait_secs: f64 = std::env::var("EDGECOMMONS_GG_READY_WAIT_SECS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(180.0);
+    let deadline = std::time::Instant::now() + Duration::from_secs_f64(ready_wait_secs);
+    while std::time::Instant::now() < deadline {
+        let missing: Vec<String> = expected_actors
+            .iter()
+            .filter(|actor| !std::path::Path::new(&gg_p1_ready_path(run_id, actor)).exists())
+            .cloned()
+            .collect();
+        if missing.is_empty() {
+            return missing;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    expected_actors
+        .iter()
+        .filter(|actor| !std::path::Path::new(&gg_p1_ready_path(run_id, actor)).exists())
+        .cloned()
+        .collect()
+}
+
+#[cfg(feature = "greengrass")]
+fn gg_p1_target_actor(target_language: &str, sender_actor: &str) -> String {
+    if target_language == "rust" && sender_actor == "rust" {
+        "rustpeer".to_string()
+    } else {
+        target_language.to_string()
+    }
+}
+
+#[cfg(feature = "greengrass")]
+fn gg_p1_command_topic(actor: &str) -> String {
+    format!("ecv1/interop-device/interop-p1-{actor}/main/cmd/deferred")
+}
+
+#[cfg(feature = "greengrass")]
+fn gg_p1_confirmed_topic(run_id: &str, publisher: &str, target_actor: &str) -> String {
+    format!("edgecommons/interop/p1/{run_id}/confirmed/{publisher}/{target_actor}")
+}
+
+#[cfg(feature = "greengrass")]
+async fn send_gg_p1_deferred(
+    svc: &Arc<DefaultMessagingService>,
+    run_id: &str,
+    sender_actor: &str,
+    target_language: &str,
+    target_actor: &str,
+) -> Value {
+    let token = format!("{run_id}:{sender_actor}->{target_language}");
+    let reply_topic = format!(
+        "edgecommons/interop/p1/{run_id}/reply/{sender_actor}/{target_actor}/{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    );
+    let replies = Arc::new(std::sync::Mutex::new(Vec::<Message>::new()));
+    let received = replies.clone();
+    if let Err(error) = svc
+        .subscribe(
+            &reply_topic,
+            message_handler(move |_topic, reply| {
+                let received = received.clone();
+                async move {
+                    received.lock().unwrap().push(reply);
+                }
+            }),
+            2,
+            1,
+        )
+        .await
+    {
+        return json!({"ok": false, "target_actor": target_actor, "error": error.to_string()});
+    }
+    let request = MessageBuilder::new("deferred", "1.0")
+        .command(json!({"token": token, "from": LANG, "actor": sender_actor}))
+        .reply_to(&reply_topic)
+        .build();
+    let correlation = request.header.correlation_id.clone();
+    if let Err(error) = svc
+        .publish(&gg_p1_command_topic(target_actor), &request)
+        .await
+    {
+        return json!({"ok": false, "target_actor": target_actor, "error": error.to_string()});
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(8);
+    while std::time::Instant::now() < deadline && replies.lock().unwrap().is_empty() {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    if replies.lock().unwrap().is_empty() {
+        return json!({"ok": false, "target_actor": target_actor, "error": "timeout"});
+    }
+    tokio::time::sleep(Duration::from_millis(750)).await;
+    let replies = replies.lock().unwrap();
+    let reply_count = replies.len();
+    let reply = &replies[0];
+    let correlation_match = reply.header.correlation_id == correlation;
+    let result = reply.body.get("result");
+    let ok = reply_count == 1
+        && correlation_match
+        && reply.body.get("ok").and_then(Value::as_bool) == Some(true)
+        && result
+            .and_then(|value| value.get("token"))
+            .and_then(Value::as_str)
+            == Some(token.as_str())
+        && result
+            .and_then(|value| value.get("durablyAccepted"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        && result
+            .and_then(|value| value.get("responder"))
+            .and_then(Value::as_str)
+            == Some(target_language)
+        && result
+            .and_then(|value| value.get("responderActor"))
+            .and_then(Value::as_str)
+            == Some(target_actor);
+    json!({
+        "ok": ok,
+        "target_actor": target_actor,
+        "expected_token": token,
+        "expected_responder": target_language,
+        "expected_responder_actor": target_actor,
+        "reply_count": reply_count,
+        "correlation_match": correlation_match,
+        "duplicate_window_ms": 750,
+        "reply_body": reply.body
+    })
+}
+
+#[cfg(feature = "greengrass")]
+async fn run_gg_p1_matrix(args: &[String]) -> ! {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let run_id = args[2].clone();
+    let languages: Vec<String> = args[3]
+        .split(',')
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    let expected_actors: Vec<String> = std::env::var("EDGECOMMONS_GG_READY_LANGS")
+        .unwrap_or_else(|_| args[3].clone())
+        .split(',')
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    let actor = std::env::var("EDGECOMMONS_GG_READY_LANG").unwrap_or_else(|_| LANG.to_string());
+    let canonical_actor = actor != "rustpeer";
+    let subscribe_delay_secs: f64 = std::env::var("EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(2.0);
+    let wait_secs: f64 = std::env::var("EDGECOMMONS_GG_WAIT_SECS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(90.0);
+    let expected_publishers: BTreeSet<String> = if actor == "rust" {
+        languages
+            .iter()
+            .filter(|value| value.as_str() != "rust")
+            .cloned()
+            .collect()
+    } else if canonical_actor {
+        languages.iter().cloned().collect()
+    } else {
+        BTreeSet::from(["rust".to_string()])
+    };
+
+    let svc = ipc_provider().await;
+    let received = Arc::new(std::sync::Mutex::new(BTreeMap::<String, Vec<Value>>::new()));
+    let errors = Arc::new(std::sync::Mutex::new(BTreeMap::<String, String>::new()));
+    let received_handler = received.clone();
+    let errors_handler = errors.clone();
+    let run_id_handler = run_id.clone();
+    let actor_handler = actor.clone();
+    if let Err(error) = svc
+        .subscribe(
+            &format!("edgecommons/interop/p1/{run_id}/confirmed/+/{actor}"),
+            message_handler(move |topic, message| {
+                let received = received_handler.clone();
+                let errors = errors_handler.clone();
+                let run_id = run_id_handler.clone();
+                let actor = actor_handler.clone();
+                async move {
+                    let publisher =
+                        publisher_from_gg_topic(&topic).unwrap_or_else(|| "unknown".to_string());
+                    let body = message.body;
+                    let valid = body.get("runId").and_then(Value::as_str) == Some(run_id.as_str())
+                        && body.get("publisher").and_then(Value::as_str)
+                            == Some(publisher.as_str())
+                        && body.get("targetActor").and_then(Value::as_str) == Some(actor.as_str())
+                        && body.get("strict").and_then(Value::as_bool) == Some(true);
+                    if publisher == "unknown" {
+                        errors.lock().unwrap().insert(
+                            format!("confirmed:{topic}"),
+                            "missing publisher topic segment".to_string(),
+                        );
+                    }
+                    received
+                        .lock()
+                        .unwrap()
+                        .entry(publisher)
+                        .or_default()
+                        .push(json!({
+                            "ok": valid,
+                            "topic": topic,
+                            "body": body
+                        }));
+                }
+            }),
+            32,
+            1,
+        )
+        .await
+    {
+        let result = json!({
+            "schema": "edgecommons.gg-ipc-p1.v1",
+            "ok": false,
+            "run_id": run_id,
+            "actor": actor,
+            "language": LANG,
+            "errors": {"subscribe": error.to_string()}
+        });
+        println!("{result}");
+        std::process::exit(1);
+    }
+
+    let path = write_command_runtime_config(&format!("interop-p1-{actor}"));
+    let runtime_args = gg_log_runtime_args(&path);
+    let gg = EdgeCommonsBuilder::new(format!(
+        "com.mbreissi.edgecommons.interop.{LANG}.P1Responder"
+    ))
+    .args(runtime_args)
+    .build()
+    .await
+    .expect("build Greengrass P1 command responder");
+    let inbox = gg.commands().expect("runtime command inbox");
+    let responder_actor = actor.clone();
+    inbox
+        .register_outcome(
+            "deferred",
+            outcome_handler(move |request, deferred| {
+                let responder_actor = responder_actor.clone();
+                async move {
+                    let token = match deferred.defer(&request, Duration::from_secs(4)) {
+                        Ok(token) => token,
+                        Err(error) => return CommandOutcome::ImmediateError(error),
+                    };
+                    let acceptance_marker = match write_durable_acceptance_marker() {
+                        Ok(marker) => marker,
+                        Err(_) => {
+                            let _ = token.discard();
+                            return CommandOutcome::ImmediateError(CommandError::new(
+                                "ACCEPTANCE_FAILED",
+                                "work was not accepted",
+                            ));
+                        }
+                    };
+                    let accepted_token = request.body.get("token").cloned().unwrap_or_default();
+                    if let Err(error) = token.activate() {
+                        remove_durable_acceptance_marker(&acceptance_marker);
+                        let _ = token.discard();
+                        return CommandOutcome::ImmediateError(CommandError::new(
+                            "ACTIVATION_FAILED",
+                            error.to_string(),
+                        ));
+                    }
+                    let settlement = token.clone();
+                    CommandOutcome::deferred_with_continuation(token, async move {
+                        let settled = settlement
+                            .settle_success(Some(json!({
+                                "token": accepted_token,
+                                "responder": LANG,
+                                "responderActor": responder_actor,
+                                "durablyAccepted": true
+                            })))
+                            .await
+                            .map_err(|error| {
+                                CommandError::new("SETTLEMENT_FAILED", error.to_string())
+                            });
+                        remove_durable_acceptance_marker(&acceptance_marker);
+                        settled
+                    })
+                }
+            }),
+        )
+        .expect("register Greengrass P1 command handler");
+    println!("READY");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    std::fs::write(gg_p1_ready_path(&run_id, &actor), "ready").expect("write P1 ready");
+
+    let ready_missing = wait_for_gg_p1_ready(&run_id, &expected_actors).await;
+    let mut deferred_requests = BTreeMap::<String, Value>::new();
+    let mut confirmed_publishes = BTreeMap::<String, Value>::new();
+    if ready_missing.is_empty() && canonical_actor {
+        tokio::time::sleep(Duration::from_secs_f64(subscribe_delay_secs)).await;
+        for target_language in &languages {
+            let target_actor = gg_p1_target_actor(target_language, &actor);
+            let request =
+                send_gg_p1_deferred(&svc, &run_id, &actor, target_language, &target_actor).await;
+            deferred_requests.insert(target_language.clone(), request);
+            let message = MessageBuilder::new("InteropConfirmed", "1.0")
+                .payload(json!({
+                    "runId": run_id,
+                    "publisher": LANG,
+                    "publisherActor": actor,
+                    "targetLanguage": target_language,
+                    "targetActor": target_actor,
+                    "strict": true
+                }))
+                .build();
+            let published = match svc
+                .publish_confirmed(
+                    &gg_p1_confirmed_topic(&run_id, LANG, &target_actor),
+                    &message,
+                    Duration::from_secs(5),
+                )
+                .await
+            {
+                Ok(()) => json!({
+                    "ok": true, "target_actor": target_actor, "confirmed": true, "qos": 1
+                }),
+                Err(error) => json!({
+                    "ok": false, "target_actor": target_actor, "error": error.to_string()
+                }),
+            };
+            confirmed_publishes.insert(target_language.clone(), published);
+        }
+    }
+
+    let deadline = std::time::Instant::now() + Duration::from_secs_f64(wait_secs);
+    while std::time::Instant::now() < deadline {
+        let seen: BTreeSet<String> = received.lock().unwrap().keys().cloned().collect();
+        if expected_publishers.is_subset(&seen) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(750)).await;
+    let received_snapshot = received.lock().unwrap().clone();
+    let errors_snapshot = errors.lock().unwrap().clone();
+    let confirmed_missing: Vec<String> = expected_publishers
+        .iter()
+        .filter(|publisher| !received_snapshot.contains_key(*publisher))
+        .cloned()
+        .collect();
+    let mut confirmed_received = BTreeMap::<String, Value>::new();
+    let mut receive_ok = confirmed_missing.is_empty();
+    for (publisher, items) in &received_snapshot {
+        let item_ok = expected_publishers.contains(publisher)
+            && items.len() == 1
+            && items[0].get("ok").and_then(Value::as_bool) == Some(true);
+        confirmed_received.insert(
+            publisher.clone(),
+            json!({"count": items.len(), "items": items, "ok": item_ok}),
+        );
+        receive_ok &= item_ok;
+    }
+    let requests_ok = !canonical_actor
+        || (deferred_requests.len() == languages.len()
+            && languages.iter().all(|language| {
+                deferred_requests
+                    .get(language)
+                    .and_then(|value| value.get("ok"))
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            }));
+    let publishes_ok = !canonical_actor
+        || (confirmed_publishes.len() == languages.len()
+            && languages.iter().all(|language| {
+                confirmed_publishes
+                    .get(language)
+                    .and_then(|value| value.get("ok"))
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            }));
+    let ok = ready_missing.is_empty()
+        && errors_snapshot.is_empty()
+        && requests_ok
+        && publishes_ok
+        && receive_ok;
+    let result = json!({
+        "schema": "edgecommons.gg-ipc-p1.v1",
+        "ok": ok,
+        "run_id": run_id,
+        "actor": actor,
+        "language": LANG,
+        "canonical_actor": canonical_actor,
+        "ready_missing": ready_missing,
+        "deferred_requests": deferred_requests,
+        "confirmed_publishes": confirmed_publishes,
+        "confirmed_received": confirmed_received,
+        "confirmed_missing": confirmed_missing,
+        "errors": errors_snapshot
+    });
+    let result_path = format!("/tmp/edgecommons_gg_ipc_p1_{actor}_{run_id}.json");
+    std::fs::write(&result_path, serde_json::to_vec(&result).unwrap()).expect("write P1 result");
+    println!("{result}");
+    drop(gg);
+    let _ = std::fs::remove_file(path);
+    std::process::exit(if ok { 0 } else { 1 });
+}
+
 #[cfg(not(feature = "greengrass"))]
 async fn run_gg_binary_matrix(_args: &[String]) -> ! {
     eprintln!("gg-binary-matrix requires the greengrass cargo feature");
@@ -745,6 +1221,12 @@ async fn run_gg_binary_matrix(_args: &[String]) -> ! {
 #[cfg(not(feature = "greengrass"))]
 async fn run_gg_log_matrix(_args: &[String]) -> ! {
     eprintln!("gg-log-matrix requires the greengrass cargo feature");
+    std::process::exit(2);
+}
+
+#[cfg(not(feature = "greengrass"))]
+async fn run_gg_p1_matrix(_args: &[String]) -> ! {
+    eprintln!("gg-p1-matrix requires the greengrass cargo feature");
     std::process::exit(2);
 }
 
@@ -774,7 +1256,8 @@ async fn run_gg_config_request(args: &[String]) -> ! {
     let result = match tokio::time::timeout(Duration::from_secs(20), fut).await {
         Ok(Ok(reply)) => {
             let matched = reply.header.correlation_id == corr;
-            let (lineage_ok, lineage_check) = validate_lineage_bundle(&component, &reply.body, None);
+            let (lineage_ok, lineage_check) =
+                validate_lineage_bundle(&component, &reply.body, None);
             json!({
                 "ok": matched && lineage_ok,
                 "correlation_match": matched,
@@ -1002,7 +1485,9 @@ async fn run_gg_config_update(_args: &[String]) -> ! {
 #[cfg(feature = "greengrass")]
 async fn run_gg_config_update_file(args: &[String]) -> ! {
     if args.len() < 6 {
-        eprintln!("gg-config-update-file requires <topic> <catalog-json> <tokens-csv> <output-json>");
+        eprintln!(
+            "gg-config-update-file requires <topic> <catalog-json> <tokens-csv> <output-json>"
+        );
         std::process::exit(2);
     }
     let topic = args[2].clone();
@@ -1178,10 +1663,7 @@ async fn run_gg_command_request(args: &[String]) -> ! {
         Err(_) => json!({"ok": false, "error": "timeout"}),
     };
     let ok = result.get("ok").and_then(Value::as_bool) == Some(true)
-        && result
-            .get("correlation_match")
-            .and_then(Value::as_bool)
-            == Some(true);
+        && result.get("correlation_match").and_then(Value::as_bool) == Some(true);
     let _ = std::fs::write(&output, serde_json::to_string_pretty(&result).unwrap());
     println!("{result}");
     std::process::exit(if ok { 0 } else { 1 });
@@ -1267,6 +1749,212 @@ async fn main() {
                 }
                 _ => {
                     println!("{}", json!({"ok": false, "error": "timeout"}));
+                    std::process::exit(1);
+                }
+            }
+        }
+        "deferred-responder" => {
+            let component_token = args[2].clone();
+            let path = write_command_runtime_config(&component_token);
+            let runtime_args = log_runtime_args(&path);
+            let gg = EdgeCommonsBuilder::new(format!(
+                "com.mbreissi.edgecommons.interop.{LANG}.DeferredResponder"
+            ))
+            .args(runtime_args)
+            .build()
+            .await
+            .expect("build deferred command responder");
+            let inbox = gg.commands().expect("runtime command inbox");
+            inbox
+                .register_outcome(
+                    "deferred",
+                    outcome_handler(|request, deferred| async move {
+                        let token = match deferred.defer(&request, Duration::from_secs(4)) {
+                            Ok(token) => token,
+                            Err(error) => return CommandOutcome::ImmediateError(error),
+                        };
+                        let acceptance_marker = match write_durable_acceptance_marker() {
+                            Ok(marker) => marker,
+                            Err(_) => {
+                                let _ = token.discard();
+                                return CommandOutcome::ImmediateError(CommandError::new(
+                                    "ACCEPTANCE_FAILED",
+                                    "work was not accepted",
+                                ));
+                            }
+                        };
+                        let accepted_token = request.body.get("token").cloned().unwrap_or_default();
+                        if let Err(error) = token.activate() {
+                            remove_durable_acceptance_marker(&acceptance_marker);
+                            let _ = token.discard();
+                            return CommandOutcome::ImmediateError(CommandError::new(
+                                "ACTIVATION_FAILED",
+                                error.to_string(),
+                            ));
+                        }
+                        let settlement = token.clone();
+                        CommandOutcome::deferred_with_continuation(token, async move {
+                            let settled = settlement
+                                .settle_success(Some(json!({
+                                    "token": accepted_token,
+                                    "responder": LANG,
+                                    "durablyAccepted": true
+                                })))
+                                .await
+                                .map_err(|error| {
+                                    CommandError::new("SETTLEMENT_FAILED", error.to_string())
+                                });
+                            remove_durable_acceptance_marker(&acceptance_marker);
+                            settled
+                        })
+                    }),
+                )
+                .expect("register deferred command handler");
+            println!("READY");
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            loop {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+        }
+        "deferred-request" => {
+            let topic = args[2].clone();
+            let token = args[3].clone();
+            let reply_topic = format!(
+                "interop/deferred/reply/{LANG}/{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("clock after epoch")
+                    .as_nanos()
+            );
+            let svc = provider("deferredreq").await;
+            let replies = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let received = replies.clone();
+            svc.subscribe(
+                &reply_topic,
+                message_handler(move |_topic, reply| {
+                    let received = received.clone();
+                    async move {
+                        received.lock().unwrap().push(reply);
+                    }
+                }),
+                16,
+                2,
+            )
+            .await
+            .expect("subscribe reply topic");
+            let request = MessageBuilder::new("deferred", "1.0")
+                .command(json!({ "token": token, "from": LANG }))
+                .reply_to(&reply_topic)
+                .build();
+            let correlation = request.header.correlation_id.clone();
+            svc.publish(&topic, &request)
+                .await
+                .expect("publish command");
+            for _ in 0..80 {
+                if !replies.lock().unwrap().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            if replies.lock().unwrap().is_empty() {
+                println!("{}", json!({"ok": false, "error": "timeout"}));
+                std::process::exit(1);
+            }
+            // Retain the subscription after the first response so a double settlement fails.
+            tokio::time::sleep(Duration::from_millis(750)).await;
+            let replies = replies.lock().unwrap();
+            let reply_count = replies.len();
+            let reply = &replies[0];
+            let correlation_match = reply.header.correlation_id == correlation;
+            let result = reply.body.get("result");
+            let ok = reply_count == 1
+                && correlation_match
+                && reply.body.get("ok").and_then(|value| value.as_bool()) == Some(true)
+                && result
+                    .and_then(|value| value.get("token"))
+                    .and_then(|value| value.as_str())
+                    == Some(token.as_str())
+                && result
+                    .and_then(|value| value.get("durablyAccepted"))
+                    .and_then(|value| value.as_bool())
+                    == Some(true)
+                && result
+                    .and_then(|value| value.get("responder"))
+                    .and_then(|value| value.as_str())
+                    .is_some();
+            println!(
+                "{}",
+                json!({
+                    "ok": ok,
+                    "reply_count": reply_count,
+                    "correlation_match": correlation_match,
+                    "reply_body": reply.body
+                })
+            );
+            std::process::exit(if ok { 0 } else { 1 });
+        }
+        "confirmed-sub" => {
+            let topic = args[2].clone();
+            let token = args[3].clone();
+            let svc = provider("confirmedsub").await;
+            let messages = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let received = messages.clone();
+            svc.subscribe(
+                &topic,
+                message_handler(move |_topic, message| {
+                    let received = received.clone();
+                    async move {
+                        received.lock().unwrap().push(message);
+                    }
+                }),
+                16,
+                2,
+            )
+            .await
+            .expect("subscribe confirmed topic");
+            println!("READY");
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            for _ in 0..80 {
+                if !messages.lock().unwrap().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            if messages.lock().unwrap().is_empty() {
+                println!("{}", json!({"ok": false, "error": "timeout"}));
+                std::process::exit(1);
+            }
+            tokio::time::sleep(Duration::from_millis(750)).await;
+            let messages = messages.lock().unwrap();
+            let message_count = messages.len();
+            let body = &messages[0].body;
+            let ok = message_count == 1
+                && body.get("token").and_then(|value| value.as_str()) == Some(token.as_str())
+                && body.get("from").and_then(|value| value.as_str()).is_some();
+            println!(
+                "{}",
+                json!({"ok": ok, "message_count": message_count, "body": body})
+            );
+            std::process::exit(if ok { 0 } else { 1 });
+        }
+        "confirmed-pub" => {
+            let topic = args[2].clone();
+            let token = args[3].clone();
+            let svc = provider("confirmedpub").await;
+            let message = MessageBuilder::new("InteropConfirmed", "1.0")
+                .payload(json!({ "token": token, "from": LANG }))
+                .build();
+            // The strict provider path resolves only after local MQTT PUBACK at QoS 1.
+            match svc
+                .publish_confirmed(&topic, &message, Duration::from_secs(5))
+                .await
+            {
+                Ok(()) => println!("{}", json!({"ok": true, "confirmed": true, "qos": 1})),
+                Err(error) => {
+                    println!("{}", json!({"ok": false, "error": error.to_string()}));
                     std::process::exit(1);
                 }
             }
@@ -1581,6 +2269,7 @@ async fn main() {
         }
         "gg-log-matrix" => run_gg_log_matrix(&args).await,
         "gg-binary-matrix" => run_gg_binary_matrix(&args).await,
+        "gg-p1-matrix" => run_gg_p1_matrix(&args).await,
         "gg-config-request" => run_gg_config_request(&args).await,
         "gg-config-update" => run_gg_config_update(&args).await,
         "gg-config-update-file" => run_gg_config_update_file(&args).await,

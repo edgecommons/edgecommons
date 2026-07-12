@@ -119,6 +119,20 @@ Internally the metric target and the logging level reconfigure themselves on rel
 via the same listener mechanism; the heartbeat reads the live snapshot each tick.
 A misbehaving listener cannot abort the others.
 
+### Transactional runtime reload
+
+If a component-owned runtime must transition with the configuration generation, install exactly
+one `ConfigurationApplyListener` coordinator with `add_config_apply_listener`. Its
+`prepare_configuration_apply` method receives the candidate snapshot and returns a
+`PreparedConfigurationApply` transaction. Preparation must not change the live runtime.
+
+Core serializes the lifecycle, invokes `commit` while the prior Core snapshot remains active, and
+stores the candidate snapshot only after `commit` succeeds. If commit reports an error, Core
+fully awaits `rollback` and retains the prior snapshot and generation. `commit` and `rollback`
+must use their own bounded stages and return only after the component runtime has either changed
+successfully or been restored; Core intentionally does not cancel a destructive transition
+midway.
+
 ## Template substitution
 
 `config::template::resolve` substitutes `{ThingName}`, `{ComponentName}`,

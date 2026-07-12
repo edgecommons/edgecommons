@@ -1122,7 +1122,15 @@ export class CommandInbox {
       this.expireSettlingDeferred(entry);
       return;
     }
-    const attemptTimeout = Math.max(1, Math.min(CommandInbox.DEFERRED_ATTEMPT_TIMEOUT_MS, remaining));
+    // `performance.now()` is fractional milliseconds, while the strict confirmed-publish
+    // contract accepts only a positive integer timeout. Flooring preserves the lifetime bound;
+    // if less than one whole millisecond remains, a valid confirmation timeout cannot be issued
+    // without exceeding that bound, so expire instead of extending it to one millisecond.
+    const attemptTimeout = Math.floor(Math.min(CommandInbox.DEFERRED_ATTEMPT_TIMEOUT_MS, remaining));
+    if (attemptTimeout < 1) {
+      this.expireSettlingDeferred(entry);
+      return;
+    }
     entry.attempts++;
     try {
       const confirmed = this.messaging.replyConfirmed;
@@ -1270,7 +1278,10 @@ export class CommandInbox {
         throw new PublishConfirmationError("unsupported", "messaging service does not support confirmed reply");
       }
       const remaining = entry.expiresAtMs - performance.now();
-      if (remaining > 0) {
+      const attemptTimeout = Math.floor(
+        Math.min(CommandInbox.DEFERRED_SHUTDOWN_TIMEOUT_MS, remaining),
+      );
+      if (attemptTimeout >= 1) {
         const reply = MessageBuilder.create(entry.verb, CommandInbox.CMD_MESSAGE_VERSION)
           .withCommand(
             errorBody(
@@ -1284,7 +1295,7 @@ export class CommandInbox {
           this.messaging,
           entry.requestMetadata,
           reply,
-          Math.max(1, Math.min(CommandInbox.DEFERRED_SHUTDOWN_TIMEOUT_MS, remaining)),
+          attemptTimeout,
         );
       }
     } catch (e) {

@@ -190,6 +190,24 @@ to the UNS `ecv1/<device>/+/main/log/warn` stream. Each participant writes a res
 `/tmp/edgecommons_gg_ipc_log_<ready-lang>_<run-id>.json`; the run passes only when every result has
 `ok:true`, `missing:[]`, no errors, and received records from Java, Python, Rust, and TypeScript.
 
+Package the P1 deferred-command and strict-confirmed-publish matrix separately. This role has its
+own component names so it cannot overlap a binary or log validation deployment:
+
+```powershell
+$p1Package = .\test-infra\interop\gg_ipc\package.ps1 `
+  -RunId "p1-$(Get-Date -Format yyyyMMddHHmmss)" `
+  -Langs "python,java,rust,ts" `
+  -Role gg-p1-matrix
+```
+
+The role deploys Java, Python, Rust, TypeScript, and a second Rust principal (`RustPeer`). The
+logical test matrix remains exactly four-by-four: `RustPeer` is only the receiving principal for
+the Rust-to-Rust edge, avoiding an unobservable same-process self-delivery. Every actor writes
+`/tmp/edgecommons_gg_ipc_p1_<actor>_<run-id>.json`; the packaged
+`verify-p1-results.py` consumes all five files and rejects a missing, duplicate, uncorrelated, or
+unconfirmed edge. Each responder fsyncs a bounded uniquely named local acceptance marker before
+activating its deferred token and removes that marker only after terminal settlement is attempted.
+
 Package the hierarchical ConfigComponent, four skeletons, catalogs, and one-shot verifier:
 
 ```powershell
@@ -331,6 +349,46 @@ Required evidence:
 - Every ordered producer/consumer pair is covered for request/reply.
 - Binary payload tests prove byte-for-byte body preservation when that behavior is in scope.
 
+### P1 deferred-command and strict-publish IPC matrix
+
+Run this independently when the change affects deferred command settlement or strict confirmed
+publication. Do not substitute the local MQTT P1 matrix: this procedure exercises the real
+Greengrass IPC component principals.
+
+```powershell
+$p1Remote = "/tmp/edgecommons-p1-$($p1Package.RunId)"
+$p1Evidence = Join-Path $p1Package.OutputRoot "evidence"
+New-Item -ItemType Directory -Force -Path $p1Evidence | Out-Null
+
+ssh $ggHost "mkdir -p $p1Remote/recipes $p1Remote/artifacts"
+scp -r "$($p1Package.RecipeDir)" "$($ggHost):$p1Remote/recipes"
+scp -r "$($p1Package.ArtifactDir)" "$($ggHost):$p1Remote/artifacts"
+ssh $ggHost "sudo /greengrass/v2/bin/greengrass-cli deployment create --recipeDir $p1Remote/recipes --artifactDir $p1Remote/artifacts --merge com.mbreissi.edgecommons.InteropP1Python=$($p1Package.Version) --merge com.mbreissi.edgecommons.InteropP1Java=$($p1Package.Version) --merge com.mbreissi.edgecommons.InteropP1Rust=$($p1Package.Version) --merge com.mbreissi.edgecommons.InteropP1RustPeer=$($p1Package.Version) --merge com.mbreissi.edgecommons.InteropP1Ts=$($p1Package.Version)"
+```
+
+Wait for all five role result files, then copy and verify them on the build machine. The verifier
+is the pass/fail authority; a component merely reaching `RUNNING` is not evidence of the matrix.
+
+```powershell
+ssh $ggHost "for f in /tmp/edgecommons_gg_ipc_p1_*_$($p1Package.RunId).json; do test -f \"`$f\" || exit 1; done; mkdir -p /tmp/edgecommons-p1-results-$($p1Package.RunId); cp /tmp/edgecommons_gg_ipc_p1_*_$($p1Package.RunId).json /tmp/edgecommons-p1-results-$($p1Package.RunId)/"
+scp -r "$($ggHost):/tmp/edgecommons-p1-results-$($p1Package.RunId)/." $p1Evidence
+py -3.14 $p1Package.ResultVerifier --directory $p1Evidence --run-id $p1Package.RunId
+```
+
+The verifier must emit `ok:true`, 16 deferred-command edges, and 16 strict confirmed-publish
+edges. For every deferred edge it verifies the actual terminal reply body: request token,
+responder language, responder actor, and `durablyAccepted:true`; it also requires the request
+correlation to match and exactly one reply observed through the 750 ms duplicate window. Strict
+publish evidence additionally proves target actor, QoS 1, and completion of the strict publish
+API.
+
+Always remove this validation deployment and its temporary files after evidence has been copied:
+
+```powershell
+ssh $ggHost "sudo /greengrass/v2/bin/greengrass-cli deployment create --remove=com.mbreissi.edgecommons.InteropP1Python --remove=com.mbreissi.edgecommons.InteropP1Java --remove=com.mbreissi.edgecommons.InteropP1Rust --remove=com.mbreissi.edgecommons.InteropP1RustPeer --remove=com.mbreissi.edgecommons.InteropP1Ts"
+ssh $ggHost "rm -rf $p1Remote /tmp/edgecommons-p1-results-$($p1Package.RunId) /tmp/edgecommons_gg_ipc_p1_*_$($p1Package.RunId).json"
+```
+
 ### 6. Send a second-pass catalog update
 
 Do not send the update immediately after deployment. First confirm every skeleton has initialized and
@@ -430,7 +488,7 @@ Use separate `--remove` arguments. On Nucleus 2.17, a comma-separated `--remove`
 recorded as one literal component name and remove nothing.
 
 ```powershell
-ssh $ggHost "sudo /greengrass/v2/bin/greengrass-cli deployment create --remove=com.mbreissi.edgecommons.ConfigComponent --remove=com.mbreissi.edgecommons.JavaComponentSkeleton --remove=com.mbreissi.edgecommons.PythonComponentSkeleton --remove=com.mbreissi.edgecommons.RustComponentSkeleton --remove=com.mbreissi.edgecommons.TsComponentSkeleton --remove=com.mbreissi.edgecommons.HierarchicalConfigVerifier --remove=com.mbreissi.edgecommons.InteropBinaryPython --remove=com.mbreissi.edgecommons.InteropBinaryJava --remove=com.mbreissi.edgecommons.InteropBinaryRust --remove=com.mbreissi.edgecommons.InteropBinaryRustPeer --remove=com.mbreissi.edgecommons.InteropBinaryTs"
+ssh $ggHost "sudo /greengrass/v2/bin/greengrass-cli deployment create --remove=com.mbreissi.edgecommons.ConfigComponent --remove=com.mbreissi.edgecommons.JavaComponentSkeleton --remove=com.mbreissi.edgecommons.PythonComponentSkeleton --remove=com.mbreissi.edgecommons.RustComponentSkeleton --remove=com.mbreissi.edgecommons.TsComponentSkeleton --remove=com.mbreissi.edgecommons.HierarchicalConfigVerifier --remove=com.mbreissi.edgecommons.InteropBinaryPython --remove=com.mbreissi.edgecommons.InteropBinaryJava --remove=com.mbreissi.edgecommons.InteropBinaryRust --remove=com.mbreissi.edgecommons.InteropBinaryRustPeer --remove=com.mbreissi.edgecommons.InteropBinaryTs --remove=com.mbreissi.edgecommons.InteropP1Python --remove=com.mbreissi.edgecommons.InteropP1Java --remove=com.mbreissi.edgecommons.InteropP1Rust --remove=com.mbreissi.edgecommons.InteropP1RustPeer --remove=com.mbreissi.edgecommons.InteropP1Ts"
 ```
 
 Verify that only baseline Greengrass services remain:
