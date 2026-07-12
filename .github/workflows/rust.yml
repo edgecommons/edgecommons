@@ -40,7 +40,16 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
-      - run: cargo llvm-cov --features credentials,streaming,metrics-prometheus,parameters --ignore-filename-regex 'testutil\.rs' --cobertura --output-path target/cobertura.xml --fail-under-lines 92
+      # Collect once, then report twice from the same profile data. `--cobertura --output-path`
+      # suppresses the summary table, so folding the gate into it means a failing run tells you only
+      # that it failed, never by how much. Collect -> print the table (and gate on it) -> write the
+      # XML the diff gate reads.
+      - run: cargo llvm-cov --no-report --features credentials,streaming,metrics-prometheus,parameters
+      - name: Coverage summary + 92% line gate
+        run: cargo llvm-cov report --ignore-filename-regex 'testutil\.rs' --summary-only --fail-under-lines 92
+      - name: Cobertura report for the diff gate
+        if: always()
+        run: cargo llvm-cov report --ignore-filename-regex 'testutil\.rs' --cobertura --output-path target/cobertura.xml
 
       # The bundle average is a lagging indicator: a large under-tested change barely moves it. The
       # diff gate asks the question that matters on day one — is the code THIS pr changed tested? —
