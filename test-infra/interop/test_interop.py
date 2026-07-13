@@ -667,3 +667,146 @@ def test_uns_guard(commands, lang):
     assert payload is not None, f"no JSON from {lang} uns-guard: {result.stdout}\n{result.stderr}"
     assert "ReservedTopic" in str(payload.get("error")), (
         f"{lang} uns-guard must name the reserved-topic error, got: {payload}")
+
+
+# ---------------------------------------------------------------------------------------------
+# `status` verb + `state.instances[]`  (the per-instance connectivity wire surface)
+#
+# Both surfaces are fed by ONE component-supplied provider: the state keepalive PUSHES the sample
+# in `instances[]`, and the built-in `status` verb RETURNS it when pulled. So the two must agree,
+# in every language, for every producer/consumer pair — which is exactly what these two matrices
+# assert. A language that emitted `"state": null` instead of omitting it, or that dropped the open
+# `attributes` bag, would look fine in its own unit tests and only fail here.
+# ---------------------------------------------------------------------------------------------
+
+# The canonical sample every node's provider must report, verbatim. Chosen to pin the contract:
+#   cam-01  every optional member present; `attributes` carries an array, a string and a number,
+#           so the OPEN bag is proven to survive a JSON round-trip across four languages.
+#   cam-02  connected=false with a RICHER state — BACKOFF ("still trying") is not FAILED
+#           ("gave up"), and a boolean cannot tell them apart. That is why `state` exists.
+#   cam-03  the minimal element: NO state, NO detail, NO attributes. Optional members must be
+#           OMITTED, never emitted as null/empty — this element is what catches that.
+EXPECTED_INSTANCES = [
+    {
+        "instance": "cam-01",
+        "connected": True,
+        "state": "ONLINE",
+        "detail": "rtsp://cam-01/stream",
+        "attributes": {"capabilities": ["ptz", "snapshot"], "vendor": "acme", "retries": 0},
+    },
+    {"instance": "cam-02", "connected": False, "state": "BACKOFF", "detail": "connect timed out"},
+    {"instance": "cam-03", "connected": True},
+]
+
+
+def _assert_instances(actual, producer, consumer):
+    """The instances[] payload must survive producer -> consumer byte-for-byte in meaning."""
+    assert actual is not None, f"{producer}->{consumer}: instances[] missing entirely"
+    by_id = {e["instance"]: e for e in actual}
+    assert set(by_id) == {"cam-01", "cam-02", "cam-03"}, (
+        f"{producer}->{consumer}: expected exactly the 3 canonical instances, got {sorted(by_id)}")
+
+    for expected in EXPECTED_INSTANCES:
+        got = by_id[expected["instance"]]
+        # `connected` is the NORMALIZED flag: always present, in every language, for every element.
+        assert got["connected"] == expected["connected"], (
+            f"{producer}->{consumer}: {expected['instance']} connected mismatch: {got}")
+        for member in ("state", "detail", "attributes"):
+            if member in expected:
+                assert got.get(member) == expected[member], (
+                    f"{producer}->{consumer}: {expected['instance']}.{member} did not round-trip: "
+                    f"expected {expected[member]!r}, got {got.get(member)!r}")
+            else:
+                # Omission is the contract, not decoration: this rides a keepalive that ships every
+                # 5s per component. A language emitting "state": null would pass its own tests and
+                # fail here.
+                assert member not in got, (
+                    f"{producer}->{consumer}: {expected['instance']} must OMIT `{member}`, "
+                    f"not emit it as {got.get(member)!r}")
+
+
+@pytest.mark.parametrize("requester", LANGS)
+@pytest.mark.parametrize("responder", LANGS)
+def test_interop_status_verb(commands, responder, requester):
+    """PULL: the built-in `status` verb returns the provider sample, cross-language (16 pairs)."""
+    for lang in (requester, responder):
+        if lang not in commands:
+            pytest.skip(f"{lang} toolchain/artifact unavailable")
+
+    component = f"statusresp{uuid.uuid4().hex[:8]}"
+
+    resp = subprocess.Popen(
+        commands[responder]("status-responder", component),
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, cwd=str(RUN_DIR),
+    )
+    try:
+        assert _wait_ready(resp), f"{responder} status-responder never signalled READY"
+
+        result = subprocess.run(
+            commands[requester]("status-request", component),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=40,
+            cwd=str(RUN_DIR),
+        )
+        assert result.returncode == 0, (
+            f"{requester}->{responder} status-request failed: {result.stdout}\n{result.stderr}")
+        payload = _last_json(result.stdout.splitlines())
+        assert payload is not None, f"no JSON from {requester}: {result.stdout}"
+        assert payload["ok"] is True, f"{requester}->{responder}: status not ok: {payload}"
+
+        body = payload["reply_body"]
+        assert body["status"] == "RUNNING"
+        assert isinstance(body["uptimeSecs"], int), "status is ping's superset: uptimeSecs required"
+        _assert_instances(body.get("instances"), responder, requester)
+    finally:
+        resp.terminate()
+        try:
+            resp.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            resp.kill()
+
+
+@pytest.mark.parametrize("subscriber", LANGS)
+@pytest.mark.parametrize("publisher", LANGS)
+def test_interop_state_instances(commands, publisher, subscriber):
+    """PUSH: the `state` keepalive carries the same sample in instances[] (16 pairs)."""
+    for lang in (publisher, subscriber):
+        if lang not in commands:
+            pytest.skip(f"{lang} toolchain/artifact unavailable")
+
+    component = f"statepub{uuid.uuid4().hex[:8]}"
+
+    # _launch (not _wait_ready + communicate): _wait_ready drains stdout to EOF on a daemon
+    # thread, so a later communicate() on the same pipe returns ''. _launch keeps every line,
+    # which is what the other subscriber tests use and what we need — the result JSON arrives
+    # AFTER the READY line, on the same pipe.
+    sub, lines, ready = _launch(commands[subscriber]("state-instances-sub", component))
+    try:
+        assert ready.wait(25), (
+            f"{subscriber} state-instances-sub never signalled READY; lines={lines}")
+
+        pub = subprocess.Popen(
+            commands[publisher]("state-instances-pub", component),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True, cwd=str(RUN_DIR),
+        )
+        try:
+            # The subscriber exits as soon as it sees a RUNNING state carrying instances[].
+            sub.wait(timeout=45)
+        finally:
+            pub.terminate()
+            try:
+                pub.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pub.kill()
+
+        payload = _last_json(lines)
+        assert payload is not None, f"{publisher}->{subscriber}: no state observed; lines={lines}"
+        assert payload["ok"] is True, f"{publisher}->{subscriber}: {payload}"
+        assert payload["state_status"] == "RUNNING", "instances[] rides the RUNNING keepalive only"
+        _assert_instances(payload.get("instances"), publisher, subscriber)
+    finally:
+        if sub.poll() is None:
+            sub.terminate()
+            try:
+                sub.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                sub.kill()

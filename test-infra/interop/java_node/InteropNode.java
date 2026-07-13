@@ -1,6 +1,7 @@
 import com.mbreissi.edgecommons.EdgeCommons;
 import com.mbreissi.edgecommons.commands.CommandInbox;
 import com.mbreissi.edgecommons.commands.CommandOutcome;
+import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
 import com.mbreissi.edgecommons.logging.LogRecord;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
@@ -17,9 +18,11 @@ import com.mbreissi.edgecommons.messaging.providers.standalone.StandaloneMessagi
 import com.mbreissi.edgecommons.uns.Uns;
 import com.mbreissi.edgecommons.uns.UnsClass;
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -40,6 +43,10 @@ import java.nio.charset.StandardCharsets;
  *   InteropNode uns-pub   &lt;identityJson&gt; &lt;class&gt; [channel]
  *   InteropNode uns-sub   &lt;topic&gt;
  *   InteropNode uns-guard
+ *   InteropNode status-responder     &lt;component&gt;
+ *   InteropNode status-request       &lt;component&gt;
+ *   InteropNode state-instances-pub  &lt;component&gt;
+ *   InteropNode state-instances-sub  &lt;component&gt;
  * Local-only MQTT transport against localhost:1883. Messages are built WITHOUT a
  * config service — the envelope legally omits {@code identity} unless an explicit
  * identity is stamped (the UNS roles), and {@code tags.thing} no longer exists.
@@ -95,6 +102,84 @@ public class InteropNode {
         cfg.add("health", health);
 
         Path path = Files.createTempFile("edgecommons-deferred-" + LANG + "-", ".json");
+        Files.writeString(path, GSON.toJson(cfg), StandardCharsets.UTF_8);
+        return path;
+    }
+
+    /**
+     * The fixed interop device (IoT Thing) name every node's real-runtime roles run under, so a
+     * requester/subscriber can derive a peer's UNS topics from the component token alone.
+     */
+    static final String INTEROP_DEVICE = "interop-device";
+
+    /** The component's own command inbox topic for one verb. */
+    static String commandTopic(String component, String verb) {
+        return "ecv1/" + INTEROP_DEVICE + "/" + component + "/main/cmd/" + verb;
+    }
+
+    /** The component's reserved {@code state} keepalive topic. */
+    static String stateTopic(String component) {
+        return "ecv1/" + INTEROP_DEVICE + "/" + component + "/main/state";
+    }
+
+    /**
+     * The canonical per-instance connectivity sample every language's interop node reports through
+     * the ONE component-supplied provider that feeds both surfaces — the {@code state} keepalive's
+     * {@code instances[]} (push) and the built-in {@code status} verb (pull). It pins the contract:
+     * cam-01 carries every optional member (with an open {@code attributes} bag holding an array, a
+     * string and a number); cam-02 is disconnected with a richer {@code state} token; cam-03 is the
+     * minimal element, whose optional members must be OMITTED — never emitted as null/empty.
+     */
+    static java.util.List<InstanceConnectivity> canonicalInstances() {
+        JsonArray capabilities = new JsonArray();
+        capabilities.add("ptz");
+        capabilities.add("snapshot");
+        Map<String, JsonElement> attributes = new java.util.LinkedHashMap<>();
+        attributes.put("capabilities", capabilities);
+        attributes.put("vendor", new JsonPrimitive("acme"));
+        attributes.put("retries", new JsonPrimitive(0));
+        return java.util.List.of(
+                InstanceConnectivity.of("cam-01", true, "rtsp://cam-01/stream")
+                        .withState("ONLINE")
+                        .withAttributes(attributes),
+                InstanceConnectivity.of("cam-02", false, "connect timed out")
+                        .withState("BACKOFF"),
+                InstanceConnectivity.of("cam-03", true));
+    }
+
+    /**
+     * The runtime config for the connectivity roles: a real component on the local broker, with the
+     * heartbeat (the {@code state} keepalive that PUSHES {@code instances[]}) enabled only for the
+     * publisher role. The command inbox — which serves the {@code status} PULL — is always on.
+     */
+    static Path writeConnectivityRuntimeConfig(String componentToken, boolean heartbeatEnabled)
+            throws Exception {
+        JsonObject cfg = new JsonObject();
+        JsonObject component = new JsonObject();
+        component.addProperty("token", componentToken);
+        cfg.add("component", component);
+
+        JsonObject local = new JsonObject();
+        local.addProperty("type", "mqtt");
+        local.addProperty("host", host());
+        local.addProperty("port", Integer.parseInt(port()));
+        local.addProperty("clientId", "interop-" + LANG + "-connectivity-"
+                + ProcessHandle.current().pid());
+        JsonObject messaging = new JsonObject();
+        messaging.add("local", local);
+        messaging.addProperty("requestTimeoutSeconds", 10);
+        cfg.add("messaging", messaging);
+
+        JsonObject heartbeat = new JsonObject();
+        heartbeat.addProperty("enabled", heartbeatEnabled);
+        heartbeat.addProperty("intervalSecs", 2);
+        heartbeat.addProperty("destination", "local");
+        cfg.add("heartbeat", heartbeat);
+        JsonObject health = new JsonObject();
+        health.addProperty("enabled", false);
+        cfg.add("health", health);
+
+        Path path = Files.createTempFile("edgecommons-connectivity-" + LANG + "-", ".json");
         Files.writeString(path, GSON.toJson(cfg), StandardCharsets.UTF_8);
         return path;
     }
@@ -1419,6 +1504,130 @@ public class InteropNode {
             JsonObject out = new JsonObject();
             out.addProperty("ok", true);
             System.out.println(out);
+            System.exit(0);
+        } else if (role.equals("status-responder")) {
+            // status-responder <component> — a real component whose built-in command inbox serves
+            // the `status` verb from the registered per-instance connectivity provider (the PULL
+            // surface). The heartbeat is off: `status` samples the provider directly, so this role
+            // proves the pull path does not depend on the keepalive having ticked.
+            String componentToken = args[1];
+            Path path = writeConnectivityRuntimeConfig(componentToken, false);
+            EdgeCommons gg = null;
+            try {
+                gg = new EdgeCommons(
+                        "com.mbreissi.edgecommons.interop." + LANG + ".StatusResponder",
+                        logRuntimeArgs(path));
+                gg.setInstanceConnectivityProvider(InteropNode::canonicalInstances);
+                CommandInbox inbox = gg.getCommands();
+                if (inbox == null) {
+                    throw new IllegalStateException("runtime did not expose command inbox");
+                }
+                System.out.println("READY");
+                System.out.flush();
+                Thread.sleep(Long.MAX_VALUE);
+            } finally {
+                if (gg != null) {
+                    gg.shutdown();
+                }
+                Files.deleteIfExists(path);
+            }
+        } else if (role.equals("status-request")) {
+            // status-request <component> — PULL the peer's built-in `status` verb over its own
+            // command inbox and print the verb's result body.
+            String component = args[1];
+            String topic = commandTopic(component, CommandInbox.STATUS);
+            StandaloneMessagingProvider prov = provider("statusreq");
+            JsonObject out = new JsonObject();
+            try {
+                JsonObject requestBody = new JsonObject();
+                requestBody.addProperty("from", LANG);
+                Message request = MessageBuilder.create(CommandInbox.STATUS, "1.0")
+                        .withCommand(requestBody).build();
+                Message reply = prov.request(topic, request).get(20, TimeUnit.SECONDS);
+                JsonElement replyBody = asElement(reply.getBody());
+                JsonObject envelope = replyBody.isJsonObject() ? replyBody.getAsJsonObject() : null;
+                JsonObject result = envelope != null && envelope.has("result")
+                        && envelope.get("result").isJsonObject()
+                        ? envelope.getAsJsonObject("result") : null;
+                boolean ok = envelope != null && envelope.has("ok")
+                        && envelope.get("ok").getAsBoolean() && result != null;
+                out.addProperty("ok", ok);
+                out.add("reply_body", result != null ? result : replyBody);
+                System.out.println(out);
+                prov.close();
+                System.exit(ok ? 0 : 1);
+            } catch (Exception e) {
+                out.addProperty("ok", false);
+                out.addProperty("error", e.getClass().getSimpleName());
+                System.out.println(out);
+                System.exit(1);
+            }
+        } else if (role.equals("state-instances-pub")) {
+            // state-instances-pub <component> — a real component with the HEARTBEAT ENABLED and the
+            // same provider registered, so the library PUSHES the sample in every RUNNING `state`
+            // keepalive's instances[].
+            String componentToken = args[1];
+            Path path = writeConnectivityRuntimeConfig(componentToken, true);
+            EdgeCommons gg = null;
+            try {
+                gg = new EdgeCommons(
+                        "com.mbreissi.edgecommons.interop." + LANG + ".StateInstancesPublisher",
+                        logRuntimeArgs(path));
+                gg.setInstanceConnectivityProvider(InteropNode::canonicalInstances);
+                System.out.println("READY");
+                System.out.flush();
+                Thread.sleep(Long.MAX_VALUE);
+            } finally {
+                if (gg != null) {
+                    gg.shutdown();
+                }
+                Files.deleteIfExists(path);
+            }
+        } else if (role.equals("state-instances-sub")) {
+            // state-instances-sub <component> — subscribe the peer's reserved `state` topic
+            // (subscribing to a reserved class is allowed; only PUBLISHING is rejected) and settle
+            // on the first RUNNING keepalive that carries a non-empty instances[].
+            String component = args[1];
+            String topic = stateTopic(component);
+            StandaloneMessagingProvider prov = provider("statesub");
+            final CountDownLatch latch = new CountDownLatch(1);
+            final JsonObject[] box = new JsonObject[1];
+            prov.subscribe(topic, (t, m) -> {
+                try {
+                    JsonElement bodyElement = asElement(m.getBody());
+                    if (!bodyElement.isJsonObject()) {
+                        return;
+                    }
+                    JsonObject body = bodyElement.getAsJsonObject();
+                    if (!body.has("status")
+                            || !"RUNNING".equals(body.get("status").getAsString())) {
+                        return;  // the STOPPED farewell carries no live instances
+                    }
+                    if (!body.has("instances") || !body.get("instances").isJsonArray()
+                            || body.getAsJsonArray("instances").isEmpty()) {
+                        return;  // a tick sampled before the provider was registered
+                    }
+                    JsonObject out = new JsonObject();
+                    out.addProperty("ok", true);
+                    out.addProperty("state_status", "RUNNING");
+                    out.add("instances", body.getAsJsonArray("instances"));
+                    box[0] = out;
+                    latch.countDown();
+                } catch (Exception ignored) {
+                    // A malformed/foreign envelope on the state topic is not this node's business.
+                }
+            }, 1);
+            System.out.println("READY");
+            System.out.flush();
+            if (!latch.await(35, TimeUnit.SECONDS)) {
+                JsonObject out = new JsonObject();
+                out.addProperty("ok", false);
+                out.addProperty("error", "timeout");
+                System.out.println(out);
+                System.exit(1);
+            }
+            System.out.println(box[0]);
+            prov.close();
             System.exit(0);
         } else {
             System.err.println("unknown role: " + role);

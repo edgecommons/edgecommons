@@ -5,6 +5,10 @@
 //!   interop-rust-node uns-pub   <identityJson> <class> [channel]
 //!   interop-rust-node uns-sub   <topic>
 //!   interop-rust-node uns-guard
+//!   interop-rust-node status-responder    <component>
+//!   interop-rust-node status-request      <component>
+//!   interop-rust-node state-instances-pub <component>
+//!   interop-rust-node state-instances-sub <component>
 //!   interop-rust-node gg-config-request <topic> <component> <output-json>
 //!   interop-rust-node gg-config-update <topic> <output-json>
 //! Local-only MQTT transport against localhost:1883. Messages are built without a
@@ -17,7 +21,8 @@ use std::time::Duration;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use edgecommons::prelude::{
-    outcome_handler, CommandError, CommandOutcome, EdgeCommonsBuilder, LogLevel, LogRecord,
+    outcome_handler, CommandError, CommandOutcome, EdgeCommonsBuilder, InstanceConnectivity,
+    InstanceConnectivityProvider, LogLevel, LogRecord,
 };
 use serde_json::json;
 #[cfg(feature = "greengrass")]
@@ -28,7 +33,7 @@ use edgecommons::messaging::config::MessagingConfig;
 #[cfg(feature = "greengrass")]
 use edgecommons::messaging::message::Message;
 use edgecommons::messaging::message::{
-    binary_value, MessageBodyCase, MessageBuilder, MessageIdentity,
+    binary_value, HierEntry, MessageBodyCase, MessageBuilder, MessageIdentity,
 };
 use edgecommons::messaging::message_handler;
 #[cfg(feature = "greengrass")]
@@ -39,8 +44,56 @@ use edgecommons::uns::{Uns, UnsClass};
 
 const LANG: &str = "rust";
 
+/// The fixed thing/device name every interop node runs under. The `status` / `state` roles are
+/// addressed by component token alone, so the device must be identical in all four nodes.
+const INTEROP_DEVICE: &str = "interop-device";
+
 static ACCEPTANCE_MARKER_SEQUENCE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
+
+/// The canonical per-instance connectivity sample (`test_interop.EXPECTED_INSTANCES`) that every
+/// language's provider reports verbatim, so a `status` pull and a `state` push can be compared
+/// across any producer/consumer pair:
+/// - `cam-01` — every optional member present, and an `attributes` bag holding an array, a string
+///   and a number (the OPEN bag must survive a four-language JSON round-trip).
+/// - `cam-02` — `connected=false` with the richer `BACKOFF` state a boolean cannot express.
+/// - `cam-03` — the minimal element: no state, no detail, no attributes. Optional members must be
+///   OMITTED, never emitted as null/empty.
+fn interop_instance_connectivity() -> Vec<InstanceConnectivity> {
+    let mut attributes = serde_json::Map::new();
+    attributes.insert("capabilities".to_string(), json!(["ptz", "snapshot"]));
+    attributes.insert("vendor".to_string(), json!("acme"));
+    attributes.insert("retries".to_string(), json!(0));
+    vec![
+        InstanceConnectivity::new("cam-01", true, Some("rtsp://cam-01/stream".to_string()))
+            .with_state("ONLINE")
+            .with_attributes(attributes),
+        InstanceConnectivity::new("cam-02", false, Some("connect timed out".to_string()))
+            .with_state("BACKOFF"),
+        InstanceConnectivity::of("cam-03", true),
+    ]
+}
+
+/// The identity a requester/subscriber derives from the `<component>` argument alone: the fixed
+/// interop device, that component token, and the default `main` instance — the same identity the
+/// responder/publisher resolves from its own runtime config.
+fn interop_identity(component_token: &str) -> MessageIdentity {
+    MessageIdentity::new(
+        vec![HierEntry {
+            level: "device".to_string(),
+            value: INTEROP_DEVICE.to_string(),
+        }],
+        component_token,
+        None,
+    )
+    .expect("valid interop identity")
+}
+
+/// The real UNS builder over that identity (`includeRoot=false`), used to mint the component's
+/// `cmd/status` request topic and its reserved `state` topic.
+fn interop_uns(component_token: &str) -> Uns {
+    Uns::new(interop_identity(component_token), false)
+}
 
 #[cfg(feature = "greengrass")]
 fn deep_merge_value(left: Value, right: Value) -> Value {
@@ -207,6 +260,44 @@ fn write_command_runtime_config(component_token: &str) -> std::path::PathBuf {
     path
 }
 
+/// Runtime config for `state-instances-pub`: the same local-MQTT bring-up as the command roles,
+/// with the HEARTBEAT ENABLED so the component publishes its reserved `state` keepalive (the PUSH
+/// surface). A short interval keeps the interop run brisk; the measures ride the metric subsystem
+/// and are irrelevant here.
+fn write_state_runtime_config(component_token: &str) -> std::path::PathBuf {
+    let host =
+        std::env::var("EDGECOMMONS_IT_MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port = std::env::var("EDGECOMMONS_IT_MQTT_PORT")
+        .unwrap_or_else(|_| "1883".to_string())
+        .parse::<u16>()
+        .expect("valid MQTT port");
+    let path = std::env::temp_dir().join(format!(
+        "edgecommons-state-{LANG}-{}-{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos()
+    ));
+    let cfg = json!({
+        "component": { "token": component_token },
+        "messaging": {
+            "local": {
+                "type": "mqtt",
+                "host": host,
+                "port": port,
+                "clientId": format!("interop-{LANG}-state-runtime-{}", std::process::id())
+            },
+            "requestTimeoutSeconds": 4
+        },
+        "heartbeat": { "enabled": true, "intervalSecs": 2, "destination": "local" },
+        "health": { "enabled": false }
+    });
+    std::fs::write(&path, serde_json::to_vec(&cfg).expect("serialize config"))
+        .expect("write state runtime config");
+    path
+}
+
 fn write_durable_acceptance_marker() -> std::io::Result<std::path::PathBuf> {
     let sequence = ACCEPTANCE_MARKER_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let marker = std::env::temp_dir().join(format!(
@@ -288,7 +379,7 @@ fn log_runtime_args(path: &std::path::Path) -> Vec<String> {
         "FILE".to_string(),
         path,
         "-t".to_string(),
-        "interop-device".to_string(),
+        INTEROP_DEVICE.to_string(),
     ]
 }
 
@@ -1894,6 +1985,186 @@ async fn main() {
                 })
             );
             std::process::exit(if ok { 0 } else { 1 });
+        }
+        // status-responder <component> — a real component that registers the canonical instance
+        // connectivity provider. The runtime's built-in command inbox (started by build()) serves
+        // the `status` verb from that same provider — the PULL surface.
+        "status-responder" => {
+            let component_token = args[2].clone();
+            let path = write_command_runtime_config(&component_token);
+            let gg = EdgeCommonsBuilder::new(format!(
+                "com.mbreissi.edgecommons.interop.{LANG}.StatusResponder"
+            ))
+            .args(log_runtime_args(&path))
+            .build()
+            .await
+            .expect("build status responder");
+            let connectivity: Arc<InstanceConnectivityProvider> =
+                Arc::new(interop_instance_connectivity);
+            gg.set_instance_connectivity_provider(Some(connectivity));
+            gg.commands().expect("runtime command inbox");
+            println!("READY");
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            loop {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+        }
+        // status-request <component> — pull that component's built-in `status` verb over its own
+        // command inbox (ecv1/interop-device/<component>/main/cmd/status) and print the verb's
+        // result object (the inbox wraps it as {"ok":true,"result":{…}}).
+        "status-request" => {
+            let component_token = args[2].clone();
+            let topic = interop_uns(&component_token)
+                .topic_with_channel(UnsClass::Cmd, "status")
+                .expect("mint the status command topic");
+            let svc = provider("statusreq").await;
+            let request = MessageBuilder::new("status", "1.0")
+                .command(json!({ "from": LANG }))
+                .build();
+            let correlation = request.header.correlation_id.clone();
+            let fut = match svc.request(&topic, request).await {
+                Ok(fut) => fut,
+                Err(error) => {
+                    println!("{}", json!({"ok": false, "error": error.to_string()}));
+                    std::process::exit(1);
+                }
+            };
+            match tokio::time::timeout(Duration::from_secs(20), fut).await {
+                Ok(Ok(reply)) => {
+                    let correlation_match = reply.header.correlation_id == correlation;
+                    let replied_ok =
+                        reply.body.get("ok").and_then(|value| value.as_bool()) == Some(true);
+                    let result = reply.body.get("result").cloned();
+                    match result {
+                        Some(result) if replied_ok && correlation_match => {
+                            println!(
+                                "{}",
+                                json!({
+                                    "ok": true,
+                                    "correlation_match": correlation_match,
+                                    "reply_body": result
+                                })
+                            );
+                        }
+                        _ => {
+                            println!(
+                                "{}",
+                                json!({
+                                    "ok": false,
+                                    "error": format!(
+                                        "unexpected status reply (correlation_match={correlation_match}): {}",
+                                        reply.body
+                                    )
+                                })
+                            );
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                Ok(Err(error)) => {
+                    println!("{}", json!({"ok": false, "error": error.to_string()}));
+                    std::process::exit(1);
+                }
+                Err(_) => {
+                    println!("{}", json!({"ok": false, "error": "timeout"}));
+                    std::process::exit(1);
+                }
+            }
+        }
+        // state-instances-pub <component> — the PUSH surface: the same component with the
+        // heartbeat ENABLED, so the state keepalive carries the same provider sample in
+        // instances[].
+        "state-instances-pub" => {
+            let component_token = args[2].clone();
+            let path = write_state_runtime_config(&component_token);
+            let gg = EdgeCommonsBuilder::new(format!(
+                "com.mbreissi.edgecommons.interop.{LANG}.StatePublisher"
+            ))
+            .args(log_runtime_args(&path))
+            .build()
+            .await
+            .expect("build state keepalive publisher");
+            let connectivity: Arc<InstanceConnectivityProvider> =
+                Arc::new(interop_instance_connectivity);
+            gg.set_instance_connectivity_provider(Some(connectivity));
+            println!("READY");
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            loop {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+        }
+        // state-instances-sub <component> — subscribe that component's reserved `state` topic
+        // (subscribing a reserved class is allowed; only PUBLISHING is rejected) and report the
+        // first RUNNING keepalive that carries a non-empty instances[].
+        "state-instances-sub" => {
+            let component_token = args[2].clone();
+            let topic = interop_uns(&component_token)
+                .topic(UnsClass::State)
+                .expect("mint the state topic");
+            let svc = provider("statesub").await;
+            let recv = Arc::new(std::sync::Mutex::new(None));
+            let rh = recv.clone();
+            svc.subscribe(
+                &topic,
+                message_handler(move |_t, m| {
+                    let rh = rh.clone();
+                    async move {
+                        let running =
+                            m.body.get("status").and_then(|v| v.as_str()) == Some("RUNNING");
+                        let instances = m
+                            .body
+                            .get("instances")
+                            .and_then(|v| v.as_array())
+                            .filter(|instances| !instances.is_empty())
+                            .cloned();
+                        // The first RUNNING keepalive can precede the provider's registration;
+                        // wait for one that actually carries the sample.
+                        if let Some(instances) = instances {
+                            if running {
+                                let mut slot = rh.lock().unwrap();
+                                if slot.is_none() {
+                                    *slot = Some(instances);
+                                }
+                            }
+                        }
+                    }
+                }),
+                16,
+                1,
+            )
+            .await
+            .expect("subscribe the reserved state topic");
+            println!("READY");
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            for _ in 0..400 {
+                if recv.lock().unwrap().is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            let observed = recv.lock().unwrap().take();
+            match observed {
+                Some(instances) => {
+                    println!(
+                        "{}",
+                        json!({
+                            "ok": true,
+                            "state_status": "RUNNING",
+                            "instances": instances
+                        })
+                    );
+                }
+                None => {
+                    println!(
+                        "{}",
+                        json!({"ok": false, "error": "timeout waiting for a state with instances[]"})
+                    );
+                    std::process::exit(1);
+                }
+            }
         }
         "confirmed-sub" => {
             let topic = args[2].clone();

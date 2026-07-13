@@ -30,6 +30,28 @@ UNS roles (M14 — UNS-CANONICAL-DESIGN §7):
       through the guarded public MessagingClient surface; exits NON-ZERO printing
       the reserved-topic error name. (The guard fires before the provider is
       touched, so this role needs no broker connection.)
+
+Per-instance connectivity — one provider, two surfaces (pull + push):
+
+  python_node.py status-responder <component>
+      Run a real component named <component> that registers the canonical
+      InstanceConnectivity provider; its built-in `status` verb answers out of that
+      provider. Prints READY, then runs until killed.
+
+  python_node.py status-request <component>
+      Pull <component>'s built-in `status` verb over its command inbox
+      (ecv1/interop-device/<component>/main/cmd/status) and print one JSON line
+      {"ok": true, "reply_body": {"status": "RUNNING", "uptimeSecs": n, "instances": [...]}}.
+
+  python_node.py state-instances-pub <component>
+      The same component with the heartbeat enabled: the `state` keepalive PUSHES the
+      very sample the `status` verb returns, in its `instances` array. Runs until killed.
+
+  python_node.py state-instances-sub <component>
+      Subscribe <component>'s reserved `state` topic (subscribing to a reserved class is
+      allowed; only publishing to one is rejected), wait for the first RUNNING keepalive
+      carrying a non-empty `instances[]`, and print
+      {"ok": true, "state_status": "RUNNING", "instances": [...]}.
 """
 import json
 import os
@@ -47,6 +69,7 @@ from edgecommons.messaging.message import _binary_marker
 from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.messaging.identity import MessageIdentity
 from edgecommons.command_inbox import CommandOutcome
+from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
 from edgecommons.uns import Uns, UnsClass
 from edgecommons import EdgeCommons, LogRecord
 
@@ -1392,6 +1415,185 @@ def run_uns_guard():
     return 0
 
 
+def _canonical_instances():
+    """The canonical per-instance connectivity sample every language's node reports.
+
+    Built through the public builder path (``of`` + ``with_state`` / ``with_attributes``),
+    not the wide constructor.  The three elements pin the contract the interop matrix
+    asserts: every optional member present (cam-01, including the OPEN ``attributes`` bag),
+    ``connected=false`` with a richer own-vocabulary ``state`` (cam-02: BACKOFF is not
+    FAILED), and the minimal element that must OMIT every optional member (cam-03).
+    """
+    return [
+        InstanceConnectivity.of("cam-01", True, "rtsp://cam-01/stream")
+        .with_state("ONLINE")
+        .with_attributes({
+            "capabilities": ["ptz", "snapshot"],
+            "vendor": "acme",
+            "retries": 0,
+        }),
+        InstanceConnectivity.of("cam-02", False, "connect timed out").with_state("BACKOFF"),
+        InstanceConnectivity.of("cam-03", True),
+    ]
+
+
+def _interop_identity(component_token):
+    """The wire identity of an interop component on the fixed ``interop-device`` thing."""
+    return MessageIdentity.from_dict({
+        "hier": [{"level": "device", "value": "interop-device"}],
+        "path": "interop-device",
+        "component": component_token,
+        "instance": "main",
+    })
+
+
+def _write_connectivity_runtime_config(component_token, heartbeat_enabled):
+    """The real runtime config for the connectivity roles.
+
+    ``heartbeat_enabled`` selects the surface under test: the PULL roles need only the
+    command inbox, while the PUSH roles need the ``state`` keepalive running.
+    """
+    cfg = {
+        "component": {"token": component_token},
+        "messaging": {
+            "local": {
+                "type": "mqtt",
+                "host": HOST,
+                "port": PORT,
+                "clientId": f"interop-{LANG}-conn-runtime-{os.getpid()}",
+            },
+            "requestTimeoutSeconds": 4,
+        },
+        "heartbeat": {"enabled": bool(heartbeat_enabled), "intervalSecs": 2},
+        "health": {"enabled": False},
+    }
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(cfg, f)
+        return f.name
+
+
+def _run_connectivity_component(component_token, heartbeat_enabled):
+    """Start a real component that reports the canonical connectivity sample, print READY
+    and stay alive until terminated. One provider feeds both surfaces: the built-in
+    ``status`` verb (pull) and the ``state`` keepalive's ``instances[]`` (push)."""
+    path = _write_connectivity_runtime_config(component_token, heartbeat_enabled)
+    gg = None
+    try:
+        gg = EdgeCommons(
+            f"com.mbreissi.edgecommons.interop.{LANG}.ConnectivityComponent",
+            _log_runtime_args(path),
+        )
+        gg.set_instance_connectivity_provider(_canonical_instances)
+        if gg.get_commands() is None:
+            raise RuntimeError("runtime did not expose command inbox")
+        print("READY", flush=True)
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if gg is not None:
+            gg.shutdown()
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def run_status_responder(component_token):
+    """Serve the built-in ``status`` verb out of the registered connectivity provider."""
+    _run_connectivity_component(component_token, heartbeat_enabled=False)
+
+
+def run_state_instances_pub(component_token):
+    """Push the same provider sample on the ``state`` keepalive (heartbeat enabled)."""
+    _run_connectivity_component(component_token, heartbeat_enabled=True)
+
+
+def run_status_request(component_token):
+    """Pull <component>'s built-in ``status`` verb and print the reply's result body."""
+    identity = _interop_identity(component_token)
+    uns = Uns(identity, False)
+    topic = uns.topic(UnsClass.CMD, "status")
+    prov = _provider("statusreq")
+    reply_topic = f"interop/status/reply/{LANG}/{uuid.uuid4().hex}"
+    replies = []
+    got = threading.Event()
+    try:
+        def on_reply(_topic, reply):
+            replies.append(reply)
+            got.set()
+
+        prov.subscribe(reply_topic, on_reply)
+        request = (
+            MessageBuilder.create("status", "1.0")
+            .with_command({})
+            .with_reply_to(reply_topic)
+            .with_tags({})
+            .build()
+        )
+        correlation = request.get_correlation_id()
+        prov.publish(topic, request)
+        if not got.wait(15):
+            print(json.dumps({"ok": False, "error": "timeout"}), flush=True)
+            return 1
+        reply = replies[0]
+        body = reply.get_body()
+        result = body.get("result") if isinstance(body, dict) else None
+        ok = (
+            reply.get_correlation_id() == correlation
+            and isinstance(body, dict)
+            and body.get("ok") is True
+            and isinstance(result, dict)
+            and result.get("status") == "RUNNING"
+            and isinstance(result.get("uptimeSecs"), int)
+        )
+        print(json.dumps({"ok": bool(ok), "reply_body": result}), flush=True)
+        return 0 if ok else 1
+    finally:
+        prov.disconnect()
+
+
+def run_state_instances_sub(component_token):
+    """Subscribe <component>'s reserved ``state`` topic (subscribing to a reserved class is
+    allowed — only publishing to one is rejected) and report the first RUNNING keepalive
+    that carries a non-empty ``instances[]``."""
+    identity = _interop_identity(component_token)
+    topic = Uns(identity, False).topic(UnsClass.STATE)
+    prov = _provider("stateinstsub")
+    state = {}
+    got = threading.Event()
+
+    def handler(_t, m):
+        try:
+            body = m.get_body()
+            if not isinstance(body, dict) or body.get("status") != "RUNNING":
+                return
+            instances = body.get("instances")
+            if not instances:
+                return
+            state["result"] = {
+                "ok": True,
+                "state_status": body.get("status"),
+                "instances": instances,
+            }
+        except Exception as exc:  # pragma: no cover - exercised by subprocess harness
+            state["result"] = {"ok": False, "error": str(exc)}
+        got.set()
+
+    prov.subscribe(topic, handler)
+    print("READY", flush=True)
+    try:
+        if not got.wait(35):
+            print(json.dumps({"ok": False, "error": "timeout", "topic": topic}), flush=True)
+            return 1
+        result = state["result"]
+        print(json.dumps(result), flush=True)
+        return 0 if result.get("ok") else 1
+    finally:
+        prov.disconnect()
+
+
 if __name__ == "__main__":
     role = sys.argv[1]
     if role == "responder":
@@ -1435,6 +1637,14 @@ if __name__ == "__main__":
         sys.exit(run_uns_sub(sys.argv[2]))
     elif role == "uns-guard":
         sys.exit(run_uns_guard())
+    elif role == "status-responder":
+        run_status_responder(sys.argv[2])
+    elif role == "status-request":
+        sys.exit(run_status_request(sys.argv[2]))
+    elif role == "state-instances-pub":
+        run_state_instances_pub(sys.argv[2])
+    elif role == "state-instances-sub":
+        sys.exit(run_state_instances_sub(sys.argv[2]))
     else:
         sys.stderr.write(f"unknown role: {role}\n")
         sys.exit(2)
