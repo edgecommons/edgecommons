@@ -231,6 +231,87 @@ class TestInstanceConnectivity:
         with pytest.raises(ValueError):
             InstanceConnectivity("  ", True)
 
+    def test_optional_state_and_attributes_serialize_and_are_omitted_when_absent(self):
+        import pytest
+        from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
+        # `connected` stays the normalized flag; `state` carries the component's OWN
+        # vocabulary; `attributes` is the open domain bag. All optional members are
+        # omitted rather than emitted null (this rides a 5s keepalive).
+        rich = InstanceConnectivity(
+            "cam-02", False, "connect timed out", "BACKOFF",
+            {"capabilities": ["ptz", "snapshot"], "lastError": "CAMERA_UNAVAILABLE"},
+        )
+        assert rich.to_dict() == {
+            "instance": "cam-02",
+            "connected": False,
+            "state": "BACKOFF",
+            "detail": "connect timed out",
+            "attributes": {
+                "capabilities": ["ptz", "snapshot"],
+                "lastError": "CAMERA_UNAVAILABLE",
+            },
+        }
+        assert InstanceConnectivity.of("cam-01", True).with_state("ONLINE").to_dict() == {
+            "instance": "cam-01", "connected": True, "state": "ONLINE"}
+        assert InstanceConnectivity("x", True, None, "  ").to_dict() == {
+            "instance": "x", "connected": True}, "a blank state is omitted"
+        assert "attributes" not in InstanceConnectivity("x", True, None, None, {}).to_dict(), (
+            "an empty attribute bag is omitted"
+        )
+        with_attrs = InstanceConnectivity.of("x", True).with_attributes({"sessionId": "s-1"})
+        assert with_attrs.to_dict()["attributes"] == {"sessionId": "s-1"}
+        assert with_attrs.with_attributes(None).attributes is None
+        with pytest.raises(ValueError):
+            InstanceConnectivity("x", True, None, None, "not-a-mapping")
+
+    def test_attributes_are_copied_defensively(self):
+        from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
+        attrs = {"lastError": "NONE"}
+        conn = InstanceConnectivity("cam", True, None, "ONLINE", attrs)
+        attrs["lastError"] = "MUTATED"
+        assert conn.to_dict()["attributes"] == {"lastError": "NONE"}
+
+    def test_state_instances_carry_state_and_attributes(self, hb):
+        from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
+        msg = MagicMock()
+        hb.set_messaging_service(msg)
+        hb.set_instance_connectivity_provider(lambda: [
+            InstanceConnectivity.of("cam-01", True).with_state("ONLINE"),
+            InstanceConnectivity("cam-02", False, None, "DISABLED", {"reason": "admin"}),
+        ])
+        hb._publish_state("RUNNING", include_uptime=True)
+        assert self._body(msg)["instances"] == [
+            {"instance": "cam-01", "connected": True, "state": "ONLINE"},
+            {"instance": "cam-02", "connected": False, "state": "DISABLED",
+             "attributes": {"reason": "admin"}},
+        ]
+
+
+class TestSampleInstanceConnectivity:
+    """The single sampling seam ``sample_instance_connectivity`` — it serves BOTH surfaces
+    (the ``state`` keepalive pushes it, the ``status`` verb pulls it), and is best-effort:
+    no provider, a ``None`` result, or a raising provider all yield an empty list."""
+
+    def test_no_provider_samples_empty(self, hb):
+        assert hb.sample_instance_connectivity() == []
+
+    def test_provider_sample_is_returned(self, hb):
+        from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
+        conn = InstanceConnectivity.of("plc1", True)
+        hb.set_instance_connectivity_provider(lambda: [conn, None])
+        assert hb.sample_instance_connectivity() == [conn], "None entries are dropped"
+
+    def test_none_and_empty_results_sample_empty(self, hb):
+        for provider in (lambda: None, lambda: []):
+            hb.set_instance_connectivity_provider(provider)
+            assert hb.sample_instance_connectivity() == []
+
+    def test_raising_provider_samples_empty(self, hb):
+        def boom():
+            raise RuntimeError("provider blew up")
+        hb.set_instance_connectivity_provider(boom)
+        assert hb.sample_instance_connectivity() == []
+
 
 class TestPublishStateNow:
     """The public out-of-band re-emit used by the _bcast republish listener's

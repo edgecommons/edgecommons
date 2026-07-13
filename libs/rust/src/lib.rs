@@ -445,6 +445,11 @@ impl EdgeCommons {
     /// connection (data + lifecycle stay under `main`; the #1c model). A reference adapter maps each
     /// connection to its reachability: OPC UA server session / Modbus slave / file-replicator source
     /// directory. Pass `None` to stop reporting.
+    ///
+    /// The provider feeds **both** surfaces from one sample
+    /// ([`heartbeat::Heartbeat::sample_instance_connectivity`]): the `state` keepalive pushes it,
+    /// and the built-in [`status`](commands::STATUS) command verb returns it when pulled — a
+    /// console can subscribe, or ask, and gets the same answer.
     pub fn set_instance_connectivity_provider(
         &self,
         provider: Option<Arc<heartbeat::InstanceConnectivityProvider>>,
@@ -997,8 +1002,8 @@ impl EdgeCommonsBuilder {
         }
 
         // §9.5 (slice S2): the component's own command inbox
-        // (ecv1/{device}/{component}/main/cmd/#) — built-ins ping / reload-config /
-        // get-configuration answer the console out of the box; apps add custom verbs via
+        // (ecv1/{device}/{component}/main/cmd/#) — built-ins ping / describe / reload-config /
+        // get-configuration / status answer the console out of the box; apps add custom verbs via
         // `EdgeCommons::commands()`. Always on (no config surface); best-effort start (a failure
         // disables the inbox only). Wired right after the republish listener (needs only the
         // messaging service, not the privileged reserved-publish seam).
@@ -1006,6 +1011,12 @@ impl EdgeCommonsBuilder {
             let uptime_secs: Arc<dyn Fn() -> u64 + Send + Sync> = {
                 let hb = heartbeat.clone();
                 Arc::new(move || hb.uptime_secs())
+            };
+            // The built-in `status` verb pulls the SAME provider sample the state keepalive
+            // pushes, so the two surfaces cannot disagree.
+            let instance_connectivity: commands::InstanceConnectivitySource = {
+                let hb = heartbeat.clone();
+                Arc::new(move || hb.sample_instance_connectivity())
             };
             let reload_action: commands::ReloadAction = {
                 let source = source.clone();
@@ -1052,6 +1063,7 @@ impl EdgeCommonsBuilder {
                 uptime_secs,
                 reload_action,
                 redacted_config,
+                instance_connectivity,
                 startup_observer,
             );
             for configurer in &self.command_configurers {

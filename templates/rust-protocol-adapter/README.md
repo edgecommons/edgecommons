@@ -65,6 +65,23 @@ simulator's `pressure-1` demonstrates exactly this.
 **`southbound_health`, dimensioned by instance** — `connectionState`, `pollLatencyMs`, `readErrors`,
 `reconnects` — so an operator sees a link go down without reading logs.
 
+**Per-instance connectivity, from one provider.** `App::run` registers an instance-connectivity
+provider reporting one entry per configured device. The library reads it twice: it pushes the
+sample into every `state` keepalive's `instances[]`, and it returns the same sample from the
+built-in `status` command verb when a console asks. A watcher and an asker cannot get different
+answers.
+
+```json
+{ "instance": "device-1", "connected": true, "state": "ONLINE",
+  "detail": "sim://device-1", "attributes": { "adapter": "sim" } }
+```
+
+`connected` is the **normalized** flag — always present, so a console renders a health dot without
+knowing your protocol. `state` is this adapter's **own** vocabulary (`CONNECTING` / `ONLINE` /
+`BACKOFF`), because a boolean cannot tell "reconnecting" from "administratively disabled".
+`attributes` is an **open** bag for domain data, so what only your adapter understands rides along
+without destabilizing the two fields every consumer relies on.
+
 ## Writes are allow-listed, and the list is empty by default
 
 ```json

@@ -45,7 +45,7 @@ import { publishReservedVia } from "./messaging/service";
 import { MessageBuilder } from "./message";
 import { Uns, UnsClass } from "./uns";
 import { logger } from "./logging";
-import type { InstanceConnectivityProvider } from "./instance_connectivity";
+import type { InstanceConnectivity, InstanceConnectivityProvider } from "./instance_connectivity";
 
 /** The state keepalive's envelope header name (§4.3). */
 const STATE_MESSAGE_NAME = "state";
@@ -251,6 +251,37 @@ export class Heartbeat {
   }
 
   /**
+   * Samples the registered per-instance connectivity provider, once.
+   *
+   * This is the single sampling seam, and it deliberately serves **both** surfaces: the `state`
+   * keepalive pushes it in `instances`, and the built-in `status` verb (`CommandInbox.STATUS`)
+   * returns it when pulled. One component-supplied provider; two surfaces; no second copy of the
+   * data to drift out of step.
+   *
+   * Best-effort by contract: no provider, a nullish result, or a throwing provider all yield an
+   * empty array. A component's provider bug must never suppress the keepalive or fail the command —
+   * it can only cost the `instances` section for that sample.
+   *
+   * @returns the live per-instance connectivity; never nullish, possibly empty
+   */
+  sampleInstanceConnectivity(): InstanceConnectivity[] {
+    const provider = this.connectivityProvider;
+    if (!provider) {
+      return [];
+    }
+    try {
+      const conns = provider();
+      if (!conns || conns.length === 0) {
+        return [];
+      }
+      return conns.filter((c): c is InstanceConnectivity => c != null);
+    } catch (e) {
+      logger.warn(`instance connectivity provider failed; omitting instances[] this sample: ${errMsg(e)}`);
+      return [];
+    }
+  }
+
+  /**
    * Define the `sys` metric (the heartbeat measures) and start the periodic task.
    *
    * On start the `sys` metric is defined with all 8 measures (storage resolution `1` when
@@ -335,20 +366,13 @@ export class Heartbeat {
     if (includeUptime) {
       body.uptimeSecs = this.getUptimeSecs();
     }
-    // Per-instance connectivity — the state body's `instances` (RUNNING keepalive only). Best-effort:
-    // a nullish/empty/throwing provider omits the section but never suppresses the keepalive.
-    const provider = this.connectivityProvider;
-    if (includeUptime && provider) {
-      try {
-        const conns = provider();
-        if (conns && conns.length > 0) {
-          const instances = conns.filter((c) => c != null).map((c) => c.toJson());
-          if (instances.length > 0) {
-            body.instances = instances;
-          }
-        }
-      } catch (e) {
-        logger.warn(`instance connectivity provider failed; omitting instances[] this tick: ${errMsg(e)}`);
+    // Per-instance connectivity — the state body's `instances` (only on the RUNNING keepalive; a
+    // STOPPED state carries no live instances). Sampled through the one seam the `status` verb also
+    // pulls, so the pushed and pulled answers cannot diverge.
+    if (includeUptime) {
+      const instances = this.sampleInstanceConnectivity().map((c) => c.toJson());
+      if (instances.length > 0) {
+        body.instances = instances;
       }
     }
     const stateMessage = MessageBuilder.create(STATE_MESSAGE_NAME, STATE_MESSAGE_VERSION)

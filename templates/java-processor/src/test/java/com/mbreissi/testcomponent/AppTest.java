@@ -64,4 +64,12 @@ class <<COMPONENTNAME>>Test {
         Message anonymous = MessageBuilder.create("T", "1.0").withPayload(new JsonObject()).build();
         assertFalse(<<COMPONENTNAME>>.isSelfEcho(anonymous, MY_PATH, MY_COMPONENT));
     }
+
+    @Test
+    void aProcessorReportsNoInstancesBecauseItOwnsNoConnections() {
+        // The provider the `state` keepalive pushes and the `status` verb pulls. A processor's
+        // routes are not connections, so it has nothing to report — and reporting nothing is the
+        // contract, not an omission: `status` then answers exactly as `ping` does.
+        assertTrue(<<COMPONENTNAME>>.instanceConnectivity().isEmpty());
+    }
 }

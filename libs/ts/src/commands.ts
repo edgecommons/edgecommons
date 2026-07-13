@@ -33,7 +33,9 @@
  *   redacted snapshot the `cfg` push class publishes, as a reply (**Flow B**: the console pulls
  *   a component's own config; unrelated to the Flow-A
  *   `ecv1/{device}/config/main/cmd/get-configuration` rendezvous where a component fetches its
- *   config FROM a config server).
+ *   config FROM a config server); {@link CommandInbox.STATUS} → `ping`'s per-instance superset,
+ *   `{"status": "RUNNING", "uptimeSecs": n[, "instances": […]]}`, where `instances` is the very
+ *   sample the `state` keepalive pushes (omitted when the component has no instances).
  * - **Unknown verb** — a well-formed request whose verb has no handler gets an
  *   {@link CommandInbox.ERR_UNKNOWN_VERB} error reply (fire-and-forget unknowns are ignored at
  *   DEBUG).
@@ -66,6 +68,7 @@ import { createHash } from "crypto";
 import { performance } from "perf_hooks";
 
 import type { Config } from "./config/model";
+import type { InstanceConnectivity } from "./instance_connectivity";
 import { logger } from "./logging";
 import type { Message } from "./message";
 import { MessageBuilder } from "./message";
@@ -412,6 +415,21 @@ export class CommandInbox {
   static readonly RELOAD_CONFIG = "reload-config";
   /** The return-my-redacted-effective-config built-in verb (Flow B). */
   static readonly GET_CONFIGURATION = "get-configuration";
+  /**
+   * The universal component status built-in verb:
+   * `{"status": "RUNNING", "uptimeSecs": n[, "instances": […]]}`.
+   *
+   * {@link CommandInbox.PING} answers only for the component as a whole. `status` is its
+   * per-instance superset: it returns the same sample the `state` keepalive pushes in `instances`,
+   * sourced from the one component-supplied `InstanceConnectivityProvider` (through
+   * `Heartbeat.sampleInstanceConnectivity`). Push and pull can therefore never disagree — a console
+   * can subscribe, or ask, and get the same answer.
+   *
+   * Every component implements it by registering that provider; a component with no instances (a
+   * plain service) simply omits the section and answers exactly as `ping` does. It is deliberately
+   * **not** named `sb/status`: a processor or a sink has no southbound, and this verb is universal.
+   */
+  static readonly STATUS = "status";
   /** The command request/reply envelope version. */
   static readonly CMD_MESSAGE_VERSION = "1.0";
   /** Error code: the request's verb has no registered handler on this component. */
@@ -454,6 +472,7 @@ export class CommandInbox {
     CommandInbox.DESCRIBE,
     CommandInbox.RELOAD_CONFIG,
     CommandInbox.GET_CONFIGURATION,
+    CommandInbox.STATUS,
   ]);
   /** Verbs owned by other library subscriptions on the same inbox path — always ignored. */
   static readonly DELEGATED_VERBS: ReadonlySet<string> = new Set([CommandInbox.SET_CONFIG_VERB]);
@@ -503,6 +522,11 @@ export class CommandInbox {
    * @param redactedConfig  the {@link CommandInbox.GET_CONFIGURATION} source — the current
    *                        redacted effective config, or `undefined` when unavailable
    *                        (production: `EffectiveConfigPublisher.redactedEffectiveConfig`)
+   * @param instanceConnectivity the {@link CommandInbox.STATUS} source — the live per-instance
+   *                        connectivity sample (production: `Heartbeat.sampleInstanceConnectivity`,
+   *                        i.e. the very same provider the `state` keepalive pushes, so the pulled
+   *                        answer and the pushed one cannot diverge). Defaults to "no instances",
+   *                        which makes `status` answer exactly as `ping` does.
    */
   constructor(
     private readonly configProvider: () => Config,
@@ -510,6 +534,7 @@ export class CommandInbox {
     uptimeSecs: () => number,
     configReload: () => boolean | Promise<boolean>,
     redactedConfig: () => Record<string, unknown> | undefined,
+    instanceConnectivity: () => InstanceConnectivity[] | undefined | null = () => [],
     private readonly stateListener?: (state: CommandInboxState) => void,
   ) {
     // ping -> the state keepalive's RUNNING body shape: proves the component is not just alive
@@ -518,6 +543,23 @@ export class CommandInbox {
       status: "RUNNING",
       uptimeSecs: uptimeSecs(),
     }));
+    // status -> ping's per-instance superset. Same body, plus the `instances` the state keepalive
+    // pushes, from the same provider. A component with no instances omits the section, so a plain
+    // service answers exactly as ping does.
+    this.handlers.set(CommandInbox.STATUS, () => {
+      const result: Record<string, unknown> = {
+        status: "RUNNING",
+        uptimeSecs: uptimeSecs(),
+      };
+      const conns = instanceConnectivity();
+      if (conns && conns.length > 0) {
+        const instances = conns.filter((c) => c != null).map((c) => c.toJson());
+        if (instances.length > 0) {
+          result.instances = instances;
+        }
+      }
+      return result;
+    });
     // describe -> command/panel discovery manifest for descriptor-driven console panels.
     this.handlers.set(CommandInbox.DESCRIBE, () => this.describe());
     // get-configuration (Flow B) -> the cfg class's body shape, as a reply.

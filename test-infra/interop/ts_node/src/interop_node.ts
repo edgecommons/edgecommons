@@ -11,6 +11,10 @@
  *   interop_node uns-pub   <identityJson> <class> [channel]
  *   interop_node uns-sub   <topic>
  *   interop_node uns-guard
+ *   interop_node status-responder    <component>
+ *   interop_node status-request      <component>
+ *   interop_node state-instances-pub <component>
+ *   interop_node state-instances-sub <component>
  *
  * Messages are built without a config — the envelope legally omits `identity` unless
  * one is stamped explicitly (the UNS roles); `tags.thing` no longer exists (UNS hard cut).
@@ -28,6 +32,7 @@ import {
   Uns,
   unsClassFromToken,
   EdgeCommonsBuilder,
+  InstanceConnectivity,
   Qos,
 } from "../../../../libs/ts/dist/index";
 import type { MessagingConfig } from "../../../../libs/ts/dist/index";
@@ -74,7 +79,7 @@ function logComponentToken(): string {
   return `interop-log-${LANG}`;
 }
 
-function writeCommandRuntimeConfig(componentToken: string): string {
+function writeCommandRuntimeConfig(componentToken: string, heartbeatEnabled = false): string {
   const path = join(tmpdir(), `edgecommons-deferred-${LANG}-${process.pid}-${Date.now()}.json`);
   writeFileSync(
     path,
@@ -89,7 +94,7 @@ function writeCommandRuntimeConfig(componentToken: string): string {
         },
         requestTimeoutSeconds: 4,
       },
-      heartbeat: { enabled: false },
+      heartbeat: { enabled: heartbeatEnabled, intervalSecs: 5, destination: "local" },
       health: { enabled: false },
     }),
     "utf8",
@@ -1178,6 +1183,163 @@ async function runUnsGuard(): Promise<number> {
   }
 }
 
+// --- per-instance connectivity: the `status` verb (pull) + `state.instances[]` (push) ----------
+//
+// ONE provider feeds both surfaces (the library samples it through the same seam), so the sample
+// below is the single cross-language canonical fixture — see test_interop.EXPECTED_INSTANCES.
+// The three elements pin the contract: every optional member present (cam-01), a rich `state` that
+// a boolean cannot express (cam-02, BACKOFF != FAILED), and the minimal element whose optional
+// members must be OMITTED, never emitted as null/empty (cam-03).
+
+/** The fixed interop device/thing token every node's runtime identity is stamped with. */
+const DEVICE = "interop-device";
+
+/** The canonical provider sample every language's node reports, verbatim. */
+function canonicalInstances(): InstanceConnectivity[] {
+  return [
+    InstanceConnectivity.of("cam-01", true, "rtsp://cam-01/stream")
+      .withState("ONLINE")
+      .withAttributes({ capabilities: ["ptz", "snapshot"], vendor: "acme", retries: 0 }),
+    InstanceConnectivity.of("cam-02", false, "connect timed out").withState("BACKOFF"),
+    InstanceConnectivity.of("cam-03", true),
+  ];
+}
+
+/** The component's own command-inbox topic for one verb (`ecv1/{device}/{component}/main/cmd/{verb}`). */
+function commandTopic(component: string, verb: string): string {
+  return `ecv1/${DEVICE}/${component}/main/cmd/${verb}`;
+}
+
+/** The component's reserved `state` keepalive topic (`ecv1/{device}/{component}/main/state`). */
+function stateTopic(component: string): string {
+  return `ecv1/${DEVICE}/${component}/main/state`;
+}
+
+/** Keeps the event loop alive for a server role until the harness terminates it. */
+function stayAlive(): Promise<never> {
+  return new Promise<never>(() => {
+    setInterval(() => undefined, 3_600_000);
+  });
+}
+
+/**
+ * status-responder <component> — a real component that registers the connectivity provider; the
+ * library's always-on command inbox then serves the built-in `status` verb from that provider.
+ */
+async function runStatusResponder(component: string): Promise<never> {
+  const path = writeCommandRuntimeConfig(component);
+  let gg: Awaited<ReturnType<EdgeCommonsBuilder["build"]>> | undefined;
+  try {
+    gg = await new EdgeCommonsBuilder(`com.mbreissi.edgecommons.interop.${LANG}.StatusResponder`)
+      .args(logRuntimeArgs(path))
+      .build();
+    gg.setInstanceConnectivityProvider(canonicalInstances);
+    process.stdout.write("READY\n");
+    await stayAlive();
+  } finally {
+    if (gg) await gg.close();
+    try {
+      unlinkSync(path);
+    } catch {
+      // best effort after a failed startup
+    }
+  }
+  throw new Error("unreachable status responder completion");
+}
+
+/**
+ * status-request <component> — pull the built-in `status` verb on that component's inbox and print
+ * the verb's result (the command reply body is `{ok, result}`; `result` is the status payload).
+ */
+async function runStatusRequest(component: string): Promise<number> {
+  const svc = await service("statusreq");
+  try {
+    const request = MessageBuilder.create("status", "1.0")
+      .withCommand({ from: LANG })
+      .withTags({})
+      .build();
+    let reply: Message;
+    try {
+      reply = await svc.request(commandTopic(component, "status"), request, 15_000);
+    } catch (e) {
+      emit({ ok: false, error: `timeout: ${String(e)}` });
+      return 1;
+    }
+    const body = reply.getBody() as Record<string, unknown> | null;
+    if (!body || body.ok !== true) {
+      emit({ ok: false, error: `command failed: ${JSON.stringify(body)}` });
+      return 1;
+    }
+    const result = body.result as Record<string, unknown> | undefined;
+    if (!result || result.status !== "RUNNING") {
+      emit({ ok: false, error: `unexpected status result: ${JSON.stringify(result)}` });
+      return 1;
+    }
+    emit({ ok: true, reply_body: result });
+    return 0;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
+/**
+ * state-instances-pub <component> — the same component with the heartbeat ENABLED, so the RUNNING
+ * `state` keepalive pushes the very sample the `status` verb returns.
+ */
+async function runStateInstancesPub(component: string): Promise<never> {
+  const path = writeCommandRuntimeConfig(component, true);
+  let gg: Awaited<ReturnType<EdgeCommonsBuilder["build"]>> | undefined;
+  try {
+    gg = await new EdgeCommonsBuilder(`com.mbreissi.edgecommons.interop.${LANG}.StateInstancesPublisher`)
+      .args(logRuntimeArgs(path))
+      .build();
+    gg.setInstanceConnectivityProvider(canonicalInstances);
+    process.stdout.write("READY\n");
+    await stayAlive();
+  } finally {
+    if (gg) await gg.close();
+    try {
+      unlinkSync(path);
+    } catch {
+      // best effort after a failed startup
+    }
+  }
+  throw new Error("unreachable state instances publisher completion");
+}
+
+/**
+ * state-instances-sub <component> — subscribe that component's reserved `state` topic (consuming a
+ * reserved class is allowed; only PUBLISHING to one is rejected) and report the first RUNNING
+ * keepalive carrying a non-empty instances[]. The first tick fires before the provider is
+ * registered, so earlier RUNNING bodies without instances[] are skipped, not failed.
+ */
+async function runStateInstancesSub(component: string): Promise<number> {
+  const svc = await service("statesub");
+  try {
+    const got = new Promise<Record<string, unknown>>((resolve) => {
+      void svc
+        .subscribe(stateTopic(component), (_t, m) => {
+          const body = m.getBody() as Record<string, unknown> | null;
+          const instances = body?.instances;
+          if (body?.status === "RUNNING" && Array.isArray(instances) && instances.length > 0) {
+            resolve(body);
+          }
+        })
+        .then(() => process.stdout.write("READY\n"));
+    });
+    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 35_000));
+    const body = await Promise.race([got, timeout]);
+    if (body === null) {
+      emit({ ok: false, error: "timeout: no RUNNING state carrying instances[]" });
+      return 1;
+    }
+    emit({ ok: true, state_status: body.status, instances: body.instances });
+    return 0;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
 async function main(): Promise<void> {
   const [role, a, b, c] = process.argv.slice(2);
   switch (role) {
@@ -1223,6 +1385,16 @@ async function main(): Promise<void> {
       process.exit(await runUnsSub(a));
     case "uns-guard":
       process.exit(await runUnsGuard());
+    case "status-responder":
+      await runStatusResponder(a);
+      return;
+    case "status-request":
+      process.exit(await runStatusRequest(a));
+    case "state-instances-pub":
+      await runStateInstancesPub(a);
+      return;
+    case "state-instances-sub":
+      process.exit(await runStateInstancesSub(a));
     default:
       process.stderr.write(`unknown role: ${role}\n`);
       process.exit(2);

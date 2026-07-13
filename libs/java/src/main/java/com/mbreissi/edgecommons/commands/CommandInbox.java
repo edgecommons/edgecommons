@@ -15,6 +15,7 @@ import com.mbreissi.edgecommons.uns.UnsScope;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -49,7 +50,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
+import java.util.List;
 import java.util.function.Supplier;
+
+import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
 
 /**
  * The library-owned component <b>command inbox</b> — the minimal {@code commands()} facade
@@ -126,6 +130,20 @@ public final class CommandInbox implements AutoCloseable {
     /** The descriptor-discovery built-in verb. */
     public static final String DESCRIBE = "describe";
 
+    /**
+     * The universal component status verb: {@code {"status":"RUNNING","uptimeSecs":n[,"instances":[…]]}}.
+     *
+     * <p>{@value #PING} answers only for the component as a whole. {@code status} is its per-instance
+     * superset: it returns the same sample the {@code state} keepalive pushes in {@code instances[]},
+     * sourced from the one component-supplied {@code InstanceConnectivityProvider}. Push and pull can
+     * therefore never disagree — a console can subscribe, or ask, and get the same answer.
+     *
+     * <p>Every component implements it by registering that provider; a component with no instances
+     * (a plain service) simply omits the section. It is deliberately <b>not</b> named {@code sb/status}:
+     * a processor or a sink has no southbound, and this verb is universal.
+     */
+    public static final String STATUS = "status";
+
     /** The descriptor command schema version. */
     public static final String DESCRIBE_SCHEMA_VERSION = "edgecommons.component.describe.v1";
 
@@ -186,7 +204,7 @@ public final class CommandInbox implements AutoCloseable {
 
     /** The built-in verbs (registered at construction; shadowing/unregistering is rejected). */
     public static final Set<String> BUILT_IN_VERBS = Set.of(PING, RELOAD_CONFIG,
-            GET_CONFIGURATION, DESCRIBE);
+            GET_CONFIGURATION, DESCRIBE, STATUS);
 
     /** Verbs owned by other library subscriptions on the same inbox path — always ignored. */
     public static final Set<String> DELEGATED_VERBS = Set.of(SET_CONFIG_VERB);
@@ -409,11 +427,28 @@ public final class CommandInbox implements AutoCloseable {
     public CommandInbox(ConfigManager configManager, MessagingClient messagingClient,
                         LongSupplier uptimeSecs, BooleanSupplier configReload,
                         Supplier<JsonObject> redactedConfig) {
+        this(configManager, messagingClient, uptimeSecs, configReload, redactedConfig, List::of);
+    }
+
+    /**
+     * As {@link #CommandInbox(ConfigManager, MessagingClient, LongSupplier, BooleanSupplier, Supplier)},
+     * plus the {@value #STATUS} source.
+     *
+     * @param instanceConnectivity the {@value #STATUS} source — the live per-instance connectivity
+     *                             sample (production: {@code Heartbeat::sampleInstanceConnectivity},
+     *                             i.e. the very same provider the {@code state} keepalive pushes, so
+     *                             the pulled answer and the pushed one cannot diverge)
+     */
+    public CommandInbox(ConfigManager configManager, MessagingClient messagingClient,
+                        LongSupplier uptimeSecs, BooleanSupplier configReload,
+                        Supplier<JsonObject> redactedConfig,
+                        Supplier<List<InstanceConnectivity>> instanceConnectivity) {
         this.configManager = Objects.requireNonNull(configManager, "configManager must not be null");
         this.messagingClient = Objects.requireNonNull(messagingClient, "messagingClient must not be null");
         Objects.requireNonNull(uptimeSecs, "uptimeSecs must not be null");
         Objects.requireNonNull(configReload, "configReload must not be null");
         Objects.requireNonNull(redactedConfig, "redactedConfig must not be null");
+        Objects.requireNonNull(instanceConnectivity, "instanceConnectivity must not be null");
 
         // ping -> the state keepalive's RUNNING body shape: proves the component is not just
         // alive (the keepalive does that) but RESPONSIVE to addressed commands.
@@ -421,6 +456,27 @@ public final class CommandInbox implements AutoCloseable {
             JsonObject result = new JsonObject();
             result.addProperty("status", "RUNNING");
             result.addProperty("uptimeSecs", uptimeSecs.getAsLong());
+            return result;
+        });
+        // status -> ping's per-instance superset. Same body, plus the instances[] the state keepalive
+        // pushes, from the same provider. A component with no instances omits the section, so a plain
+        // service answers exactly as ping does.
+        handlers.put(STATUS, request -> {
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "RUNNING");
+            result.addProperty("uptimeSecs", uptimeSecs.getAsLong());
+            List<InstanceConnectivity> conns = instanceConnectivity.get();
+            if (conns != null && !conns.isEmpty()) {
+                JsonArray instances = new JsonArray();
+                for (InstanceConnectivity c : conns) {
+                    if (c != null) {
+                        instances.add(c.toJson());
+                    }
+                }
+                if (!instances.isEmpty()) {
+                    result.add("instances", instances);
+                }
+            }
             return result;
         });
         // reload-config -> re-fetch from the active config source and re-apply (listeners fire,

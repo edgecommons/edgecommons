@@ -2,11 +2,13 @@ package <<PACKAGE>>;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 import com.mbreissi.edgecommons.EdgeCommons;
 import com.mbreissi.edgecommons.EdgeCommonsBuilder;
 import com.mbreissi.edgecommons.config.ConfigManager;
 import com.mbreissi.edgecommons.facades.EventsFacade;
 import com.mbreissi.edgecommons.facades.Severity;
+import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessagingClient;
 import com.mbreissi.edgecommons.metrics.MetricBuilder;
@@ -21,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
@@ -50,7 +53,11 @@ import java.util.concurrent.atomic.AtomicLong;
  *       transient one loses data a second attempt would have delivered. See
  *       {@link DeliverException}.</li>
  *   <li><b>Report every transition.</b> A sink that fails quietly is indistinguishable from one that
- *       is idle. Started / completed / failed / exhausted all go out on the UNS event surface.</li>
+ *       is idle. Started / completed / failed / exhausted all go out on the UNS event surface, and
+ *       each destination's current reachability is reported as an <b>instance</b> of this component
+ *       ({@link #connectivity}) — a sink's destinations <i>are</i> its instances. The library pushes
+ *       that on every {@code state} keepalive and returns it from the built-in {@code status}
+ *       verb.</li>
  * </ul>
  *
  * <h2>Where the work comes from</h2>
@@ -81,6 +88,14 @@ public final class <<COMPONENTNAME>> {
     private final List<Thread> workers = new ArrayList<>();
     private final CountDownLatch shutdown = new CountDownLatch(1);
 
+    /**
+     * The live reachability of every configured destination, keyed by sink id — <b>a sink's
+     * destinations are its instances</b>. Written by the sink workers as deliveries succeed and
+     * fail, read on the heartbeat thread; hence concurrent, and hence a cached value rather than a
+     * live probe (see {@link #reportConnectivity}).
+     */
+    private final Map<String, InstanceConnectivity> destinationHealth = new ConcurrentHashMap<>();
+
     public static void main(String[] args) {
         new <<COMPONENTNAME>>(args).run();
     }
@@ -105,6 +120,13 @@ public final class <<COMPONENTNAME>> {
                 .addMeasure("exhausted", "Count", 60)
                 .addMeasure("dropped", "Count", 60)
                 .build());
+
+        // ONE provider, TWO surfaces: the library pushes this sample into the `state` keepalive's
+        // instances[] every tick AND returns it from the built-in `status` verb when pulled — so an
+        // operator asking "is the archive still taking writes?" and a console subscribed to state
+        // can never disagree. Sampled on the heartbeat thread: it must not block, so it reads the
+        // cached map the workers maintain and never touches the destination.
+        edgeCommons.setInstanceConnectivityProvider(() -> List.copyOf(destinationHealth.values()));
 
         sinks = parseSinks(config);
         if (sinks.isEmpty()) {
@@ -132,6 +154,12 @@ public final class <<COMPONENTNAME>> {
         for (SinkConfig sink : sinks) {
             Destination destination = Destination.build(sink.destination());
             BlockingQueue<Item> queue = new ArrayBlockingQueue<>(sink.maxQueue());
+
+            // Report the destination BEFORE the first delivery: a configured sink that has had no
+            // work yet must still appear, or an operator cannot tell "idle" from "not configured".
+            // Nothing has failed, so it is reported reachable — replace this with a cheap probe
+            // (a HEAD, a bucket stat) if your backend offers one.
+            reportConnectivity(sink, destination, true, "IDLE", null);
 
             messaging.subscribe(sink.subscribe(), (topic, msg) -> {
                 stats.received.incrementAndGet();
@@ -215,6 +243,8 @@ public final class <<COMPONENTNAME>> {
                 destination.verify(item, delivered);
 
                 stats.delivered.incrementAndGet();
+                // A verified delivery is the only proof a destination is reachable.
+                reportConnectivity(sink, destination, true, "ONLINE", null);
                 int attempts = attempt + 1;
                 events.emit(Severity.INFO, "delivery-completed", null,
                         context(sink.id(), item.key(), c -> {
@@ -229,6 +259,7 @@ public final class <<COMPONENTNAME>> {
                     // Permanent: it will fail identically forever. Retrying is a waste of the budget
                     // and of the log; give up now and say so.
                     stats.exhausted.incrementAndGet();
+                    reportConnectivity(sink, destination, false, "FAILED", e.getMessage());
                     LOGGER.error("sink {} permanently failed on {}: {}", sink.id(), item.key(), e.getMessage());
                     events.emit(Severity.CRITICAL, "delivery-exhausted",
                             sink.id() + " will never deliver " + item.key(),
@@ -238,6 +269,7 @@ public final class <<COMPONENTNAME>> {
 
                 if (sink.retry().budgetSpent(elapsedMs(started))) {
                     stats.exhausted.incrementAndGet();
+                    reportConnectivity(sink, destination, false, "FAILED", e.getMessage());
                     int attempts = attempt + 1;
                     LOGGER.error("sink {} spent its retry budget on {} after {} attempts",
                             sink.id(), item.key(), attempts);
@@ -252,6 +284,9 @@ public final class <<COMPONENTNAME>> {
 
                 long backoff = sink.retry().delayMs(attempt, ThreadLocalRandom.current().nextDouble());
                 stats.retried.incrementAndGet();
+                // Transient: still trying. `connected=false` says "not delivering"; only OUR `state`
+                // can say whether that is a retry in flight or a destination that is gone for good.
+                reportConnectivity(sink, destination, false, "BACKOFF", e.getMessage());
                 int attempts = attempt + 1;
                 LOGGER.warn("sink {} transient failure on {} (attempt {}); retrying in {} ms: {}",
                         sink.id(), item.key(), attempts, backoff, e.getMessage());
@@ -271,6 +306,38 @@ public final class <<COMPONENTNAME>> {
                 attempt++;
             }
         }
+    }
+
+    /** Records one destination's reachability for both connectivity surfaces (state + status). */
+    private void reportConnectivity(SinkConfig sink, Destination destination, boolean reachable,
+                                    String state, String detail) {
+        destinationHealth.put(sink.id(), connectivity(sink.id(), destination.kind(), reachable, state, detail));
+    }
+
+    /**
+     * One destination's connectivity entry.
+     *
+     * <p>{@code connected} is the one <b>normalized</b> field and is always present, so any console
+     * can render a health dot for any sink without knowing what a bucket is. {@code state} is this
+     * component's <i>own</i> vocabulary for what a boolean cannot say — {@code BACKOFF} (retrying,
+     * the data is still in hand) and {@code FAILED} (gave up, the data did not arrive) are both
+     * "not connected", and an operator must be able to tell them apart. {@code attributes} is an
+     * open bag for what only a sink knows (the backend kind here; add a bucket, a region, an error
+     * code): deliberately unconstrained, so domain data can never destabilize the fields above that
+     * every consumer relies on.
+     *
+     * @param sinkId    the sink id — the instance this entry reports
+     * @param kind      the destination kind, as named in config ({@code local}, {@code s3}, …)
+     * @param reachable the normalized flag: is this destination taking writes?
+     * @param state     our own condition token ({@code IDLE}/{@code ONLINE}/{@code BACKOFF}/{@code FAILED})
+     * @param detail    why it is not, or {@code null}
+     * @return the entry the {@code state} keepalive and the {@code status} verb both report
+     */
+    static InstanceConnectivity connectivity(String sinkId, String kind, boolean reachable,
+                                             String state, String detail) {
+        return InstanceConnectivity.of(sinkId, reachable, detail)
+                .withState(state)
+                .withAttributes(Map.of("kind", new JsonPrimitive(kind)));
     }
 
     private static long elapsedMs(long startedNanos) {

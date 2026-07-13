@@ -19,6 +19,7 @@
     <maven.compiler.release>25</maven.compiler.release>
     <junitVersion>5.9.2</junitVersion>
     <mavenPluginVersion>2.1</mavenPluginVersion>
+    <surefirePluginVersion>3.2.5</surefirePluginVersion>
     <!-- LOCAL DEV OVERRIDE SEAM (the Maven analog of the bridge's gitignored .cargo/config.toml
          `[patch]` and the edge-console's `link-sibling-lib.mjs` stub): Maven always resolves a
          dependency by coordinate, so there is no "path dependency" like Cargo/npm have — the
@@ -113,6 +114,14 @@
                component can't accidentally use APIs newer than its declared level. -->
           <release>${maven.compiler.release}</release>
         </configuration>
+      </plugin>
+      <plugin>
+        <!-- Pinned rather than left to the default lifecycle binding: a Maven whose default
+             surefire predates the JUnit Platform would silently run none of this component's
+             tests — a suite that never runs is worse than no suite, because it looks green. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>${surefirePluginVersion}</version>
       </plugin>
     </plugins>
   </build>

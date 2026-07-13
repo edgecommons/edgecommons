@@ -55,6 +55,25 @@ data that a second attempt would have delivered.
 (carrying `willRetry`), and finally `delivery-exhausted` at Critical. A sink that fails quietly is
 indistinguishable from one that is idle.
 
+## A sink's destinations are its instances
+
+`App::run` registers an instance-connectivity provider reporting one entry per configured
+destination, moved by the same delivery ladder as the events above. The library reads it twice: it
+pushes the sample into every `state` keepalive's `instances[]`, and it returns the same sample from
+the built-in `status` command verb when a console asks — a watcher and an asker cannot get
+different answers.
+
+```json
+{ "instance": "archive", "connected": false, "state": "FAILED",
+  "detail": "/var/lib/out", "attributes": { "destination": "local" } }
+```
+
+`connected` is the **normalized** flag — always present, so a console renders a health dot without
+knowing what an object store is. `state` is this sink's **own** vocabulary (`IDLE` / `ONLINE` /
+`BACKOFF` / `FAILED`): still-retrying and gave-up are the same boolean and very different pages at
+3 a.m. `attributes` is an **open** bag for domain data, carried without destabilizing the two
+fields every consumer relies on.
+
 ## Configuration
 
 ```json

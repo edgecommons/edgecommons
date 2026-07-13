@@ -237,16 +237,19 @@ class EdgeCommons:
 
             # §9.5 (slice S2): subscribe the component's own command inbox
             # (ecv1/{device}/{component}/main/cmd/#) on the primary connection and
-            # dispatch cmd envelopes by verb - built-ins ping / reload-config /
-            # get-configuration answer the console out of the box; apps add custom
-            # verbs via get_commands().register(). Always on (no config surface);
-            # best-effort start (a failure disables the inbox only).
+            # dispatch cmd envelopes by verb - built-ins ping / status / describe /
+            # reload-config / get-configuration answer the console out of the box; apps
+            # add custom verbs via get_commands().register(). Always on (no config
+            # surface); best-effort start (a failure disables the inbox only).
             from edgecommons.command_inbox import CommandInbox
             self._command_inbox = CommandInbox(
                 self._config_manager, _MC2,
                 self._heartbeat.get_uptime_secs,
                 self._config_manager.reload_from_provider,
                 self._effective_config_publisher.redacted_effective_config,
+                # The built-in `status` verb pulls the SAME provider sample the state
+                # keepalive pushes, so the two surfaces cannot disagree.
+                self._heartbeat.sample_instance_connectivity,
             )
             # The complete component command surface is installed before the transport
             # subscription can acknowledge and make dispatch externally reachable.
@@ -490,8 +493,10 @@ class EdgeCommons:
         connection's health) in the ``main`` ``state`` keepalive's ``instances`` array,
         without minting a separate UNS instance per connection (data + lifecycle stay under
         ``main``). A reference adapter maps each connection to its reachability: OPC UA
-        server session / Modbus slave / file-replicator source directory. No-op when the
-        heartbeat is not wired (test bring-up). Pass ``None`` to stop reporting.
+        server session / Modbus slave / file-replicator source directory. The same sample
+        answers the built-in ``status`` command verb when pulled, so a component supplies
+        the data once and the library serves it on both surfaces. No-op when the heartbeat
+        is not wired (test bring-up). Pass ``None`` to stop reporting.
 
         :param provider: a zero-arg callable returning a list of
             :class:`~edgecommons.heartbeat.instance_connectivity.InstanceConnectivity`, or

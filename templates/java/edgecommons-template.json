@@ -57,6 +57,10 @@
       "COMPONENTNAME",
       "PACKAGE"
     ],
+    "src/test/java/com/mbreissi/testcomponent/AppTest.java": [
+      "COMPONENTNAME",
+      "PACKAGE"
+    ],
     "supervisor/component.conf": [
       "BINNAME",
       "COMPONENTNAME",
@@ -90,6 +94,14 @@
     {
       "from": "src/main/java/{PACKAGEPATH}/App.java",
       "to": "src/main/java/{PACKAGEPATH}/{COMPONENTNAME}.java"
+    },
+    {
+      "from": "src/test/java/com/mbreissi/testcomponent",
+      "to": "src/test/java/{PACKAGEPATH}"
+    },
+    {
+      "from": "src/test/java/{PACKAGEPATH}/AppTest.java",
+      "to": "src/test/java/{PACKAGEPATH}/{COMPONENTNAME}Test.java"
     },
     {
       "from": "test-configs/TestComponent.json",

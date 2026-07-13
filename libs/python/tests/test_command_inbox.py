@@ -7,8 +7,10 @@ Covers:
 - ``start()`` subscribes exactly the own-inbox wildcard
   (``ecv1/{device}/{component}/main/cmd/#``) on the primary connection;
 - each built-in verb dispatches and replies with the pinned body shape - ``ping``
-  (status + uptime), ``reload-config`` (ack / ``RELOAD_FAILED``),
-  ``get-configuration`` (redacted config / ``NO_CONFIG``);
+  (status + uptime), ``status`` (ping's body plus the per-instance ``instances[]``
+  sample - omitted when the component reports none), ``reload-config`` (ack /
+  ``RELOAD_FAILED``), ``get-configuration`` (redacted config / ``NO_CONFIG``),
+  ``describe`` (the discovery manifest);
 - replies go to the request's ``reply_to`` with the request's ``correlation_id`` and
   the responder's identity;
 - custom verbs register/dispatch (namespaced verbs included), cannot shadow
@@ -132,7 +134,7 @@ def _notification(verb):
 
 
 class Harness:
-    def __init__(self, uptime=42, reload_ok=True, redacted=None):
+    def __init__(self, uptime=42, reload_ok=True, redacted=None, instance_connectivity=None):
         self.config = FakeConfig()
         self.messaging = FakeMessaging()
         self.uptime = uptime
@@ -146,6 +148,7 @@ class Harness:
             lambda: self.uptime,
             lambda: self.reload_ok,
             lambda: self.redacted,
+            instance_connectivity,
         )
 
     def only_reply(self):
@@ -243,6 +246,95 @@ def test_ping_is_answered_even_when_heartbeat_disabled(h):
     assert h.only_reply_body()["ok"] is True
 
 
+def test_status_without_a_provider_answers_like_ping_and_omits_instances(h):
+    # A plain service (a processor, a sink) reports no instances: `status` is then
+    # byte-for-byte what `ping` replies - the section is omitted, not an empty array.
+    h.uptime = 77
+    h.inbox.start()
+    h.messaging.simulate_message(_topic(CommandInbox.STATUS), _request(CommandInbox.STATUS))
+    body = h.only_reply_body()
+    assert body["ok"] is True
+    assert body["result"] == {"status": "RUNNING", "uptimeSecs": 77}
+
+
+def test_status_returns_the_provider_sample_including_state_and_attributes():
+    # The pulled answer is the provider sample - the same one the state keepalive pushes.
+    from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
+
+    sample = [
+        InstanceConnectivity.of("cam-01", True).with_state("ONLINE"),
+        InstanceConnectivity("cam-02", False, "connect timed out", "BACKOFF",
+                             {"capabilities": ["ptz", "snapshot"],
+                              "lastError": "CAMERA_UNAVAILABLE"}),
+    ]
+    h = Harness(instance_connectivity=lambda: sample)
+    h.inbox.start()
+    h.messaging.simulate_message(_topic(CommandInbox.STATUS), _request(CommandInbox.STATUS))
+
+    result = h.only_reply_body()["result"]
+    assert result["status"] == "RUNNING"
+    instances = result["instances"]
+    assert len(instances) == 2
+    assert instances[0] == {"instance": "cam-01", "connected": True, "state": "ONLINE"}, (
+        "an empty attribute bag (and an absent detail) is omitted"
+    )
+    assert instances[1] == {
+        "instance": "cam-02",
+        "connected": False,
+        "state": "BACKOFF",
+        "detail": "connect timed out",
+        "attributes": {
+            "capabilities": ["ptz", "snapshot"],
+            "lastError": "CAMERA_UNAVAILABLE",
+        },
+    }
+
+
+def test_status_survives_a_throwing_provider():
+    # In production the source is EnhancedHeartbeat.sample_instance_connectivity, which
+    # swallows a component's provider bug and yields an empty list (so `status` still
+    # answers - see test_enhanced_heartbeat_unit). This asserts the inbox itself is safe
+    # even when a caller wires a raw raising source: it degrades to the standard uncoded
+    # -failure reply and never crashes.
+    def boom():
+        raise RuntimeError("provider blew up")
+
+    h = Harness(instance_connectivity=boom)
+    h.inbox.start()
+    h.messaging.simulate_message(_topic(CommandInbox.STATUS), _request(CommandInbox.STATUS))
+    body = h.only_reply_body()
+    assert body["ok"] is False
+    assert body["error"]["code"] == CommandInbox.ERR_HANDLER_ERROR
+
+
+def test_status_through_the_heartbeat_seam_degrades_to_ping_when_the_provider_raises():
+    # The production wiring: the inbox pulls the heartbeat's sampling seam, so a raising
+    # component provider costs only the instances[] section - the verb still answers.
+    from unittest.mock import MagicMock
+
+    from edgecommons.heartbeat.enhanced_heartbeat import EnhancedHeartbeat
+
+    heartbeat = EnhancedHeartbeat(MagicMock())
+
+    def boom():
+        raise RuntimeError("provider blew up")
+
+    heartbeat.set_instance_connectivity_provider(boom)
+    h = Harness(instance_connectivity=heartbeat.sample_instance_connectivity)
+    h.inbox.start()
+    h.messaging.simulate_message(_topic(CommandInbox.STATUS), _request(CommandInbox.STATUS))
+    body = h.only_reply_body()
+    assert body["ok"] is True
+    assert "instances" not in body["result"]
+
+
+def test_status_cannot_be_shadowed_by_a_custom_verb(h):
+    with pytest.raises(ValueError):
+        h.inbox.register(CommandInbox.STATUS, lambda request: None)
+    with pytest.raises(ValueError):
+        h.inbox.unregister(CommandInbox.STATUS)
+
+
 def test_reply_carries_the_request_correlation_id_verb_name_and_responder_identity(h):
     h.inbox.start()
     ping = _request(CommandInbox.PING)
@@ -334,6 +426,7 @@ def test_describe_includes_built_ins_custom_verbs_and_panels(h):
     assert verbs[CommandInbox.DESCRIBE] is True
     assert verbs[CommandInbox.GET_CONFIGURATION] is True
     assert verbs[CommandInbox.RELOAD_CONFIG] is True
+    assert verbs[CommandInbox.STATUS] is True
     assert verbs["sb/browse"] is False
     assert result["panels"]["schemaVersion"] == "edgecommons.panels.v2"
     assert result["panels"]["provider"] == "TestComponent"
@@ -454,6 +547,7 @@ def test_verbs_snapshot_contains_built_ins_and_customs(h):
         CommandInbox.DESCRIBE,
         CommandInbox.RELOAD_CONFIG,
         CommandInbox.GET_CONFIGURATION,
+        CommandInbox.STATUS,
         "mine",
     }
 
@@ -746,6 +840,14 @@ class TestCommandsJsonConformance:
             c for c in vectors["verbs"] if c["name"] == "get-configuration"
         )["reply"]["body"]["result"]["config"]
         reply = self._dispatch_case(case, vectors, redacted=golden_config)
+        self._assert_reply_matches_golden(reply, case)
+
+    def test_status_golden_replayed_through_a_live_inbox(self):
+        # The golden case pins the no-provider component (a plain service): the reply is
+        # ping's body and the instances[] section is omitted, not an empty array.
+        vectors = self._vectors()
+        case = next(c for c in vectors["verbs"] if c["name"] == "status")
+        reply = self._dispatch_case(case, vectors, uptime=42)
         self._assert_reply_matches_golden(reply, case)
 
     def test_unknown_verb_golden_replayed_through_a_live_inbox(self):

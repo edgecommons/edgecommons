@@ -123,6 +123,10 @@
               {
                 "verb": "reload-config",
                 "builtIn": true
+              },
+              {
+                "verb": "status",
+                "builtIn": true
               }
             ],
             "panels": {
@@ -131,7 +135,7 @@
               "renderer": "descriptor",
               "views": []
             },
-            "digest": "sha256:f144f03e7875b48743db4cd6ab38262a4cf9bb412428757f8a7d0c5f4599af46"
+            "digest": "sha256:e2910a393362ef102d5ca9d612d6f4fe9dd545106084baca3c3340e1c4fab95d"
           }
         }
       }
@@ -232,6 +236,51 @@
           }
         }
       }
+    },
+    {
+      "name": "status",
+      "verb": "status",
+      "topic": "ecv1/gw-01/opcua-adapter/main/cmd/status",
+      "request": {
+        "header": {
+          "name": "status",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "timestamp_ms": 1782907200000,
+          "uuid": "00000000-0000-4000-8000-00000000c501",
+          "correlation_id": "00000000-0000-4000-8000-00000000c502",
+          "reply_to": "edgecommons/reply-00000000-0000-4000-8000-00000000c503"
+        },
+        "body": {}
+      },
+      "reply": {
+        "header": {
+          "name": "status",
+          "version": "1.0",
+          "timestamp": "2026-07-01T12:00:00Z",
+          "timestamp_ms": 1782907200000,
+          "uuid": "00000000-0000-4000-8000-00000000c504",
+          "correlation_id": "00000000-0000-4000-8000-00000000c502"
+        },
+        "identity": {
+          "hier": [
+            {
+              "level": "device",
+              "value": "gw-01"
+            }
+          ],
+          "path": "gw-01",
+          "component": "opcua-adapter",
+          "instance": "main"
+        },
+        "body": {
+          "ok": true,
+          "result": {
+            "status": "RUNNING",
+            "uptimeSecs": 42
+          }
+        }
+      }
     }
   ],
   "errors": [
@@ -290,7 +339,8 @@
       "ping",
       "describe",
       "reload-config",
-      "get-configuration"
+      "get-configuration",
+      "status"
     ],
     "delegatedVerbs": [
       "set-config"

@@ -123,6 +123,42 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener):
         identity = self._cm.get_component_identity()
         self._me = (identity.path, identity.component)
 
+        # --- instance connectivity: ONE provider, TWO surfaces. Whatever it returns is pushed into
+        # the `state` keepalive's instances[] on every tick AND returned by the built-in `status`
+        # verb when a console asks — so whoever watches and whoever asks can never get different
+        # answers.
+        gg.set_instance_connectivity_provider(self.instance_connectivity)
+
+    def instance_connectivity(self) -> list:
+        """The per-instance connectivity this component reports.
+
+        A processor owns **no southbound connections** — its routes are subscriptions on a bus the
+        library already reports on, not links to a device — so it reports **no instances**. That is
+        a real answer, not a missing one: with no instances the ``instances[]`` section is omitted
+        and ``status`` answers exactly as ``ping`` does. The provider is registered anyway, so the
+        seam is visible the day a route of yours does own a connection.
+
+        When one does (an enrichment stage that calls a database or an upstream API), return one
+        entry per connection::
+
+            from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
+
+            return [
+                InstanceConnectivity.of("enrich", self._db.is_connected(), "postgres://plant-db")
+                .with_state("ONLINE")
+                .with_attributes({"pool": self._db.pool_size()})
+            ]
+
+        ``connected`` is the **normalized** flag — always present, so a console renders a health dot
+        without knowing this component's vocabulary. ``state`` is that vocabulary (``ONLINE`` /
+        ``CONNECTING`` / ``BACKOFF`` / ``DISABLED``: a boolean cannot tell "reconnecting" from "gave
+        up"). ``attributes`` is the open bag for domain data, so what only you understand never
+        destabilizes the two fields everyone reads.
+
+        Keep it cheap and non-blocking — it is sampled on every keepalive tick (5 s by default).
+        """
+        return []
+
     def on_configuration_change(self, configuration) -> bool:
         logger.info("configuration changed")
         return True

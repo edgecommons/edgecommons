@@ -23,6 +23,9 @@
  *   `qualityRaw`.
  * * Emit **`southbound_health`**, dimensioned by instance, so an operator can see a link go down
  *   without reading logs.
+ * * Report **per-instance connectivity** ({@link connectivityOf}), so the fleet sees which devices
+ *   this adapter is actually talking to — pushed on every `state` keepalive and returned by the
+ *   built-in `status` verb, from one provider.
  * * Serve **read/write commands** — and allow-list the writes. An adapter that will write any
  *   address it is asked to is a control-system vulnerability, not a feature.
  */
@@ -33,6 +36,7 @@ import {
   DataFacade,
   EdgeCommons,
   EventsFacade,
+  InstanceConnectivity,
   MetricBuilder,
   MetricService,
   Quality as LibQuality,
@@ -217,14 +221,37 @@ export class Mailbox<T> {
 
 // --- health ----------------------------------------------------------------------------------
 
-/** The `southbound_health` measures, per instance (SOUTHBOUND.md §5). */
+/**
+ * This adapter's **own vocabulary** for a link's condition — what it reports as
+ * `InstanceConnectivity.state`. A boolean cannot tell "has not connected yet" from "backing off
+ * after a failure" from "configured with an adapter that does not exist"; an operator needs to, so
+ * the richer token rides alongside the normalized flag.
+ */
+export type LinkState = "CONNECTING" | "ONLINE" | "BACKOFF" | "DISABLED";
+
+/** The `southbound_health` measures, per instance (SOUTHBOUND.md §5), plus the link condition. */
 export class Health {
   /** 1 = connected, 0 = down. */
   connectionState = 0;
+  /**
+   * The link's condition, in this adapter's vocabulary. A device starts CONNECTING: it is
+   * configured and not yet reachable, which is exactly what must NOT look like a device nobody
+   * configured at all.
+   */
+  link: LinkState = "CONNECTING";
   pollLatencyMs = 0;
   readErrors = 0;
   reconnects = 0;
   signalsPublished = 0;
+
+  /**
+   * Record the link's condition. The metric's boolean and the reported state token move
+   * **together**, so the health dot and the label a console shows can never disagree.
+   */
+  setLink(state: LinkState): void {
+    this.link = state;
+    this.connectionState = state === "ONLINE" ? 1 : 0;
+  }
 
   /** Snapshot the interval counters and reset them (a gauge stays, a counter resets). */
   takeInterval(): Record<string, number> {
@@ -240,6 +267,21 @@ export class Health {
     this.signalsPublished = 0;
     return values;
   }
+}
+
+/**
+ * One device's connectivity sample, for the provider registered in the {@link App} constructor.
+ *
+ * * `connected` is the **normalized** flag — always present, so a console renders a health dot for
+ *   this adapter without knowing anything about its protocol.
+ * * `state` is *this adapter's* vocabulary ({@link LinkState}) for the richer condition.
+ * * `attributes` is the **open** bag: domain data only this adapter understands (here, which backend
+ *   the device speaks), carried without destabilizing the two fields above that everyone reads.
+ */
+export function connectivityOf(cfg: DeviceConfig, health: Health): InstanceConnectivity {
+  return InstanceConnectivity.of(cfg.id, health.link === "ONLINE", cfg.connection.endpoint)
+    .withState(health.link)
+    .withAttributes({ adapter: cfg.adapter });
 }
 
 // --- the southbound publish path ---------------------------------------------------------------
@@ -345,6 +387,8 @@ export class App {
   private readonly metrics: MetricService;
   private readonly devices: DeviceConfig[] = [];
   private readonly mailboxes = new Map<string, Mailbox<WriteRequest>>();
+  /** Each device's health: written by its own loop, read by the connectivity provider. */
+  private readonly health = new Map<string, Health>();
   private readonly loops: Promise<void>[] = [];
   private stopped = false;
 
@@ -373,6 +417,25 @@ export class App {
     if (this.devices.length === 0) {
       throw new Error("no valid devices in component.instances[]");
     }
+
+    // A device's health exists from the moment it is CONFIGURED, not from the moment its loop first
+    // connects: a configured device that is down must never be indistinguishable from a device
+    // nobody configured. Registered here, before run() starts a single worker, so the very first
+    // keepalive already reports every device — as CONNECTING, connected=false.
+    //
+    // ONE provider, TWO surfaces: the library pushes this sample into the `state` keepalive's
+    // `instances[]` every tick, and returns the very same sample from the built-in `status` verb
+    // when a console asks. Whoever watches and whoever asks cannot get different answers. Keep it
+    // cheap — it is sampled on the keepalive interval, and it reads only cached state.
+    //
+    // Reporting one entry per device is the whole point of the adapter archetype: the fleet sees
+    // which of THIS component's devices are reachable, without minting a UNS instance per device.
+    for (const device of this.devices) {
+      this.health.set(device.id, new Health());
+    }
+    gg.setInstanceConnectivityProvider(() =>
+      this.devices.map((d) => connectivityOf(d, this.health.get(d.id) as Health)),
+    );
   }
 
   async run(): Promise<void> {
@@ -398,9 +461,13 @@ export class App {
       this.mailboxes.set(device.id, mailbox);
 
       this.loops.push(
-        this.runDevice(device, instance.data(), instance.events(), mailbox).catch((e: unknown) =>
-          logger.error(`device loop '${device.id}' stopped: ${String(e)}`),
-        ),
+        this.runDevice(
+          device,
+          instance.data(),
+          instance.events(),
+          mailbox,
+          this.health.get(device.id) as Health,
+        ).catch((e: unknown) => logger.error(`device loop '${device.id}' stopped: ${String(e)}`)),
       );
     }
 
@@ -427,15 +494,18 @@ export class App {
     data: DataFacade,
     events: EventsFacade,
     mailbox: Mailbox<WriteRequest>,
+    health: Health,
   ): Promise<void> {
     const backend: DeviceBackend | undefined = backendFor(cfg.adapter);
     if (!backend) {
       logger.error(`unknown adapter '${cfg.adapter}' for instance '${cfg.id}'`);
+      // This device will never connect, and saying CONNECTING forever would be a lie no boolean
+      // could correct. DISABLED is what a console needs to show, and why `state` exists.
+      health.setLink("DISABLED");
       return;
     }
 
     const backoff = new Backoff();
-    const health = new Health();
     let attempt = 0;
 
     while (!this.stopped) {
@@ -450,13 +520,14 @@ export class App {
         logger.warn(
           `connect failed instance=${cfg.id} permanent=${permanent} waitMs=${wait}: ${String(e)}`,
         );
+        health.setLink("BACKOFF");
         attempt += 1;
         await sleep(wait);
         continue;
       }
 
       attempt = 0;
-      health.connectionState = 1;
+      health.setLink("ONLINE");
       await this.emitHealth(health);
       await events
         .emit(Severity.Info, "device-connected", `connected to ${cfg.connection.endpoint}`, {
@@ -470,7 +541,7 @@ export class App {
 
       await this.pollUntilDisconnected(cfg, session, data, backend.kind, mailbox, health);
 
-      health.connectionState = 0;
+      health.setLink("BACKOFF");
       health.reconnects += 1;
       await this.emitHealth(health);
       if (!this.stopped) {

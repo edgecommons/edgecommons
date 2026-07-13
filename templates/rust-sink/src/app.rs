@@ -19,7 +19,9 @@
 //!   transient one loses data a second attempt would have delivered. See
 //!   [`crate::dest::DeliverError`].
 //! * **Report every transition.** A sink that fails quietly is indistinguishable from one that is
-//!   idle. Started / completed / failed / exhausted all go out on the UNS event surface.
+//!   idle. Started / completed / failed / exhausted all go out on the UNS event surface — and the
+//!   same transitions move each destination's reported connectivity ([`connectivity_of`]), because
+//!   a sink's destinations **are** its instances.
 //!
 //! ## Where the work comes from
 //!
@@ -30,7 +32,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
 
 use edgecommons::messaging::Message;
@@ -127,6 +129,87 @@ pub struct Stats {
     pub dropped: AtomicU64,
 }
 
+/// This sink's **own vocabulary** for a destination's condition — what it reports as
+/// `InstanceConnectivity::state`. The delivery ladder in [`deliver_with_retry`] moves it, so what
+/// the events say and what the connectivity says are the same story.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum DestState {
+    /// Nothing has been delivered yet, so nothing has failed yet. Reported reachable until proven
+    /// otherwise — an untried destination is not a broken one.
+    #[default]
+    Idle = 0,
+    /// The last delivery was verified.
+    Online = 1,
+    /// A transient failure; retrying inside the time budget.
+    Backoff = 2,
+    /// Permanent, or the budget is spent. Not reachable, and no longer trying — this is the state
+    /// an operator must be paged about, and the boolean alone cannot distinguish it from a retry.
+    Failed = 3,
+}
+
+impl DestState {
+    /// The normalized flag: is the destination taking data right now?
+    #[must_use]
+    pub fn connected(self) -> bool {
+        matches!(self, Self::Idle | Self::Online)
+    }
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "IDLE",
+            Self::Online => "ONLINE",
+            Self::Backoff => "BACKOFF",
+            Self::Failed => "FAILED",
+        }
+    }
+
+    fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Online,
+            2 => Self::Backoff,
+            3 => Self::Failed,
+            _ => Self::Idle,
+        }
+    }
+}
+
+/// One destination's condition: written by that sink's delivery task, read by the connectivity
+/// provider registered in [`App::run`].
+#[derive(Default)]
+pub struct DestHealth(AtomicU8);
+
+impl DestHealth {
+    pub fn set(&self, state: DestState) {
+        self.0.store(state as u8, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn get(&self) -> DestState {
+        DestState::from_u8(self.0.load(Ordering::Relaxed))
+    }
+}
+
+/// One destination's connectivity sample.
+///
+/// * `connected` is the **normalized** flag — always present, so a console can render a health dot
+///   for this sink without knowing what an object store is.
+/// * `state` is *this sink's* vocabulary ([`DestState`]): `BACKOFF` (still trying) and `FAILED`
+///   (gave up) are the same boolean and very different pages at 3 a.m.
+/// * `attributes` is the **open** bag: domain data only this sink understands (here, the kind of
+///   backend), carried without destabilizing the two fields above that every consumer relies on.
+#[must_use]
+pub fn connectivity_of(sink: &SinkConfig, kind: &str, health: &DestHealth) -> InstanceConnectivity {
+    let state = health.get();
+    let mut attributes = serde_json::Map::new();
+    attributes.insert("destination".to_string(), json!(kind));
+
+    InstanceConnectivity::new(&sink.id, state.connected(), Some(sink.destination.endpoint()))
+        .with_state(state.as_str())
+        .with_attributes(attributes)
+}
+
 pub struct App {
     metrics: Arc<dyn MetricService>,
     sinks: Vec<SinkConfig>,
@@ -189,8 +272,14 @@ impl App {
             anyhow::bail!("a sink needs a messaging transport, and none was wired");
         };
 
+        // Each destination's condition, shared with its delivery task: the task writes it, the
+        // connectivity provider below reads it.
+        let mut reported: Vec<(SinkConfig, &'static str, Arc<DestHealth>)> = Vec::new();
+
         for sink in &self.sinks {
             let destination = crate::dest::build(&sink.destination)?;
+            let health = Arc::new(DestHealth::default());
+            reported.push((sink.clone(), destination.kind(), Arc::clone(&health)));
             let (tx, rx) = tokio::sync::mpsc::channel::<Item>(sink.max_queue);
 
             let stats = Arc::clone(&self.stats);
@@ -226,9 +315,25 @@ impl App {
                 rx,
                 destination,
                 Arc::clone(&self.stats),
+                health,
                 gg.events(),
             ));
         }
+
+        // ONE provider, TWO surfaces: the library pushes this sample into the `state` keepalive's
+        // `instances[]` every tick, and returns the very same sample from the built-in `status`
+        // command verb when a console asks. Whoever watches and whoever asks cannot get different
+        // answers. Keep it cheap — it is sampled on the keepalive interval.
+        //
+        // A sink's destinations ARE its instances: one entry each, so the fleet sees a bucket stop
+        // accepting data without reading a single log line.
+        let provider: Arc<InstanceConnectivityProvider> = Arc::new(move || {
+            reported
+                .iter()
+                .map(|(sink, kind, health)| connectivity_of(sink, kind, health))
+                .collect()
+        });
+        gg.set_instance_connectivity_provider(Some(provider));
 
         let mut ticker = tokio::time::interval(Duration::from_secs(60));
         loop {
@@ -262,10 +367,11 @@ async fn run_sink(
     mut rx: tokio::sync::mpsc::Receiver<Item>,
     destination: SharedDestination,
     stats: Arc<Stats>,
+    health: Arc<DestHealth>,
     events: EventsFacade,
 ) {
     while let Some(item) = rx.recv().await {
-        deliver_with_retry(&sink, &item, &destination, &stats, &events).await;
+        deliver_with_retry(&sink, &item, &destination, &stats, &health, &events).await;
     }
     tracing::info!(sink = %sink.id, "sink stopped");
 }
@@ -275,11 +381,15 @@ async fn run_sink(
 /// The event ladder is the sink's contract with whoever is watching: **started**, then either
 /// **completed**, or **failed** (with `willRetry`), and finally **exhausted** if the budget runs
 /// out. An operator must be able to tell "still trying" from "gave up", and gave-up must be loud.
+///
+/// Every rung of that ladder also moves `health` — the same distinction, reported as this
+/// destination's [`DestState`] on the `state` keepalive and to the `status` verb.
 async fn deliver_with_retry(
     sink: &SinkConfig,
     item: &Item,
     destination: &SharedDestination,
     stats: &Arc<Stats>,
+    health: &Arc<DestHealth>,
     events: &EventsFacade,
 ) {
     let started = std::time::Instant::now();
@@ -304,6 +414,7 @@ async fn deliver_with_retry(
         match outcome {
             Ok(()) => {
                 stats.delivered.fetch_add(1, Ordering::Relaxed);
+                health.set(DestState::Online);
                 let _ = events
                     .emit(
                         Severity::Info,
@@ -325,6 +436,7 @@ async fn deliver_with_retry(
             // of the log; give up now and say so.
             Err(e) if !e.is_transient() => {
                 stats.exhausted.fetch_add(1, Ordering::Relaxed);
+                health.set(DestState::Failed);
                 tracing::error!(sink = %sink.id, key = %item.key, error = %e, "permanent failure");
                 let _ = events
                     .emit(
@@ -340,6 +452,7 @@ async fn deliver_with_retry(
             Err(e) => {
                 if sink.retry.budget_spent(started.elapsed()) {
                     stats.exhausted.fetch_add(1, Ordering::Relaxed);
+                    health.set(DestState::Failed);
                     tracing::error!(sink = %sink.id, key = %item.key, attempt, "retry budget spent");
                     let _ = events
                         .emit(
@@ -357,6 +470,7 @@ async fn deliver_with_retry(
 
                 let backoff = sink.retry.delay(attempt, rand01());
                 stats.retried.fetch_add(1, Ordering::Relaxed);
+                health.set(DestState::Backoff);
                 tracing::warn!(
                     sink = %sink.id, key = %item.key, attempt,
                     backoff_ms = backoff.as_millis() as u64, error = %e,
@@ -442,6 +556,51 @@ mod tests {
         let r = RetryConfig { base_delay_ms: 1, max_delay_ms: 1, give_up_after_ms: 5_000 };
         assert!(!r.budget_spent(Duration::from_secs(4)));
         assert!(r.budget_spent(Duration::from_secs(5)));
+    }
+
+    fn sink_config(id: &str) -> SinkConfig {
+        serde_json::from_value(json!({
+            "id": id,
+            "subscribe": "ecv1/+/+/+/data/#",
+            "destination": { "type": "local", "path": "/var/lib/out" }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn every_destination_reports_its_own_connectivity() {
+        let sink = sink_config("archive");
+        let health = DestHealth::default();
+
+        // Nothing delivered yet. An untried destination is not a broken one, so it is reported
+        // reachable — with the sink's own token saying it has simply not been used.
+        let c = connectivity_of(&sink, "local", &health);
+        assert_eq!(c.instance, "archive");
+        assert!(c.connected);
+        assert_eq!(c.state.as_deref(), Some("IDLE"));
+        assert!(c.detail.as_deref().unwrap().contains("out"), "where the data goes, for a human");
+        assert_eq!(c.attributes["destination"], json!("local"), "the open bag carries domain data");
+
+        health.set(DestState::Online);
+        assert!(connectivity_of(&sink, "local", &health).connected);
+    }
+
+    #[test]
+    fn still_retrying_and_gave_up_are_the_same_boolean_and_different_states() {
+        // Both are "not connected" to a console's health dot — which is exactly why the normalized
+        // flag is not enough on its own, and why `state` carries the sink's own vocabulary.
+        let sink = sink_config("archive");
+        let health = DestHealth::default();
+
+        health.set(DestState::Backoff);
+        let retrying = connectivity_of(&sink, "local", &health);
+        health.set(DestState::Failed);
+        let gave_up = connectivity_of(&sink, "local", &health);
+
+        assert!(!retrying.connected);
+        assert!(!gave_up.connected);
+        assert_eq!(retrying.state.as_deref(), Some("BACKOFF"));
+        assert_eq!(gave_up.state.as_deref(), Some("FAILED"), "gave up must be loud");
     }
 
     #[test]

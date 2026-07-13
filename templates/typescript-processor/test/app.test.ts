@@ -1,7 +1,7 @@
 import { Config, MessageBuilder } from "@edgecommons/edgecommons";
 import { describe, expect, it } from "vitest";
 
-import { BoundedQueue, Stats, isSelfEcho, parseRoute } from "../src/app";
+import { BoundedQueue, Stats, instanceConnectivity, isSelfEcho, parseRoute } from "../src/app";
 import { ProcMsg } from "../src/proc";
 
 const config = Config.fromValue("com.example.Processor", "gw-01", {
@@ -93,6 +93,15 @@ describe("the self-echo guard", () => {
     expect(
       isSelfEcho(anonymous, config.componentIdentity.path, config.componentIdentity.component),
     ).toBe(false);
+  });
+});
+
+describe("the instance-connectivity provider", () => {
+  it("reports no instances, because a processor's routes are not connections", () => {
+    // The provider the `state` keepalive pushes and the `status` verb pulls — one source, two
+    // surfaces. Reporting nothing is the contract, not an omission: with no instances the keepalive
+    // carries no `instances[]` section and `status` answers exactly as `ping` does.
+    expect(instanceConnectivity()).toEqual([]);
   });
 });
 

@@ -6,7 +6,8 @@
  * - `start()` subscribes exactly the own-inbox wildcard (`ecv1/{device}/{component}/main/cmd/#`)
  *   on the primary connection;
  * - each built-in verb dispatches and replies with the pinned body shape — `ping`
- *   (status + uptime), `reload-config` (ack / `RELOAD_FAILED`), `get-configuration`
+ *   (status + uptime), `status` (ping's body plus the `instances` sample, omitted when there are
+ *   none), `reload-config` (ack / `RELOAD_FAILED`), `get-configuration`
  *   (redacted config / `NO_CONFIG`);
  * - replies go to the request's `reply_to` with the request's `correlation_id` and the
  *   responder's identity;
@@ -36,6 +37,7 @@ import {
   DeferredReplyState,
   SettlementResult,
 } from "../src/commands";
+import { InstanceConnectivity } from "../src/instance_connectivity";
 import { Message, MessageBuilder } from "../src/message";
 import { UnsValidationError } from "../src/uns";
 import { RecordingMessagingService, tick } from "./_fakes";
@@ -149,6 +151,7 @@ describe("CommandInbox", () => {
       () => uptime,
       () => reloadResult,
       () => redactedConfig,
+      () => [],
       (state) => states.push(state),
     );
     await observed.start();
@@ -244,6 +247,7 @@ describe("CommandInbox", () => {
       () => uptime,
       () => reloadResult,
       () => redactedConfig,
+      () => [],
       (state) => states.push(state),
     );
     messaging.subscribe = async (filter, handler) => {
@@ -305,6 +309,74 @@ describe("CommandInbox", () => {
     expect(result.uptimeSecs).toBe(1234);
   });
 
+  it("status without a provider answers like ping and omits instances", async () => {
+    uptime = 77;
+    await inbox.start(); // the default status source is "no instances"
+    await deliver(messaging, topic(CommandInbox.STATUS), request(CommandInbox.STATUS));
+    const body = onlyReplyBody(messaging);
+    expect(body.ok).toBe(true);
+    const result = body.result as Record<string, unknown>;
+    expect(result.status).toBe("RUNNING");
+    expect(result.uptimeSecs).toBe(77);
+    expect(
+      result.instances,
+      "a component with no instances must omit the section, not emit an empty array",
+    ).toBeUndefined();
+  });
+
+  it("status returns the provider sample, including state and attributes", async () => {
+    const withInstances = new CommandInbox(
+      config,
+      messaging,
+      () => uptime,
+      () => reloadResult,
+      () => redactedConfig,
+      () => [
+        InstanceConnectivity.of("cam-01", true).withState("ONLINE"),
+        new InstanceConnectivity("cam-02", false, "connect timed out", "BACKOFF", {
+          capabilities: ["ptz", "snapshot"],
+          lastError: "CAMERA_UNAVAILABLE",
+        }),
+      ],
+    );
+    await withInstances.start();
+    await deliver(messaging, topic(CommandInbox.STATUS), request(CommandInbox.STATUS));
+    const result = onlyReplyBody(messaging).result as Record<string, unknown>;
+    expect(result.status).toBe("RUNNING");
+    expect(result.instances).toEqual([
+      { instance: "cam-01", connected: true, state: "ONLINE" },
+      {
+        instance: "cam-02",
+        connected: false,
+        state: "BACKOFF",
+        detail: "connect timed out",
+        attributes: { capabilities: ["ptz", "snapshot"], lastError: "CAMERA_UNAVAILABLE" },
+      },
+    ]);
+  });
+
+  it("status survives a throwing connectivity source (HANDLER_ERROR, never a crash)", async () => {
+    const throwing = new CommandInbox(
+      config,
+      messaging,
+      () => uptime,
+      () => reloadResult,
+      () => redactedConfig,
+      () => {
+        throw new Error("provider blew up");
+      },
+    );
+    await throwing.start();
+    await expect(deliver(messaging, topic(CommandInbox.STATUS), request(CommandInbox.STATUS))).resolves.toBeUndefined();
+    const body = onlyReplyBody(messaging);
+    expect(body.ok).toBe(false);
+    expect((body.error as Record<string, unknown>).code).toBe(CommandInbox.ERR_HANDLER_ERROR);
+  });
+
+  it("status is a built-in: a component cannot shadow it", () => {
+    expect(() => inbox.register(CommandInbox.STATUS, () => null)).toThrow(/built-in/);
+  });
+
   it("describe includes component identity, built-ins, custom verbs, panels, and a stable digest", async () => {
     inbox.register("sb/browse", () => ({ nodes: [] }));
     const overview = {
@@ -335,6 +407,7 @@ describe("CommandInbox", () => {
       { verb: CommandInbox.PING, builtIn: true },
       { verb: CommandInbox.RELOAD_CONFIG, builtIn: true },
       { verb: "sb/browse", builtIn: false },
+      { verb: CommandInbox.STATUS, builtIn: true },
     ]);
     expect(result.panels).toEqual({
       schemaVersion: "edgecommons.panels.v2",
@@ -510,6 +583,7 @@ describe("CommandInbox", () => {
         CommandInbox.DESCRIBE,
         CommandInbox.GET_CONFIGURATION,
         CommandInbox.RELOAD_CONFIG,
+        CommandInbox.STATUS,
         "mine",
       ]),
     );

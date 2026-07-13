@@ -298,7 +298,10 @@ public class EdgeCommons
             // on (no config surface); best-effort start (a failure disables the inbox only).
             commandInbox = new CommandInbox(configManager, messagingClient,
                     heartbeat::getUptimeSecs, configManager::reloadFromProvider,
-                    effectiveConfigPublisher::redactedEffectiveConfig);
+                    effectiveConfigPublisher::redactedEffectiveConfig,
+                    // The built-in `status` verb pulls the SAME provider sample the state keepalive
+                    // pushes, so the two surfaces cannot disagree.
+                    heartbeat::sampleInstanceConnectivity);
             for (Consumer<CommandInbox> configurer : commandConfigurers) {
                 configurer.accept(commandInbox);
             }

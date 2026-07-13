@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   Backoff,
+  Health,
   Mailbox,
   WriteRequest,
   Writes,
+  connectivityOf,
   handleWrite,
   parseDevice,
   publishReadings,
@@ -83,6 +85,52 @@ describe("reconnect backoff", () => {
     // does not reconnect in lockstep when a PLC reboots.
     expect(b.delayMs(2, 0.5)).toBe(2_000);
     expect(b.delayMs(2, 0.0)).toBe(0);
+  });
+});
+
+describe("per-instance connectivity", () => {
+  const device = parseDevice({ id: "plc-1", adapter: "sim", connection: { endpoint: "sim://plc-1" } });
+
+  it("reports a configured device that has not connected yet", () => {
+    // The health exists from the moment the device is CONFIGURED. A configured device that is down
+    // must never look like a device nobody configured — so it is reported, connected=false, and the
+    // adapter's own token says WHY it is not up: CONNECTING is not BACKOFF, and the boolean alone
+    // could not tell them apart.
+    const c = connectivityOf(device, new Health());
+
+    expect(c.instance).toBe("plc-1");
+    expect(c.connected).toBe(false);
+    expect(c.state).toBe("CONNECTING");
+    expect(c.detail).toBe("sim://plc-1"); // the endpoint, for a human
+    expect(c.attributes.adapter).toBe("sim"); // the open bag carries domain data
+  });
+
+  it("goes ONLINE on connect and BACKOFF on failure", () => {
+    const health = new Health();
+
+    health.setLink("ONLINE");
+    expect(connectivityOf(device, health).connected).toBe(true); // the flag every console reads
+    expect(connectivityOf(device, health).state).toBe("ONLINE");
+
+    health.setLink("BACKOFF");
+    expect(connectivityOf(device, health).connected).toBe(false);
+    expect(connectivityOf(device, health).state).toBe("BACKOFF");
+
+    // Down is down to the boolean — but "retrying" and "will never connect" are not the same fact,
+    // and only the state token can say which one an operator is looking at.
+    health.setLink("DISABLED");
+    expect(connectivityOf(device, health).connected).toBe(false);
+    expect(connectivityOf(device, health).state).toBe("DISABLED");
+  });
+
+  it("keeps the normalized flag and the health metric from disagreeing", () => {
+    // Both move through setLink, so the metric an operator charts and the connectivity a console
+    // renders are the same fact.
+    const health = new Health();
+    health.setLink("ONLINE");
+    expect(health.takeInterval().connectionState).toBe(1);
+    health.setLink("BACKOFF");
+    expect(health.takeInterval().connectionState).toBe(0);
   });
 });
 

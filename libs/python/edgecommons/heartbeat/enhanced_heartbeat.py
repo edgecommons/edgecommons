@@ -287,6 +287,37 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         """
         self._connectivity_provider = provider
 
+    def sample_instance_connectivity(self) -> list:
+        """Samples the registered per-instance connectivity provider, once.
+
+        This is the single sampling seam, and it deliberately serves **both** surfaces:
+        the ``state`` keepalive pushes it in ``instances[]``, and the built-in ``status``
+        verb (:data:`edgecommons.command_inbox.STATUS`) returns it when pulled. One
+        component-supplied provider; two surfaces; no second copy of the data to drift out
+        of step.
+
+        Best-effort by contract: no provider, a ``None`` result, or a raising provider all
+        yield an empty list. A component's provider bug must never suppress the keepalive
+        or fail the command — it can only cost the ``instances[]`` section for that sample.
+
+        :returns: the live per-instance connectivity as a list of
+            :class:`~edgecommons.heartbeat.instance_connectivity.InstanceConnectivity`;
+            never ``None``, possibly empty.
+        """
+        provider = getattr(self, "_connectivity_provider", None)
+        if provider is None:
+            return []
+        try:
+            conns = provider()
+            if not conns:
+                return []
+            return [c for c in conns if c is not None]
+        except Exception as e:  # noqa: BLE001 - best-effort; a provider bug never breaks us
+            logger.warning(
+                f"Instance connectivity provider failed; omitting instances[] this sample: {e}"
+            )
+            return []
+
     def _publish_state(self, status: str, include_uptime: bool) -> None:
         """Publishes one ``state`` envelope to the component's UNS state topic through
         the privileged seam. No-op (WARN once) when the component identity is not
@@ -316,21 +347,13 @@ class EnhancedHeartbeat(ConfigurationChangeListener):
         body: Dict[str, Any] = {"status": status}
         if include_uptime:
             body["uptimeSecs"] = self.get_uptime_secs()
-        # Per-instance connectivity — the state body's ``instances`` (RUNNING keepalive only).
-        # Best-effort: a None/empty/raising provider omits the section but NEVER suppresses the
-        # keepalive itself.
-        provider = getattr(self, "_connectivity_provider", None)
-        if include_uptime and provider is not None:
-            try:
-                conns = provider()
-                if conns:
-                    instances = [c.to_dict() for c in conns if c is not None]
-                    if instances:
-                        body["instances"] = instances
-            except Exception as e:  # noqa: BLE001 - best-effort; a provider bug never breaks the keepalive
-                logger.warning(
-                    f"Instance connectivity provider failed; omitting instances[] this tick: {e}"
-                )
+        # Per-instance connectivity — the state body's ``instances`` (RUNNING keepalive only;
+        # a STOPPED state carries no live instances). The same sample the ``status`` verb
+        # pulls, through the one sampling seam.
+        if include_uptime:
+            instances = [c.to_dict() for c in self.sample_instance_connectivity()]
+            if instances:
+                body["instances"] = instances
         message = MessageBuilder.create(self.STATE_MESSAGE_NAME, self.STATE_MESSAGE_VERSION) \
             .with_payload(body) \
             .with_config(self._config_service) \

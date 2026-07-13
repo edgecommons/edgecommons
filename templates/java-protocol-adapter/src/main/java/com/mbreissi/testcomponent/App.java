@@ -5,6 +5,7 @@ import com.mbreissi.edgecommons.EdgeCommonsBuilder;
 import com.mbreissi.edgecommons.EdgeCommonsInstance;
 import com.mbreissi.edgecommons.config.ConfigManager;
 import com.mbreissi.edgecommons.config.ConfigurationChangeListener;
+import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessagingClient;
 import com.mbreissi.edgecommons.metrics.Metric;
@@ -13,12 +14,15 @@ import com.mbreissi.edgecommons.metrics.MetricEmitter;
 import com.mbreissi.edgecommons.uns.UnsClass;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 
 /**
@@ -38,7 +42,10 @@ import java.util.concurrent.CountDownLatch;
  * {@code ecv1/+/+/+/data/#}.
  *
  * <p>The {@code state} heartbeat keepalive is <b>automatic</b> (library-owned, on / 5 s / local
- * by default) on {@code ecv1/{device}/{component}/main/state} — no heartbeat code here.
+ * by default) on {@code ecv1/{device}/{component}/main/state} — no heartbeat code here. What the
+ * adapter <i>does</i> supply is the payload only it knows: <b>one connectivity entry per configured
+ * device</b> ({@link #reportConnectivity}), which the library both pushes on that keepalive and
+ * returns from the built-in {@code status} verb.
  *
  * <p><b>Phase 5 (M9) note</b>: the southbound <i>command</i> family — write/read/control toward
  * the device — is not part of this scaffold yet. When you add such handlers, expect them to be
@@ -66,6 +73,14 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
     private final MessagingClient messaging;
     private final MetricEmitter metrics;
 
+    /**
+     * The live reachability of every configured device, keyed by instance id — the adapter's answer
+     * to "which of my devices are actually up?". Written by the instance workers, read on the
+     * heartbeat thread; hence concurrent, and hence a cached value rather than a live probe (see
+     * {@link #reportConnectivity}).
+     */
+    private final Map<String, InstanceConnectivity> deviceHealth = new ConcurrentHashMap<>();
+
     /** Blocks main() until the JVM is signalled; the library's SIGTERM/SIGINT hook drives shutdown. */
     private final CountDownLatch shutdownLatch = new CountDownLatch(1);
 
@@ -85,6 +100,13 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
         metrics = edgeCommons.getMetrics();
         config.addConfigChangeListener(this);
         defineHealthMetric();
+
+        // ONE provider, TWO surfaces: the library pushes this sample into the `state` keepalive's
+        // instances[] every tick AND returns it from the built-in `status` verb when pulled — so an
+        // operator asking "which devices are up?" and a console subscribed to state can never
+        // disagree. Sampled on the heartbeat thread: it must not block, so it reads the cached map
+        // the workers maintain and never touches the protocol.
+        edgeCommons.setInstanceConnectivityProvider(() -> List.copyOf(deviceHealth.values()));
     }
 
     public void run() {
@@ -95,6 +117,10 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
         // One worker per configured instance (component.instances[].id). Each instance is one
         // device/endpoint with its own connection + subscriptions (see the southbound config convention).
         for (String instanceId : config.getInstanceIds()) {
+            // Report the device BEFORE its worker connects: a configured device that is not yet up
+            // must still appear (connected=false), or an operator cannot tell "still connecting"
+            // from "not configured at all".
+            reportConnectivity(instanceId, "", false, "CONNECTING", null);
             Thread worker = new Thread(() -> runInstance(instanceId), "adapter-" + instanceId);
             worker.setDaemon(true);
             worker.start();
@@ -125,6 +151,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
             // establish subscriptions / start polling per instance.subscriptions[]. On each value
             // received, call publishUpdate(...). Emit connectionState=1 once connected.
             emitHealth(instanceId, /*connected*/ true, /*pollLatencyMs*/ 0, /*readErrors*/ 0, /*staleSignals*/ 0);
+            reportConnectivity(instanceId, endpoint, true, "ONLINE", null);
 
             // --- placeholder so the scaffold runs end-to-end; replace with real device events ---
             while (true) {
@@ -140,7 +167,52 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
         } catch (Exception e) {
             LOGGER.error("[{}] adapter error", instanceId, e);
             emitHealth(instanceId, false, 0, 1, 0);
+            // The device stays in the report — as DOWN. Removing it would make a broken device
+            // indistinguishable from one nobody configured.
+            reportConnectivity(instanceId, endpoint, false, "BACKOFF", e.toString());
         }
+    }
+
+    /**
+     * Records one device's live reachability for both connectivity surfaces (the {@code state}
+     * keepalive's {@code instances[]} and the {@code status} verb). Call it wherever this adapter
+     * already <i>knows</i> — connected, connection lost, retrying, administratively disabled.
+     *
+     * <p>{@code connected} is the one <b>normalized</b> field and is always present, so any console
+     * can render a health dot for any adapter without knowing this protocol. {@code state} is this
+     * adapter's <i>own</i> vocabulary for what a boolean cannot say — {@code CONNECTING} and
+     * {@code BACKOFF} are both "not connected", but only one of them means an operator should look
+     * at the device. {@code attributes} is an open bag for protocol-specific facts (a session id,
+     * a firmware revision, the last error code): it is deliberately unconstrained, so what only this
+     * adapter understands can never destabilize the fields every consumer relies on.
+     *
+     * @param instanceId the device's {@code component.instances[].id}
+     * @param endpoint   the device endpoint — the human {@code detail} when up
+     * @param connected  the normalized reachability flag
+     * @param state      this adapter's own condition token ({@code CONNECTING}/{@code ONLINE}/…)
+     * @param detail     why it is down, or {@code null} to use the endpoint
+     */
+    private void reportConnectivity(String instanceId, String endpoint, boolean connected,
+                                    String state, String detail) {
+        deviceHealth.put(instanceId, connectivity(instanceId, endpoint, connected, state, detail));
+    }
+
+    /**
+     * One device's connectivity entry — the pure half of {@link #reportConnectivity}, so the
+     * adapter's report can be asserted without a device or a live runtime.
+     *
+     * @param instanceId the device's {@code component.instances[].id}
+     * @param endpoint   the device endpoint — the human {@code detail} when up
+     * @param connected  the normalized reachability flag
+     * @param state      this adapter's own condition token ({@code CONNECTING}/{@code ONLINE}/…)
+     * @param detail     why it is down, or {@code null} to use the endpoint
+     * @return the entry the {@code state} keepalive and the {@code status} verb both report
+     */
+    static InstanceConnectivity connectivity(String instanceId, String endpoint, boolean connected,
+                                             String state, String detail) {
+        return InstanceConnectivity.of(instanceId, connected, detail != null ? detail : endpoint)
+                .withState(state)
+                .withAttributes(Map.of("adapter", new JsonPrimitive(ADAPTER_KIND)));
     }
 
     /**

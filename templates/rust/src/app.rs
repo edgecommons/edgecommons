@@ -22,6 +22,10 @@
 //! - a periodic **evt** (`ecv1/.../evt/info/sample-event`) via `gg.events()` — the
 //!   [`EventsFacade`] derives the `evt/{severity}/{type}` channel from the body's own severity +
 //!   type, so the topic and body can never disagree;
+//! - an **instance-connectivity provider** (`gg.set_instance_connectivity_provider`) — the one
+//!   source both the `state` keepalive (push) and the built-in `status` verb (pull) read. This
+//!   scaffold owns no connections, so it reports none; [`App::new`] shows where a component that
+//!   does adds them;
 //! - a custom **command verb** ([`SET_GREETING`]), registered with `gg.commands().register(...)`
 //!   alongside the automatic built-ins, that mutates a small piece of in-memory state which the
 //!   periodic status publish then reflects on its very next tick — so invoking it from the
@@ -146,6 +150,30 @@ impl App {
                 .add_dimension("demo", "scaffold")
                 .build(),
         );
+
+        // --- instance connectivity: ONE provider, TWO surfaces. Whatever it returns is pushed
+        // into the `state` keepalive's `instances[]` on every tick AND returned by the built-in
+        // `status` command verb when a console asks — whoever watches and whoever asks cannot get
+        // different answers.
+        //
+        // This scaffold owns no southbound connections, so it reports NO instances. That is a real
+        // answer, not a missing one: with an empty vec the `instances[]` section is omitted and
+        // `status` says exactly what `ping` says. It is registered anyway, so the seam is visible
+        // the day this component grows a connection of its own.
+        //
+        // When it does (a device, a database, an upstream API), return one entry per connection:
+        //
+        //     InstanceConnectivity::of(&id, client.is_connected())  // the NORMALIZED flag: always
+        //         .with_state("ONLINE")                             // present, so any console can
+        //         .with_attributes(attributes)                      // render a health dot without
+        //                                                           // knowing this component
+        //
+        // `state` is your own vocabulary (ONLINE / CONNECTING / BACKOFF / DISABLED — a boolean
+        // cannot tell "reconnecting" from "administratively off"); `attributes` is the open bag for
+        // domain data, deliberately unconstrained so it never destabilizes the fields above. Keep
+        // the provider cheap: it is sampled on the keepalive interval.
+        let no_instances: Arc<InstanceConnectivityProvider> = Arc::new(Vec::new);
+        gg.set_instance_connectivity_provider(Some(no_instances));
 
         Ok(Self {
             config: gg.config(),

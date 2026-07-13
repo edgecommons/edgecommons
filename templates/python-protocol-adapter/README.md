@@ -23,8 +23,12 @@ mandatory library-owned readiness conditions.
 
 ## Layout
 
-- `main.py` — builds edgecommons, spawns one worker per `component.instances[]` entry.
-- `app/<<COMPONENTNAME>>.py` — your adapter: connect, poll/subscribe, publish, command surface.
+- `main.py` — builds edgecommons, registers the instance-connectivity provider, spawns one worker per
+  `component.instances[]` entry.
+- `app/<<COMPONENTNAME>>.py` — your adapter: connect, poll/subscribe, publish, command surface, and
+  each device's `LinkStatus` (what the `state` keepalive and the `status` verb report).
+- `tests/` — `pytest` tests for what the adapter reports about its devices. `python -m pytest` — no
+  broker and no device needed.
 - `requirements.txt` — `edgecommons` + your protocol client library.
 - `recipe.yaml` / `gdk-config.json` — Greengrass packaging (IPC pubsub access; venv install).
 - `Dockerfile` / `k8s/` — Kubernetes image + manifests (KUBERNETES platform only).

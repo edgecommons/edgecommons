@@ -35,7 +35,11 @@ contract is pinned by ``uns-test-vectors/commands.json``.
   class publishes, as a reply (**Flow B**: the console pulls a component's own
   config; unrelated to the Flow-A
   ``ecv1/{device}/config/main/cmd/get-configuration`` rendezvous where a component
-  fetches its config FROM a config server).
+  fetches its config FROM a config server); :data:`STATUS` -> ``ping``'s per-instance
+  superset ``{"status": "RUNNING", "uptimeSecs": n[, "instances": [...]]}``, whose
+  ``instances[]`` is the very sample the ``state`` keepalive pushes (one
+  component-supplied provider, two surfaces - a pulled answer can never disagree with a
+  pushed one); the section is omitted when the component reports no instances.
 - **Unknown verb** — a well-formed request whose verb has no handler gets an
   :data:`ERR_UNKNOWN_VERB` error reply (fire-and-forget unknowns are ignored at
   DEBUG).
@@ -80,11 +84,22 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Deque, Dict, Optional, Set, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Deque,
+    Dict,
+    List,
+    Optional,
+    Set,
+    Tuple,
+)
 
 from edgecommons.uns import Uns, UnsClass, UnsScope
 
 if TYPE_CHECKING:
+    from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
     from edgecommons.messaging.message import Message
 
 logger = logging.getLogger("CommandInbox")
@@ -100,6 +115,19 @@ DESCRIBE = "describe"
 
 #: The return-my-redacted-effective-config built-in verb (Flow B).
 GET_CONFIGURATION = "get-configuration"
+
+#: The universal component status verb:
+#: ``{"status": "RUNNING", "uptimeSecs": n[, "instances": [...]]}``.
+#:
+#: :data:`PING` answers only for the component as a whole. ``status`` is its per-instance
+#: superset: it returns the same sample the ``state`` keepalive pushes in ``instances[]``,
+#: sourced from the one component-supplied ``InstanceConnectivityProvider``. Push and pull
+#: can therefore never disagree - a console can subscribe, or ask, and get the same answer.
+#:
+#: Every component implements it by registering that provider; a component with no
+#: instances (a plain service) simply omits the section. It is deliberately **not** named
+#: ``sb/status``: a processor or a sink has no southbound, and this verb is universal.
+STATUS = "status"
 
 #: The command request/reply envelope version.
 CMD_MESSAGE_VERSION = "1.0"
@@ -153,7 +181,7 @@ DEFERRED_REPLY_SHUTDOWN_TIMEOUT_SECS = 1.0
 SET_CONFIG_VERB = "set-config"
 
 #: The built-in verbs (registered at construction; shadowing/unregistering is rejected).
-BUILT_IN_VERBS = frozenset({PING, DESCRIBE, RELOAD_CONFIG, GET_CONFIGURATION})
+BUILT_IN_VERBS = frozenset({PING, DESCRIBE, RELOAD_CONFIG, GET_CONFIGURATION, STATUS})
 
 #: Verbs owned by other library subscriptions on the same inbox path - always ignored.
 DELEGATED_VERBS = frozenset({SET_CONFIG_VERB})
@@ -382,6 +410,7 @@ class CommandInbox:
     DESCRIBE = DESCRIBE
     RELOAD_CONFIG = RELOAD_CONFIG
     GET_CONFIGURATION = GET_CONFIGURATION
+    STATUS = STATUS
     CMD_MESSAGE_VERSION = CMD_MESSAGE_VERSION
     ERR_UNKNOWN_VERB = ERR_UNKNOWN_VERB
     ERR_HANDLER_ERROR = ERR_HANDLER_ERROR
@@ -406,6 +435,9 @@ class CommandInbox:
         uptime_secs: Callable[[], int],
         config_reload: Callable[[], bool],
         redacted_config: Callable[[], Optional[dict]],
+        instance_connectivity: Optional[
+            Callable[[], Optional[List["InstanceConnectivity"]]]
+        ] = None,
     ):
         """Creates the inbox and registers the built-in verbs. The verb
         *actions* are injected seams so the built-ins unit-test deterministically;
@@ -424,6 +456,12 @@ class CommandInbox:
         :param redacted_config: the :data:`GET_CONFIGURATION` source - the current
             redacted effective config, or ``None`` when unavailable (production:
             ``EffectiveConfigPublisher.redacted_effective_config``)
+        :param instance_connectivity: the :data:`STATUS` source - the live per-instance
+            connectivity sample (production:
+            ``EnhancedHeartbeat.sample_instance_connectivity``, i.e. the very same provider
+            the ``state`` keepalive pushes, so the pulled answer and the pushed one cannot
+            diverge). ``None`` (the default) means "this component reports no instances",
+            and ``status`` then answers exactly as ``ping`` does.
         """
         if config_manager is None:
             raise ValueError("config_manager must not be None")
@@ -435,6 +473,8 @@ class CommandInbox:
             raise ValueError("config_reload must not be None")
         if redacted_config is None:
             raise ValueError("redacted_config must not be None")
+        if instance_connectivity is None:
+            instance_connectivity = list  # no provider -> no instances[] section
 
         self._config_manager = config_manager
         self._messaging_client = messaging_client
@@ -449,6 +489,18 @@ class CommandInbox:
         # commands.
         def _ping(request):
             return {"status": "RUNNING", "uptimeSecs": uptime_secs()}
+
+        # status -> ping's per-instance superset. Same body, plus the instances[] the
+        # state keepalive pushes, from the same provider. A component with no instances
+        # omits the section, so a plain service answers exactly as ping does.
+        def _status(request):
+            result = {"status": "RUNNING", "uptimeSecs": uptime_secs()}
+            conns = instance_connectivity()
+            if conns:
+                instances = [c.to_dict() for c in conns if c is not None]
+                if instances:
+                    result["instances"] = instances
+            return result
 
         # reload-config -> re-fetch from the active config source and re-apply
         # (listeners fire, so a successful reload also re-announces the cfg push as
@@ -490,6 +542,7 @@ class CommandInbox:
             return {"config": config}
 
         self._handlers[PING] = _ping
+        self._handlers[STATUS] = _status
         self._handlers[DESCRIBE] = _describe
         self._handlers[RELOAD_CONFIG] = _reload_config
         self._handlers[GET_CONFIGURATION] = _get_configuration

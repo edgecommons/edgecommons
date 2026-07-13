@@ -1,6 +1,7 @@
 package <<PACKAGE>>;
 
 import com.google.gson.JsonObject;
+import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.mbreissi.edgecommons.messaging.MessageBuilder;
 import org.junit.jupiter.api.Test;
@@ -13,6 +14,7 @@ import java.nio.file.Path;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -77,5 +79,31 @@ class <<COMPONENTNAME>>Test {
         try (Stream<Path> s = Files.list(dir)) {
             return s.count();
         }
+    }
+
+    @Test
+    void aReachableDestinationIsReportedAsAnInstanceOfThisComponent() {
+        // A sink's destinations ARE its instances: this is what the `state` keepalive pushes and
+        // what the built-in `status` verb answers with.
+        InstanceConnectivity up = <<COMPONENTNAME>>.connectivity("archive", "local", true, "ONLINE", null);
+
+        assertEquals("archive", up.getInstance());
+        assertTrue(up.isConnected(), "connected is the NORMALIZED flag every console reads");
+        assertEquals("ONLINE", up.getState());
+        assertEquals("local", up.getAttributes().get("kind").getAsString(),
+                "domain data belongs in the open attributes bag, never in the normalized fields");
+    }
+
+    @Test
+    void retryingAndGivingUpAreBothDisconnectedButAnOperatorMustTellThemApart() {
+        // The reason `state` exists: a boolean cannot distinguish "still trying, the data is in
+        // hand" from "gave up, the data did not arrive". Both are connected=false.
+        InstanceConnectivity retrying = <<COMPONENTNAME>>.connectivity("archive", "local", false, "BACKOFF", "timeout");
+        InstanceConnectivity gaveUp = <<COMPONENTNAME>>.connectivity("archive", "local", false, "FAILED", "no such bucket");
+
+        assertFalse(retrying.isConnected());
+        assertFalse(gaveUp.isConnected());
+        assertNotEquals(retrying.getState(), gaveUp.getState());
+        assertEquals("timeout", retrying.getDetail(), "the detail says WHY it is down");
     }
 }
