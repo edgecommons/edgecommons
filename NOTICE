@@ -1,0 +1,38 @@
+EdgeCommons Core Library and CLI — Third-Party License Notices
+================================================================
+
+This NOTICE file records license elections made for dual-licensed
+dependencies of this project, as required by the Business Source License
+1.1 governing this repository's own code (see LICENSE). It is provided
+for informational purposes and does not modify the terms of LICENSE.
+
+Eclipse Public License / Eclipse Distribution License elections
+-----------------------------------------------------------------
+
+The dependencies below are distributed by their upstream projects under a
+choice of the Eclipse Public License (EPL) or the Eclipse Distribution
+License (EDL) 1.0, a BSD-3-Clause-style permissive license with no
+reciprocal/copyleft obligations. For each of the following, EdgeCommons
+elects the Eclipse Distribution License (EDL) 1.0 and does not rely on
+the Eclipse Public License option:
+
+- org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5 (Java, compile
+  scope; ships in the built/shaded artifact)
+  Dual-licensed: Eclipse Public License 1.0 OR Eclipse Distribution
+  License 1.0
+  Elected: Eclipse Distribution License (EDL) 1.0
+  https://www.eclipse.org/org/documents/edl-v10.php
+
+- paho-mqtt >=2.1.0 (Python, runtime dependency)
+  Dual-licensed: Eclipse Public License 2.0 OR Eclipse Distribution
+  License 1.0
+  Elected: Eclipse Distribution License (EDL) 1.0
+  https://www.eclipse.org/org/documents/edl-v10.php
+
+Scope note
+----------
+
+Other EPL-licensed components that appear only in this project's test or
+build tooling (e.g. JUnit 4/5, JaCoCo) are not addressed here: they are
+not part of the distributed Licensed Work, so no election is required for
+them.
