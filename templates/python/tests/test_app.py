@@ -1,12 +1,16 @@
-"""The scaffold's two seams: the command verb it registers, and the connectivity it reports.
+"""The scaffold's two seams: the command verb it serves, and the connectivity it reports.
 
 Neither needs a broker, a transport or a device. The app is handed the framework facade, so a
 recording stand-in for it is enough to assert what the app wires into the library — which is what
 you will do with your own verbs and your own provider. Run them with `pytest`.
+
+Note where the verb lives: `main.py` registers it on the builder (`.configure_commands(...)`), which
+runs BEFORE the inbox starts serving, so no request can arrive at a half-registered inbox. The
+handler itself is on `GreetingState` — so it is testable here with no framework at all.
 """
 import pytest
 
-from app.<<COMPONENTNAME>> import SET_GREETING, <<COMPONENTNAME>>
+from app.<<COMPONENTNAME>> import SET_GREETING, GreetingState, <<COMPONENTNAME>>
 
 
 # --- the framework stand-in: it records what the app registers ----------------------------------
@@ -69,8 +73,13 @@ def gg():
 
 
 @pytest.fixture
-def app(gg):
-    return <<COMPONENTNAME>>(gg)
+def command_state():
+    return GreetingState()
+
+
+@pytest.fixture
+def app(gg, command_state):
+    return <<COMPONENTNAME>>(gg, command_state)
 
 
 # --- instance connectivity -----------------------------------------------------------------------
@@ -93,23 +102,28 @@ def test_a_component_that_owns_no_connections_reports_no_instances(app):
 # --- the custom command verb ---------------------------------------------------------------------
 
 
-def test_the_custom_verb_is_registered_alongside_the_built_ins(app, gg):
-    assert SET_GREETING in gg.commands.verbs
+def test_the_custom_verb_does_not_shadow_a_built_in():
+    # The inbox REJECTS a verb that collides with a built-in (ping / status / describe /
+    # reload-config / get-configuration) — registration fails outright rather than silently
+    # replacing library behavior. Pick your verbs accordingly.
+    from edgecommons.command_inbox import CommandInbox
+
+    assert SET_GREETING not in CommandInbox.BUILT_IN_VERBS
 
 
-def test_set_greeting_replaces_the_greeting_and_reports_what_it_replaced(app, gg):
-    handler = gg.commands.verbs[SET_GREETING]
-
-    reply = handler(FakeRequest({"greeting": "Hi"}))
+def test_set_greeting_replaces_the_greeting_and_reports_what_it_replaced(command_state):
+    reply = command_state.handle(FakeRequest({"greeting": "Hi"}))
 
     assert reply["greeting"] == "Hi"
     assert reply["previousGreeting"] != "Hi"
+    # The state is what the app reads on its next publish, so the command must actually move it.
+    assert command_state.value() == "Hi"
 
 
-def test_a_malformed_command_argument_is_a_coded_error_not_a_crash(app, gg):
+def test_a_malformed_command_argument_is_a_coded_error_not_a_crash(command_state):
     from edgecommons.command_inbox import CommandException
 
-    handler = gg.commands.verbs[SET_GREETING]
-
+    # A typo'd argument must come back as a CODED error the caller can act on — never an
+    # unhandled exception that takes the handler (and the reply) with it.
     with pytest.raises(CommandException):
-        handler(FakeRequest({"greetnig": "typo"}))
+        command_state.handle(FakeRequest({"greetnig": "typo"}))
