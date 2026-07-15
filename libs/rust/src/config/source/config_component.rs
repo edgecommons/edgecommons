@@ -6,7 +6,7 @@
 //!
 //! ## Wire contract (a convention shared with the config server)
 //! - **Flow A — GET**: a request to
-//!   `ecv1/{device}/config/main/cmd/get-configuration` (with `{device}` = the
+//!   `ecv1/{device}/config/cmd/get-configuration` (with `{device}` = the
 //!   sanitized resolved thing name). `config` is a **reserved-by-convention logical
 //!   component name** — the config server is the sole subscriber and replies via
 //!   `reply_to` with the configuration as the message body. Because this request
@@ -16,7 +16,7 @@
 //!   (§1.5).
 //! - **set-config push**: the server pushes a fire-and-forget `cmd` (no `reply_to`
 //!   — a notification-style command) to the component's own inbox
-//!   `ecv1/{device}/{component}/main/cmd/set-config`; the body is the
+//!   `ecv1/{device}/{component}/cmd/set-config`; the body is the
 //!   `lineageVersion: 1` lineage bundle, forwarded through [`ConfigSource::watch`]
 //!   into the runtime's lineage-merge, validate-and-swap reload path.
 //!
@@ -58,11 +58,13 @@ use crate::messaging::message::MessageBuilder;
 use crate::messaging::{MessagingService, message_handler};
 
 /// Flow-A GET request topic template (§4.3): the config server's rendezvous under
-/// the reserved-by-convention logical component name `config`, instance `main`.
-const GET_TOPIC_TEMPLATE: &str = "ecv1/{device}/config/main/cmd/get-configuration";
+/// the reserved-by-convention logical component name `config`. D-U28: component
+/// scope — no `main` instance token.
+const GET_TOPIC_TEMPLATE: &str = "ecv1/{device}/config/cmd/get-configuration";
 /// The pushed `set-config` command's topic template — this component's OWN inbox
 /// (§4.3): the server-to-component push replacing the legacy `.../updated` topic.
-const SET_CONFIG_TOPIC_TEMPLATE: &str = "ecv1/{device}/{component}/main/cmd/set-config";
+/// D-U28: component scope — no `main` instance token.
+const SET_CONFIG_TOPIC_TEMPLATE: &str = "ecv1/{device}/{component}/cmd/set-config";
 /// Per-attempt reply deadline (the §5 framework deadline, passed per-call).
 const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum request attempts before giving up.
@@ -257,11 +259,11 @@ mod tests {
     fn topics_are_the_uns_rendezvous_and_own_inbox() {
         assert_eq!(
             mint_topic(GET_TOPIC_TEMPLATE, "gw-01", "MyComp"),
-            "ecv1/gw-01/config/main/cmd/get-configuration"
+            "ecv1/gw-01/config/cmd/get-configuration"
         );
         assert_eq!(
             mint_topic(SET_CONFIG_TOPIC_TEMPLATE, "gw-01", "MyComp"),
-            "ecv1/gw-01/MyComp/main/cmd/set-config"
+            "ecv1/gw-01/MyComp/cmd/set-config"
         );
     }
 
@@ -281,7 +283,7 @@ mod tests {
         // requester self-identified in the BODY and NO envelope identity (§1.5).
         let requests = provider.requests.lock().unwrap();
         let (topic, request) = &requests[0];
-        assert_eq!(topic, "ecv1/thing-1/config/main/cmd/get-configuration");
+        assert_eq!(topic, "ecv1/thing-1/config/cmd/get-configuration");
         assert_eq!(
             request.body["component"], "MyComp",
             "sanitized short name in the body"
@@ -300,10 +302,7 @@ mod tests {
         let src = ConfigComponentSource::new(svc, "thing+1", "com.example.My/Comp");
         let _ = src.load().await.unwrap();
         let requests = provider.requests.lock().unwrap();
-        assert_eq!(
-            requests[0].0,
-            "ecv1/thing_1/config/main/cmd/get-configuration"
-        );
+        assert_eq!(requests[0].0, "ecv1/thing_1/config/cmd/get-configuration");
         assert_eq!(requests[0].1.body["component"], "My_Comp");
     }
 
@@ -323,7 +322,7 @@ mod tests {
         let src = ConfigComponentSource::new(svc, "thing-1", "com.example.MyComp");
 
         let mut rx = src.watch().unwrap();
-        let inbox = "ecv1/thing-1/MyComp/main/cmd/set-config";
+        let inbox = "ecv1/thing-1/MyComp/cmd/set-config";
         for _ in 0..100 {
             if provider.has_sub(inbox) {
                 break;

@@ -648,14 +648,19 @@ fn check_length(topic: &str) -> Result<()> {
 /// The §4.1 reserved-class publish-guard predicate (D-U24): the reserved [`UnsClass`]
 /// a client-chosen topic targets, or `None` when the topic is allowed.
 ///
-/// Reserved iff the topic is `ecv1`-rooted and the class token at topic level 4
-/// (0-based — the rootless grammar `ecv1/{device}/{component}/{instance}/{class}`) —
-/// or at level 5, **only when this component's effective `topic.includeRoot` is
-/// true** (D-U27: `includeRoot && hier.len() >= 2`; checking position 5
-/// unconditionally would false-positive on legitimate app channels like
-/// `ecv1/d/c/i/app/state`) — is one of `state | metric | cfg | log`. Non-`ecv1`
-/// topics pass untouched (`edgecommons/reply-…`, `cloudwatch/metric/put`, foreign MQTT
-/// bridging). `subscribe*` is never guarded (consumers must read reserved classes).
+/// Reserved iff the topic is `ecv1`-rooted and the class token — located by the
+/// class-token set exactly as [`Uns::validate`] does (D-U28) — is one of
+/// `state | metric | cfg | log`. The instance slot is optional: `{component}` sits
+/// at index 2 rootless / 3 rooted (so the token right after it is `base = 3` rootless
+/// / `4` rooted, keyed on the component's effective `topic.includeRoot`, D-U27). The
+/// class is that token iff it parses as a class token (component scope,
+/// e.g. `ecv1/{d}/{c}/state`), else the one after it (an instance token is present,
+/// e.g. `ecv1/{d}/{c}/{i}/state` — an instance can never be a class token). This
+/// locates the class for component- and instance-scope topics alike, so a raw publish
+/// to a component-scope reserved topic is caught while a legitimate app channel like
+/// `ecv1/d/c/i/app/state` passes. Non-`ecv1` topics pass untouched
+/// (`edgecommons/reply-…`, `cloudwatch/metric/put`, foreign MQTT bridging).
+/// `subscribe*` is never guarded (consumers must read reserved classes).
 pub fn reserved_class_of(topic: &str, include_root: bool) -> Option<UnsClass> {
     if !topic.starts_with(Uns::ROOT) {
         return None;
@@ -664,17 +669,18 @@ pub fn reserved_class_of(topic: &str, include_root: bool) -> Option<UnsClass> {
     if tokens[0] != Uns::ROOT {
         return None;
     }
-    if tokens.len() >= 5 {
-        if let Some(cls) = UnsClass::from_token(tokens[4]) {
-            if cls.is_reserved() {
-                return Some(cls);
-            }
-        }
-    }
-    if include_root && tokens.len() >= 6 {
-        if let Some(cls) = UnsClass::from_token(tokens[5]) {
-            if cls.is_reserved() {
-                return Some(cls);
+    let base = if include_root { 4 } else { 3 };
+    if tokens.len() > base {
+        let class_idx = if UnsClass::from_token(tokens[base]).is_some() {
+            base
+        } else {
+            base + 1
+        };
+        if class_idx < tokens.len() {
+            if let Some(cls) = UnsClass::from_token(tokens[class_idx]) {
+                if cls.is_reserved() {
+                    return Some(cls);
+                }
             }
         }
     }
@@ -724,6 +730,7 @@ mod vector_tests {
     /// `identityValues[<level>]`, values + component through the SANITIZER first
     /// (the config identity-resolution path — pins the D-U26 "sanitized ⇒ valid"
     /// equivalence); `instance` verbatim (a validated token, never sanitized).
+    /// D-U28: `instance` is optional — a component-scope case omits it entirely.
     fn case_identity(input: &Value) -> MessageIdentity {
         let levels = input["hierarchyLevels"]
             .as_array()
@@ -740,12 +747,12 @@ mod vector_tests {
                 }
             })
             .collect();
-        MessageIdentity::new(
-            hier,
-            sanitize(str_field(input, "component")),
-            Some(str_field(input, "instance").to_string()),
-        )
-        .expect("vector identity constructs")
+        let instance = input
+            .get("instance")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        MessageIdentity::new(hier, sanitize(str_field(input, "component")), instance)
+            .expect("vector identity constructs")
     }
 
     /// A multi-level identity to bind the validator/filter to, so the case's
@@ -1452,26 +1459,53 @@ mod tests {
             Some(UnsClass::Log)
         );
         assert_eq!(reserved_class_of("ecv1/d/c/i/data/temp", false), None);
-        // Position 4 is checked even under root mode.
+        // The instance token right after {component} is checked even under root mode.
         assert_eq!(
             reserved_class_of("ecv1/d/c/i/cfg", true),
             Some(UnsClass::Cfg)
         );
-        // Position 5 only when includeRoot is effective.
+        // Rooted, instance-scoped: the class sits one further right, checked only when
+        // includeRoot is effective.
         assert_eq!(
             reserved_class_of("ecv1/s/d/c/i/state", true),
             Some(UnsClass::State)
         );
         assert_eq!(reserved_class_of("ecv1/s/d/c/i/state", false), None);
-        // app/state at position 5 rootless is a legit channel.
+        // app/state (an app channel) is a legit channel, not a reserved class.
         assert_eq!(reserved_class_of("ecv1/d/c/i/app/state", false), None);
         assert_eq!(reserved_class_of("ecv1/s/d/c/i/app/state", true), None);
+        // D-U28: component-scope (instance omitted) reserved topics are caught too —
+        // the class is located by the class-token set, not a fixed position.
+        assert_eq!(
+            reserved_class_of("ecv1/gw-01/comp/state", false),
+            Some(UnsClass::State)
+        );
+        assert_eq!(
+            reserved_class_of("ecv1/gw-01/comp/cfg", false),
+            Some(UnsClass::Cfg)
+        );
+        assert_eq!(
+            reserved_class_of("ecv1/gw-01/comp/metric/cpu", false),
+            Some(UnsClass::Metric)
+        );
+        assert_eq!(
+            reserved_class_of("ecv1/gw-01/comp/log/tail", false),
+            Some(UnsClass::Log)
+        );
+        // Rooted component scope: {component} at index 3, class right after at index 4.
+        assert_eq!(
+            reserved_class_of("ecv1/dallas/gw-01/comp/state", true),
+            Some(UnsClass::State)
+        );
+        // Component-scope app/state stays a legit channel (not reserved).
+        assert_eq!(reserved_class_of("ecv1/gw-01/comp/app/state", false), None);
+        assert_eq!(reserved_class_of("ecv1/gw-01/comp/data/temp", false), None);
         // Non-ecv1 topics always pass.
         assert_eq!(reserved_class_of("edgecommons/reply-42", false), None);
         assert_eq!(reserved_class_of("cloudwatch/metric/put", false), None);
         // A root-PREFIXED but different first token passes.
         assert_eq!(reserved_class_of("ecv1x/d/c/i/state", false), None);
-        // Too-short topics pass.
+        // Too-short topics (nothing at or after {component}) pass.
         assert_eq!(reserved_class_of("ecv1/d/state", false), None);
     }
 }

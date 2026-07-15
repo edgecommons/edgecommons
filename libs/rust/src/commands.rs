@@ -36,7 +36,7 @@
 //!   → return the current **redacted effective config** as `{"config": <redacted config>}` — the
 //!   same redacted snapshot the `cfg` push class publishes, as a reply (**Flow B**: the console
 //!   pulls a component's own config; unrelated to the Flow-A
-//!   `ecv1/{device}/config/main/cmd/get-configuration` rendezvous where a component fetches its
+//!   `ecv1/{device}/config/cmd/get-configuration` rendezvous where a component fetches its
 //!   config FROM a config server); [`STATUS`] → [`PING`]'s per-instance superset
 //!   (`{"status":"RUNNING","uptimeSecs":n[,"instances":[…]]}`), pulling the very same
 //!   per-instance sample the `state` keepalive pushes
