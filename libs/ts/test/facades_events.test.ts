@@ -21,7 +21,9 @@ const FIXED_CLOCK = (): number => Date.parse(NOW);
 function makeFacade(): { facade: EventsFacade; messaging: RecordingMessagingService } {
   const cfg = Config.fromValue("opcua-adapter", "gw-01", { component: {} });
   const messaging = new RecordingMessagingService();
-  const uns = new Uns(cfg.componentIdentity, false);
+  // Bind the topic builder to the explicit instance "main" (a normal token under D-U28) so the
+  // pinned `.../main/evt/...` topics hold.
+  const uns = new Uns(cfg.componentIdentity.withInstance("main"), false);
   const facade = new EventsFacade(() => cfg, "main", uns, messaging, FIXED_CLOCK);
   return { facade, messaging };
 }

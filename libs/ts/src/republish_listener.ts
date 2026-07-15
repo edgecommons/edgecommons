@@ -4,8 +4,8 @@
  * (local/IPC) connection, the two per-device broadcast command topics for its own device —
  *
  * ```text
- *   ecv1/{device}/_bcast/main/cmd/republish-state
- *   ecv1/{device}/_bcast/main/cmd/republish-cfg
+ *   ecv1/{device}/_bcast/cmd/republish-state
+ *   ecv1/{device}/_bcast/cmd/republish-cfg
  * ```
  *
  * and, on receipt, re-announces out of band: `republish-state` re-emits the heartbeat's `state`
@@ -19,7 +19,8 @@
  * `uns-test-vectors/bcast.json`):**
  * - **Topics** — built through the {@link Uns} topic builder with the reserved `_bcast`
  *   pseudo-component identity: single-level hierarchy `[{level: "device", value: <own device>}]`,
- *   component {@link RepublishListener.BCAST_COMPONENT}, instance `main`, class `cmd`, channel =
+ *   component {@link RepublishListener.BCAST_COMPONENT}, **component scope** (no instance token,
+ *   D-U28), class `cmd`, channel =
  *   the verb. Always **rootless** (the identity is single-level, so `includeRoot` is a D-U25
  *   no-op — the broadcast topic shape is device-bus-wide, independent of any component's own
  *   hierarchy/root mode).
@@ -188,8 +189,7 @@ export class RepublishListener {
       const identity = this.configProvider().componentIdentity;
       const bcastIdentity = new MessageIdentity(
         [{ level: "device", value: identity.device }],
-        RepublishListener.BCAST_COMPONENT,
-        MessageIdentity.DEFAULT_INSTANCE,
+        RepublishListener.BCAST_COMPONENT, // D-U28: _bcast is component scope (no instance)
       );
       const uns = new Uns(bcastIdentity, false);
       for (const command of this.commands) {

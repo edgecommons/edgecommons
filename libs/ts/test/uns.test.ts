@@ -58,22 +58,29 @@ describe("UnsClass", () => {
 
 describe("Uns.topic / topicFor", () => {
   it("builds leaf and channeled topics from the bound identity", () => {
+    // D-U28: SINGLE/MULTI are component-scoped identities, so the instance slot is omitted.
     const uns = new Uns(SINGLE, false);
-    expect(uns.topic(UnsClass.State)).toBe("ecv1/gw-01/comp/main/state");
-    expect(uns.topic(UnsClass.Data, "temp")).toBe("ecv1/gw-01/comp/main/data/temp");
-    expect(uns.topic(UnsClass.Cmd, "sb/status")).toBe("ecv1/gw-01/comp/main/cmd/sb/status");
+    expect(uns.topic(UnsClass.State)).toBe("ecv1/gw-01/comp/state");
+    expect(uns.topic(UnsClass.Data, "temp")).toBe("ecv1/gw-01/comp/data/temp");
+    expect(uns.topic(UnsClass.Cmd, "sb/status")).toBe("ecv1/gw-01/comp/cmd/sb/status");
     expect(uns.identity()).toBe(SINGLE);
   });
 
+  it("an instance-bound identity emits the instance slot (D-U28)", () => {
+    const uns = new Uns(SINGLE.withInstance("kep1"), false);
+    expect(uns.topic(UnsClass.State)).toBe("ecv1/gw-01/comp/kep1/state");
+    expect(uns.topic(UnsClass.Data, "temp")).toBe("ecv1/gw-01/comp/kep1/data/temp");
+  });
+
   it("multi-level rootless uses the device (last hier value); rooted prepends hier[0]", () => {
-    expect(new Uns(MULTI, false).topic(UnsClass.State)).toBe("ecv1/gw-01/comp/main/state");
-    expect(new Uns(MULTI, true).topic(UnsClass.State)).toBe("ecv1/dallas/gw-01/comp/main/state");
+    expect(new Uns(MULTI, false).topic(UnsClass.State)).toBe("ecv1/gw-01/comp/state");
+    expect(new Uns(MULTI, true).topic(UnsClass.State)).toBe("ecv1/dallas/gw-01/comp/state");
   });
 
   it("includeRoot is a no-op on a single-level hierarchy (D-U25)", () => {
-    expect(new Uns(SINGLE, true).topic(UnsClass.State)).toBe("ecv1/gw-01/comp/main/state");
-    // ...and the no-op restores the 3-token channel budget.
-    expect(new Uns(SINGLE, true).topic(UnsClass.Data, "a/b/c")).toBe("ecv1/gw-01/comp/main/data/a/b/c");
+    expect(new Uns(SINGLE, true).topic(UnsClass.State)).toBe("ecv1/gw-01/comp/state");
+    // ...and the no-op leaves the multi-token channel budget intact.
+    expect(new Uns(SINGLE, true).topic(UnsClass.Data, "a/b/c")).toBe("ecv1/gw-01/comp/data/a/b/c");
   });
 
   it("topicFor mints a topic for a peer identity (a received message's identity)", () => {
@@ -91,8 +98,9 @@ describe("Uns.topic / topicFor", () => {
     expect(codeOf(() => uns.topic(UnsClass.Data, "a//b"))).toBe("EMPTY_TOKEN");
     expect(codeOf(() => uns.topic(UnsClass.Data, "te+mp"))).toBe("BAD_CHAR");
     expect(codeOf(() => uns.topic(UnsClass.Data, "a..b"))).toBe("TRAVERSAL");
-    expect(codeOf(() => uns.topic(UnsClass.Data, "a/b/c/d"))).toBe("DEPTH_EXCEEDED");
-    expect(codeOf(() => new Uns(MULTI, true).topic(UnsClass.Data, "a/b/c"))).toBe("DEPTH_EXCEEDED");
+    // D-U28: component scope frees one channel slot, so depth is exceeded one token later.
+    expect(codeOf(() => uns.topic(UnsClass.Data, "a/b/c/d/e"))).toBe("DEPTH_EXCEEDED");
+    expect(codeOf(() => new Uns(MULTI, true).topic(UnsClass.Data, "a/b/c/d"))).toBe("DEPTH_EXCEEDED");
     expect(codeOf(() => uns.topic(UnsClass.Data, "x".repeat(MAX_TOPIC_UTF8_BYTES)))).toBe("LENGTH_EXCEEDED");
   });
 
@@ -136,10 +144,14 @@ describe("Uns.validate", () => {
   const uns = new Uns(MULTI, false);
   const rooted = new Uns(MULTI, true);
 
-  it("accepts concrete grammar-conformant topics", () => {
+  it("accepts concrete grammar-conformant topics (instance and component scope, D-U28)", () => {
     expect(() => uns.validate("ecv1/gw-01/comp/main/state")).not.toThrow();
     expect(() => uns.validate("ecv1/gw-01/comp/main/cmd/sb/status")).not.toThrow();
     expect(() => rooted.validate("ecv1/dallas/gw-01/comp/main/state")).not.toThrow();
+    // D-U28: the instance slot is optional — component-scope topics validate too.
+    expect(() => uns.validate("ecv1/gw-01/comp/state")).not.toThrow();
+    expect(() => uns.validate("ecv1/gw-01/comp/cmd/sb/status")).not.toThrow();
+    expect(() => rooted.validate("ecv1/dallas/gw-01/comp/state")).not.toThrow();
   });
 
   it("rejects with precise codes", () => {
@@ -159,8 +171,13 @@ describe("Uns.validate", () => {
     expect(codeOf(() => uns.validate("ecv1/d/c/i/data/#"))).toBe("WILDCARD_IN_TOPIC");
   });
 
-  it("is includeRoot-sensitive (class position 4 rootless / 5 rooted)", () => {
-    expect(codeOf(() => rooted.validate("ecv1/gw-01/comp/main/state"))).toBe("BAD_CLASS");
+  it("locates the class by the class-token set, not a fixed position (D-U28)", () => {
+    // A rootless-shaped topic under rooted mode now validates: the class token is LOCATED
+    // (the leading levels are read as component scope), matching the regenerated vector
+    // `validate-rootless-topic-under-rooted-mode`.
+    expect(() => rooted.validate("ecv1/gw-01/comp/main/state")).not.toThrow();
+    // A rooted-shaped topic under rootless mode still fails — the token where the class must be
+    // (`main`) is not a class token.
     expect(codeOf(() => uns.validate("ecv1/dallas/gw-01/comp/main"))).toBe("BAD_CLASS");
   });
 });

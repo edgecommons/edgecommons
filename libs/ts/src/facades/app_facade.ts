@@ -61,7 +61,7 @@ export class AppFacade {
    */
   constructor(
     private readonly configProvider: () => Config,
-    private readonly instanceId: string,
+    private readonly instanceId: string | undefined,
     private readonly uns: Uns,
     private readonly messaging: IMessagingService,
   ) {}

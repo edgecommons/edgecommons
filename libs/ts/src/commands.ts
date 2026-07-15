@@ -1,10 +1,12 @@
 /**
  * The library-owned component **command inbox** — the minimal `commands()` facade
  * (DESIGN-uns §7.3 / §9.5, the edge-console slice S2): every component subscribes, on its
- * PRIMARY (local/IPC) connection, its own `main`-instance command-inbox wildcard
+ * PRIMARY (local/IPC) connection, both its component-scope and instance-scope command-inbox
+ * wildcards (D-U28)
  *
  * ```text
- *   ecv1/{device}/{component}/main/cmd/#
+ *   ecv1/{device}/{component}/cmd/#
+ *   ecv1/{device}/{component}/+/cmd/#
  * ```
  *
  * and dispatches incoming `cmd` envelopes to handlers by **verb** — the topic's channel
@@ -32,7 +34,7 @@
  *   the current **redacted effective config** as `{"config": <redacted config>}` — the same
  *   redacted snapshot the `cfg` push class publishes, as a reply (**Flow B**: the console pulls
  *   a component's own config; unrelated to the Flow-A
- *   `ecv1/{device}/config/main/cmd/get-configuration` rendezvous where a component fetches its
+ *   `ecv1/{device}/config/cmd/get-configuration` rendezvous where a component fetches its
  *   config FROM a config server); {@link CommandInbox.STATUS} → `ping`'s per-instance superset,
  *   `{"status": "RUNNING", "uptimeSecs": n[, "instances": […]]}`, where `instances` is the very
  *   sample the `state` keepalive pushes (omitted when the component has no instances).
@@ -51,9 +53,10 @@
  * - **No config surface** — always on; core plumbing, not a feature toggle.
  *
  * Lifecycle: constructed and {@link CommandInbox.start started} by the `EdgeCommonsBuilder` after
- * initialization completes; {@link CommandInbox.close} unsubscribes the inbox (before messaging
- * closes — the unsubscribe-before-exit rule). Only the `main`-instance inbox is subscribed in
- * this slice; per-instance inboxes ride the full `commands()` facade (Phase 5).
+ * initialization completes; {@link CommandInbox.close} unsubscribes both inbox filters (before
+ * messaging closes — the unsubscribe-before-exit rule). Under D-U28 the inbox subscribes both the
+ * component-scope (`.../cmd/#`) and instance-scope (`.../+/cmd/#`) wildcards, so a command
+ * addressed to the component or to any of its instances reaches the same dispatcher.
  *
  * **TS-idiom divergence from Java**: the Java inbox guards a `null` resolved component identity
  * (a mock/test bring-up state possible with Java's `ConfigManager`) and disables itself with a
@@ -483,10 +486,10 @@ export class CommandInbox {
   private readonly outcomeHandlers = new Map<string, OutcomeCommandHandler>();
   /** panel id -> descriptor; panel descriptors are carried verbatim for `describe`. */
   private readonly panelViews = new Map<string, Record<string, unknown>>();
-  /** The subscribed inbox filter (`…/cmd/#`); undefined until {@link start} builds it. */
+  /** The instance-scoped inbox filter (`…/+/cmd/#`); undefined until {@link start} builds it. */
   private inboxFilter?: string;
-  /** The filter minus the trailing `#` — the verb-extraction prefix (`…/cmd/`). */
-  private inboxPrefix?: string;
+  /** The component-scoped inbox filter (`…/cmd/#`, D-U28); undefined until {@link start} builds it. */
+  private componentInboxFilter?: string;
   private started = false;
   private closed = false;
   /** The single in-flight startup attempt, shared by concurrent callers. */
@@ -812,11 +815,12 @@ export class CommandInbox {
   }
 
   /**
-   * Builds the own-inbox wildcard (`ecv1/{device}/{component}/main/cmd/#`, through the topic
-   * builder under this component's identity + root mode) and subscribes it on the PRIMARY
-   * connection. Startup is single-flight and bounded: `ACTIVE` is published only after the
-   * selected transport has acknowledged the exact filter. A failed attempt remains `FAILED`
-   * with a sanitized error and any late acknowledgement is immediately unsubscribed.
+   * Builds the two own-inbox wildcards (D-U28: `ecv1/{device}/{component}/+/cmd/#` instance-scope
+   * and `ecv1/{device}/{component}/cmd/#` component-scope, through the topic builder under this
+   * component's identity + root mode) and subscribes both on the PRIMARY connection. Startup is
+   * single-flight and bounded: `ACTIVE` is published only after the selected transport has
+   * acknowledged both filters. A failed attempt remains `FAILED` with a sanitized error and any
+   * late acknowledgement is immediately unsubscribed.
    *
    * @param timeoutMs bounded acknowledgement wait (default 10 seconds)
    */
@@ -841,6 +845,8 @@ export class CommandInbox {
 
   private async startAttempt(timeoutMs: number): Promise<void> {
     this.transition(CommandInboxState.Starting);
+    let filter: string | undefined;
+    let componentFilter: string | undefined;
     try {
       const config = this.configProvider();
       const identity = config.componentIdentity;
@@ -848,46 +854,53 @@ export class CommandInbox {
       // Pin every scope token to this component's own identity: the site value is consulted
       // only under an effective root mode (D-U25 makes it a no-op otherwise).
       const site = identity.hier.length >= 2 ? identity.hier[0].value : undefined;
-      const filter = uns.filter(UnsClass.Cmd, {
+      const scope = {
         site,
         device: identity.device,
         component: identity.component,
         instance: identity.instance,
-      });
+      };
+      // D-U28: the component identity is component-scoped (no instance), so a plain filter renders
+      // the instance slot as '+' (instance-scope: .../+/cmd/#); the component-scope filter omits
+      // the slot (.../cmd/#). Subscribe BOTH. Assigned BEFORE subscribing so a delivery racing the
+      // subscribe call is retained until the acknowledgement transitions this inbox to ACTIVE.
+      filter = uns.filter(UnsClass.Cmd, scope);
+      componentFilter = uns.filter(UnsClass.Cmd, scope, false);
       this.inboxFilter = filter;
-      // ".../cmd/#" -> ".../cmd/" - the verb is the topic's remainder after this prefix.
-      // Assigned BEFORE subscribing so a delivery racing the subscribe call is retained until
-      // the acknowledgement transitions this inbox to ACTIVE.
-      this.inboxPrefix = filter.slice(0, filter.length - 1);
-      const subscription = this.messaging.subscribe(
-        filter,
-        (topic, message) => this.receiveDuringActivation(topic, message),
+      this.componentInboxFilter = componentFilter;
+      const sub1 = this.messaging.subscribe(filter, (topic, message) => this.receiveDuringActivation(topic, message));
+      const sub2 = this.messaging.subscribe(componentFilter, (topic, message) =>
+        this.receiveDuringActivation(topic, message),
       );
-      // A transport call cannot be cancelled through the public messaging interface. If it
+      // A transport call cannot be cancelled through the public messaging interface. If either
       // eventually succeeds after this start attempt timed out or close() won the race, remove
       // the late subscription without allowing it to resurrect the inbox state.
-      void subscription.then(
-        () => {
-          if (this.closed || this.inboxState !== CommandInboxState.Starting) {
-            void this.messaging.unsubscribe(filter).catch(() => undefined);
-          }
-        },
-        () => undefined,
-      );
-      await awaitSubscriptionAcknowledgement(subscription, timeoutMs);
+      const cleanLate = (f: string) => (): void => {
+        if (this.closed || this.inboxState !== CommandInboxState.Starting) {
+          void this.messaging.unsubscribe(f).catch(() => undefined);
+        }
+      };
+      void sub1.then(cleanLate(filter), () => undefined);
+      void sub2.then(cleanLate(componentFilter), () => undefined);
+      await awaitSubscriptionAcknowledgement(sub1, timeoutMs);
+      await awaitSubscriptionAcknowledgement(sub2, timeoutMs);
       if (this.closed || this.inboxState !== CommandInboxState.Starting) {
         await this.messaging.unsubscribe(filter).catch(() => undefined);
+        await this.messaging.unsubscribe(componentFilter).catch(() => undefined);
         this.activationPending = [];
         return;
       }
       this.started = true;
       this.transition(CommandInboxState.Active);
       this.drainActivationPending();
-      logger.info(`command inbox subscribed on '${filter}' (verbs: ${[...this.verbs()].join(", ")})`);
+      logger.info(
+        `command inbox subscribed on '${filter}' and '${componentFilter}' (verbs: ${[...this.verbs()].join(", ")})`,
+      );
     } catch (e) {
       // Be defensive about providers that complete subscription work before reporting a local
       // failure: a failed start must never leave a partially live command plane behind.
-      if (this.inboxFilter) await this.messaging.unsubscribe(this.inboxFilter).catch(() => undefined);
+      if (filter) await this.messaging.unsubscribe(filter).catch(() => undefined);
+      if (componentFilter) await this.messaging.unsubscribe(componentFilter).catch(() => undefined);
       this.started = false;
       this.activationPending = [];
       if (this.closed) {
@@ -934,12 +947,19 @@ export class CommandInbox {
       if (this.closed || this.inboxState !== CommandInboxState.Active) {
         return;
       }
-      if (!this.inboxPrefix || !topic || !topic.startsWith(this.inboxPrefix)) {
-        // ".../cmd/#" also matches the bare ".../cmd" parent level - nothing to dispatch.
-        logger.debug(`ignoring cmd delivery outside the inbox prefix: '${topic}'`);
+      // D-U28: the instance slot is optional, so a command arrives on either
+      // ".../{instance}/cmd/{verb}" or ".../cmd/{verb}". Locate the "/cmd/" class marker and take
+      // the verb after it — unambiguous for both scopes (an instance is never a class token).
+      if (!topic) {
         return;
       }
-      const verb = topic.slice(this.inboxPrefix.length);
+      const cmdMarker = topic.indexOf("/cmd/");
+      if (cmdMarker < 0) {
+        // ".../cmd/#" also matches the bare ".../cmd" parent level - nothing to dispatch.
+        logger.debug(`ignoring cmd delivery without a '/cmd/' segment: '${topic}'`);
+        return;
+      }
+      const verb = topic.slice(cmdMarker + 5); // 5 = "/cmd/".length
       if (verb === "") {
         return;
       }
@@ -1302,11 +1322,13 @@ export class CommandInbox {
       this.cancelDeferredOnShutdown(entry);
     }
 
-    if (this.inboxFilter) {
-      try {
-        await this.messaging.unsubscribe(this.inboxFilter);
-      } catch (e) {
-        logger.debug(`command-inbox unsubscribe of '${this.inboxFilter}' failed: ${errMsg(e)}`);
+    for (const f of [this.inboxFilter, this.componentInboxFilter]) {
+      if (f) {
+        try {
+          await this.messaging.unsubscribe(f);
+        } catch (e) {
+          logger.debug(`command-inbox unsubscribe of '${f}' failed: ${errMsg(e)}`);
+        }
       }
     }
     this.started = false;

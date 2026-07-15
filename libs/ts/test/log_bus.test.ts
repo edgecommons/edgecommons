@@ -41,11 +41,11 @@ describe("LogBusService", () => {
     expect(messaging.published.length).toBe(1);
     const call = messaging.published[0];
     expect(call.kind).toBe("publishReserved");
-    expect(call.topic).toBe("ecv1/thing-1/C/main/log/warn");
+    expect(call.topic).toBe("ecv1/thing-1/C/log/warn");
     expect(call.message?.header.name).toBe("log");
     expect(call.message?.header.version).toBe("1.0");
     expect(call.message?.header.timestamp).toBe("2026-07-09T12:34:56.789Z");
-    expect(call.message?.identity?.instance).toBe("main");
+    expect(call.message?.identity?.instance).toBeUndefined(); // D-U28: log is component scope
     expect(call.message?.body).toEqual({
       schema: "edgecommons.log.v1",
       timestamp: "2026-07-09T12:34:56.789Z",
@@ -72,7 +72,7 @@ describe("LogBusService", () => {
     await logs.flush();
 
     expect(messaging.published[0].kind).toBe("publishReservedNorthbound");
-    expect(messaging.published[0].topic).toBe("ecv1/thing-1/C/main/log/error");
+    expect(messaging.published[0].topic).toBe("ecv1/thing-1/C/log/error");
     logs.close();
   });
 
@@ -231,7 +231,7 @@ describe("LogBusService", () => {
     await logs.flush();
 
     expect(messaging.published.length).toBe(1);
-    expect(messaging.published[0].topic).toBe("ecv1/thing-1/C/main/log/info");
+    expect(messaging.published[0].topic).toBe("ecv1/thing-1/C/log/info");
     expect(messaging.published[0].message?.body).toMatchObject({
       schema: "edgecommons.log.v1",
       level: "INFO",
@@ -245,6 +245,8 @@ describe("LogBusService", () => {
   it("keeps raw public publishes to the reserved log class rejected", async () => {
     const provider = new FakeMessagingProvider();
     const svc = new DefaultMessagingService(provider);
+    // The §4.1 reserved-class guard locates the class at the instance-scope position (unchanged by
+    // D-U28, mirroring Java); an instance-scoped reserved topic exercises that rejection.
     const topic = "ecv1/thing-1/C/main/log/info";
     const msg = MessageBuilder.create("log", "1.0").withPayload({}).build();
 

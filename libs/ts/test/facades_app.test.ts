@@ -17,7 +17,9 @@ import { RecordingMessagingService } from "./_fakes";
 function makeFacade(): { facade: AppFacade; messaging: RecordingMessagingService } {
   const cfg = Config.fromValue("opcua-adapter", "gw-01", { component: {} });
   const messaging = new RecordingMessagingService();
-  const uns = new Uns(cfg.componentIdentity, false);
+  // These tests bind the facade to the explicit instance "main" (a normal token under D-U28); the
+  // topic builder carries the same token so the pinned `.../main/app/...` topics hold.
+  const uns = new Uns(cfg.componentIdentity.withInstance("main"), false);
   const facade = new AppFacade(() => cfg, "main", uns, messaging);
   return { facade, messaging };
 }

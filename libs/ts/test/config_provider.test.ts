@@ -87,7 +87,7 @@ describe("config_provider harness", () => {
     const topic = subscribeMock.mock.calls[0][0] as string;
     // Default thing=lab-5950x; the rendezvous is the UNS Flow-A topic (D-U19) — the consumer
     // no longer appears in the topic (it self-identifies in the request body).
-    expect(topic).toBe("ecv1/lab-5950x/config/main/cmd/get-configuration");
+    expect(topic).toBe("ecv1/lab-5950x/config/cmd/get-configuration");
     expect((stdoutSpy.mock.calls[0][0] as string)).toContain(`config provider ready on ${topic}`);
     expect(intervalSpy).toHaveBeenCalled();
   });
@@ -98,7 +98,7 @@ describe("config_provider harness", () => {
     await loadHarness();
 
     const topic = subscribeMock.mock.calls[0][0] as string;
-    expect(topic).toBe("ecv1/edge_thing_7/config/main/cmd/get-configuration");
+    expect(topic).toBe("ecv1/edge_thing_7/config/cmd/get-configuration");
   });
 
   it("replies to a GetConfiguration request whose body matches the served component", async () => {

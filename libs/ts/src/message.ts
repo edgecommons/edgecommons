@@ -90,32 +90,48 @@ export interface HierLevel {
  *   on deserialize a present `path` is taken as-is, a missing one is recomputed.
  * - `component` — the publishing component's UNS token (the sanitized short name, i.e. the
  *   existing `{ComponentName}` semantics).
- * - `instance` — the per-message instance token, never absent (default
- *   {@link MessageIdentity.DEFAULT_INSTANCE}).
+ * - `instance` — the per-message instance token, or `undefined` for component/global scope
+ *   (D-U28); present ⇒ instance-scoped, absent ⇒ component-scoped, and never a reserved class token.
  *
- * Serialization ({@link toObject}) emits the canonical member order
- * `hier, path, component, instance`. Deserialization ({@link fromObject}) is deliberately
- * lenient, mirroring the lenient envelope handling across all four libraries: a malformed
- * `identity` yields `undefined` plus a WARN log, and the message still delivers.
+ * Serialization ({@link toObject}) emits the canonical member order `hier, path, component,
+ * instance` — the `instance` key is **omitted** when absent (D-U28). Deserialization
+ * ({@link fromObject}) is deliberately lenient, mirroring the lenient envelope handling across
+ * all four libraries: a malformed `identity` yields `undefined` plus a WARN log, and the
+ * message still delivers.
  */
 export class MessageIdentity {
-  /** The default per-message instance token, used when no instance is specified. */
-  static readonly DEFAULT_INSTANCE = "main";
+  /**
+   * Class tokens an instance id may not equal (D-U28): keeps the component-scope and
+   * instance-scope UNS subscription templates provably disjoint, and lets the reserved-class
+   * guard locate the class unambiguously.
+   */
+  static readonly RESERVED_CLASS_TOKENS: ReadonlySet<string> = new Set([
+    "state",
+    "metric",
+    "cfg",
+    "log",
+    "data",
+    "evt",
+    "cmd",
+    "app",
+  ]);
 
   private readonly hierValue: readonly HierLevel[];
   private readonly pathValue: string;
   private readonly componentValue: string;
-  private readonly instanceValue: string;
+  private readonly instanceValue: string | undefined;
 
   /**
    * Creates a validated identity, precomputing `path` as the `'/'`-join of the `hier` values.
    *
    * @param hier      the ordered hierarchy entries (non-empty; last entry = device)
    * @param component the component UNS token (non-empty)
-   * @param instance  the instance token, or absent/empty for {@link MessageIdentity.DEFAULT_INSTANCE}
+   * @param instance  the instance token, or absent/empty for component/global scope (D-U28); a
+   *                  present token may not equal a reserved UNS class token
    * @param path      wire-authoritative path override (library-internal — used by
    *                  {@link fromObject} where a present wire path is taken as-is)
-   * @throws Error if `hier` is empty, an entry has an empty level/value, or `component` is empty
+   * @throws Error if `hier` is empty, an entry has an empty level/value, `component` is empty, or
+   *               `instance` is a reserved class token
    */
   constructor(hier: readonly HierLevel[], component: string, instance?: string, path?: string) {
     if (!Array.isArray(hier) || hier.length === 0) {
@@ -132,10 +148,14 @@ export class MessageIdentity {
     if (typeof component !== "string" || component === "") {
       throw new Error("MessageIdentity component must be non-empty");
     }
+    // D-U28: absent/empty ⇒ component scope (undefined); a present instance may not be a class token.
+    if (instance !== undefined && instance !== "" && MessageIdentity.RESERVED_CLASS_TOKENS.has(instance)) {
+      throw new Error(`MessageIdentity instance '${instance}' must not be a reserved UNS class token`);
+    }
     this.hierValue = hier.map((e) => ({ level: e.level, value: e.value }));
     this.pathValue = path ?? this.hierValue.map((e) => e.value).join("/");
     this.componentValue = component;
-    this.instanceValue = instance === undefined || instance === "" ? MessageIdentity.DEFAULT_INSTANCE : instance;
+    this.instanceValue = instance === undefined || instance === "" ? undefined : instance;
   }
 
   /** The immutable, ordered hierarchy entries (the last entry is the device). */
@@ -153,8 +173,8 @@ export class MessageIdentity {
     return this.componentValue;
   }
 
-  /** The per-message instance token (never absent). */
-  get instance(): string {
+  /** The per-message instance token, or `undefined` for component/global scope (D-U28). */
+  get instance(): string | undefined {
     return this.instanceValue;
   }
 
@@ -167,33 +187,35 @@ export class MessageIdentity {
   }
 
   /**
-   * Returns a copy of this identity with a different per-message instance token.
+   * Returns a copy of this identity with a different per-message instance token, or component
+   * scope when `instance` is `undefined`/empty (D-U28).
    *
-   * @throws Error if `instance` is empty
+   * @param instance the instance token, or `undefined`/empty for component/global scope
+   * @throws Error if `instance` is a reserved class token
    */
-  withInstance(instance: string): MessageIdentity {
-    if (typeof instance !== "string" || instance === "") {
-      throw new Error("MessageIdentity instance must be non-empty");
-    }
+  withInstance(instance?: string): MessageIdentity {
     return new MessageIdentity(this.hierValue, this.componentValue, instance, this.pathValue);
   }
 
   /**
    * Serializes this identity to its wire form, in the canonical member order
-   * `hier, path, component, instance`.
+   * `hier, path, component, instance` — the `instance` key is omitted when component-scoped (D-U28).
    */
   toObject(): Record<string, unknown> {
-    return {
+    const out: Record<string, unknown> = {
       hier: this.hierValue.map((e) => ({ level: e.level, value: e.value })),
       path: this.pathValue,
       component: this.componentValue,
-      instance: this.instanceValue,
     };
+    if (this.instanceValue !== undefined) {
+      out.instance = this.instanceValue; // D-U28: omitted when component-scoped
+    }
+    return out;
   }
 
   /**
-   * Lenient wire-form parser: a missing `instance` defaults to
-   * {@link MessageIdentity.DEFAULT_INSTANCE}; a missing `path` is recomputed from the hier
+   * Lenient wire-form parser: a missing `instance` means component scope (absent, D-U28); a
+   * missing `path` is recomputed from the hier
    * values (a present one is taken as-is — the publisher is authoritative); a malformed
    * identity (non-object, missing/empty/non-array `hier`, malformed hier entries, or a
    * missing `component`) yields `undefined` plus a WARN log so the enclosing message still
@@ -231,8 +253,13 @@ export class MessageIdentity {
       return undefined;
     }
     const path = asNonEmptyString(obj.path); // undefined -> recomputed
-    const instance = asNonEmptyString(obj.instance); // undefined -> DEFAULT_INSTANCE
-    return new MessageIdentity(hier, component, instance, path);
+    const instance = asNonEmptyString(obj.instance); // undefined -> component scope (D-U28)
+    try {
+      return new MessageIdentity(hier, component, instance, path);
+    } catch (e) {
+      logger.warn(`Malformed message identity (${e instanceof Error ? e.message : String(e)}); dropping identity`);
+      return undefined;
+    }
   }
 }
 
@@ -585,9 +612,9 @@ function emptyHeader(): MessageHeader {
  * `build()` is the single UNS identity stamping site (UNS-CANONICAL-DESIGN §1.4): an
  * explicit {@link withIdentity} override wins; otherwise, when a config snapshot is
  * present ({@link withConfig}), the component's resolved identity is stamped with the
- * per-message instance token ({@link withInstance}, default
- * {@link MessageIdentity.DEFAULT_INSTANCE}); with neither, `identity` stays unset
- * (bootstrap/raw messages legally omit it).
+ * per-message instance token ({@link withInstance}) — absent ⇒ component scope (D-U28); with
+ * neither a config snapshot nor an override, `identity` stays unset (bootstrap/raw messages
+ * legally omit it).
  */
 export class MessageBuilder {
   private header: MessageHeader;
@@ -769,18 +796,15 @@ export class MessageBuilder {
   }
 
   /**
-   * Set the per-message instance token stamped into the identity element (default
-   * {@link MessageIdentity.DEFAULT_INSTANCE}). Only takes effect when an identity is stamped
-   * (a config snapshot is present; the token is not applied to an explicit
-   * {@link withIdentity} override).
+   * Set the per-message instance token stamped into the identity element. A `null`/`undefined`/
+   * empty token means component scope (D-U28: the identity carries no instance key). Only takes
+   * effect when an identity is stamped (a config snapshot is present; the token is not applied to
+   * an explicit {@link withIdentity} override).
    *
-   * @throws Error if `instance` is empty
+   * @param instance the instance token, or `undefined`/empty for component/global scope
    */
-  withInstance(instance: string): this {
-    if (typeof instance !== "string" || instance === "") {
-      throw new Error("instance must be non-empty");
-    }
-    this.instanceToken = instance;
+  withInstance(instance?: string): this {
+    this.instanceToken = instance === undefined || instance === "" ? undefined : instance;
     return this;
   }
 
@@ -808,7 +832,7 @@ export class MessageBuilder {
     if (this.identityOverride !== undefined) {
       identity = this.identityOverride;
     } else if (this.configIdentity !== undefined) {
-      identity = this.configIdentity.withInstance(this.instanceToken ?? MessageIdentity.DEFAULT_INSTANCE);
+      identity = this.configIdentity.withInstance(this.instanceToken); // D-U28: undefined ⇒ component scope
     }
     const tags = this.tagsPresent ? { ...this.extra } : undefined;
     return Message.envelope({ ...this.header }, tags, this.bodyValue, identity, {
@@ -1216,7 +1240,7 @@ function encodeIdentity(identity: MessageIdentity): Buffer {
   for (const entry of identity.hier) w.message(1, () => encodeHierEntry(entry));
   w.tag(2, WT_LEN).string(identity.path);
   w.tag(3, WT_LEN).string(identity.component);
-  w.tag(4, WT_LEN).string(identity.instance);
+  if (identity.instance !== undefined) w.tag(4, WT_LEN).string(identity.instance); // D-U28: omit for component scope
   return w.finish();
 }
 

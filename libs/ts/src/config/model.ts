@@ -364,9 +364,9 @@ export class Config {
   readonly raw: Record<string, unknown>;
   /**
    * The component's resolved UNS identity (hierarchy + identity values + device + component
-   * token, instance {@link MessageIdentity.DEFAULT_INSTANCE}), resolved **once at
-   * construction** from the component's OWN config (no shared config, UNS-CANONICAL-DESIGN
-   * §1.5) — {@link fromValue} fails fast on any inconsistency.
+   * token; **component scope** — no instance token, D-U28), resolved **once at construction**
+   * from the component's OWN config (no shared config, UNS-CANONICAL-DESIGN §1.5) —
+   * {@link fromValue} fails fast on any inconsistency.
    */
   readonly componentIdentity: MessageIdentity;
   /**
@@ -617,7 +617,7 @@ function resolveComponentIdentity(
     ? componentName.slice(componentName.lastIndexOf(".") + 1)
     : componentName;
   const componentToken = sanitizedIdentityValue("component", configuredComponentToken ?? shortName);
-  return new MessageIdentity(hier, componentToken, MessageIdentity.DEFAULT_INSTANCE);
+  return new MessageIdentity(hier, componentToken); // D-U28: component scope (no instance)
 }
 
 /**

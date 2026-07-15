@@ -517,7 +517,7 @@ describe("EdgeCommons lifecycle (mocked)", () => {
     });
     try {
       const { UnsClass } = await import("../src/uns");
-      expect(gg.uns().topic(UnsClass.State)).toBe("ecv1/dallas/lc-thing/Lc/main/state");
+      expect(gg.uns().topic(UnsClass.State)).toBe("ecv1/dallas/lc-thing/Lc/state");
       expect(gg.uns()).toBe(gg.uns()); // cached
       expect(gg.uns().identity().component).toBe("Lc");
       // The messaging guard was late-bound to the EFFECTIVE root (D-U27): a rooted reserved

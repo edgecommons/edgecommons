@@ -63,8 +63,8 @@ import type { ParameterService } from "./parameters";
  * the envelope (stamped by its instance-bound builder).
  *
  * Obtain handles from {@link EdgeCommons.instance} (validated + cached per id). Component-level
- * messages (everything not built through a handle) default to instance
- * {@link MessageIdentity.DEFAULT_INSTANCE}.
+ * messages (everything not built through a handle) are **component-scoped** — no instance token
+ * (D-U28).
  */
 export class EdgeCommonsInstance {
   private readonly unsValue: Uns;
@@ -75,9 +75,11 @@ export class EdgeCommonsInstance {
   private appFacade?: AppFacade;
 
   /**
-   * @internal Created by {@link EdgeCommons.instance}, which validates + caches per id.
+   * @internal Created by {@link EdgeCommons.instance}, which validates + caches per id. A
+   * `undefined` `idValue` yields the **component-scope** handle (D-U28: no instance token) backing
+   * `gg.data()`/`events()`/`app()`.
    *
-   * @param idValue         the instance token
+   * @param idValue         the instance token, or `undefined` for component scope
    * @param configProvider  a snapshot accessor (envelope identity + `publish.channel` lookup)
    * @param componentIdentity the resolved component identity (pre-instance-binding)
    * @param includeRoot     the resolved `topic.includeRoot` mode
@@ -89,7 +91,7 @@ export class EdgeCommonsInstance {
    * @param clockMillis     the clock for the facades' time defaults (injected for deterministic tests)
    */
   constructor(
-    private readonly idValue: string,
+    private readonly idValue: string | undefined,
     private readonly configProvider: () => Config,
     componentIdentity: MessageIdentity,
     includeRoot: boolean,
@@ -97,11 +99,12 @@ export class EdgeCommonsInstance {
     private readonly streamSinkProvider: () => StreamSink | undefined = () => undefined,
     private readonly clockMillis: () => number = () => Date.now(),
   ) {
+    // D-U28: withInstance(undefined) ⇒ component scope; a real token ⇒ instance scope.
     this.unsValue = new Uns(componentIdentity.withInstance(idValue), includeRoot);
   }
 
-  /** This handle's instance token. */
-  id(): string {
+  /** This handle's instance token, or `undefined` for the component-scope handle (D-U28). */
+  id(): string | undefined {
     return this.idValue;
   }
 
@@ -209,7 +212,8 @@ export class EdgeCommons {
   private republishListener?: RepublishListener;
   /**
    * The library-owned command inbox — the minimal `commands()` facade (DESIGN-uns §9.5, slice
-   * S2): subscribes `ecv1/{device}/{component}/main/cmd/#` on the primary connection,
+   * S2): subscribes both `ecv1/{device}/{component}/cmd/#` (component scope) and
+   * `ecv1/{device}/{component}/+/cmd/#` (instance scope) on the primary connection (D-U28),
    * dispatches `cmd` envelopes by verb (built-ins `ping` / `describe` / `reload-config` /
    * `get-configuration` / `status` + custom registrations via {@link commands}), and replies to
    * `header.reply_to`. Always wired when messaging is available (no config surface); undefined
@@ -217,14 +221,15 @@ export class EdgeCommons {
    */
   private commandInbox?: CommandInbox;
   /**
-   * The component-identity-bound UNS topic builder (instance
-   * {@link MessageIdentity.DEFAULT_INSTANCE}), lazily bound on first {@link uns} from the
-   * initial config's resolved identity + `topic.includeRoot` (both fixed at startup, like the
-   * Java facade).
+   * The component-identity-bound UNS topic builder (component scope — no instance token, D-U28),
+   * lazily bound on first {@link uns} from the initial config's resolved identity +
+   * `topic.includeRoot` (both fixed at startup, like the Java facade).
    */
   private unsValue?: Uns;
   /** Cached per-id instance handles (UNS-CANONICAL-DESIGN §3, D-U3). */
   private readonly instanceHandles = new Map<string, EdgeCommonsInstance>();
+  /** D-U28: the component-scope handle (no instance token) backing {@link data}/{@link events}/{@link app}. */
+  private componentHandle?: EdgeCommonsInstance;
   /**
    * The clock the per-instance publish facades (`data()`/`events()`) use for their time defaults
    * (`serverTs`/`timestamp` → now). System clock in production; the facades take an injected
@@ -397,9 +402,9 @@ export class EdgeCommons {
   }
 
   /**
-   * The UNS topic builder + validator bound to this component's resolved identity (instance
-   * `"main"`) and its `topic.includeRoot` setting (UNS-CANONICAL-DESIGN §2). For
-   * instance-scoped topics use {@link instance}`.uns()`.
+   * The UNS topic builder + validator bound to this component's resolved identity (component
+   * scope — no instance token, D-U28) and its `topic.includeRoot` setting
+   * (UNS-CANONICAL-DESIGN §2). For instance-scoped topics use {@link instance}`.uns()`.
    */
   uns(): Uns {
     if (this.unsValue === undefined) {
@@ -455,30 +460,49 @@ export class EdgeCommons {
   }
 
   /**
-   * The `data()` publish facade for the component's `main` instance — the single-instance-
-   * component convenience, equivalent to `instance("main").data()` (DESIGN-class-facades §3, D6).
+   * The component-scope handle (D-U28: no instance token) backing {@link data}, {@link events},
+   * and {@link app}. Lazily built and cached, mirroring {@link uns} (and the Java
+   * `EdgeCommons.componentScope()`).
+   */
+  private componentScope(): EdgeCommonsInstance {
+    if (this.componentHandle === undefined) {
+      this.componentHandle = new EdgeCommonsInstance(
+        undefined,
+        () => this.current,
+        this.current.componentIdentity,
+        this.current.topicIncludeRoot,
+        () => this.messagingService,
+        () => this.streamSink(),
+        this.clockMillis,
+      );
+    }
+    return this.componentHandle;
+  }
+
+  /**
+   * The `data()` publish facade at **component scope** (D-U28: no instance token) — for an
+   * instance-scoped facade use `instance(id).data()` (DESIGN-class-facades §3, D6).
    * Builds/validates the `SouthboundSignalUpdate` body.
    */
   data(): DataFacade {
-    return this.instance(MessageIdentity.DEFAULT_INSTANCE).data();
+    return this.componentScope().data();
   }
 
   /**
-   * The `events()` publish facade for the component's `main` instance — equivalent to
-   * `instance("main").events()` (DESIGN-class-facades §3, D6). Operator events & alarms on the
-   * `evt` class.
+   * The `events()` publish facade at **component scope** (D-U28: no instance token) — for an
+   * instance-scoped facade use `instance(id).events()`. Operator events & alarms on the `evt` class.
    */
   events(): EventsFacade {
-    return this.instance(MessageIdentity.DEFAULT_INSTANCE).events();
+    return this.componentScope().events();
   }
 
   /**
-   * The `app()` publish facade for the component's `main` instance — equivalent to
-   * `instance("main").app()` (DESIGN-class-facades §3, D6). Free-form inter-component pub/sub on
-   * the `app` class.
+   * The `app()` publish facade at **component scope** (D-U28: no instance token) — for an
+   * instance-scoped facade use `instance(id).app()`. Free-form inter-component pub/sub on the
+   * `app` class.
    */
   app(): AppFacade {
-    return this.instance(MessageIdentity.DEFAULT_INSTANCE).app();
+    return this.componentScope().app();
   }
 
   /** Register a listener invoked after the configuration is hot-reloaded. */
@@ -535,6 +559,7 @@ export class EdgeCommons {
   _applyReload(snapshot: Config): void {
     this.current = snapshot;
     this.unsValue = undefined;
+    this.componentHandle = undefined;
     this.instanceHandles.clear();
   }
 }
@@ -838,8 +863,8 @@ export class EdgeCommonsBuilder {
       await republishListener.start();
       runtime._setRepublishListener(republishListener);
 
-      // §9.5 (slice S2): subscribe the component's own command inbox
-      // (ecv1/{device}/{component}/main/cmd/#) on the primary connection and dispatch cmd
+      // §9.5 (slice S2): subscribe the component's own command inbox (D-U28: both
+      // ecv1/{device}/{component}/cmd/# and ecv1/{device}/{component}/+/cmd/#) on the primary connection and dispatch cmd
       // envelopes by verb - built-ins ping / describe / reload-config / get-configuration /
       // status answer the console out of the box; apps add custom verbs via
       // gg.commands().register(). Always on (no config surface); best-effort start (a failure

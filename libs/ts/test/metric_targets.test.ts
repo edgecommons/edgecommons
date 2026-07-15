@@ -93,7 +93,7 @@ describe("LogTarget", () => {
 
 describe("MessagingMetricTarget (UNS metric topics, §4.3)", () => {
   const config = Config.fromValue("com.example.C", "thing-1", { tags: { site: "f1" } });
-  const METRIC_TOPIC = "ecv1/thing-1/C/main/metric/requests";
+  const METRIC_TOPIC = "ecv1/thing-1/C/metric/requests";
 
   it("wraps EMF in a Metric/1.0 envelope and publishes the UNS topic through the reserved seam", async () => {
     const svc = new RecordingMessagingService();
@@ -131,7 +131,7 @@ describe("MessagingMetricTarget (UNS metric topics, §4.3)", () => {
       .addMeasure("count", "Count", 60)
       .build();
     await t.emit(weird, { count: 1 });
-    expect(svc.published[0].topic).toBe("ecv1/thing-1/C/main/metric/req_count_all");
+    expect(svc.published[0].topic).toBe("ecv1/thing-1/C/metric/req_count_all");
   });
 
   it("largeFleetWorkaround emits 2 variants (coreName ALL on the 2nd)", async () => {

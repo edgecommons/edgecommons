@@ -134,7 +134,9 @@ async function runDataCase(input: Record<string, unknown>): Promise<Record<strin
 async function runEvtCase(input: Record<string, unknown>): Promise<Record<string, unknown>> {
   const cfg = facadeConfig();
   const messaging = new RecordingMessagingService();
-  const uns = new Uns(cfg.componentIdentity, false);
+  // These vectors bind the facade to the explicit instance "main" (a normal instance token under
+  // D-U28); the topic builder must carry the same token so the pinned `.../main/evt/...` topics hold.
+  const uns = new Uns(cfg.componentIdentity.withInstance("main"), false);
   let facade = new EventsFacade(() => cfg, "main", uns, messaging, FIXED_CLOCK);
   if (has(input, "override")) {
     facade = facade.via(Channel.fromConfig(input.override as string)!);
@@ -184,7 +186,8 @@ async function runEvtCase(input: Record<string, unknown>): Promise<Record<string
 async function runAppCase(input: Record<string, unknown>): Promise<Record<string, unknown>> {
   const cfg = facadeConfig();
   const messaging = new RecordingMessagingService();
-  const uns = new Uns(cfg.componentIdentity, false);
+  // Explicit instance "main" (a normal token under D-U28) — bind the topic builder to it too.
+  const uns = new Uns(cfg.componentIdentity.withInstance("main"), false);
   const facade = new AppFacade(() => cfg, "main", uns, messaging);
 
   const name = input.name as string;

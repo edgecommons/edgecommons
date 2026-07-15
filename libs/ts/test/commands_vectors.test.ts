@@ -72,6 +72,7 @@ interface CommandsDocument {
   description: string;
   inbox: {
     filter: string;
+    componentFilter: string;
     input: { device: string; component: string; instance: string; includeRoot: boolean; class: string };
   };
   verbs: VerbVector[];
@@ -89,6 +90,19 @@ interface CommandsDocument {
 
 function load(): CommandsDocument {
   return JSON.parse(readFileSync(COMMANDS_PATH, "utf8")) as CommandsDocument;
+}
+
+/**
+ * The config the live inbox binds to. commands.json is generated from an identity carrying the
+ * explicit instance token `main` (Java `SINGLE_IDENTITY`), so its inbox filters are the instance
+ * filter `.../main/cmd/#` plus the component filter `.../cmd/#`, and its replies/describe body carry
+ * `instance: "main"`. Bind the same identity so the live output matches byte-for-byte. Under D-U28
+ * `Config.fromValue` resolves component scope, so the bound instance is applied to the identity here.
+ */
+function boundConfig(doc: CommandsDocument): () => Config {
+  const base = Config.fromValue(doc.inbox.input.component, doc.inbox.input.device, {});
+  const bound = { ...base, componentIdentity: base.componentIdentity.withInstance(doc.inbox.input.instance) } as Config;
+  return () => bound;
 }
 
 /** Rebuilds a golden envelope through `MessageBuilder` with every pinned setter (D-U22). */
@@ -132,12 +146,16 @@ describe.skipIf(!present)("uns-test-vectors/commands.json — CommandInbox confo
     );
     const cls = unsClassFromToken(doc.inbox.input.class);
     expect(cls, "inbox input class token").toBeDefined();
-    const filter = new Uns(identity, doc.inbox.input.includeRoot).filter(cls!, {
+    const uns = new Uns(identity, doc.inbox.input.includeRoot);
+    const scope = {
       device: doc.inbox.input.device,
       component: doc.inbox.input.component,
       instance: doc.inbox.input.instance,
-    });
-    expect(filter).toBe(doc.inbox.filter);
+    };
+    // Pinning the explicit instance reproduces the instance-scoped filter byte-for-byte.
+    expect(uns.filter(cls!, scope)).toBe(doc.inbox.filter);
+    // D-U28: omitting the instance slot reproduces the component-scope filter byte-for-byte.
+    expect(uns.filter(cls!, scope, false)).toBe(doc.inbox.componentFilter);
   });
 
   it("every verb/error topic is reproduced byte-for-byte (the verb is the cmd channel)", () => {
@@ -178,7 +196,7 @@ describe.skipIf(!present)("uns-test-vectors/commands.json — CommandInbox confo
       unknown
     >;
 
-    const config = (): Config => Config.fromValue(doc.inbox.input.component, doc.inbox.input.device, {});
+    const config = boundConfig(doc);
     const messaging = new RecordingMessagingService();
     const inbox = new CommandInbox(
       config,
@@ -188,10 +206,15 @@ describe.skipIf(!present)("uns-test-vectors/commands.json — CommandInbox confo
       () => goldenRedactedConfig, // matches the get-configuration golden byte-for-byte
     );
     await inbox.start();
-    expect(messaging.subscriptions.has(doc.inbox.filter), "the live inbox must subscribe the vector's filter").toBe(
-      true,
-    );
-    const handler = messaging.subscriptions.get(doc.inbox.filter)!;
+    // D-U28: the live component-scoped inbox subscribes the component-scope filter and the
+    // instance-scope wildcard. The verb goldens carry an explicit `.../main/cmd/...` topic, so the
+    // dispatcher (verb located via the `/cmd/` marker) handles either scope; drive it through the
+    // subscribed component-scope handler.
+    expect(
+      messaging.subscriptions.has(doc.inbox.componentFilter),
+      "the live inbox must subscribe the component-scope filter (D-U28)",
+    ).toBe(true);
+    const handler = messaging.subscriptions.get(doc.inbox.componentFilter)!;
 
     for (const v of doc.verbs) {
       const request = rebuiltRequestMessage(v);
@@ -217,11 +240,11 @@ describe.skipIf(!present)("uns-test-vectors/commands.json — CommandInbox confo
     const doc = load();
     const errorVector = doc.errors[0];
 
-    const config = (): Config => Config.fromValue(doc.inbox.input.component, doc.inbox.input.device, {});
+    const config = boundConfig(doc);
     const messaging = new RecordingMessagingService();
     const inbox = new CommandInbox(config, messaging, () => 42, () => true, () => undefined);
     await inbox.start();
-    const handler = messaging.subscriptions.get(doc.inbox.filter)!;
+    const handler = messaging.subscriptions.get(doc.inbox.componentFilter)!;
 
     const request = rebuiltRequestMessage(errorVector);
     await handler(errorVector.topic, request);
