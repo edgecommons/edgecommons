@@ -299,7 +299,10 @@ def test_interop_deferred_command(commands, requester, responder):
             pytest.skip(f"{lang} toolchain/artifact unavailable")
 
     component = f"interop-deferred-{responder}-{uuid.uuid4().hex}"
-    topic = f"ecv1/interop-device/{component}/main/cmd/deferred"
+    # Component-scope command address (D-U28): the deferred request publishes to
+    # ecv1/{device}/{component}/cmd/{verb} with NO instance token; the responder's inbox
+    # covers it via its component-scope subscription (.../{me}/cmd/#).
+    topic = f"ecv1/interop-device/{component}/cmd/deferred"
     token = uuid.uuid4().hex
     resp_proc, lines, ready = _launch(commands[responder]("deferred-responder", component))
     try:
@@ -500,7 +503,9 @@ def test_interop_typed_telemetry_byte_sample(commands, publisher, subscriber):
 
 
 def _log_topic(publisher):
-    return f"ecv1/interop-device/interop-log-{publisher}/main/log/warn"
+    # Component-scope log class (D-U28): the library-owned `log` publisher emits on
+    # ecv1/{device}/{component}/log/{level} with NO instance token (`main` retired).
+    return f"ecv1/interop-device/interop-log-{publisher}/log/warn"
 
 
 def _identity_device(identity):
@@ -553,7 +558,8 @@ def test_interop_log_bus(commands, publisher, subscriber):
         identity = payload["identity"]
         assert _identity_device(identity) == "interop-device"
         assert identity["component"] == f"interop-log-{publisher}"
-        assert identity["instance"] == "main"
+        # Component scope (D-U28): the wire identity OMITS `instance` entirely.
+        assert "instance" not in identity, f"component-scope log identity must omit instance: {identity}"
         body = payload["body"]
         assert body["schema"] == "edgecommons.log.v1"
         assert body["level"] == "WARN"
@@ -574,8 +580,16 @@ def test_interop_log_bus(commands, publisher, subscriber):
 
 # The fixed conformance identity every language's `uns-pub` is handed (wire form). The
 # topic below is what the real `uns()` builder must mint from it, byte-for-byte, in all
-# four languages (includeRoot=false; instance defaults through the identity itself).
-UNS_IDENTITY = {
+# four languages (includeRoot=false).
+#
+# D-U28 — the instance token is OPTIONAL, so the matrix proves BOTH scopes round-trip
+# identically across all four languages:
+#   * component scope — the identity OMITS `instance`; the builder mints
+#     `ecv1/{device}/{component}/{class}[/channel]` (no `main`), and the wire identity
+#     carries no `instance` key.
+#   * instance scope — an explicit instance token ("kep1") yields
+#     `ecv1/{device}/{component}/{instance}/{class}[/channel]` and `identity.instance == "kep1"`.
+UNS_IDENTITY_BASE = {
     "hier": [
         {"level": "site", "value": "dallas"},
         {"level": "zone", "value": "zone-3"},
@@ -583,30 +597,37 @@ UNS_IDENTITY = {
     ],
     "path": "dallas/zone-3/gw-01",
     "component": "interop",
-    "instance": "main",
 }
 UNS_CLASS = "data"
 UNS_CHANNEL = "temp"
-EXPECTED_UNS_TOPIC = "ecv1/gw-01/interop/main/data/temp"
+# scope -> (identity fed to uns-pub, byte-exact topic the real builder must mint)
+UNS_SCOPES = {
+    "component": (dict(UNS_IDENTITY_BASE), "ecv1/gw-01/interop/data/temp"),
+    "instance": ({**UNS_IDENTITY_BASE, "instance": "kep1"}, "ecv1/gw-01/interop/kep1/data/temp"),
+}
 
 
+@pytest.mark.parametrize("scope", list(UNS_SCOPES))
 @pytest.mark.parametrize("subscriber", LANGS)
 @pytest.mark.parametrize("publisher", LANGS)
-def test_uns_topic_parity(commands, publisher, subscriber):
+def test_uns_topic_parity(commands, publisher, subscriber, scope):
     """Every language's `uns-pub` must mint the SAME topic byte-for-byte from the fixed
     identity, and a subscriber in any language must parse a structurally-identical
     top-level `identity` element out of the received envelope (D-U22: topics compare
-    byte-for-byte, envelopes structurally)."""
+    byte-for-byte, envelopes structurally). Both the component and instance scope
+    (D-U28) are exercised across every ordered pair."""
     for lang in (publisher, subscriber):
         if lang not in commands:
             pytest.skip(f"{lang} toolchain/artifact unavailable")
 
-    sub_proc, lines, ready = _launch(commands[subscriber]("uns-sub", EXPECTED_UNS_TOPIC))
+    identity, expected_topic = UNS_SCOPES[scope]
+
+    sub_proc, lines, ready = _launch(commands[subscriber]("uns-sub", expected_topic))
     try:
         assert ready.wait(20), f"{subscriber} uns-sub never signalled READY"
 
         pub = subprocess.run(
-            commands[publisher]("uns-pub", json.dumps(UNS_IDENTITY), UNS_CLASS, UNS_CHANNEL),
+            commands[publisher]("uns-pub", json.dumps(identity), UNS_CLASS, UNS_CHANNEL),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30,
             cwd=str(RUN_DIR))
         assert pub.returncode == 0, f"{publisher} uns-pub failed: {pub.stdout}\n{pub.stderr}"
@@ -616,14 +637,18 @@ def test_uns_topic_parity(commands, publisher, subscriber):
 
         # Byte-identical topic across all four languages (each publisher is asserted
         # against the same pinned constant, so all pairs are transitively identical).
-        assert pub_out["topic"] == EXPECTED_UNS_TOPIC, (
-            f"{publisher} minted '{pub_out['topic']}', expected '{EXPECTED_UNS_TOPIC}'")
+        assert pub_out["topic"] == expected_topic, (
+            f"{publisher} ({scope} scope) minted '{pub_out['topic']}', expected '{expected_topic}'")
 
         # The sent envelope carries the top-level identity (structural equality; JSON
-        # member order is not normative) and no tags.thing (hard cut).
+        # member order is not normative) and no tags.thing (hard cut). For component
+        # scope the identity has no `instance` key at all (D-U28 wire rule).
         envelope = pub_out["envelope"]
-        assert envelope.get("identity") == UNS_IDENTITY, (
-            f"{publisher} envelope identity mismatch: {envelope.get('identity')}")
+        assert envelope.get("identity") == identity, (
+            f"{publisher} ({scope} scope) envelope identity mismatch: {envelope.get('identity')}")
+        if scope == "component":
+            assert "instance" not in (envelope.get("identity") or {}), (
+                f"{publisher} component-scope envelope must omit instance: {envelope.get('identity')}")
         assert "thing" not in (envelope.get("tags") or {}), "tags.thing must be gone"
 
         # The subscriber exits after receiving (or its own 10s timeout).
@@ -635,8 +660,11 @@ def test_uns_topic_parity(commands, publisher, subscriber):
         received = _last_json(lines)
         assert received is not None, f"no JSON from {subscriber} uns-sub; lines={lines}"
         assert received["ok"] is True, f"{publisher}->{subscriber} uns failed: {received}"
-        assert received["identity"] == UNS_IDENTITY, (
-            f"{subscriber} parsed identity {received['identity']}, expected {UNS_IDENTITY}")
+        assert received["identity"] == identity, (
+            f"{subscriber} ({scope} scope) parsed identity {received['identity']}, expected {identity}")
+        if scope == "component":
+            assert "instance" not in (received["identity"] or {}), (
+                f"{subscriber} component-scope parsed identity must omit instance: {received['identity']}")
         assert received["body"]["from"] == publisher, "envelope body must name the publisher"
     finally:
         if sub_proc.poll() is None:
@@ -647,26 +675,38 @@ def test_uns_topic_parity(commands, publisher, subscriber):
                 sub_proc.kill()
 
 
+# The reserved-class guard must reject a raw publish to a reserved class in BOTH scopes
+# (D-U28): the classic instance-scoped topic (where `main` is now just an ordinary
+# instance token) AND the component-scoped topic with no instance at all — the guard
+# LOCATES the class by the class-token set, so it catches component scope too.
+UNS_GUARD_TOPICS = {
+    "instance": "ecv1/dev1/comp1/main/state",
+    "component": "ecv1/dev1/comp1/state",
+}
+
+
+@pytest.mark.parametrize("guard_scope", list(UNS_GUARD_TOPICS))
 @pytest.mark.parametrize("lang", LANGS)
-def test_uns_guard(commands, lang):
-    """Each language's `uns-guard` attempts a raw publish to the reserved-class topic
-    ecv1/dev1/comp1/main/state through its guarded public surface and must exit
-    NON-ZERO printing the reserved-topic error name (Java ReservedTopicException /
-    Python+TS ReservedTopicError / Rust EdgeCommonsError::ReservedTopic — all carry the
-    common 'ReservedTopic' stem)."""
+def test_uns_guard(commands, lang, guard_scope):
+    """Each language's `uns-guard` attempts a raw publish to a reserved-class topic
+    through its guarded public surface and must exit NON-ZERO printing the reserved-topic
+    error name (Java ReservedTopicException / Python+TS ReservedTopicError / Rust
+    EdgeCommonsError::ReservedTopic — all carry the common 'ReservedTopic' stem). Both the
+    instance-scoped and the component-scoped reserved topic (D-U28) must be rejected."""
     if lang not in commands:
         pytest.skip(f"{lang} toolchain/artifact unavailable")
 
-    result = subprocess.run(commands[lang]("uns-guard"),
+    guard_topic = UNS_GUARD_TOPICS[guard_scope]
+    result = subprocess.run(commands[lang]("uns-guard", guard_topic),
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             timeout=30, cwd=str(RUN_DIR))
     assert result.returncode != 0, (
-        f"{lang} uns-guard must exit non-zero (the guard must reject the reserved"
-        f" topic): {result.stdout}\n{result.stderr}")
+        f"{lang} uns-guard ({guard_scope} scope, {guard_topic}) must exit non-zero (the"
+        f" guard must reject the reserved topic): {result.stdout}\n{result.stderr}")
     payload = _last_json(result.stdout.splitlines())
     assert payload is not None, f"no JSON from {lang} uns-guard: {result.stdout}\n{result.stderr}"
     assert "ReservedTopic" in str(payload.get("error")), (
-        f"{lang} uns-guard must name the reserved-topic error, got: {payload}")
+        f"{lang} uns-guard ({guard_scope} scope) must name the reserved-topic error, got: {payload}")
 
 
 # ---------------------------------------------------------------------------------------------

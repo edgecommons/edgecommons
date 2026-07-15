@@ -112,14 +112,14 @@ public class InteropNode {
      */
     static final String INTEROP_DEVICE = "interop-device";
 
-    /** The component's own command inbox topic for one verb. */
+    /** The component's own command inbox topic for one verb (component scope, D-U28: no instance). */
     static String commandTopic(String component, String verb) {
-        return "ecv1/" + INTEROP_DEVICE + "/" + component + "/main/cmd/" + verb;
+        return "ecv1/" + INTEROP_DEVICE + "/" + component + "/cmd/" + verb;
     }
 
-    /** The component's reserved {@code state} keepalive topic. */
+    /** The component's reserved {@code state} keepalive topic (component scope, D-U28: no instance). */
     static String stateTopic(String component) {
-        return "ecv1/" + INTEROP_DEVICE + "/" + component + "/main/state";
+        return "ecv1/" + INTEROP_DEVICE + "/" + component + "/state";
     }
 
     /**
@@ -1110,7 +1110,8 @@ public class InteropNode {
                             && identity != null
                             && "interop-device".equals(wireIdentityDevice(identity))
                             && identity.get("component").getAsString().startsWith("interop-log-")
-                            && "main".equals(identity.get("instance").getAsString())
+                            // Component scope (D-U28): the wire identity omits `instance`.
+                            && !identity.has("instance")
                             && header != null
                             && "log".equals(header.get("name").getAsString())
                             && "1.0".equals(header.get("version").getAsString());
@@ -1488,7 +1489,9 @@ public class InteropNode {
             // constructor (null provider, guard intact) proves the real guard without a
             // broker connection.
             MessagingClient client = new MessagingClient() { };
-            String topic = "ecv1/dev1/comp1/main/state";
+            // Reserved-class target selectable (D-U28): instance-scoped default or the
+            // component-scoped ecv1/dev1/comp1/state — the guard must reject both.
+            String topic = args.length > 1 ? args[1] : "ecv1/dev1/comp1/main/state";
             JsonObject payload = new JsonObject();
             payload.addProperty("from", LANG);
             try {

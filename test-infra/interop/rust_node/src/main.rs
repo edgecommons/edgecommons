@@ -74,9 +74,11 @@ fn interop_instance_connectivity() -> Vec<InstanceConnectivity> {
     ]
 }
 
-/// The identity a requester/subscriber derives from the `<component>` argument alone: the fixed
-/// interop device, that component token, and the default `main` instance — the same identity the
-/// responder/publisher resolves from its own runtime config.
+/// The component-scope identity a requester/subscriber derives from the `<component>` argument
+/// alone (D-U28: no instance token) — the fixed interop device and that component token, the same
+/// identity the responder/publisher resolves from its own runtime config. The library-owned `state`
+/// keepalive and `status` command inbox are component-scoped, so this mints
+/// `ecv1/interop-device/{component}/{class}` with no instance segment.
 fn interop_identity(component_token: &str) -> MessageIdentity {
     MessageIdentity::new(
         vec![HierEntry {
@@ -588,7 +590,10 @@ async fn run_gg_log_matrix(args: &[String]) -> ! {
                 let expected_message = format!("gg-log-interop-{run_id}-{publisher}");
                 let ok = expected.contains(publisher)
                     && identity.is_some_and(|id| {
-                        id.device() == "interop-device" && id.instance() == "main"
+                        // gg-log-matrix belongs to the separate deployed-Greengrass phase;
+                        // its `main`-scoped assertion is updated there. Compile-fix only for
+                        // the D-U28 `instance() -> Option<&str>` signature.
+                        id.device() == "interop-device" && id.instance() == Some("main")
                     })
                     && m.body["schema"].as_str() == Some("edgecommons.log.v1")
                     && m.body["level"].as_str() == Some("WARN")
@@ -2455,7 +2460,8 @@ async fn main() {
                             && identity.is_some_and(|id| {
                                 id.device() == "interop-device"
                                     && id.component().starts_with("interop-log-")
-                                    && id.instance() == "main"
+                                    // Component scope (D-U28): the wire identity omits `instance`.
+                                    && id.instance().is_none()
                             })
                             && m.header.name == "log"
                             && m.header.version == "1.0";
@@ -2623,7 +2629,9 @@ async fn main() {
         // guarded public service; must fail with EdgeCommonsError::ReservedTopic (§4.1).
         "uns-guard" => {
             let svc = provider("guard").await;
-            let topic = "ecv1/dev1/comp1/main/state";
+            // Reserved-class target selectable (D-U28): instance-scoped default or the
+            // component-scoped ecv1/dev1/comp1/state — the guard must reject both.
+            let topic = args.get(2).map(String::as_str).unwrap_or("ecv1/dev1/comp1/main/state");
             match svc.publish_raw(topic, &json!({ "from": LANG })).await {
                 Err(EdgeCommonsError::ReservedTopic(detail)) => {
                     println!(

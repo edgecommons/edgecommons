@@ -543,7 +543,8 @@ async function runLogSub(topic: string, token: string): Promise<number> {
       && wireIdentityDevice(identity) === "interop-device"
       && typeof identity?.component === "string"
       && identity.component.startsWith("interop-log-")
-      && identity?.instance === "main"
+      // Component scope (D-U28): the wire identity omits `instance`.
+      && identity?.instance === undefined
       && header?.name === "log"
       && header?.version === "1.0";
     emit({ ok, topic: received.topic, header, identity, body });
@@ -1162,12 +1163,14 @@ async function runUnsSub(topic: string): Promise<number> {
  * uns-guard — attempt a raw publish to a reserved-class topic through the guarded
  * public service; must fail with ReservedTopicError (§4.1).
  */
-async function runUnsGuard(): Promise<number> {
+async function runUnsGuard(topic?: string): Promise<number> {
   const svc = await service("guard");
   try {
-    const topic = "ecv1/dev1/comp1/main/state";
+    // Reserved-class target selectable (D-U28): instance-scoped default or the
+    // component-scoped ecv1/dev1/comp1/state — the guard must reject both.
+    const guardTopic = topic ?? "ecv1/dev1/comp1/main/state";
     try {
-      await svc.publishRaw(topic, { from: LANG });
+      await svc.publishRaw(guardTopic, { from: LANG });
     } catch (e) {
       if (e instanceof ReservedTopicError) {
         emit({ error: "ReservedTopicError", class: e.classToken, topic: e.topic });
@@ -1205,14 +1208,14 @@ function canonicalInstances(): InstanceConnectivity[] {
   ];
 }
 
-/** The component's own command-inbox topic for one verb (`ecv1/{device}/{component}/main/cmd/{verb}`). */
+/** The component's own command-inbox topic for one verb (component scope, D-U28: no instance). */
 function commandTopic(component: string, verb: string): string {
-  return `ecv1/${DEVICE}/${component}/main/cmd/${verb}`;
+  return `ecv1/${DEVICE}/${component}/cmd/${verb}`;
 }
 
-/** The component's reserved `state` keepalive topic (`ecv1/{device}/{component}/main/state`). */
+/** The component's reserved `state` keepalive topic (component scope, D-U28: no instance). */
 function stateTopic(component: string): string {
-  return `ecv1/${DEVICE}/${component}/main/state`;
+  return `ecv1/${DEVICE}/${component}/state`;
 }
 
 /** Keeps the event loop alive for a server role until the harness terminates it. */
@@ -1384,7 +1387,7 @@ async function main(): Promise<void> {
     case "uns-sub":
       process.exit(await runUnsSub(a));
     case "uns-guard":
-      process.exit(await runUnsGuard());
+      process.exit(await runUnsGuard(a));
     case "status-responder":
       await runStatusResponder(a);
       return;

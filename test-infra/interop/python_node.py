@@ -618,7 +618,8 @@ def run_log_sub(topic, token):
                 and identity is not None
                 and _wire_identity_device(identity) == "interop-device"
                 and identity.get("component", "").startswith("interop-log-")
-                and identity.get("instance") == "main"
+                # Component scope (D-U28): the wire identity omits `instance` entirely.
+                and "instance" not in identity
                 and header is not None
                 and header.get("name") == "log"
                 and header.get("version") == "1.0"
@@ -1394,12 +1395,17 @@ def run_uns_sub(topic):
         prov.disconnect()
 
 
-def run_uns_guard():
-    """Attempt a reserved-class publish through the guarded public surface (must fail)."""
+def run_uns_guard(topic=None):
+    """Attempt a reserved-class publish through the guarded public surface (must fail).
+
+    ``topic`` selects the reserved target (D-U28): the instance-scoped
+    ``ecv1/dev1/comp1/main/state`` (default) or the component-scoped
+    ``ecv1/dev1/comp1/state`` — the guard must reject both.
+    """
     from edgecommons.messaging.errors import ReservedTopicError
     from edgecommons.messaging.messaging_client import MessagingClient
 
-    topic = "ecv1/dev1/comp1/main/state"
+    topic = topic or "ecv1/dev1/comp1/main/state"
     try:
         # The guard (§4.1) fires before the provider is dereferenced, so no broker
         # connection (and no MessagingClient.init) is needed to prove it.
@@ -1438,12 +1444,14 @@ def _canonical_instances():
 
 
 def _interop_identity(component_token):
-    """The wire identity of an interop component on the fixed ``interop-device`` thing."""
+    """The component-scope wire identity of an interop component on the fixed
+    ``interop-device`` thing. No instance token (D-U28): the library-owned `state`
+    keepalive and the `status` command inbox are component-scoped, so a peer derives
+    ``ecv1/interop-device/{component}/{class}`` from this identity."""
     return MessageIdentity.from_dict({
         "hier": [{"level": "device", "value": "interop-device"}],
         "path": "interop-device",
         "component": component_token,
-        "instance": "main",
     })
 
 
@@ -1636,7 +1644,7 @@ if __name__ == "__main__":
     elif role == "uns-sub":
         sys.exit(run_uns_sub(sys.argv[2]))
     elif role == "uns-guard":
-        sys.exit(run_uns_guard())
+        sys.exit(run_uns_guard(sys.argv[2] if len(sys.argv) > 2 else None))
     elif role == "status-responder":
         run_status_responder(sys.argv[2])
     elif role == "status-request":
