@@ -435,11 +435,11 @@ impl DefaultLogService {
             truncate_body(&mut body, settings.max_record_bytes);
             self.counters.truncated.fetch_add(1, Ordering::Relaxed);
         }
+        // D-U28: the `log` class is component scope - the topic carries no instance slot.
         let topic = format!(
-            "ecv1/{}/{}/{}/log/{}",
+            "ecv1/{}/{}/log/{}",
             config.identity().device(),
             config.identity().component(),
-            crate::messaging::MessageIdentity::DEFAULT_INSTANCE,
             record.level.lowercase()
         );
         let message = MessageBuilder::new(LOG_MESSAGE_NAME, LOG_MESSAGE_VERSION)
@@ -786,7 +786,7 @@ mod tests {
 
         let published = messaging.reserved_local();
         assert_eq!(published.len(), 1);
-        assert_eq!(published[0].0, "ecv1/gw-01/MyComp/main/log/info");
+        assert_eq!(published[0].0, "ecv1/gw-01/MyComp/log/info");
         let body = &published[0].1.body;
         assert_eq!(published[0].1.header.name, "log");
         assert_eq!(published[0].1.header.version, "1.0");
@@ -816,7 +816,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             messaging.reserved_iot()[0].0,
-            "ecv1/gw-01/MyComp/main/log/error"
+            "ecv1/gw-01/MyComp/log/error"
         );
         assert!(messaging.reserved_local().is_empty());
     }

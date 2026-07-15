@@ -2,8 +2,8 @@
 //!
 //! **One-liner purpose**: The library-owned `cfg` publisher (UNS-CANONICAL-DESIGN
 //! §4.3): announces the component's effective (redacted) configuration on
-//! `ecv1/{device}/{component}/main/cfg` — once at startup (after initialization
-//! completes) and again on every configuration change.
+//! `ecv1/{device}/{component}/cfg` (component scope, D-U28) — once at startup (after
+//! initialization completes) and again on every configuration change.
 //!
 //! The body is `{"config": <effective config, redacted>}`; the `cfg` class is
 //! reserved, so the publish goes through the privileged [`ReservedMessaging`] seam.
@@ -211,7 +211,8 @@ mod tests {
         let published = recorder.reserved_local();
         assert_eq!(published.len(), 1, "one cfg announcement through the seam");
         let (topic, msg) = &published[0];
-        assert_eq!(topic, "ecv1/thing-1/MyComp/main/cfg");
+        // D-U28: the cfg class is component scope (no instance slot).
+        assert_eq!(topic, "ecv1/thing-1/MyComp/cfg");
         assert_eq!(msg.header.name, "cfg");
         assert_eq!(msg.header.version, "1.0");
         assert_eq!(

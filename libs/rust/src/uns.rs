@@ -9,9 +9,9 @@
 //! - [`UnsClass`] — the closed class set (`state`/`metric`/`cfg`/`log` are the
 //!   library-owned RESERVED classes; `data`/`evt`/`cmd`/`app` are application classes).
 //! - [`UnsScope`] — the wildcard scope for [`Uns::filter`] (a `None` field renders `+`).
-//! - [`Uns`] — the identity-bound topic builder/validator. Obtain the component-bound
-//!   instance via `EdgeCommons::uns()` (instance `main`) or an instance-bound one via
-//!   `EdgeCommons::instance(id)?.uns()`.
+//! - [`Uns`] — the identity-bound topic builder/validator. Obtain the component-scope
+//!   builder via `EdgeCommons::uns()` (D-U28: no instance slot) or an instance-bound one
+//!   via `EdgeCommons::instance(id)?.uns()`.
 //! - [`reserved_class_of`] — the §4.1 reserved-class publish-guard predicate used by
 //!   the messaging service.
 //!
@@ -47,10 +47,11 @@
 //!     None,
 //! ).unwrap();
 //! let uns = Uns::new(identity, false);
-//! assert_eq!(uns.topic(UnsClass::State).unwrap(), "ecv1/gw-01/opcua-adapter/main/state");
+//! // D-U28: a component-scope identity (built with None) omits the instance slot.
+//! assert_eq!(uns.topic(UnsClass::State).unwrap(), "ecv1/gw-01/opcua-adapter/state");
 //! assert_eq!(
 //!     uns.topic_with_channel(UnsClass::Data, "temp").unwrap(),
-//!     "ecv1/gw-01/opcua-adapter/main/data/temp"
+//!     "ecv1/gw-01/opcua-adapter/data/temp"
 //! );
 //! assert_eq!(uns.filter(UnsClass::Data, &UnsScope::all()).unwrap(), "ecv1/+/+/+/data/#");
 //! ```
@@ -357,7 +358,11 @@ impl Uns {
         }
         segments.push(checked_token(target.device(), "device")?);
         segments.push(checked_token(target.component(), "component")?);
-        segments.push(checked_token(target.instance(), "instance")?);
+        // D-U28: the instance slot is emitted only when the identity is instance-scoped;
+        // a component-scope identity (no instance) omits it entirely.
+        if let Some(instance) = target.instance() {
+            segments.push(checked_token(instance, "instance")?);
+        }
         segments.push(cls.token());
 
         let channel_supplied = channel.is_some_and(|c| !c.is_empty());
@@ -416,6 +421,25 @@ impl Uns {
     /// [`EdgeCommonsError::UnsValidation`] when a pinned (`Some`) scope field violates the
     /// token rule.
     pub fn filter(&self, cls: UnsClass, scope: &UnsScope) -> Result<String> {
+        self.filter_scoped(cls, scope, true)
+    }
+
+    /// As [`Self::filter`], but D-U28 scope-aware: when `include_instance` is `false` the
+    /// instance slot is **omitted** entirely, yielding a component-scope filter (e.g.
+    /// `ecv1/{device}/{component}/cmd/#`); when `true` the instance slot is present (a pinned
+    /// token, or `+` when [`UnsScope::instance`] is `None`). The instance-scope filter with a
+    /// `None` scope instance and the component-scope filter are disjoint, so a subscriber that
+    /// registers both never double-receives one delivery.
+    ///
+    /// # Errors
+    /// [`EdgeCommonsError::UnsValidation`] when a pinned (`Some`) scope field violates the
+    /// token rule.
+    pub fn filter_scoped(
+        &self,
+        cls: UnsClass,
+        scope: &UnsScope,
+        include_instance: bool,
+    ) -> Result<String> {
         let mut segments: Vec<&str> = Vec::with_capacity(Self::MAX_TOPIC_SLASHES + 1);
         segments.push(Self::ROOT);
         if self.rooted(&self.identity) {
@@ -423,7 +447,9 @@ impl Uns {
         }
         segments.push(wildcard_or(scope.device.as_deref(), "device")?);
         segments.push(wildcard_or(scope.component.as_deref(), "component")?);
-        segments.push(wildcard_or(scope.instance.as_deref(), "instance")?);
+        if include_instance {
+            segments.push(wildcard_or(scope.instance.as_deref(), "instance")?);
+        }
         segments.push(cls.token());
         let filter = segments.join("/");
         Ok(if cls.is_leaf() { filter } else { filter + "/#" })
@@ -433,10 +459,12 @@ impl Uns {
     /// instance's root mode: wildcards are rejected (`WILDCARD_IN_TOPIC`); every
     /// token passes the token rule; the first token must be the [`Self::ROOT`]
     /// literal; depth ≤ [`Self::MAX_TOPIC_SLASHES`] separators; length ≤
-    /// [`Self::MAX_TOPIC_UTF8_BYTES`] UTF-8 bytes; the class position (5th token
-    /// rootless, 6th rooted — the root mode is effective only with a multi-level
-    /// bound hierarchy, D-U25) must hold a [`UnsClass`] token; leaf classes must end
-    /// at the class token and channeled classes must carry at least one channel token.
+    /// [`Self::MAX_TOPIC_UTF8_BYTES`] UTF-8 bytes; the class is located as the token
+    /// right after `{component}` (index 3 rootless / 4 rooted — the root mode is
+    /// effective only with a multi-level bound hierarchy, D-U25) when that token is a
+    /// [`UnsClass`], else the token after it (D-U28: the instance slot is optional and
+    /// an instance is never a class token); leaf classes must end at the class token
+    /// and channeled classes must carry at least one channel token.
     ///
     /// # Errors
     /// [`EdgeCommonsError::UnsValidation`] with the precise [`UnsValidationCode`] on the
@@ -479,15 +507,32 @@ impl Uns {
             ));
         }
         check_length(topic)?;
-        let class_position = if self.rooted(&self.identity) { 5 } else { 4 };
+        // D-U28: the instance slot is optional. The token right after {component} is the class
+        // iff it is a class token, else it is the instance and the class follows (an instance is
+        // never a class token). {component} sits at index 2 rootless / 3 rooted.
+        let after_component = if self.rooted(&self.identity) { 4 } else { 3 };
+        if tokens.len() <= after_component {
+            return Err(violation(
+                UnsValidationCode::BadClass,
+                format!(
+                    "topic '{topic}' has too few levels ({}): no class token at or after position \
+                     {after_component} (effective root mode {})",
+                    tokens.len(),
+                    self.rooted(&self.identity)
+                ),
+            ));
+        }
+        let class_position = if UnsClass::from_token(tokens[after_component]).is_some() {
+            after_component
+        } else {
+            after_component + 1
+        };
         if tokens.len() <= class_position {
             return Err(violation(
                 UnsValidationCode::BadClass,
                 format!(
-                    "topic '{topic}' has too few levels ({}): the class token is expected at \
-                     position {class_position} (effective root mode {})",
-                    tokens.len(),
-                    self.rooted(&self.identity)
+                    "topic '{topic}' carries an instance token but no class token follows \
+                     (expected at position {class_position})"
                 ),
             ));
         }
@@ -929,10 +974,10 @@ mod vector_tests {
                 BCAST_COMPONENT,
                 "case '{name}': component"
             );
-            assert_eq!(
-                str_field(input, "instance"),
-                MessageIdentity::DEFAULT_INSTANCE,
-                "case '{name}': instance"
+            // D-U28: the _bcast identity is component scope - the vector carries no `instance`.
+            assert!(
+                input.get("instance").is_none(),
+                "case '{name}': _bcast is component scope (no instance)"
             );
             assert!(
                 !input["includeRoot"].as_bool().expect("includeRoot"),
@@ -945,7 +990,7 @@ mod vector_tests {
                     value: device.to_string(),
                 }],
                 BCAST_COMPONENT,
-                Some(MessageIdentity::DEFAULT_INSTANCE.to_string()),
+                None, // D-U28: component scope
             )
             .expect("bcast identity constructs");
             let uns = Uns::new(identity, false);
@@ -1028,6 +1073,61 @@ mod tests {
             "opcua-adapter",
             "main",
         )
+    }
+
+    /// A component-scope identity (D-U28: no instance).
+    fn component_scope() -> MessageIdentity {
+        MessageIdentity::new(
+            vec![HierEntry {
+                level: "device".to_string(),
+                value: "gw-01".to_string(),
+            }],
+            "opcua-adapter",
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn d_u28_component_scope_topics_omit_the_instance_slot() {
+        let uns = Uns::new(component_scope(), false);
+        // Leaf + channeled topics both drop the instance segment.
+        assert_eq!(
+            uns.topic(UnsClass::State).unwrap(),
+            "ecv1/gw-01/opcua-adapter/state"
+        );
+        assert_eq!(
+            uns.topic_with_channel(UnsClass::Cmd, "ping").unwrap(),
+            "ecv1/gw-01/opcua-adapter/cmd/ping"
+        );
+        // validate() accepts the component-scope topics (class located right after component).
+        assert!(uns.validate("ecv1/gw-01/opcua-adapter/state").is_ok());
+        assert!(uns.validate("ecv1/gw-01/opcua-adapter/cmd/ping").is_ok());
+        // The component-scope filter omits the instance slot; the default keeps it (`+`).
+        assert_eq!(
+            uns.filter_scoped(UnsClass::Cmd, &UnsScope::all(), false)
+                .unwrap(),
+            "ecv1/+/+/cmd/#"
+        );
+        assert_eq!(
+            uns.filter(UnsClass::Cmd, &UnsScope::all()).unwrap(),
+            "ecv1/+/+/+/cmd/#"
+        );
+    }
+
+    #[test]
+    fn d_u28_validate_reads_instance_as_optional() {
+        let uns = Uns::new(single(), false);
+        // Instance present: class located after the instance token.
+        assert!(uns.validate("ecv1/gw-01/opcua-adapter/main/state").is_ok());
+        // Instance absent: class located right after the component.
+        assert!(uns.validate("ecv1/gw-01/opcua-adapter/state").is_ok());
+        // An instance token that is a class token can never be minted, but a topic with
+        // NO class token at all is still BAD_CLASS.
+        assert_eq!(
+            code(uns.validate("ecv1/gw-01/opcua-adapter").unwrap_err()),
+            UnsValidationCode::BadClass
+        );
     }
 
     fn code(err: EdgeCommonsError) -> UnsValidationCode {
@@ -1307,19 +1407,25 @@ mod tests {
 
     #[test]
     fn validate_is_root_mode_sensitive() {
-        // Rooted mode expects the class at position 5.
+        // Rooted mode: the fully-instanced topic reads site/device/component/instance/class.
         let rooted = Uns::new(multi(), true);
         assert!(
             rooted
                 .validate("ecv1/dallas/gw-01/opcua-adapter/main/state")
                 .is_ok()
         );
+        // D-U28: under rooted mode this same 5-token topic is now a VALID component-scope
+        // topic (gw-01=site, opcua-adapter=device, main=component, state=class) - the instance
+        // slot is optional, so the class is located right after the component. (Pinned by
+        // uns-test-vectors/topics.json validate-rootless-topic-under-rooted-mode.)
+        assert!(
+            rooted
+                .validate("ecv1/gw-01/opcua-adapter/main/state")
+                .is_ok()
+        );
+        // A rooted topic that genuinely lacks a class token still fails.
         assert_eq!(
-            code(
-                rooted
-                    .validate("ecv1/gw-01/opcua-adapter/main/state")
-                    .unwrap_err()
-            ),
+            code(rooted.validate("ecv1/gw-01/opcua-adapter/main").unwrap_err()),
             UnsValidationCode::BadClass
         );
         // Single-level + includeRoot is a no-op (D-U25): still the rootless positions.
@@ -1504,8 +1610,8 @@ impl RepublishGate {
 /// (local/IPC) connection, the two per-device broadcast command topics for its own device:
 ///
 /// ```text
-/// ecv1/{device}/_bcast/main/cmd/republish-state
-/// ecv1/{device}/_bcast/main/cmd/republish-cfg
+/// ecv1/{device}/_bcast/cmd/republish-state
+/// ecv1/{device}/_bcast/cmd/republish-cfg
 /// ```
 ///
 /// and, on receipt, re-announces out of band: `republish-state` re-emits the heartbeat's
@@ -1523,8 +1629,8 @@ impl RepublishGate {
 /// `uns-test-vectors/bcast.json`):
 /// - **Topics** — built through the library topic builder with the reserved `_bcast`
 ///   pseudo-component identity: single-level hierarchy `[{device: <own device>}]`, component
-///   [`BCAST_COMPONENT`], instance `main`, class `cmd`, channel = the verb. Always **rootless**
-///   (the identity is single-level, so `includeRoot` is a D-U25 no-op).
+///   [`BCAST_COMPONENT`], **component scope** (no instance, D-U28), class `cmd`, channel = the
+///   verb. Always **rootless** (the identity is single-level, so `includeRoot` is a D-U25 no-op).
 /// - **Trigger validation** — the envelope's `header.name` must equal the topic's verb; a
 ///   missing/mismatched name, a raw (headerless) payload, or any parse anomaly is ignored (DEBUG
 ///   log) — never crashes the component (see [`Self::handle`]).
@@ -1619,7 +1725,7 @@ impl RepublishListener {
                 value: device.to_string(),
             }],
             BCAST_COMPONENT,
-            Some(MessageIdentity::DEFAULT_INSTANCE.to_string()),
+            None, // D-U28: _bcast is component scope (no instance)
         ) {
             Ok(id) => id,
             Err(e) => {
@@ -1821,8 +1927,8 @@ mod republish_tests {
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     const DEVICE: &str = "test-thing";
-    const STATE_TOPIC: &str = "ecv1/test-thing/_bcast/main/cmd/republish-state";
-    const CFG_TOPIC: &str = "ecv1/test-thing/_bcast/main/cmd/republish-cfg";
+    const STATE_TOPIC: &str = "ecv1/test-thing/_bcast/cmd/republish-state";
+    const CFG_TOPIC: &str = "ecv1/test-thing/_bcast/cmd/republish-cfg";
 
     fn topics() -> std::collections::HashSet<String> {
         std::collections::HashSet::from([STATE_TOPIC.to_string(), CFG_TOPIC.to_string()])

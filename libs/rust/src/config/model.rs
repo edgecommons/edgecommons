@@ -311,7 +311,7 @@ impl FileLogging {
 /// `heartbeat` section (UNS-CANONICAL-DESIGN §4.3, D-U14/D-U20).
 ///
 /// The heartbeat is a library-owned UNS `state` keepalive published each tick to
-/// `ecv1/{device}/{component}/main/state` (body `{"status":"RUNNING","uptimeSecs":n}`,
+/// `ecv1/{device}/{component}/state` (body `{"status":"RUNNING","uptimeSecs":n}`,
 /// best-effort `{"status":"STOPPED"}` on graceful shutdown), with the enabled system
 /// measures emitted as the metric `sys` through the normal metric subsystem. The
 /// legacy `targets[]` array (the heartbeat topic-override drift knobs) is removed —
@@ -641,10 +641,9 @@ pub struct Config {
     /// The original JSON document, retained for template substitution over
     /// arbitrary user keys and for access to instance subtrees.
     pub raw: Value,
-    /// The component's resolved UNS identity (instance
-    /// [`MessageIdentity::DEFAULT_INSTANCE`]), resolved fail-fast at snapshot
-    /// construction from the component's OWN config (top-level `hierarchy` +
-    /// `identity` — no shared config, UNS-CANONICAL-DESIGN §1.5).
+    /// The component's resolved UNS identity (component scope — no instance, D-U28),
+    /// resolved fail-fast at snapshot construction from the component's OWN config
+    /// (top-level `hierarchy` + `identity` — no shared config, UNS-CANONICAL-DESIGN §1.5).
     identity: crate::messaging::message::MessageIdentity,
 }
 
@@ -682,11 +681,24 @@ impl Config {
         })
     }
 
-    /// The component's resolved UNS identity (instance
-    /// [`MessageIdentity::DEFAULT_INSTANCE`]) — see
-    /// [`crate::config::identity`] for the resolution algorithm.
+    /// The component's resolved UNS identity (component scope — no instance, D-U28) —
+    /// see [`crate::config::identity`] for the resolution algorithm.
     pub fn identity(&self) -> &crate::messaging::message::MessageIdentity {
         &self.identity
+    }
+
+    /// Test-only: returns a clone whose resolved identity is rebound to `instance`
+    /// (empty ⇒ component scope). Mirrors the Java canonical test's
+    /// `MockConfigurationService.setComponentIdentity(...)` — the commands/facade
+    /// conformance vectors pin an instance-scoped component, which config resolution
+    /// (component scope by D-U28) never produces on its own.
+    #[cfg(test)]
+    pub(crate) fn with_instance_for_test(mut self, instance: &str) -> Self {
+        self.identity = self
+            .identity
+            .with_instance(instance)
+            .expect("test instance token is valid");
+        self
     }
 
     /// The raw top-level `topic.includeRoot` setting (default `false`). Note that
@@ -979,7 +991,8 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.identity().path(), "dallas/gw-01");
         assert_eq!(cfg.identity().component(), "OpcuaAdapter");
-        assert_eq!(cfg.identity().instance(), "main");
+        // D-U28: the resolved component identity is component scope (no instance).
+        assert_eq!(cfg.identity().instance(), None);
     }
 
     #[test]

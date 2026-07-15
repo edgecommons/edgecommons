@@ -7,7 +7,8 @@
 //! ## Resolution algorithm (identical across all four languages)
 //! 1. `levels` = top-level `hierarchy.levels` when present, else the zero-config
 //!    default `["device"]` — the UNS works out of the box as
-//!    `ecv1/{thing}/{comp}/main/{class}`.
+//!    `ecv1/{thing}/{comp}/{class}` (D-U28: the component identity is component scope,
+//!    so its topics carry no instance slot).
 //! 2. Level **names** must match `^[A-Za-z0-9_-]+$`, be unique and non-empty (they
 //!    become Parquet columns in a later phase — keep them strict).
 //! 3. Every level **except the last** takes its value from the top-level `identity`
@@ -86,10 +87,9 @@ fn configured_component_token(raw: &Value) -> Result<Option<&str>> {
     Ok(Some(token))
 }
 
-/// Resolves the component's UNS identity (instance
-/// [`MessageIdentity::DEFAULT_INSTANCE`]) from the raw config document + the
-/// resolved thing name + the (full or short) component name. See the
-/// [module docs](self) for the algorithm.
+/// Resolves the component's UNS identity (component scope — no instance, D-U28) from
+/// the raw config document + the resolved thing name + the (full or short) component
+/// name. See the [module docs](self) for the algorithm.
 ///
 /// # Errors
 /// [`EdgeCommonsError::Config`] naming the precise inconsistency (fail-fast at construction).
@@ -223,7 +223,8 @@ mod tests {
             "OpcuaAdapter",
             "short name (segment after last '.')"
         );
-        assert_eq!(id.instance(), "main");
+        // D-U28: the resolved component identity is component scope (no instance).
+        assert_eq!(id.instance(), None);
     }
 
     #[test]

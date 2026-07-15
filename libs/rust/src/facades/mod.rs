@@ -31,8 +31,8 @@
 //! ## Accessors
 //! Obtained from [`crate::EdgeCommonsInstance::data`]/[`crate::EdgeCommonsInstance::events`]/
 //! [`crate::EdgeCommonsInstance::app`] (primary — the data plane is inherently per-instance) or the
-//! `main`-instance convenience [`crate::EdgeCommons::data`]/[`crate::EdgeCommons::events`]/
-//! [`crate::EdgeCommons::app`] (== `instance("main")`).
+//! component-scope convenience [`crate::EdgeCommons::data`]/[`crate::EdgeCommons::events`]/
+//! [`crate::EdgeCommons::app`] (D-U28: no instance token).
 //!
 //! ## Semantics & Architecture
 //! - **Injected clock, no inline `Instant`/`SystemTime`**: every `serverTs`/`timestamp` default
@@ -137,8 +137,9 @@ mod vector_tests {
         Arc::new(|| "2026-07-01T12:00:00Z".to_string())
     }
 
-    /// The `gw-01`/`opcua-adapter` identity every facade vector is keyed to (instance `main` by
-    /// default; `data.json` cases rebind to `kep1`).
+    /// The `gw-01`/`opcua-adapter` identity every facade vector is keyed to (D-U28: config
+    /// resolution is component scope; the `evt`/`app` runners rebind to instance `main` and the
+    /// `data.json` cases to `kep1`, matching the instance-scoped vector topics).
     fn facade_config() -> Arc<Config> {
         Arc::new(Config::from_value("opcua-adapter", "gw-01", serde_json::json!({})).unwrap())
     }
@@ -294,7 +295,10 @@ mod vector_tests {
     async fn run_evt_case(input: &Value) -> Value {
         let config = facade_config();
         let messaging = RecordingMessaging::new();
-        let uns = Uns::new(config.identity().clone(), false);
+        // The evt.json vectors pin the instance-scoped `main` topics (D-U28: config
+        // resolution is component scope, so bind the instance explicitly, as the
+        // instance-bound handle `gg.instance("main").events()` does).
+        let uns = Uns::new(config.identity().with_instance("main").unwrap(), false);
         let mut facade = EventsFacade::new(
             config,
             "main".to_string(),
@@ -371,7 +375,8 @@ mod vector_tests {
     async fn run_app_case(input: &Value) -> Value {
         let config = facade_config();
         let messaging = RecordingMessaging::new();
-        let uns = Uns::new(config.identity().clone(), false);
+        // The app.json vectors pin the instance-scoped `main` topics (see run_evt_case).
+        let uns = Uns::new(config.identity().with_instance("main").unwrap(), false);
         let facade = AppFacade::new(
             config,
             "main".to_string(),

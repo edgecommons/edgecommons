@@ -5,11 +5,13 @@
 //! canonical `com.mbreissi.edgecommons.commands.CommandInbox`.
 //!
 //! ## Overview
-//! Every edgecommons component subscribes, on its PRIMARY (local/IPC) connection, its own
-//! `main`-instance command-inbox wildcard
+//! Every edgecommons component subscribes, on its PRIMARY (local/IPC) connection, BOTH its
+//! instance-scope and component-scope command-inbox wildcards (D-U28: the instance slot is
+//! optional)
 //!
 //! ```text
-//! ecv1/{device}/{component}/main/cmd/#
+//! ecv1/{device}/{component}/+/cmd/#     (instance-addressed)
+//! ecv1/{device}/{component}/cmd/#       (component-addressed)
 //! ```
 //!
 //! and dispatches incoming `cmd` envelopes to handlers by **verb** — the topic's channel
@@ -387,12 +389,13 @@ pub(crate) type InstanceConnectivitySource =
 /// holding it) — mirrors [`crate::uns::RepublishListener`]'s `Inner`.
 struct Inner {
     closed: bool,
-    /// The subscribed inbox filter (`…/cmd/#`); `None` until [`CommandInbox::start`] builds it.
+    /// The instance-scope inbox filter (`…/{instance|+}/cmd/#`); `None` until
+    /// [`CommandInbox::start`] builds it. D-U28: with a component-scope identity the instance
+    /// slot renders `+`, matching any instance-addressed command.
     inbox_filter: Option<String>,
-    /// The filter minus the trailing `#` — the verb-extraction prefix (`…/cmd/`). Set BEFORE
-    /// subscribing (mirrors the Java canonical) so a delivery racing the subscribe call still
-    /// resolves the verb correctly.
-    inbox_prefix: Option<String>,
+    /// The component-scope inbox filter (`…/cmd/#`, D-U28); `None` until [`CommandInbox::start`]
+    /// builds it. Subscribed alongside [`Self::inbox_filter`] so component-scope commands land too.
+    component_inbox_filter: Option<String>,
     startup_state: CommandInboxStartupState,
     startup_error: String,
     startup_generation: u64,
@@ -406,7 +409,7 @@ impl Default for Inner {
         Self {
             closed: false,
             inbox_filter: None,
-            inbox_prefix: None,
+            component_inbox_filter: None,
             startup_state: CommandInboxStartupState::Stopped,
             startup_error: String::new(),
             startup_generation: 0,
@@ -827,15 +830,25 @@ impl CommandInbox {
             .collect();
         let snapshot = self.config.load_full();
         let identity = snapshot.identity();
-        let component = json!({
-            "hier": identity.hier().iter().map(|entry| {
-                json!({ "level": entry.level, "value": entry.value })
-            }).collect::<Vec<_>>(),
-            "path": identity.path(),
-            "component": identity.component(),
-            "instance": identity.instance(),
-        });
-        describe_payload(commands, self.panels(), Some(component))
+        let mut component = serde_json::Map::new();
+        component.insert(
+            "hier".to_string(),
+            Value::Array(
+                identity
+                    .hier()
+                    .iter()
+                    .map(|entry| json!({ "level": entry.level, "value": entry.value }))
+                    .collect(),
+            ),
+        );
+        component.insert("path".to_string(), json!(identity.path()));
+        component.insert("component".to_string(), json!(identity.component()));
+        // D-U28: the `instance` key is present only for an instance-scoped identity - a
+        // component-scope identity omits it (mirroring the envelope identity serialization).
+        if let Some(instance) = identity.instance() {
+            component.insert("instance".to_string(), json!(instance));
+        }
+        describe_payload(commands, self.panels(), Some(Value::Object(component)))
     }
 
     /// Start with the default bounded acknowledgement deadline.
@@ -889,20 +902,26 @@ impl CommandInbox {
         } else {
             None
         };
+        // D-U28: the component identity is component scope (instance None), so a plain filter
+        // renders the instance slot as `+` (instance-scoped: `.../+/cmd/#`); the component-scope
+        // filter omits the instance slot (`.../cmd/#`). Subscribe both so a command lands whether
+        // it is addressed to an instance or to the component.
         let scope = UnsScope {
             site,
             device: Some(identity.device().to_string()),
             component: Some(identity.component().to_string()),
-            instance: Some(identity.instance().to_string()),
+            instance: identity.instance().map(str::to_string),
         };
-        let filter = match uns.filter(UnsClass::Cmd, &scope) {
-            Ok(filter) => filter,
-            Err(error) => {
+        let build_filter = |include_instance: bool| {
+            uns.filter_scoped(UnsClass::Cmd, &scope, include_instance)
+        };
+        let (filter, component_filter) = match (build_filter(true), build_filter(false)) {
+            (Ok(filter), Ok(component_filter)) => (filter, component_filter),
+            (Err(error), _) | (_, Err(error)) => {
                 self.fail_start(generation, &error.to_string());
                 return self.startup_status();
             }
         };
-        let prefix = filter[..filter.len() - 1].to_string();
         {
             let mut inner = self.inner.lock().unwrap();
             if inner.closed
@@ -912,37 +931,54 @@ impl CommandInbox {
                 return Self::status_locked(&inner);
             }
             inner.inbox_filter = Some(filter.clone());
-            inner.inbox_prefix = Some(prefix.clone());
+            inner.component_inbox_filter = Some(component_filter.clone());
         }
 
-        let weak = Arc::downgrade(&self);
-        let callback_prefix = prefix.clone();
-        let handler = message_handler(move |topic, message| {
-            let weak = weak.clone();
-            let prefix = callback_prefix.clone();
-            async move {
-                if let Some(inbox) = weak.upgrade() {
-                    inbox
-                        .receive_during_activation(generation, prefix, topic, message)
-                        .await;
+        let make_handler = || {
+            let weak = Arc::downgrade(&self);
+            message_handler(move |topic, message| {
+                let weak = weak.clone();
+                async move {
+                    if let Some(inbox) = weak.upgrade() {
+                        inbox
+                            .receive_during_activation(generation, topic, message)
+                            .await;
+                    }
                 }
+            })
+        };
+        for subscribe_filter in [&filter, &component_filter] {
+            if let Err(error) = self
+                .messaging
+                .subscribe_acknowledged(
+                    subscribe_filter,
+                    make_handler(),
+                    SUBSCRIBE_MAX_MESSAGES,
+                    SUBSCRIBE_MAX_CONCURRENCY,
+                    timeout,
+                )
+                .await
+            {
+                let _ = self.messaging.unsubscribe(&filter).await;
+                let _ = self.messaging.unsubscribe(&component_filter).await;
+                self.fail_start(generation, &error.to_string());
+                tracing::warn!(error = %error, filter, component_filter, "command inbox startup failed");
+                return self.startup_status();
             }
-        });
-        if let Err(error) = self
-            .messaging
-            .subscribe_acknowledged(
-                &filter,
-                handler,
-                SUBSCRIBE_MAX_MESSAGES,
-                SUBSCRIBE_MAX_CONCURRENCY,
-                timeout,
-            )
-            .await
-        {
-            let _ = self.messaging.unsubscribe(&filter).await;
-            self.fail_start(generation, &error.to_string());
-            tracing::warn!(error = %error, filter, "command inbox startup failed");
-            return self.startup_status();
+            // If this generation was invalidated mid-ack (e.g. stop() raced the second
+            // acknowledged-subscribe), tear down what we have and stop - never leave a partial
+            // subscription live for a stale generation.
+            let still_current = {
+                let inner = self.inner.lock().unwrap();
+                !inner.closed
+                    && inner.startup_generation == generation
+                    && inner.startup_state == CommandInboxStartupState::Starting
+            };
+            if !still_current {
+                let _ = self.messaging.unsubscribe(&filter).await;
+                let _ = self.messaging.unsubscribe(&component_filter).await;
+                return self.startup_status();
+            }
         }
 
         let should_drain = {
@@ -963,13 +999,14 @@ impl CommandInbox {
 
         if self.startup_status().state != CommandInboxStartupState::Active {
             let _ = self.messaging.unsubscribe(&filter).await;
+            let _ = self.messaging.unsubscribe(&component_filter).await;
             return self.startup_status();
         }
         if should_drain {
             let inbox = self.clone();
-            tokio::spawn(async move { inbox.drain_activation_gate(generation, prefix).await });
+            tokio::spawn(async move { inbox.drain_activation_gate(generation).await });
         }
-        tracing::info!(filter, verbs = ?self.verbs(), "command inbox subscribed");
+        tracing::info!(filter, component_filter, verbs = ?self.verbs(), "command inbox subscribed");
         self.startup_status()
     }
 
@@ -979,9 +1016,9 @@ impl CommandInbox {
         Self::status_locked(&inner)
     }
 
-    /// Stop the current generation and clean its subscription. A later start may retry.
+    /// Stop the current generation and clean its subscriptions. A later start may retry.
     pub async fn stop(&self) -> CommandInboxStartupStatus {
-        let filter = {
+        let filters = {
             let mut inner = self.inner.lock().unwrap();
             inner.startup_generation += 1;
             inner.startup_state = CommandInboxStartupState::Stopped;
@@ -989,12 +1026,14 @@ impl CommandInbox {
             inner.pending.clear();
             inner.retained = 0;
             inner.draining = false;
-            inner.inbox_prefix = None;
-            let filter = inner.inbox_filter.take();
+            let filters = [
+                inner.inbox_filter.take(),
+                inner.component_inbox_filter.take(),
+            ];
             (self.startup_observer)(inner.startup_state);
-            filter
+            filters
         };
-        if let Some(filter) = filter {
+        for filter in filters.into_iter().flatten() {
             let _ = self.messaging.unsubscribe(&filter).await;
         }
         self.startup_status()
@@ -1017,7 +1056,7 @@ impl CommandInbox {
         inner.startup_state = CommandInboxStartupState::Failed;
         inner.startup_error = sanitize_start_error(error);
         inner.inbox_filter = None;
-        inner.inbox_prefix = None;
+        inner.component_inbox_filter = None;
         inner.pending.clear();
         inner.retained = 0;
         inner.draining = false;
@@ -1027,7 +1066,6 @@ impl CommandInbox {
     async fn receive_during_activation(
         self: Arc<Self>,
         generation: u64,
-        prefix: String,
         topic: String,
         message: Message,
     ) {
@@ -1055,12 +1093,11 @@ impl CommandInbox {
         };
         if dispatch_now {
             let (topic, message) = delivery.unwrap();
-            self.dispatch_delivery(generation, &prefix, topic, message)
-                .await;
+            self.dispatch_delivery(generation, topic, message).await;
         }
     }
 
-    async fn drain_activation_gate(self: Arc<Self>, generation: u64, prefix: String) {
+    async fn drain_activation_gate(self: Arc<Self>, generation: u64) {
         loop {
             let next = {
                 let mut inner = self.inner.lock().unwrap();
@@ -1086,7 +1123,7 @@ impl CommandInbox {
                 return;
             };
             self.clone()
-                .dispatch_delivery(generation, &prefix, topic, message)
+                .dispatch_delivery(generation, topic, message)
                 .await;
             let mut inner = self.inner.lock().unwrap();
             if inner.startup_generation == generation && inner.retained > 0 {
@@ -1096,13 +1133,7 @@ impl CommandInbox {
     }
 
     /// One received `cmd` envelope after lifecycle gating.
-    async fn dispatch_delivery(
-        self: Arc<Self>,
-        generation: u64,
-        prefix: &str,
-        topic: String,
-        message: Message,
-    ) {
+    async fn dispatch_delivery(self: Arc<Self>, generation: u64, topic: String, message: Message) {
         {
             let inner = self.inner.lock().unwrap();
             if inner.closed
@@ -1112,12 +1143,16 @@ impl CommandInbox {
                 return;
             }
         }
-        if !topic.starts_with(prefix) {
+        // D-U28: the instance slot is optional, so a command arrives on either
+        // ".../{instance}/cmd/{verb}" or ".../cmd/{verb}". Locate the "/cmd/" class marker and
+        // take the verb after it - unambiguous for both scopes (an instance is never a class
+        // token). Both subscribed filters share this extraction path.
+        let Some(marker) = topic.find("/cmd/") else {
             // ".../cmd/#" also matches the bare ".../cmd" parent level - nothing to dispatch.
-            tracing::debug!(topic = %topic, "ignoring cmd delivery outside the inbox prefix");
+            tracing::debug!(topic = %topic, "ignoring cmd delivery without a '/cmd/' segment");
             return;
-        }
-        let verb = &topic[prefix.len()..];
+        };
+        let verb = &topic[marker + "/cmd/".len()..];
         if verb.is_empty() {
             return;
         }
@@ -1294,12 +1329,13 @@ impl CommandInbox {
         }
     }
 
-    /// Marks the inbox closed (idempotent) and returns the filter to unsubscribe (`None` if
-    /// already closed or never started). Shared by [`Self::close`] and [`Drop::drop`].
-    fn mark_closed(&self) -> Option<String> {
+    /// Marks the inbox closed (idempotent) and returns the filters to unsubscribe (empty if
+    /// already closed or never started). Shared by [`Self::close`] and [`Drop::drop`]. D-U28:
+    /// both the instance- and component-scope filters.
+    fn mark_closed(&self) -> Vec<String> {
         let mut inner = self.inner.lock().unwrap();
         if inner.closed {
-            return None;
+            return Vec::new();
         }
         inner.closed = true;
         inner.startup_generation += 1;
@@ -1308,10 +1344,12 @@ impl CommandInbox {
         inner.pending.clear();
         inner.retained = 0;
         inner.draining = false;
-        inner.inbox_prefix = None;
-        let filter = inner.inbox_filter.take();
+        let filters = [
+            inner.inbox_filter.take(),
+            inner.component_inbox_filter.take(),
+        ];
         (self.startup_observer)(inner.startup_state);
-        filter
+        filters.into_iter().flatten().collect()
     }
 
     /// Stop deferred acceptance, attempt `COMPONENT_STOPPING` replies for open tokens, and cancel
@@ -1332,7 +1370,7 @@ impl CommandInbox {
     #[cfg(test)]
     pub(crate) async fn close(&self) {
         self.shutdown_deferred().await;
-        if let Some(filter) = self.mark_closed() {
+        for filter in self.mark_closed() {
             if let Err(e) = self.messaging.unsubscribe(&filter).await {
                 tracing::debug!(error = %e, filter, "command-inbox unsubscribe failed");
             }
@@ -1346,14 +1384,14 @@ impl Drop for CommandInbox {
     /// rule) — on a spawned fire-and-forget task, since `Drop` cannot `.await`. A no-op when
     /// never started, already closed, or no `tokio` runtime is available to spawn on.
     fn drop(&mut self) {
-        let filter = self.mark_closed();
+        let filters = self.mark_closed();
         let messaging = self.messaging.clone();
         let deferred = self.deferred.clone();
         self.post_accept_shutdown.send_replace(true);
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
                 deferred.shutdown().await;
-                if let Some(filter) = filter {
+                for filter in filters {
                     if let Err(e) = messaging.unsubscribe(&filter).await {
                         tracing::debug!(error = %e, filter, "command-inbox unsubscribe failed");
                     }
@@ -1577,8 +1615,19 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::Duration;
 
-    const INBOX_FILTER: &str = "ecv1/test-thing/TestComponent/main/cmd/#";
+    // D-U28: the config identity is component scope, so the instance-scope filter renders the
+    // instance slot as `+`; the inbox also subscribes the component-scope filter.
+    const INBOX_FILTER: &str = "ecv1/test-thing/TestComponent/+/cmd/#";
+    const COMPONENT_INBOX_FILTER: &str = "ecv1/test-thing/TestComponent/cmd/#";
     const REPLY_TO: &str = "edgecommons/reply-test-1";
+
+    /// The two filters `start()` subscribes (instance-scope + component-scope, D-U28).
+    fn inbox_filters() -> std::collections::HashSet<String> {
+        std::collections::HashSet::from([
+            INBOX_FILTER.to_string(),
+            COMPONENT_INBOX_FILTER.to_string(),
+        ])
+    }
 
     fn test_config() -> Arc<ArcSwap<Config>> {
         Arc::new(ArcSwap::from_pointee(
@@ -1683,8 +1732,8 @@ mod tests {
         f.inbox.clone().start().await;
         assert_eq!(
             f.messaging.subscribed_topics(),
-            std::collections::HashSet::from([INBOX_FILTER.to_string()]),
-            "start() must subscribe exactly the own-inbox cmd wildcard"
+            inbox_filters(),
+            "start() must subscribe the instance- and component-scope cmd wildcards"
         );
     }
 
@@ -1693,10 +1742,30 @@ mod tests {
         let f = fixture();
         f.inbox.clone().start().await;
         f.inbox.clone().start().await;
-        assert_eq!(
-            f.messaging.subscribed_topics(),
-            std::collections::HashSet::from([INBOX_FILTER.to_string()])
-        );
+        assert_eq!(f.messaging.subscribed_topics(), inbox_filters());
+    }
+
+    #[tokio::test]
+    async fn d_u28_dispatches_component_scope_and_instance_addressed_commands() {
+        // A command lands whether addressed to an instance (`.../main/cmd/ping`, matches the
+        // instance-scope `+` filter) or to the component (`.../cmd/ping`, matches the
+        // component-scope filter); the verb is extracted via the `/cmd/` marker in both cases.
+        let f = fixture();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(&topic("ping"), request("ping"))
+            .await;
+        f.messaging
+            .simulate_message("ecv1/test-thing/TestComponent/cmd/ping", request("ping"))
+            .await;
+
+        let replies = f.messaging.replies();
+        assert_eq!(replies.len(), 2, "both scopes are dispatched and replied to");
+        for (_, reply) in &replies {
+            assert_eq!(reply.body["ok"], json!(true));
+            assert_eq!(reply.body["result"]["status"], "RUNNING");
+        }
     }
 
     #[tokio::test]
@@ -1925,7 +1994,8 @@ mod tests {
         assert_eq!(result["component"]["path"], "test-thing");
         assert_eq!(result["component"]["hier"][0]["value"], "test-thing");
         assert_eq!(result["component"]["component"], "TestComponent");
-        assert_eq!(result["component"]["instance"], "main");
+        // D-U28: the fixture config is component scope, so describe omits the instance key.
+        assert!(result["component"].get("instance").is_none());
 
         let commands = result["commands"].as_array().unwrap();
         for verb in BUILT_IN_VERBS {
@@ -2840,10 +2910,7 @@ mod tests {
             f.inbox.clone().start().await.state,
             CommandInboxStartupState::Active
         );
-        assert_eq!(
-            f.messaging.subscribed_topics(),
-            [INBOX_FILTER.to_string()].into()
-        );
+        assert_eq!(f.messaging.subscribed_topics(), inbox_filters());
     }
 
     #[tokio::test]
@@ -2902,9 +2969,14 @@ mod vector_tests {
     }
 
     /// The `gw-01`/`opcua-adapter`/`main` identity every case in `commands.json` is keyed to.
+    /// The vectors pin an instance-scoped component (`main`); config resolution is component
+    /// scope by D-U28, so the identity is rebound to `main` (mirroring the Java loader's
+    /// `MockConfigurationService.setComponentIdentity`).
     fn vector_config() -> Arc<ArcSwap<Config>> {
         Arc::new(ArcSwap::from_pointee(
-            Config::from_value("opcua-adapter", "gw-01", json!({})).unwrap(),
+            Config::from_value("opcua-adapter", "gw-01", json!({}))
+                .unwrap()
+                .with_instance_for_test("main"),
         ))
     }
 
@@ -2968,8 +3040,11 @@ mod vector_tests {
         inbox.clone().start().await;
         assert_eq!(
             messaging.subscribed_topics(),
-            std::collections::HashSet::from([str_field(&doc["inbox"], "filter").to_string()]),
-            "start() must subscribe exactly the vector's inbox filter"
+            std::collections::HashSet::from([
+                str_field(&doc["inbox"], "filter").to_string(),
+                str_field(&doc["inbox"], "componentFilter").to_string(),
+            ]),
+            "start() must subscribe the pinned instance- and component-scope filters (D-U28)"
         );
 
         // ---- the built-in verb goldens, replayed through the live inbox ----
@@ -3023,9 +3098,13 @@ mod vector_tests {
                 identity.component(),
                 str_field(expected_identity, "component")
             );
+            // D-U28: a config-stamped reply is component scope (no instance), regardless of the
+            // vector's instance-scoped golden identity. The Java loader likewise asserts only the
+            // live body/topic/correlation, not the live reply's instance.
             assert_eq!(
                 identity.instance(),
-                str_field(expected_identity, "instance")
+                None,
+                "verb '{verb}': the live reply identity is component scope"
             );
         }
 

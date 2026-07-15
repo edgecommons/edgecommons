@@ -7,8 +7,9 @@
 //!
 //! The messaging service stays instance-agnostic — `publish(topic, msg)` already
 //! receives both the topic (minted by this handle's instance-bound [`Uns`]) and the
-//! envelope (stamped by its instance-bound builder). Component-level messages
-//! (everything not built through a handle) default to instance `"main"`.
+//! envelope (stamped by its instance-bound builder). A handle built with an empty id
+//! is **component scope** (D-U28: no instance token) — the seam `EdgeCommons::data`/
+//! `events`/`app` use to publish at component level.
 //!
 //! Obtain handles from [`crate::EdgeCommons::instance`] (token validated against the
 //! §2.2 rule). The id is deliberately NOT verified against the configured
@@ -61,7 +62,9 @@ pub struct EdgeCommonsInstance {
 
 impl EdgeCommonsInstance {
     /// Crate-private: created by [`crate::EdgeCommons::instance`], which validates
-    /// the token (§2.2 token rule) first.
+    /// the token (§2.2 token rule) first. An empty `id` is **component scope** (D-U28:
+    /// the bound identity carries no instance and its topics omit the instance slot) —
+    /// the path [`crate::EdgeCommons::data`]/`events`/`app` take.
     pub(crate) fn new(
         id: String,
         config: Arc<Config>,
@@ -69,6 +72,7 @@ impl EdgeCommonsInstance {
         stream_sink: Option<Arc<dyn StreamSink>>,
         clock: Clock,
     ) -> Result<EdgeCommonsInstance> {
+        // D-U28: an empty id yields a component-scope identity (with_instance maps empty ⇒ None).
         let identity = config.identity().with_instance(id.clone())?;
         // The RAW includeRoot flag, like gg.uns(): Uns applies it per-target only
         // for multi-level hierarchies (D-U25).
@@ -177,7 +181,7 @@ mod tests {
             .message("data", "1.0")
             .payload(json!({ "v": 1 }))
             .build();
-        assert_eq!(msg.identity.unwrap().instance(), "kep1");
+        assert_eq!(msg.identity.unwrap().instance(), Some("kep1"));
         assert_eq!(msg.header.name, "data");
     }
 
@@ -212,5 +216,50 @@ mod tests {
             handle.data().publish_value("temp", 1).await,
             Err(crate::EdgeCommonsError::Messaging(_))
         ));
+    }
+
+    #[test]
+    fn empty_id_is_component_scope_and_omits_the_instance_slot() {
+        // D-U28: a handle built with an empty id is component scope - topics carry no
+        // instance slot and the stamped envelope identity has no instance. This is the
+        // handle EdgeCommons::data()/events()/app() use.
+        let handle = handle("", None);
+        assert_eq!(handle.id(), "");
+        assert_eq!(
+            handle
+                .uns()
+                .topic_with_channel(UnsClass::Data, "temp")
+                .unwrap(),
+            "ecv1/gw-01/MyComp/data/temp"
+        );
+        let msg = handle
+            .message("data", "1.0")
+            .payload(json!({ "v": 1 }))
+            .build();
+        assert_eq!(msg.identity.unwrap().instance(), None);
+    }
+
+    #[tokio::test]
+    async fn component_scope_facades_publish_without_an_instance_slot() {
+        let messaging = RecordingMessaging::new();
+        let handle = handle("", Some(messaging.clone() as Arc<dyn MessagingService>));
+
+        handle.data().publish_value("temp", 21.5).await.unwrap();
+        handle
+            .events()
+            .emit_message("door-open", "front door opened")
+            .await
+            .unwrap();
+        handle
+            .app()
+            .publish("Hello", "hello", json!({ "greeting": "hi" }))
+            .await
+            .unwrap();
+
+        let published = messaging.local();
+        assert_eq!(published.len(), 3);
+        assert_eq!(published[0].0, "ecv1/gw-01/MyComp/data/temp");
+        assert_eq!(published[1].0, "ecv1/gw-01/MyComp/evt/info/door-open");
+        assert_eq!(published[2].0, "ecv1/gw-01/MyComp/app/hello");
     }
 }

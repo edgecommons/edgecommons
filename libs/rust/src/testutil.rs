@@ -342,7 +342,11 @@ impl MessagingService for RecordingMessaging {
         for (topic, message) in deliveries {
             handler.handle(topic, message).await;
         }
-        if self.block_subscribe_ack.load(Ordering::SeqCst) {
+        // D-U28: the command inbox now issues TWO acknowledged subscribes (instance- and
+        // component-scope filters). The block is a one-shot latch so it models a single slow
+        // ack window — the first subscribe blocks, the second proceeds — rather than deadlocking
+        // the second subscribe on a release the test only sends once.
+        if self.block_subscribe_ack.swap(false, Ordering::SeqCst) {
             self.subscribe_ack_release.notified().await;
         }
         if let Some(error) = self.subscribe_ack_failure.lock().unwrap().clone() {
