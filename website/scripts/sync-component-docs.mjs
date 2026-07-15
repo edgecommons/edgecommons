@@ -32,7 +32,8 @@ const TMP = join(WEB, ".component-src");
 const TOKEN = process.env.EDGECOMMONS_READ_TOKEN || "";
 const LOCAL_MAP = JSON.parse(process.env.COMPONENT_DOCS_MAP || "{}");
 
-// Sidebar order by source filename (Diátaxis). reference/* are flattened to reference-<x> at 30+.
+// Sidebar order by source filename (Diátaxis). reference/* and deployment/* are flattened to
+// reference-<x> (30+) and deployment-<x> (45+).
 const ORDER = { index: 0, tutorial: 10, "user-guide": 15, "how-to-guides": 20, scripting: 22, "sample-configurations": 25, explanation: 40 };
 
 function jsonStr(s) {
@@ -73,6 +74,7 @@ function resolveDocLink(target, { name, repo, fileDir }) {
   const baseName = last.replace(/\.mdx?$/i, "");
   if (/^(readme|index)$/i.test(baseName)) return `/components/${name}/${anchor}`;
   if (segs.includes("reference")) return `/components/${name}/reference-${baseName}/${anchor}`;
+  if (segs.includes("deployment")) return `/components/${name}/deployment-${baseName}/${anchor}`;
   return `/components/${name}/${baseName}/${anchor}`;
 }
 
@@ -136,20 +138,21 @@ function syncComponent(c) {
   for (const entry of readdirSync(docsDir)) {
     const src = join(docsDir, entry);
     if (statSync(src).isDirectory()) {
-      if (entry !== "reference") continue; // only the known Diátaxis subdir
+      if (entry !== "reference" && entry !== "deployment") continue; // known Diátaxis subdirs
+      const [label, base] = entry === "reference" ? ["Reference", 30] : ["Deployment", 45];
       let i = 0;
       for (const ref of readdirSync(src).filter((f) => /\.mdx?$/i.test(f)).sort()) {
         const ext = /\.mdx$/i.test(ref) ? ".mdx" : ".md";
         const name = ref.replace(/\.mdx?$/i, "");
         const md = toStarlight(readFileSync(join(src, ref), "utf8"), {
-          title: `Reference — ${titleCase(name)}`,
-          order: 30 + i++,
+          title: `${label} — ${titleCase(name)}`,
+          order: base + i++,
           name: c.name,
           repo: c.repo,
-          fileDir: "reference",
+          fileDir: entry,
           isMdx: ext === ".mdx",
         });
-        writeFileSync(join(dest, `reference-${name}${ext}`), md);
+        writeFileSync(join(dest, `${entry}-${name}${ext}`), md);
       }
       continue;
     }
