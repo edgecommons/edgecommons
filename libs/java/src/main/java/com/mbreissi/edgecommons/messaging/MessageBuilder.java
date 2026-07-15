@@ -294,8 +294,7 @@ public class MessageBuilder {
         } else if (configService != null) {
             MessageIdentity componentIdentity = configService.getComponentIdentity();
             if (componentIdentity != null) {
-                message.identity = componentIdentity.withInstance(
-                        instance != null ? instance : MessageIdentity.DEFAULT_INSTANCE);
+                message.identity = componentIdentity.withInstance(instance);   // D‑U28: null ⇒ component scope
             }
         }
 

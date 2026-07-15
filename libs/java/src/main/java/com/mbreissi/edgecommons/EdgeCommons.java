@@ -106,6 +106,9 @@ public class EdgeCommons
      */
     private final ConcurrentHashMap<String, EdgeCommonsInstance> instanceHandles = new ConcurrentHashMap<>();
 
+    /** D‑U28: the component-scope handle (no instance token) backing gg.data()/events()/app(). */
+    private volatile EdgeCommonsInstance componentHandle;
+
     /**
      * The clock the per-instance publish facades ({@code data()}/{@code events()}) use for their
      * time defaults ({@code serverTs}/{@code timestamp} → now). System UTC in production; the
@@ -450,42 +453,60 @@ public class EdgeCommons
     }
 
     /**
-     * The {@code data()} publish facade for the component's {@code main} instance — the
-     * single-instance-component convenience, equivalent to {@code instance("main").data()}
-     * (DESIGN-class-facades §3, D6). Builds/validates the {@code SouthboundSignalUpdate} body.
+     * The {@code data()} publish facade at <b>component scope</b> (D‑U28: no instance token) —
+     * for an instance-scoped facade use {@code instance(id).data()}. Builds/validates the
+     * {@code SouthboundSignalUpdate} body.
      *
-     * @return the {@code main}-instance {@link DataFacade}
+     * @return the component-scope {@link DataFacade}
      * @throws IllegalStateException when called before initialization completes
      */
     public DataFacade getData()
     {
-        return instance(MessageIdentity.DEFAULT_INSTANCE).data();
+        return componentScope().data();
     }
 
     /**
-     * The {@code events()} publish facade for the component's {@code main} instance — equivalent to
-     * {@code instance("main").events()} (DESIGN-class-facades §3, D6). Operator events &amp; alarms
+     * The {@code events()} publish facade at <b>component scope</b> (D‑U28: no instance token) —
+     * for an instance-scoped facade use {@code instance(id).events()}. Operator events &amp; alarms
      * on the {@code evt} class.
      *
-     * @return the {@code main}-instance {@link EventsFacade}
+     * @return the component-scope {@link EventsFacade}
      * @throws IllegalStateException when called before initialization completes
      */
     public EventsFacade getEvents()
     {
-        return instance(MessageIdentity.DEFAULT_INSTANCE).events();
+        return componentScope().events();
     }
 
     /**
-     * The {@code app()} publish facade for the component's {@code main} instance — equivalent to
-     * {@code instance("main").app()} (DESIGN-class-facades §3, D6). Free-form inter-component
+     * The {@code app()} publish facade at <b>component scope</b> (D‑U28: no instance token) —
+     * for an instance-scoped facade use {@code instance(id).app()}. Free-form inter-component
      * pub/sub on the {@code app} class.
      *
-     * @return the {@code main}-instance {@link AppFacade}
+     * @return the component-scope {@link AppFacade}
      * @throws IllegalStateException when called before initialization completes
      */
     public AppFacade getApp()
     {
-        return instance(MessageIdentity.DEFAULT_INSTANCE).app();
+        return componentScope().app();
+    }
+
+    /**
+     * The component-scope handle (D‑U28: no instance token) backing {@link #getData()},
+     * {@link #getEvents()}, and {@link #getApp()}. Lazily built and cached, mirroring
+     * {@link #getUns()}.
+     */
+    private EdgeCommonsInstance componentScope()
+    {
+        EdgeCommonsInstance handle = componentHandle;
+        if (handle == null)
+        {
+            ConfigManager cm = requireResolvedIdentity();
+            handle = new EdgeCommonsInstance(null, cm, cm.isTopicIncludeRoot(), messagingClient,
+                    streamSink(), clock);
+            componentHandle = handle;
+        }
+        return handle;
     }
 
     /**

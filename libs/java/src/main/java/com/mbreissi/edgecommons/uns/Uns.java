@@ -134,7 +134,9 @@ public final class Uns {
         }
         segments.add(checkedToken(target.getDevice(), "device"));
         segments.add(checkedToken(target.getComponent(), "component"));
-        segments.add(checkedToken(target.getInstance(), "instance"));
+        if (target.getInstance() != null) {   // D‑U28: the instance slot is omitted for component scope
+            segments.add(checkedToken(target.getInstance(), "instance"));
+        }
         segments.add(cls.token);
 
         boolean channelSupplied = channel != null && !channel.isEmpty();
@@ -182,6 +184,22 @@ public final class Uns {
      * @throws UnsValidationException when a pinned (non-null) scope field violates the token rule
      */
     public String filter(UnsClass cls, UnsScope scope) {
+        return filter(cls, scope, true);
+    }
+
+    /**
+     * As {@link #filter(UnsClass, UnsScope)}, but D‑U28 scope-aware: when {@code includeInstance} is
+     * {@code false} the instance slot is <b>omitted</b> entirely, yielding a component-scope filter
+     * (e.g. {@code ecv1/{device}/{component}/cmd/#}); when {@code true} the instance slot is present
+     * (a pinned token, or {@code +} when {@link UnsScope#instance()} is {@code null}).
+     *
+     * @param cls             the UNS class (non-null)
+     * @param scope           the wildcard scope (non-null)
+     * @param includeInstance whether to render the optional instance slot
+     * @return the subscription filter
+     * @throws UnsValidationException when a pinned scope field violates the token rule
+     */
+    public String filter(UnsClass cls, UnsScope scope, boolean includeInstance) {
         Objects.requireNonNull(cls, "class must not be null");
         Objects.requireNonNull(scope, "scope must not be null (use UnsScope.all())");
         List<String> segments = new ArrayList<>(MAX_TOPIC_SLASHES + 1);
@@ -191,7 +209,9 @@ public final class Uns {
         }
         segments.add(wildcardOr(scope.device(), "device"));
         segments.add(wildcardOr(scope.component(), "component"));
-        segments.add(wildcardOr(scope.instance(), "instance"));
+        if (includeInstance) {
+            segments.add(wildcardOr(scope.instance(), "instance"));
+        }
         segments.add(cls.token);
         String filter = String.join("/", segments);
         return cls.leaf ? filter : filter + "/#";
@@ -237,12 +257,22 @@ public final class Uns {
                             + MAX_TOPIC_SLASHES + ")");
         }
         checkLength(topic);
-        int classPosition = rooted(identity) ? 5 : 4;
+        // D‑U28: the instance slot is optional. The token right after {component} is the class iff it
+        // is a class token, else it is the instance and the class follows (an instance can never be a
+        // class token). {component} sits at index 2 rootless / 3 rooted.
+        int afterComponent = rooted(identity) ? 4 : 3;
+        if (tokens.length <= afterComponent) {
+            throw new UnsValidationException(UnsValidationException.Code.BAD_CLASS,
+                    "topic '" + topic + "' has too few levels (" + tokens.length + "): no class token"
+                            + " at or after position " + afterComponent
+                            + " (effective root mode " + rooted(identity) + ")");
+        }
+        int classPosition = UnsClass.fromToken(tokens[afterComponent]) != null
+                ? afterComponent : afterComponent + 1;
         if (tokens.length <= classPosition) {
             throw new UnsValidationException(UnsValidationException.Code.BAD_CLASS,
-                    "topic '" + topic + "' has too few levels (" + tokens.length + "): the class"
-                            + " token is expected at position " + classPosition
-                            + " (effective root mode " + rooted(identity) + ")");
+                    "topic '" + topic + "' carries an instance token but no class token follows"
+                            + " (expected at position " + classPosition + ")");
         }
         UnsClass cls = UnsClass.fromToken(tokens[classPosition]);
         if (cls == null) {
