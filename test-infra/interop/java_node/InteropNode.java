@@ -420,7 +420,7 @@ public class InteropNode {
     }
 
     static String ggP1CommandTopic(String actor) {
-        return "ecv1/interop-device/interop-p1-" + actor + "/main/cmd/deferred";
+        return "ecv1/interop-device/interop-p1-" + actor + "/cmd/deferred";
     }
 
     static String ggP1ConfirmedTopic(String runId, String publisher, String targetActor) {
@@ -1179,7 +1179,7 @@ public class InteropNode {
             java.util.concurrent.ConcurrentHashMap<String, JsonObject> received = new java.util.concurrent.ConcurrentHashMap<>();
             java.util.concurrent.ConcurrentHashMap<String, String> errors = new java.util.concurrent.ConcurrentHashMap<>();
             CountDownLatch latch = new CountDownLatch(expectedLangs.length);
-            prov.subscribe("ecv1/interop-device/+/main/log/warn", (topic, m) -> {
+            prov.subscribe("ecv1/interop-device/+/log/warn", (topic, m) -> {
                 try {
                     JsonObject body = (JsonObject) m.getBody();
                     JsonObject identity = m.getIdentity() == null ? null : m.getIdentity().toDict();
@@ -1191,7 +1191,9 @@ public class InteropNode {
                     boolean ok = java.util.Arrays.asList(expectedLangs).contains(publisher)
                             && "interop-device".equals(wireIdentityDevice(identity))
                             && identity != null
-                            && "main".equals(identity.get("instance").getAsString())
+                            // D-U28: component-scope log record omits the instance token on
+                            // the wire; its absence is the omit-when-absent proof over IPC.
+                            && !identity.has("instance")
                             && "edgecommons.log.v1".equals(body.get("schema").getAsString())
                             && "WARN".equals(body.get("level").getAsString())
                             && ("interop." + publisher).equals(body.get("logger").getAsString())

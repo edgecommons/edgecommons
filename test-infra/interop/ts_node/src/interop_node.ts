@@ -659,7 +659,7 @@ function ggP1TargetActor(targetLanguage: string, senderActor: string): string {
 }
 
 function ggP1CommandTopic(actor: string): string {
-  return `ecv1/interop-device/interop-p1-${actor}/main/cmd/deferred`;
+  return `ecv1/interop-device/interop-p1-${actor}/cmd/deferred`;
 }
 
 function ggP1ConfirmedTopic(runId: string, publisher: string, targetActor: string): string {
@@ -892,7 +892,7 @@ async function runGgLogMatrix(runId: string, langsCsv: string): Promise<number> 
   const errors = new Map<string, string>();
   try {
     await svc.subscribe(
-      "ecv1/interop-device/+/main/log/warn",
+      "ecv1/interop-device/+/log/warn",
       (topic, message) => {
         try {
           const envelope = message.toObject() as Record<string, any>;
@@ -905,7 +905,9 @@ async function runGgLogMatrix(runId: string, langsCsv: string): Promise<number> 
           const fields = (body.fields ?? {}) as Record<string, unknown>;
           const ok = expected.has(publisher)
             && wireIdentityDevice(identity) === "interop-device"
-            && identity?.instance === "main"
+            // D-U28: the component-scope log record omits the instance token on the wire;
+            // its absence is the omit-when-absent proof over Greengrass IPC.
+            && identity?.instance === undefined
             && body.schema === "edgecommons.log.v1"
             && body.level === "WARN"
             && body.logger === `interop.${publisher}`

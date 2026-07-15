@@ -575,7 +575,7 @@ async fn run_gg_log_matrix(args: &[String]) -> ! {
     let run_id_for_handler = run_id.clone();
     let expected_for_handler = expected.clone();
     svc.subscribe(
-        "ecv1/interop-device/+/main/log/warn",
+        "ecv1/interop-device/+/log/warn",
         message_handler(move |topic, m| {
             let rh = rh.clone();
             let eh = eh.clone();
@@ -590,10 +590,11 @@ async fn run_gg_log_matrix(args: &[String]) -> ! {
                 let expected_message = format!("gg-log-interop-{run_id}-{publisher}");
                 let ok = expected.contains(publisher)
                     && identity.is_some_and(|id| {
-                        // gg-log-matrix belongs to the separate deployed-Greengrass phase;
-                        // its `main`-scoped assertion is updated there. Compile-fix only for
-                        // the D-U28 `instance() -> Option<&str>` signature.
-                        id.device() == "interop-device" && id.instance() == Some("main")
+                        // D-U28: the LogService publishes component-scope, so the record's
+                        // identity carries the device and component but NO instance token
+                        // (omitted on the wire). Asserting `instance() == None` proves the
+                        // omit-when-absent contract survives the real Greengrass IPC hop.
+                        id.device() == "interop-device" && id.instance().is_none()
                     })
                     && m.body["schema"].as_str() == Some("edgecommons.log.v1")
                     && m.body["level"].as_str() == Some("WARN")
@@ -935,7 +936,7 @@ fn gg_p1_target_actor(target_language: &str, sender_actor: &str) -> String {
 
 #[cfg(feature = "greengrass")]
 fn gg_p1_command_topic(actor: &str) -> String {
-    format!("ecv1/interop-device/interop-p1-{actor}/main/cmd/deferred")
+    format!("ecv1/interop-device/interop-p1-{actor}/cmd/deferred")
 }
 
 #[cfg(feature = "greengrass")]
@@ -1392,7 +1393,7 @@ async fn run_gg_config_update(args: &[String]) -> ! {
     let received = Arc::new(std::sync::Mutex::new(serde_json::Map::new()));
 
     for token in ["opcua-adapter", "modbus-adapter"] {
-        let push_topic = format!("ecv1/lab-5950x/{token}/main/cmd/set-config");
+        let push_topic = format!("ecv1/lab-5950x/{token}/cmd/set-config");
         let received_for_handler = received.clone();
         let token_for_handler = token.to_string();
         svc.subscribe(
@@ -1618,7 +1619,7 @@ async fn run_gg_config_update_file(args: &[String]) -> ! {
     let received = Arc::new(std::sync::Mutex::new(serde_json::Map::new()));
 
     for token in &tokens {
-        let push_topic = format!("ecv1/lab-5950x/{token}/main/cmd/set-config");
+        let push_topic = format!("ecv1/lab-5950x/{token}/cmd/set-config");
         let received_for_handler = received.clone();
         let token_for_handler = token.clone();
         svc.subscribe(
@@ -2016,7 +2017,7 @@ async fn main() {
             }
         }
         // status-request <component> — pull that component's built-in `status` verb over its own
-        // command inbox (ecv1/interop-device/<component>/main/cmd/status) and print the verb's
+        // command inbox (ecv1/interop-device/<component>/cmd/status) and print the verb's
         // result object (the inbox wraps it as {"ok":true,"result":{…}}).
         "status-request" => {
             let component_token = args[2].clone();

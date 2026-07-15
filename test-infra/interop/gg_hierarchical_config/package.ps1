@@ -328,7 +328,7 @@ Manifests:
           OUT="/tmp/edgecommons_full_interop"
           mkdir -p "`$OUT"
           exec {artifacts:path}/interop-rust-node gg-config-update-file \
-            ecv1/lab-5950x/config/main/cmd/update-catalog \
+            ecv1/lab-5950x/config/cmd/update-catalog \
             /tmp/edgecommons-full-interop/catalog-update-second-pass.json \
             JavaComponentSkeleton,PythonComponentSkeleton,RustComponentSkeleton,TsComponentSkeleton \
             "`$OUT/update-result.json"

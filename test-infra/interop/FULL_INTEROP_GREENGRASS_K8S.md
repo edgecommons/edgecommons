@@ -186,7 +186,7 @@ $logPackage = .\test-infra\interop\gg_ipc\package.ps1 `
 
 The `gg-log-matrix` role uses the same packaged Java, Python, Rust, RustPeer, and TypeScript
 interop components, but each participant publishes one runtime structured log record and subscribes
-to the UNS `ecv1/<device>/+/main/log/warn` stream. Each participant writes a result file named
+to the UNS `ecv1/<device>/+/log/warn` stream. Each participant writes a result file named
 `/tmp/edgecommons_gg_ipc_log_<ready-lang>_<run-id>.json`; the run passes only when every result has
 `ok:true`, `missing:[]`, no errors, and received records from Java, Python, Rust, and TypeScript.
 
@@ -401,10 +401,10 @@ ssh $ggHost "sudo /greengrass/v2/bin/greengrass-cli deployment create --recipeDi
 The verifier must subscribe to all four `set-config` topics before it sends the request:
 
 ```text
-ecv1/lab-5950x/JavaComponentSkeleton/main/cmd/set-config
-ecv1/lab-5950x/PythonComponentSkeleton/main/cmd/set-config
-ecv1/lab-5950x/RustComponentSkeleton/main/cmd/set-config
-ecv1/lab-5950x/TsComponentSkeleton/main/cmd/set-config
+ecv1/lab-5950x/JavaComponentSkeleton/cmd/set-config
+ecv1/lab-5950x/PythonComponentSkeleton/cmd/set-config
+ecv1/lab-5950x/RustComponentSkeleton/cmd/set-config
+ecv1/lab-5950x/TsComponentSkeleton/cmd/set-config
 ```
 
 ### 7. Collect Greengrass evidence
@@ -664,7 +664,7 @@ The skeleton pods all run with:
 The verifier Job:
 
 - sends `GetConfiguration` requests to
-  `ecv1/edgecommons-k8s-line-7/config/main/cmd/get-configuration`;
+  `ecv1/edgecommons-k8s-line-7/config/cmd/get-configuration`;
 - proves the initial lineage bundles contain ordered
   `enterprise/acme`, `site/integration-lab`, `zone/k8s-zone`, `line/line-7`,
   and `component/<component-key>` layers;
@@ -672,7 +672,7 @@ The verifier Job:
   schema-valid component tokens, each language's unique component marker, and
   `publish_interval=5`;
 - subscribes to all four `set-config` inboxes;
-- sends `UpdateCatalog` to `ecv1/edgecommons-k8s-line-7/config/main/cmd/update-catalog`;
+- sends `UpdateCatalog` to `ecv1/edgecommons-k8s-line-7/config/cmd/update-catalog`;
 - requires an acknowledgement with `ok=true` and captures the acknowledgement provenance;
 - proves the pushed bundles contain `tags.lineageMarker=k8s-hierarchical-updated` and
   `publish_interval=1`;
