@@ -55,10 +55,9 @@ class MessageIdentityTest {
     }
 
     @Test
-    void nullInstanceDefaultsToMain() {
+    void nullInstanceMeansComponentScope() {
         MessageIdentity id = new MessageIdentity(multiLevelHier(), "comp", null);
-        assertEquals(MessageIdentity.DEFAULT_INSTANCE, id.getInstance());
-        assertEquals("main", id.getInstance());
+        assertNull(id.getInstance());   // D‑U28: absent ⇒ component scope, not "main"
     }
 
     @Test

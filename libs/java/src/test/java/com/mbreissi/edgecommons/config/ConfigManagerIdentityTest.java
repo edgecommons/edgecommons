@@ -52,7 +52,7 @@ class ConfigManagerIdentityTest {
         assertEquals("dallas/finishing/zone-3/gw-01", id.getPath());
         assertEquals("gw-01", id.getDevice());
         assertEquals("TestComponent", id.getComponent());
-        assertEquals(MessageIdentity.DEFAULT_INSTANCE, id.getInstance());
+        assertNull(id.getInstance());   // D‑U28: component identity is component-scoped
     }
 
     @Test

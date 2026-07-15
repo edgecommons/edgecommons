@@ -251,8 +251,10 @@ public final class MessageProtoCodec {
     private static Identity toProtoIdentity(MessageIdentity identity) {
         Identity.Builder builder = Identity.newBuilder()
                 .setPath(identity.getPath())
-                .setComponent(identity.getComponent())
-                .setInstance(identity.getInstance());
+                .setComponent(identity.getComponent());
+        if (identity.getInstance() != null) {   // D‑U28: omit the instance for component scope
+            builder.setInstance(identity.getInstance());
+        }
         for (MessageIdentity.HierEntry entry : identity.getHier()) {
             builder.addHier(HierEntry.newBuilder().setLevel(entry.level()).setValue(entry.value()).build());
         }

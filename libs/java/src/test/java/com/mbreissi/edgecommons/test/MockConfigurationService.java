@@ -34,11 +34,11 @@ public class MockConfigurationService extends ConfigManager {
     /**
      * The mock's resolved UNS identity — a real ConfigManager always resolves one, so the default
      * mirrors the zero-config resolution (single 'device' level = thing name, component = short
-     * name, instance 'main'). Settable (incl. to null) for identity-edge-case tests.
+     * name, component scope — no instance, D‑U28). Settable (incl. to null) for identity-edge-case tests.
      */
     private MessageIdentity componentIdentity = new MessageIdentity(
             List.of(new MessageIdentity.HierEntry("device", thingName)),
-            componentName, MessageIdentity.DEFAULT_INSTANCE);
+            componentName, null);
     
     public void setFullConfig(JsonObject config) {
         this.fullConfig = config;

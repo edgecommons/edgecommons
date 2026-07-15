@@ -89,7 +89,7 @@ public final class AppFacade {
     public AppFacade(ConfigManager configManager, String instanceId, Uns uns,
                      MessagingClient messaging) {
         this.configManager = Objects.requireNonNull(configManager, "configManager must not be null");
-        this.instanceId = Objects.requireNonNull(instanceId, "instanceId must not be null");
+        this.instanceId = instanceId;   // D‑U28: null ⇒ component scope
         this.uns = Objects.requireNonNull(uns, "uns must not be null");
         this.messaging = Objects.requireNonNull(messaging, "messaging must not be null");
     }

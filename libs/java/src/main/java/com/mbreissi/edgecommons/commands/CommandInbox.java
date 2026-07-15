@@ -218,8 +218,10 @@ public final class CommandInbox implements AutoCloseable {
     /** panel id → descriptor; custom panels via {@link #registerPanel(JsonObject)}. */
     private final Map<String, JsonObject> panels = Collections.synchronizedMap(new LinkedHashMap<>());
 
-    /** The subscribed inbox filter ({@code …/cmd/#}); null until {@link #start()} builds it. */
+    /** The instance-scoped inbox filter ({@code …/+/cmd/#}); null until {@link #start()} builds it. */
     private String inboxFilter;
+    /** The component-scoped inbox filter ({@code …/cmd/#}, D‑U28); null until {@link #start()} builds it. */
+    private String componentInboxFilter;
     /** The filter minus the trailing {@code #} — the verb-extraction prefix ({@code …/cmd/}). */
     private String inboxPrefix;
 
@@ -844,6 +846,7 @@ public final class CommandInbox implements AutoCloseable {
 
         final long generation;
         final String filter;
+        final String componentFilter;
         final String prefix;
         final ActivationGate gate;
         synchronized (this) {
@@ -867,10 +870,16 @@ public final class CommandInbox implements AutoCloseable {
                 Uns uns = new Uns(identity, configManager.isTopicIncludeRoot());
                 String site = identity.getHier().size() >= 2
                         ? identity.getHier().get(0).value() : null;
-                filter = uns.filter(UnsClass.CMD, new UnsScope(
-                        site, identity.getDevice(), identity.getComponent(), identity.getInstance()));
+                // D‑U28: the component identity is component-scoped (no instance), so a plain filter
+                // renders the instance slot as '+' (instance-scoped: .../+/cmd/#); the component-scope
+                // overload omits the instance slot (.../cmd/#). Subscribe both.
+                UnsScope scope = new UnsScope(
+                        site, identity.getDevice(), identity.getComponent(), identity.getInstance());
+                filter = uns.filter(UnsClass.CMD, scope);
+                componentFilter = uns.filter(UnsClass.CMD, scope, false);
                 prefix = filter.substring(0, filter.length() - 1);
                 inboxFilter = filter;
+                componentInboxFilter = componentFilter;
                 inboxPrefix = prefix;
                 gate = new ActivationGate(generation, prefix);
                 activationGate = gate;
@@ -885,8 +894,12 @@ public final class CommandInbox implements AutoCloseable {
             messagingClient.subscribeAcknowledged(filter,
                     (topic, message) -> receiveDuringActivation(gate, topic, message),
                     -1, MessagingClient.DEFAULT_MAX_MESSAGES, timeout);
+            messagingClient.subscribeAcknowledged(componentFilter,
+                    (topic, message) -> receiveDuringActivation(gate, topic, message),
+                    -1, MessagingClient.DEFAULT_MAX_MESSAGES, timeout);
         } catch (Exception e) {
             unsubscribeQuietly(filter);
+            unsubscribeQuietly(componentFilter);
             synchronized (this) {
                 failStartLocked(generation, e.toString());
                 StartupStatus failed = startupStatus();
@@ -914,12 +927,14 @@ public final class CommandInbox implements AutoCloseable {
                 }
                 if (!stale) {
                     currentStartupStatus = new StartupStatus(StartupState.ACTIVE, "");
-                    LOGGER.info("Command inbox subscribed on '{}' (verbs: {})", filter, verbs());
+                    LOGGER.info("Command inbox subscribed on '{}' and '{}' (verbs: {})",
+                            filter, componentFilter, verbs());
                 }
             }
         }
         if (stale) {
             unsubscribeQuietly(filter);
+            unsubscribeQuietly(componentFilter);
         }
         return startupStatus();
     }
@@ -932,15 +947,19 @@ public final class CommandInbox implements AutoCloseable {
     /** Stops the active generation without permanently closing the inbox; a later start may retry. */
     public void stop() {
         String filter;
+        String componentFilter;
         synchronized (this) {
             startupGeneration++;
             currentStartupStatus = new StartupStatus(StartupState.STOPPED, "");
             filter = inboxFilter;
+            componentFilter = componentInboxFilter;
             inboxFilter = null;
+            componentInboxFilter = null;
             inboxPrefix = null;
             clearActivationGateLocked();
         }
         unsubscribeQuietly(filter);
+        unsubscribeQuietly(componentFilter);
     }
 
     private void failStartLocked(long generation, String error) {
@@ -949,6 +968,7 @@ public final class CommandInbox implements AutoCloseable {
             return;
         }
         inboxFilter = null;
+        componentInboxFilter = null;
         inboxPrefix = null;
         clearActivationGateLocked();
         currentStartupStatus = new StartupStatus(
@@ -1072,12 +1092,19 @@ public final class CommandInbox implements AutoCloseable {
                     return;
                 }
             }
-            if (topic == null || !topic.startsWith(prefix)) {
-                // ".../cmd/#" also matches the bare ".../cmd" parent level - nothing to dispatch.
-                LOGGER.debug("Ignoring cmd delivery outside the inbox prefix: '{}'", topic);
+            // D‑U28: the instance slot is optional, so a command arrives on either
+            // ".../{instance}/cmd/{verb}" or ".../cmd/{verb}". Locate the "/cmd/" class marker and take
+            // the verb after it — unambiguous for both scopes (an instance is never a class token).
+            if (topic == null) {
                 return;
             }
-            String verb = topic.substring(prefix.length());
+            int cmdMarker = topic.indexOf("/cmd/");
+            if (cmdMarker < 0) {
+                // ".../cmd/#" also matches the bare ".../cmd" parent level - nothing to dispatch.
+                LOGGER.debug("Ignoring cmd delivery without a '/cmd/' segment: '{}'", topic);
+                return;
+            }
+            String verb = topic.substring(cmdMarker + 5);   // 5 = "/cmd/".length()
             if (verb.isEmpty()) {
                 return;
             }
@@ -1483,7 +1510,9 @@ public final class CommandInbox implements AutoCloseable {
         startupGeneration++;
         currentStartupStatus = new StartupStatus(StartupState.STOPPED, "");
         String filterToUnsubscribe = inboxFilter;
+        String componentFilterToUnsubscribe = componentInboxFilter;
         inboxFilter = null;
+        componentInboxFilter = null;
         inboxPrefix = null;
         clearActivationGateLocked();
 
