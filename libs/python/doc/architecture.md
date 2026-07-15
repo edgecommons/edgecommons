@@ -102,7 +102,7 @@ are configured, not hardcoded.
 
 ### Heartbeat (`edgecommons/heartbeat/`)
 `EnhancedHeartbeat` is the library-owned liveness signal (UNS model — on by default, every 5 s): each
-tick it publishes the **`state` keepalive** to `ecv1/{device}/{component}/main/state` (via the
+tick it publishes the **`state` keepalive** to `ecv1/{device}/{component}/state` (via the
 reserved-publish seam) and emits the enabled system measures (CPU/memory/disk/threads/FDs via
 `psutil`) as the **`sys` metric** through the metric subsystem. It has its messaging + metric services
 passed in (not reached for via globals). The legacy `heartbeat.targets[]` routing is removed; see

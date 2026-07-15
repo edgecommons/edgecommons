@@ -262,7 +262,8 @@ def _to_proto_identity(identity):
     proto = _new("Identity")
     proto.path = identity.path
     proto.component = identity.component
-    proto.instance = identity.instance
+    if identity.instance is not None:   # D-U28: omit the instance for component scope
+        proto.instance = identity.instance
     for entry in identity.hier:
         item = proto.hier.add()
         item.level = entry.level

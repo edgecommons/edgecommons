@@ -6,7 +6,7 @@ The heartbeat is the library-owned liveness signal of every component (UNS-CANON
 Each tick it does two independent things:
 
 1. **State keepalive** — publishes a `state` envelope to the component's UNS state topic
-   `ecv1/{device}/{component}/main/state` (rooted form `ecv1/{site}/{device}/…` when
+   `ecv1/{device}/{component}/state` (rooted form `ecv1/{site}/{device}/…` when
    `topic.includeRoot` is true). Header `name` is `"state"`; the body is
    `{"status": "RUNNING", "uptimeSecs": <seconds since start>}`. On graceful shutdown
    (`EdgeCommons.shutdown()` / SIGTERM, or `EnhancedHeartbeat.stop()`) a best-effort
@@ -52,7 +52,7 @@ hard cut. The section is now:
 }
 ```
 
-Publishes the `RUNNING` keepalive to `ecv1/{device}/{component}/main/state` every 5 seconds and
+Publishes the `RUNNING` keepalive to `ecv1/{device}/{component}/state` every 5 seconds and
 emits `sys` with CPU + memory through the configured metric target. (Omitting the section entirely
 behaves the same.)
 

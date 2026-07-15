@@ -210,11 +210,11 @@ class TestDataFacade:
         with pytest.raises(ValueError):
             DataFacade(None, "kep1", uns, messaging)
         with pytest.raises(ValueError):
-            DataFacade(config, "", uns, messaging)
-        with pytest.raises(ValueError):
             DataFacade(config, "kep1", None, messaging)
         with pytest.raises(ValueError):
             DataFacade(config, "kep1", uns, None)
+        # D-U28: an empty/None instance_id is component scope (accepted, no raise).
+        assert DataFacade(config, None, uns, messaging).instance_id() is None
 
     def test_instance_id_accessor(self):
         facade = DataFacade(_FakeConfigManager(), "kep1", _uns(), _RecordingMessaging())
@@ -431,11 +431,11 @@ class TestEventsFacade:
         with pytest.raises(ValueError):
             EventsFacade(None, "main", _uns(), _RecordingMessaging())
         with pytest.raises(ValueError):
-            EventsFacade(_FakeConfigManager(), "", _uns(), _RecordingMessaging())
-        with pytest.raises(ValueError):
             EventsFacade(_FakeConfigManager(), "main", None, _RecordingMessaging())
         with pytest.raises(ValueError):
             EventsFacade(_FakeConfigManager(), "main", _uns(), None)
+        # D-U28: an empty/None instance_id is component scope (accepted, no raise).
+        EventsFacade(_FakeConfigManager(), None, _uns(), _RecordingMessaging())
 
     def test_emit_derives_channel_and_defaults_timestamp(self):
         facade, messaging = self._facade()
@@ -533,11 +533,11 @@ class TestAppFacade:
         with pytest.raises(ValueError):
             AppFacade(None, "main", _uns(), _RecordingMessaging())
         with pytest.raises(ValueError):
-            AppFacade(_FakeConfigManager(), "", _uns(), _RecordingMessaging())
-        with pytest.raises(ValueError):
             AppFacade(_FakeConfigManager(), "main", None, _RecordingMessaging())
         with pytest.raises(ValueError):
             AppFacade(_FakeConfigManager(), "main", _uns(), None)
+        # D-U28: an empty/None instance_id is component scope (accepted, no raise).
+        AppFacade(_FakeConfigManager(), None, _uns(), _RecordingMessaging())
 
     def test_publishes_verbatim_body_with_named_header_onto_app_channel(self):
         facade, messaging = self._facade()
@@ -630,6 +630,7 @@ class TestEdgeCommonsFacadeAccessors:
         gg = object.__new__(EdgeCommons)
         gg._uns = None
         gg._instance_handles = {}
+        gg._component_handle = None
         gg._streams = None
         gg._clock = FIXED_CLOCK
         gg._config_manager = self._Cm()
@@ -651,11 +652,15 @@ class TestEdgeCommonsFacadeAccessors:
         def get_global_config(self):
             return {}
 
-    def test_data_events_app_equal_main_instance_facades(self):
+    def test_data_events_app_are_cached_component_scope_facades(self):
+        # D-U28: gg.data()/events()/app() are the component-scope facades (no instance
+        # token), cached and distinct from an instance-scoped handle's facades.
         gg = self._gg()
-        assert gg.data() is gg.instance("main").data()
-        assert gg.events() is gg.instance("main").events()
-        assert gg.app() is gg.instance("main").app()
+        assert gg.data() is gg.data()  # cached component-scope handle
+        assert gg.events() is gg.events()
+        assert gg.app() is gg.app()
+        assert gg.data() is not gg.instance("main").data()
+        assert gg.data().instance_id() is None  # component scope (DataFacade exposes the accessor)
 
 
 # ===================== util helpers (format_instant / parse_iso_to_epoch_millis) =====================

@@ -22,7 +22,11 @@ from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.messaging.messaging_client import MessagingClient
 
 
-INBOX_FILTER = "ecv1/test-thing/TestComponent/main/cmd/#"
+# D-U28: the inbox subscribes both the component-scope and instance-scope cmd wildcards.
+INBOX_FILTERS = {
+    "ecv1/test-thing/TestComponent/cmd/#",
+    "ecv1/test-thing/TestComponent/+/cmd/#",
+}
 REPLY_TO = "edgecommons/reply-command-outcome"
 
 
@@ -98,7 +102,7 @@ def _inbox():
     messaging = _Messaging()
     inbox = CommandInbox(_Config(), messaging, lambda: 1, lambda: True, lambda: {})
     inbox.start()
-    assert set(messaging.callbacks) == {INBOX_FILTER}
+    assert set(messaging.callbacks) == INBOX_FILTERS
     return inbox, messaging
 
 

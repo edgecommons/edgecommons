@@ -1,11 +1,14 @@
 """The library-owned component **command inbox** — the minimal ``commands()`` facade
 (DESIGN-uns §7.3/§9.5, the edge-console slice S2): every component subscribes, on its
-PRIMARY (local/IPC) connection, its own ``main``-instance command-inbox wildcard::
+PRIMARY (local/IPC) connection, BOTH its component-scope and instance-scope
+command-inbox wildcards (D-U28)::
 
-    ecv1/{device}/{component}/main/cmd/#
+    ecv1/{device}/{component}/cmd/#      (component scope)
+    ecv1/{device}/{component}/+/cmd/#    (any instance)
 
 and dispatches incoming ``cmd`` envelopes to handlers by **verb** — the topic's
-channel (everything after ``cmd/``, ``/``-namespaced verbs included), which the
+channel (everything after the ``/cmd/`` marker, ``/``-namespaced verbs included),
+which the
 envelope's ``header.name`` must equal. A request carrying ``header.reply_to`` gets a
 structured reply on that topic with the request's ``correlation_id`` (the
 ``uns-bridge`` rewrites ``reply_to`` across brokers, so console-to-component
@@ -64,9 +67,9 @@ runtime after initialization completes (right after the §9.4 republish listener
 :meth:`CommandInbox.close` unsubscribes the inbox (before messaging closes — the
 unsubscribe-before-exit rule). When the component identity is not resolved (mock/test
 bring-up), the inbox disables itself with a WARN, mirroring the heartbeat, the
-effective-config publisher and the republish listener. Only the ``main``-instance
-inbox is subscribed in this slice; per-instance inboxes ride the full ``commands()``
-facade (Phase 5).
+effective-config publisher and the republish listener. Both the component-scope
+(``.../cmd/#``) and any-instance (``.../+/cmd/#``) inboxes are subscribed (D-U28); the
+verb is extracted from the unambiguous ``/cmd/`` marker for either scope.
 """
 import hashlib
 import heapq
@@ -547,11 +550,16 @@ class CommandInbox:
         self._handlers[RELOAD_CONFIG] = _reload_config
         self._handlers[GET_CONFIGURATION] = _get_configuration
 
-        # The subscribed inbox filter (".../cmd/#"); None until start() builds it.
+        # The instance-scoped inbox filter (".../+/cmd/#", D-U28); None until start()
+        # builds it.
         self._inbox_filter: Optional[str] = None
-        # The filter minus the trailing '#' - the verb-extraction prefix
-        # (".../cmd/"); assigned BEFORE subscribing so a delivery racing the
-        # subscribe call sees it.
+        # The component-scoped inbox filter (".../cmd/#", D-U28); None until start()
+        # builds it.
+        self._component_inbox_filter: Optional[str] = None
+        # The instance filter minus the trailing '#' - the legacy verb-extraction prefix
+        # (".../cmd/"); assigned BEFORE subscribing so a delivery racing the subscribe
+        # call sees it. Verb extraction now uses the "/cmd/" marker (D-U28), so this is
+        # retained only for the activation gate.
         self._inbox_prefix: Optional[str] = None
 
         self._lock = threading.RLock()
@@ -1134,13 +1142,19 @@ class CommandInbox:
             try:
                 uns = Uns(identity, self._config_manager.is_topic_include_root())
                 site = identity.hier[0].value if len(identity.hier) >= 2 else None
+                # D-U28: the component identity is component-scoped (no instance), so a
+                # plain filter renders the instance slot as '+' (instance scope:
+                # .../+/cmd/#); the component-scope filter omits the instance slot
+                # (.../cmd/#). Subscribe both.
                 scope = UnsScope(
                     site, identity.device, identity.component, identity.instance
                 )
                 filter_ = uns.filter(UnsClass.CMD, scope)
+                component_filter = uns.filter(UnsClass.CMD, scope, include_instance=False)
                 prefix = filter_[:-1]
                 gate = _ActivationGate(generation, prefix, deque())
                 self._inbox_filter = filter_
+                self._component_inbox_filter = component_filter
                 self._inbox_prefix = prefix
                 self._activation_gate = gate
             except Exception as exc:
@@ -1157,8 +1171,18 @@ class CommandInbox:
                 10000,
                 timeout,
             )
+            self._messaging_client.subscribe_acknowledged(
+                component_filter,
+                lambda topic, message: self._receive_during_activation(
+                    gate, topic, message
+                ),
+                None,
+                10000,
+                timeout,
+            )
         except Exception as exc:  # noqa: BLE001 - failure is observable state
             self._unsubscribe_quietly(filter_)
+            self._unsubscribe_quietly(component_filter)
             with self._lock:
                 self._fail_start_locked(generation, exc)
                 failed = self._startup_status
@@ -1196,12 +1220,14 @@ class CommandInbox:
                         stale = True
                 if not stale:
                     logger.info(
-                        "Command inbox subscribed on '%s' (verbs: %s)",
+                        "Command inbox subscribed on '%s' and '%s' (verbs: %s)",
                         filter_,
+                        component_filter,
                         sorted(self.verbs()),
                     )
         if stale:
             self._unsubscribe_quietly(filter_)
+            self._unsubscribe_quietly(component_filter)
         return self.startup_status()
 
     def startup_status(self) -> CommandInboxStartupStatus:
@@ -1219,10 +1245,13 @@ class CommandInbox:
                 CommandInboxStartupState.STOPPED
             )
             filter_ = self._inbox_filter
+            component_filter = self._component_inbox_filter
             self._inbox_filter = None
+            self._component_inbox_filter = None
             self._inbox_prefix = None
             self._clear_activation_gate_locked()
         self._unsubscribe_quietly(filter_)
+        self._unsubscribe_quietly(component_filter)
 
     def _fail_start_locked(self, generation: int, error: object) -> None:
         if (
@@ -1231,6 +1260,7 @@ class CommandInbox:
         ):
             return
         self._inbox_filter = None
+        self._component_inbox_filter = None
         self._inbox_prefix = None
         self._clear_activation_gate_locked()
         self._startup_status = CommandInboxStartupStatus(
@@ -1335,12 +1365,19 @@ class CommandInbox:
                     is not CommandInboxStartupState.ACTIVE
                 ):
                     return
-            if topic is None or not topic.startswith(prefix):
+            # D-U28: the instance slot is optional, so a command arrives on either
+            # ".../{instance}/cmd/{verb}" or ".../cmd/{verb}". Locate the "/cmd/" class
+            # marker and take the verb after it - unambiguous for both scopes (an
+            # instance is never a class token).
+            if topic is None:
+                return
+            cmd_marker = topic.find("/cmd/")
+            if cmd_marker < 0:
                 # ".../cmd/#" also matches the bare ".../cmd" parent level - nothing
                 # to dispatch.
-                logger.debug("Ignoring cmd delivery outside the inbox prefix: '%s'", topic)
+                logger.debug("Ignoring cmd delivery without a '/cmd/' segment: '%s'", topic)
                 return
-            verb = topic[len(prefix):]
+            verb = topic[cmd_marker + 5:]   # 5 = len("/cmd/")
             if not verb:
                 return
             if verb in DELEGATED_VERBS:
@@ -1595,7 +1632,9 @@ class CommandInbox:
                 CommandInboxStartupState.STOPPED
             )
             inbox_filter = self._inbox_filter
+            component_inbox_filter = self._component_inbox_filter
             self._inbox_filter = None
+            self._component_inbox_filter = None
             self._inbox_prefix = None
             self._clear_activation_gate_locked()
 
@@ -1651,6 +1690,7 @@ class CommandInbox:
                         self._cleanup_deferred_locked(entry)
 
         self._unsubscribe_quietly(inbox_filter)
+        self._unsubscribe_quietly(component_inbox_filter)
 
     def _send_stopping_reply(self, entry: _DeferredEntry) -> None:
         try:

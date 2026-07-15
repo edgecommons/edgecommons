@@ -144,7 +144,7 @@ The validation schema covers all edgecommons configuration sections:
 - `intervalSecs`: Must be positive integer
 - `targetConfig.destination`: Must be one of "ipc", "local", "northbound"
 - The former `targetConfig.topic` override is removed (UNS hard cut): the messaging target
-  publishes to the UNS metric topic `ecv1/{device}/{component}/main/metric/{metricName}` and
+  publishes to the UNS metric topic `ecv1/{device}/{component}/metric/{metricName}` and
   the cloudwatchcomponent topic is the fixed external contract `cloudwatch/metric/put`
 
 ### Tags Configuration

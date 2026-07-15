@@ -41,7 +41,7 @@ class TestMessageIdentity:
         assert ident.path == "dallas/z3/gw-01"
         assert ident.device == "gw-01"
         assert ident.component == "opcua-adapter"
-        assert ident.instance == "main"  # default
+        assert ident.instance is None  # D-U28: absent ⇒ component scope
 
     def test_empty_hier_rejected(self):
         with pytest.raises(ValueError):
@@ -56,11 +56,20 @@ class TestMessageIdentity:
         other = ident.with_instance("kep1")
         assert other.instance == "kep1"
         assert other.hier == ident.hier and other.path == ident.path
-        assert ident.instance == "main"  # original untouched
+        assert ident.instance is None  # original untouched (component scope)
 
-    def test_with_instance_empty_rejected(self):
+    def test_with_instance_empty_is_component_scope(self):
+        # D-U28: a None/empty instance means component scope (no raise).
+        assert _identity("kep1").with_instance("").instance is None
+        assert _identity("kep1").with_instance(None).instance is None
+
+    def test_reserved_class_token_instance_rejected(self):
+        # D-U28: a present instance may not equal a reserved UNS class token.
+        for token in ("state", "metric", "cfg", "log", "data", "evt", "cmd", "app"):
+            with pytest.raises(ValueError):
+                _identity(token)
         with pytest.raises(ValueError):
-            _identity().with_instance("")
+            _identity().with_instance("cmd")
 
     def test_to_dict_canonical_order(self):
         d = _identity("kep1").to_dict()
@@ -80,10 +89,13 @@ class TestFromDictLenient:
         parsed = MessageIdentity.from_dict(ident.to_dict())
         assert parsed == ident
 
-    def test_missing_instance_defaults_to_main(self):
-        d = _identity().to_dict()
+    def test_missing_instance_is_component_scope(self):
+        # D-U28: a missing/empty instance parses back to None (component scope).
+        d = _identity("kep1").to_dict()
         del d["instance"]
-        assert MessageIdentity.from_dict(d).instance == "main"
+        assert MessageIdentity.from_dict(d).instance is None
+        # A component-scoped identity omits the instance key entirely on serialize.
+        assert "instance" not in _identity().to_dict()
 
     def test_missing_path_recomputed(self):
         d = _identity().to_dict()
@@ -175,10 +187,12 @@ class TestBuilderStamping:
         )
         assert m.get_identity() is override
 
-    def test_config_identity_stamped_with_default_instance(self):
+    def test_config_identity_stamped_component_scope(self):
+        # D-U28: with no per-message instance, the stamped identity is component scope.
         m = MessageBuilder.create("N", "1").with_config(self._Cm(_identity())).build()
-        assert m.get_identity().instance == "main"
+        assert m.get_identity().instance is None
         assert m.get_identity().component == "opcua-adapter"
+        assert "instance" not in m.get_identity().to_dict()
 
     def test_config_identity_stamped_with_instance_token(self):
         m = (
@@ -198,9 +212,15 @@ class TestBuilderStamping:
         assert m.get_identity() is None
         assert m.tags is not None  # tags still stamped from config
 
-    def test_with_instance_empty_rejected(self):
-        with pytest.raises(ValueError):
-            MessageBuilder.create("N", "1").with_instance("")
+    def test_builder_with_instance_empty_is_component_scope(self):
+        # D-U28: an empty per-message instance ⇒ component scope (no raise, no key).
+        m = (
+            MessageBuilder.create("N", "1")
+            .with_config(self._Cm(_identity()))
+            .with_instance("")
+            .build()
+        )
+        assert m.get_identity().instance is None
 
     def test_from_object_carries_identity(self):
         src = {

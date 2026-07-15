@@ -10,8 +10,8 @@ hierarchy (>= 2 ``hier`` entries — D-U25). With a single-level hierarchy
 (``["device"]``) ``hier[0]`` *is* the device, so includeRoot is a no-op (prepending
 would duplicate the device: ``ecv1/gw-01/gw-01/...``).
 
-Obtain the component-bound instance via ``gg.uns()`` (instance ``"main"``) or an
-instance-bound one via ``gg.instance(id).uns()``.
+Obtain the component-bound builder via ``gg.uns()`` (component scope — no instance
+token, D-U28) or an instance-bound one via ``gg.instance(id).uns()``.
 
 Normative rules (each violation raises :class:`UnsValidationError` with a
 machine-readable ``code``):
@@ -205,7 +205,8 @@ class Uns:
             segments.append(_checked_token(target.hier[0].value, "site (hier[0]) value"))
         segments.append(_checked_token(target.device, "device"))
         segments.append(_checked_token(target.component, "component"))
-        segments.append(_checked_token(target.instance, "instance"))
+        if target.instance is not None:   # D-U28: the instance slot is omitted for component scope
+            segments.append(_checked_token(target.instance, "instance"))
         segments.append(cls.token)
 
         channel_supplied = bool(channel)
@@ -237,16 +238,26 @@ class Uns:
         _check_length(topic)
         return topic
 
-    def filter(self, cls: UnsClass, scope: UnsScope) -> str:
+    def filter(self, cls: UnsClass, scope: UnsScope,
+               include_instance: bool = True) -> str:
         """Builds a subscription filter for a class over a wildcard :class:`UnsScope`:
         ``None`` scope fields render as ``+``; channeled classes get a trailing ``/#``
         (all channels); leaf classes end at the class token. The ``site`` position
         exists (and :attr:`UnsScope.site` is consulted) only when ``topic.includeRoot``
         is true AND the bound identity carries a multi-level hierarchy (D-U25).
 
+        D-U28 scope-aware: when ``include_instance`` is ``False`` the instance slot is
+        **omitted** entirely, yielding a component-scope filter (e.g.
+        ``ecv1/{device}/{component}/cmd/#``); when ``True`` (the default) the instance
+        slot is present (a pinned token, or ``+`` when :attr:`UnsScope.instance` is
+        ``None``).
+
         The output is correct by construction and is NOT passed through
         :meth:`validate` (filters legitimately carry wildcards).
 
+        :param cls: the UNS class (non-``None``)
+        :param scope: the wildcard scope (non-``None``)
+        :param include_instance: whether to render the optional instance slot (D-U28)
         :raises UnsValidationError: when a pinned (non-``None``) scope field violates
             the token rule
         """
@@ -259,7 +270,8 @@ class Uns:
             segments.append(_wildcard_or(scope.site, "site"))
         segments.append(_wildcard_or(scope.device, "device"))
         segments.append(_wildcard_or(scope.component, "component"))
-        segments.append(_wildcard_or(scope.instance, "instance"))
+        if include_instance:
+            segments.append(_wildcard_or(scope.instance, "instance"))
         segments.append(cls.token)
         built = "/".join(segments)
         return built if cls.leaf else built + "/#"
@@ -268,10 +280,12 @@ class Uns:
         """Validates a **concrete** topic against the full §2.2 grammar under this
         instance's root mode: wildcards are rejected (``WILDCARD_IN_TOPIC``); every
         token passes the token rule; the first token must be the ``ecv1`` root literal;
-        depth <= 7 separators; length <= 256 UTF-8 bytes; the class position (5th token
-        rootless, 6th rooted — the root mode is effective only with a multi-level bound
-        hierarchy, D-U25) must hold a :class:`UnsClass` token; leaf classes must end at
-        the class token and channeled classes must carry at least one channel token.
+        depth <= 7 separators; length <= 256 UTF-8 bytes. The instance slot is optional
+        (D-U28), so the class is located by the class-token set — the token right after
+        ``{component}`` is the class iff it is a class token, else it is the instance and
+        the class follows (the root mode is effective only with a multi-level bound
+        hierarchy, D-U25). Leaf classes must end at the class token and channeled classes
+        must carry at least one channel token.
 
         :raises UnsValidationError: with the precise code on the first violation found
         """
@@ -299,13 +313,28 @@ class Uns:
                 f"topic '{topic}' has {slashes} '/' separators (max {Uns.MAX_TOPIC_SLASHES})",
             )
         _check_length(topic)
-        class_position = 5 if self._rooted(self._identity) else 4
+        # D-U28: the instance slot is optional. The token right after {component} is the
+        # class iff it is a class token, else it is the instance and the class follows
+        # (an instance can never be a class token). {component} sits at index 2 rootless
+        # / 3 rooted, so the token after it is at index 3 rootless / 4 rooted.
+        after_component = 4 if self._rooted(self._identity) else 3
+        if len(tokens) <= after_component:
+            raise UnsValidationError(
+                UnsValidationError.BAD_CLASS,
+                f"topic '{topic}' has too few levels ({len(tokens)}): no class token at"
+                f" or after position {after_component} (effective root mode"
+                f" {self._rooted(self._identity)})",
+            )
+        class_position = (
+            after_component
+            if UnsClass.from_token(tokens[after_component]) is not None
+            else after_component + 1
+        )
         if len(tokens) <= class_position:
             raise UnsValidationError(
                 UnsValidationError.BAD_CLASS,
-                f"topic '{topic}' has too few levels ({len(tokens)}): the class token is"
-                f" expected at position {class_position} (effective root mode"
-                f" {self._rooted(self._identity)})",
+                f"topic '{topic}' carries an instance token but no class token follows"
+                f" (expected at position {class_position})",
             )
         cls = UnsClass.from_token(tokens[class_position])
         if cls is None:

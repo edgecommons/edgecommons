@@ -26,7 +26,7 @@ class TestZeroConfigDefault:
         assert ident.device == "gw-01"
         assert ident.path == "gw-01"
         assert ident.component == "opcua-adapter"  # sanitized short name (D-U18)
-        assert ident.instance == "main"
+        assert ident.instance is None  # D-U28: resolved identity is component scope
 
     def test_identity_none_without_init(self):
         cm = ConfigManager("comp", "thing")

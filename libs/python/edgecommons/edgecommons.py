@@ -82,25 +82,30 @@ class EdgeCommons:
         # startup and on every configuration change.
         self._effective_config_publisher = None
         # The library-owned _bcast republish listener (DESIGN-uns §9.3/§9.4, the
-        # late-join lever): subscribes ecv1/{device}/_bcast/main/cmd/republish-state|
-        # republish-cfg on the primary connection and re-announces state/cfg out of
+        # late-join lever): subscribes ecv1/{device}/_bcast/cmd/republish-state|
+        # republish-cfg (component scope, no instance - D-U28) on the primary connection
+        # and re-announces state/cfg out of
         # band (jittered, coalesced) when the uns-bridge - or a console - broadcasts a
         # republish command.
         self._republish_listener = None
         # The library-owned command inbox (DESIGN-uns §7.3/§9.5, the minimal
-        # commands() facade - edge-console slice S2): subscribes the own-inbox
-        # wildcard ecv1/{device}/{component}/main/cmd/# on the primary connection
-        # and dispatches cmd envelopes by verb - built-ins ping / reload-config /
-        # get-configuration answer the console out of the box; apps add custom
-        # verbs via get_commands().register().
+        # commands() facade - edge-console slice S2): subscribes both the
+        # component-scope inbox wildcard ecv1/{device}/{component}/cmd/# and the
+        # instance-scope ecv1/{device}/{component}/+/cmd/# (D-U28) on the primary
+        # connection and dispatches cmd envelopes by verb - built-ins ping /
+        # reload-config / get-configuration answer the console out of the box; apps add
+        # custom verbs via get_commands().register().
         self._command_inbox = None
-        # The component-identity-bound UNS topic builder (instance "main"), lazily
-        # bound on first uns() from the resolved component identity +
-        # topic.includeRoot (UNS-CANONICAL-DESIGN §2).
+        # The component-identity-bound UNS topic builder (component scope, no instance
+        # token - D-U28), lazily bound on first uns() from the resolved component
+        # identity + topic.includeRoot (UNS-CANONICAL-DESIGN §2).
         self._uns = None
         # Cached per-id instance handles (UNS-CANONICAL-DESIGN §3, D-U3): instance(id)
         # returns the same EdgeCommonsInstance for the same id.
         self._instance_handles = {}
+        # D-U28: the component-scope handle (no instance token) backing
+        # data()/events()/app(); lazily built and cached, mirroring uns().
+        self._component_handle = None
         # The clock the data()/events() publish facades use for their time defaults
         # (serverTs/timestamp -> now), injected so tests can pin a fixed clock
         # (DESIGN-class-facades §2, mirrors Java's Clock.systemUTC()).
@@ -235,9 +240,10 @@ class EdgeCommons:
             )
             self._republish_listener.start()
 
-            # §9.5 (slice S2): subscribe the component's own command inbox
-            # (ecv1/{device}/{component}/main/cmd/#) on the primary connection and
-            # dispatch cmd envelopes by verb - built-ins ping / status / describe /
+            # §9.5 (slice S2): subscribe the component's own command inbox - both
+            # ecv1/{device}/{component}/cmd/# (component scope) and
+            # ecv1/{device}/{component}/+/cmd/# (any instance, D-U28) - on the primary
+            # connection and dispatch cmd envelopes by verb - built-ins ping / status / describe /
             # reload-config / get-configuration answer the console out of the box; apps
             # add custom verbs via get_commands().register(). Always on (no config
             # surface); best-effort start (a failure disables the inbox only).
@@ -490,9 +496,9 @@ class EdgeCommons:
     def set_instance_connectivity_provider(self, provider) -> None:
         """Register the component's per-instance connectivity provider — the overridable
         surface for reporting connectivity AT THE INSTANCE LEVEL (each configured
-        connection's health) in the ``main`` ``state`` keepalive's ``instances`` array,
-        without minting a separate UNS instance per connection (data + lifecycle stay under
-        ``main``). A reference adapter maps each connection to its reachability: OPC UA
+        connection's health) in the component's ``state`` keepalive's ``instances`` array,
+        without minting a separate UNS instance per connection (data + lifecycle stay at
+        component scope — no instance token, D-U28). A reference adapter maps each connection to its reachability: OPC UA
         server session / Modbus slave / file-replicator source directory. The same sample
         answers the built-in ``status`` command verb when pulled, so a component supplies
         the data once and the library serves it on both surfaces. No-op when the heartbeat
@@ -795,8 +801,8 @@ class EdgeCommons:
 
     def uns(self):
         """The UNS topic builder + validator bound to this component's resolved
-        identity (instance ``"main"``) and its ``topic.includeRoot`` setting
-        (UNS-CANONICAL-DESIGN §2). For instance-scoped topics use
+        identity (component scope — no instance token, D-U28) and its
+        ``topic.includeRoot`` setting (UNS-CANONICAL-DESIGN §2). For instance-scoped topics use
         ``instance(id).uns()``. Mirrors Java's ``getUns()``.
 
         :raises RuntimeError: when called before initialization completes (no resolved
@@ -863,38 +869,47 @@ class EdgeCommons:
         return _sink
 
     def data(self):
-        """The ``data()`` publish facade for the component's ``main`` instance — the
-        single-instance-component convenience, equivalent to ``instance("main").data()``
-        (DESIGN-class-facades §3, D6). Builds/validates the ``SouthboundSignalUpdate``
-        body. Mirrors Java's ``getData()``.
+        """The ``data()`` publish facade at **component scope** (D-U28: no instance
+        token) — for an instance-scoped facade use ``instance(id).data()``.
+        Builds/validates the ``SouthboundSignalUpdate`` body. Mirrors Java's
+        ``getData()``.
 
         :raises RuntimeError: when called before initialization completes
         """
-        from edgecommons.messaging.identity import MessageIdentity
-
-        return self.instance(MessageIdentity.DEFAULT_INSTANCE).data()
+        return self._component_scope().data()
 
     def events(self):
-        """The ``events()`` publish facade for the component's ``main`` instance —
-        equivalent to ``instance("main").events()`` (DESIGN-class-facades §3, D6).
-        Operator events & alarms on the ``evt`` class. Mirrors Java's ``getEvents()``.
+        """The ``events()`` publish facade at **component scope** (D-U28: no instance
+        token) — for an instance-scoped facade use ``instance(id).events()``. Operator
+        events & alarms on the ``evt`` class. Mirrors Java's ``getEvents()``.
 
         :raises RuntimeError: when called before initialization completes
         """
-        from edgecommons.messaging.identity import MessageIdentity
-
-        return self.instance(MessageIdentity.DEFAULT_INSTANCE).events()
+        return self._component_scope().events()
 
     def app(self):
-        """The ``app()`` publish facade for the component's ``main`` instance —
-        equivalent to ``instance("main").app()`` (DESIGN-class-facades §3, D6). Free-form
+        """The ``app()`` publish facade at **component scope** (D-U28: no instance
+        token) — for an instance-scoped facade use ``instance(id).app()``. Free-form
         inter-component pub/sub on the ``app`` class. Mirrors Java's ``getApp()``.
 
         :raises RuntimeError: when called before initialization completes
         """
-        from edgecommons.messaging.identity import MessageIdentity
+        return self._component_scope().app()
 
-        return self.instance(MessageIdentity.DEFAULT_INSTANCE).app()
+    def _component_scope(self):
+        """The component-scope handle (D-U28: no instance token) backing
+        :meth:`data`, :meth:`events`, and :meth:`app`. Lazily built and cached,
+        mirroring :meth:`uns`."""
+        from edgecommons.edgecommons_instance import EdgeCommonsInstance
+        from edgecommons.messaging.messaging_client import MessagingClient
+
+        if self._component_handle is None:
+            cm = self._require_resolved_identity()
+            self._component_handle = EdgeCommonsInstance(
+                None, cm, cm.is_topic_include_root(), MessagingClient,
+                self._stream_sink(), self._clock,
+            )
+        return self._component_handle
 
     def logs(self):
         """The library-owned UNS ``log`` publisher facade for this component."""

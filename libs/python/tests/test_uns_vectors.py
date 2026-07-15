@@ -210,7 +210,7 @@ def test_bcast_topic_and_envelope(case):
         "'" + case["name"] + "' pseudo-component token"
     )
     identity = MessageIdentity(
-        [HierEntry("device", inp["device"])], inp["component"], inp["instance"]
+        [HierEntry("device", inp["device"])], inp["component"], inp.get("instance")
     )
     cls = UnsClass.from_token(inp["class"])
     assert cls is not None, f"vector class '{inp['class']}' is not a UNS class"

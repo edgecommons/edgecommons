@@ -27,8 +27,8 @@ from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.republish_listener import RepublishListener, _ThreadingDelayer
 
 # The default fake identity's device is 'test-thing' (single 'device' level).
-STATE_TOPIC = "ecv1/test-thing/_bcast/main/cmd/republish-state"
-CFG_TOPIC = "ecv1/test-thing/_bcast/main/cmd/republish-cfg"
+STATE_TOPIC = "ecv1/test-thing/_bcast/cmd/republish-state"  # D-U28: component scope
+CFG_TOPIC = "ecv1/test-thing/_bcast/cmd/republish-cfg"
 
 
 class FakeConfig:

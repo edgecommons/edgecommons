@@ -3,12 +3,12 @@ verb (the #1c model).
 
 A multi-connection component (an OPC UA adapter with several servers, a Modbus adapter
 with several slaves, a file-replicator with several source directories) keeps its
-identity, data and lifecycle under its ``main`` instance token — it does NOT mint a
-separate UNS instance per connection. Instead it reports each connection's health here,
-and the console renders it per-instance under the one component (no phantom "instance"
-component that never heartbeats).
+identity, data and lifecycle at **component scope** (no instance token — D-U28) — it
+does NOT mint a separate UNS instance per connection. Instead it reports each
+connection's health here, and the console renders it per-instance under the one
+component (no phantom "instance" component that never heartbeats).
 
-Register a provider with ``gg.set_instance_connectivity_provider(...)``; the ``main``
+Register a provider with ``gg.set_instance_connectivity_provider(...)``; the component's
 ``state`` keepalive then carries an ``instances`` array of :class:`InstanceConnectivity`.
 The same sample answers both surfaces: it is pushed on every ``state`` keepalive tick,
 and it is what the built-in ``status`` command verb

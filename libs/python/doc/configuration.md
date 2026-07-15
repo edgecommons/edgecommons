@@ -105,7 +105,7 @@ These sections are managed by edgecommons and configure framework behavior:
 - **`tags`**: Component tagging for organization and templating
 
 `logging.publish` is the optional structured log-bus publisher. When enabled, Python publishes
-`edgecommons.log.v1` records to `ecv1/{device}/{component}/main/log/{level}` through the reserved `log`
+`edgecommons.log.v1` records to `ecv1/{device}/{component}/log/{level}` through the reserved `log`
 class seam. It is disabled by default; `captureNative` observes stdlib `logging` records and
 `captureConsole` requests stdout/stderr capture where supported.
 

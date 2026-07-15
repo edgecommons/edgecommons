@@ -8,9 +8,10 @@ the topic (minted by this handle's instance-bound ``uns()``) and the envelope (s
 its instance-bound builder), which is why the seam works unchanged over Python's
 static/process-global ``MessagingClient``.
 
-Obtain handles from ``EdgeCommons.instance(id)`` (validated + cached per id).
-Component-level messages (everything not built through a handle) default to instance
-``"main"``.
+Obtain instance-scoped handles from ``EdgeCommons.instance(id)`` (validated + cached
+per id). The library also builds one handle with ``instance_id=None`` for **component
+scope** (D-U28): its ``uns()``/``new_message()``/facades omit the instance token
+entirely, backing ``gg.data()``/``gg.events()``/``gg.app()``.
 """
 from typing import Callable, Optional
 
@@ -31,9 +32,10 @@ class EdgeCommonsInstance:
                  messaging_client=None, stream_sink: Optional[StreamSink] = None,
                  clock: Optional[Callable] = None):
         """Library-internal: created by ``EdgeCommons.instance(id)``, which validates the
-        token (§2.2 token rule) and caches per id.
+        token (§2.2 token rule) and caches per id, or by ``EdgeCommons._component_scope()``
+        with ``instance_id=None`` for component scope (D-U28).
 
-        :param instance_id: the instance token
+        :param instance_id: the instance token, or ``None`` for component scope (D-U28)
         :param config_manager: the component config manager
         :param include_root: the resolved ``topic.includeRoot`` mode
         :param messaging_client: the (guarded) messaging handle the facades publish

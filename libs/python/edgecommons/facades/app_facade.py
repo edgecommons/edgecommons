@@ -10,8 +10,8 @@ Routing: :attr:`~edgecommons.facades.channel.Channel.LOCAL` (default) or
 :attr:`~edgecommons.facades.channel.Channel.NORTHBOUND`; a ``stream`` route is
 **rejected** (same reasoning as ``events()``).
 
-Library-internal: obtain via ``gg.instance(id).app()`` or the ``main`` convenience
-``gg.app()``.
+Library-internal: obtain via ``gg.instance(id).app()`` or the component-scope
+convenience ``gg.app()`` (no instance token, D-U28).
 
 Mirrors Java's ``AppFacade`` (``com.mbreissi.edgecommons.facades.AppFacade``).
 """
@@ -76,8 +76,7 @@ class AppFacade:
         """
         if config_manager is None:
             raise ValueError("config_manager must not be None")
-        if not instance_id:
-            raise ValueError("instance_id must not be None/empty")
+        # D-U28: instance_id is None for component scope (no instance token).
         if uns is None:
             raise ValueError("uns must not be None")
         if messaging_client is None:

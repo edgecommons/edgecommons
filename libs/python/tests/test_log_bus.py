@@ -12,7 +12,7 @@ from edgecommons.messaging.qos import Qos
 from edgecommons.validation.configuration_validator import ConfigurationValidator
 
 
-IDENTITY = MessageIdentity([HierEntry("device", "gw-01")], "adapter", "main")
+IDENTITY = MessageIdentity([HierEntry("device", "gw-01")], "adapter")  # D-U28: component scope
 TS = "2026-07-01T12:00:00Z"
 
 
@@ -161,11 +161,11 @@ def test_explicit_publish_uses_reserved_seam_and_canonical_envelope():
 
         topic, msg = messaging.local[0]
         envelope = msg.to_dict()
-        assert topic == "ecv1/gw-01/adapter/main/log/error"
+        assert topic == "ecv1/gw-01/adapter/log/error"  # D-U28: component scope
         assert envelope["header"]["name"] == "log"
         assert envelope["header"]["version"] == "1.0"
         assert envelope["header"]["timestamp"] == TS
-        assert envelope["identity"]["instance"] == "main"
+        assert "instance" not in envelope["identity"]  # D-U28: component scope
         assert envelope["body"] == {
             "schema": "edgecommons.log.v1",
             "timestamp": TS,
@@ -192,7 +192,7 @@ def test_northbound_destination_uses_reserved_northbound_seam():
         service.publish(LogRecord(timestamp=TS, level="FATAL", logger="unit", message="fatal"))
         assert service.flush(timeout=2) is True
         assert not messaging.local
-        assert messaging.northbound[0][0] == "ecv1/gw-01/adapter/main/log/fatal"
+        assert messaging.northbound[0][0] == "ecv1/gw-01/adapter/log/fatal"
         assert messaging.northbound_qos == [Qos.AT_LEAST_ONCE]
     finally:
         service.close()
@@ -420,7 +420,7 @@ def test_root_logging_handler_capture_honors_config_and_min_level():
         assert len(mine) == 1
         topic, msg = mine[0]
         body = msg.to_dict()["body"]
-        assert topic == "ecv1/gw-01/adapter/main/log/warn"
+        assert topic == "ecv1/gw-01/adapter/log/warn"
         assert body["level"] == "WARN"
         assert body["logger"] == "unit.logbus.capture"
         assert body["message"] == "captured warning"

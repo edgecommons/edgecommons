@@ -26,8 +26,8 @@ Python instead collapses each into one method with keyword defaults (``severity`
 defaults to ``INFO`` on :meth:`emit`, ``CRITICAL`` on :meth:`raise_alarm`/
 :meth:`clear_alarm` when omitted) -- same behavior, no overload set.
 
-Library-internal: obtain via ``gg.instance(id).events()`` or the ``main`` convenience
-``gg.events()``.
+Library-internal: obtain via ``gg.instance(id).events()`` or the component-scope
+convenience ``gg.events()`` (no instance token, D-U28).
 
 Mirrors Java's ``EventsFacade`` (``com.mbreissi.edgecommons.facades.EventsFacade``).
 """
@@ -69,8 +69,7 @@ class EventsFacade:
         """
         if config_manager is None:
             raise ValueError("config_manager must not be None")
-        if not instance_id:
-            raise ValueError("instance_id must not be None/empty")
+        # D-U28: instance_id is None for component scope (no instance token).
         if uns is None:
             raise ValueError("uns must not be None")
         if messaging_client is None:

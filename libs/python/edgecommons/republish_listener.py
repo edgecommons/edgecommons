@@ -3,8 +3,8 @@
 on its PRIMARY (local/IPC) connection, the two per-device broadcast command topics for
 its own device::
 
-    ecv1/{device}/_bcast/main/cmd/republish-state
-    ecv1/{device}/_bcast/main/cmd/republish-cfg
+    ecv1/{device}/_bcast/cmd/republish-state
+    ecv1/{device}/_bcast/cmd/republish-cfg
 
 and, on receipt, re-announces out of band: ``republish-state`` re-emits the heartbeat's
 ``state`` keepalive (``{"status":"RUNNING","uptimeSecs":n}``) and ``republish-cfg``
@@ -22,7 +22,8 @@ constants and wire contract are pinned by ``uns-test-vectors/bcast.json``.
 
 - **Topics** — built through the topic builder with the reserved ``_bcast``
   pseudo-component identity: single-level hierarchy ``[{device: <own device>}]``,
-  component :data:`BCAST_COMPONENT`, instance ``main``, class ``cmd``, channel = the
+  component :data:`BCAST_COMPONENT`, **component scope** (no instance token — D-U28),
+  class ``cmd``, channel = the
   verb. Always **rootless** (the identity is single-level, so ``includeRoot`` is a
   D-U25 no-op — the broadcast topic shape is device-bus-wide, independent of any
   component's own hierarchy/root mode).
@@ -233,7 +234,7 @@ class RepublishListener:
                 bcast_identity = MessageIdentity(
                     [HierEntry("device", identity.device)],
                     BCAST_COMPONENT,
-                    MessageIdentity.DEFAULT_INSTANCE,
+                    None,   # D-U28: _bcast is component scope (no instance)
                 )
                 uns = Uns(bcast_identity, False)
                 for command in self._commands:
