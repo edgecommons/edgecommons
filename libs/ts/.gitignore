@@ -3,3 +3,4 @@ dist/
 *.tsbuildinfo
 package-lock.json
 coverage/
+libs/ts/logs/
