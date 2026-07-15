@@ -70,8 +70,8 @@ class TestFlowATopics:
 
         topic, msg = requests[0]
         # tokens minted locally through the normative sanitizer (§1.5 steps 4-5)
-        assert topic == "ecv1/thing 1/config/main/cmd/get-configuration"
-        assert no_subscribe["topic"] == "ecv1/thing 1/My_Comp/main/cmd/set-config"
+        assert topic == "ecv1/thing 1/config/cmd/get-configuration"
+        assert no_subscribe["topic"] == "ecv1/thing 1/My_Comp/cmd/set-config"
         # the bootstrap request self-identifies in the BODY and carries no identity
         # (built without a config-bound builder)
         assert msg.get_body() == {"component": "My_Comp"}

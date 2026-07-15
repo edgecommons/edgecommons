@@ -12,7 +12,7 @@ from edgecommons.messaging.providers.greengrass.greengrass_ipc import (
 )
 from edgecommons.messaging.providers.standalone_provider import StandaloneProvider
 from edgecommons.platform import Transport
-from edgecommons.uns import Uns, RESERVED_CLASSES
+from edgecommons.uns import Uns, UnsClass, RESERVED_CLASSES
 from edgecommons.utils.iou import Iou
 
 logger = logging.getLogger("MessagingClient")
@@ -25,8 +25,9 @@ _RESERVED_TOKENS = frozenset(cls.value for cls in RESERVED_CLASSES)
 class MessagingClient:
     _messaging_provider: MessagingProvider = None
 
-    # Whether the reserved-class publish guard also checks the class token at topic
-    # position 5 — this component's EFFECTIVE root mode (topic.includeRoot AND a
+    # Whether the reserved-class publish guard treats topics as rooted — shifting the
+    # class position one slot right (past the site token) — this component's EFFECTIVE
+    # root mode (topic.includeRoot AND a
     # multi-level hierarchy — UNS-CANONICAL-DESIGN §4.1, D-U24/D-U27). Late-bound from
     # the ConfigManager via set_guard_include_root() right after config loads (the
     # messaging client is initialized BEFORE config because the IPC-backed config
@@ -137,30 +138,36 @@ class MessagingClient:
         """Late-binds the reserved-class guard's root flag from the config model (§4.1,
         D-U24). The runtime binds the EFFECTIVE root — ``topic.includeRoot`` AND a
         multi-level hierarchy (D-U27), the same rule topic-building uses (D-U25) —
-        right after the ConfigManager exists; before the bind only the always-checked
-        class position 4 applies."""
+        right after the ConfigManager exists; before the bind the rootless class
+        position (right after ``{component}``) applies."""
         MessagingClient._guard_include_root = bool(include_root)
         logger.debug(f"Reserved-topic guard includeRoot bound to {include_root}")
 
     @staticmethod
     def _reserved_class_of(topic: Optional[str], include_root: bool) -> Optional[str]:
         """The §4.1 guard predicate: the reserved class token the topic targets, or
-        ``None`` when the topic is allowed. The class position is topic level 4
-        (0-based) always — the rootless grammar
-        ``ecv1/{device}/{component}/{instance}/{class}`` — and level 5 **only when
-        this component's effective root mode is true** (checking it unconditionally
-        would false-positive on legitimate app channels like ``ecv1/d/c/i/app/state``).
-        Non-``ecv1`` topics pass untouched (``edgecommons/reply-...``,
-        ``cloudwatch/metric/put``, foreign MQTT bridging)."""
+        ``None`` when the topic is allowed. D-U28: the instance slot is optional, so the
+        class is located by the class-token set — exactly like :meth:`Uns.validate`.
+        ``{component}`` sits at index 2 rootless / 3 rooted, so the token right after it
+        is at ``base = 4 if include_root else 3``; that token is the class iff it is a
+        class token, else it is the instance and the class is the token after it (an
+        instance can never be a class token). This catches component-scope reserved
+        topics (``ecv1/{d}/{c}/state``) as well as instance-scope ones, while legitimate
+        app channels like ``ecv1/d/c/i/app/state`` stay allowed (the ``app`` class token
+        wins the class position). Non-``ecv1`` topics pass untouched
+        (``edgecommons/reply-...``, ``cloudwatch/metric/put``, foreign MQTT bridging)."""
         if not topic or not topic.startswith(Uns.ROOT):
             return None
         tokens = topic.split("/")
         if tokens[0] != Uns.ROOT:
             return None
-        if len(tokens) >= 5 and tokens[4] in _RESERVED_TOKENS:
-            return tokens[4]
-        if include_root and len(tokens) >= 6 and tokens[5] in _RESERVED_TOKENS:
-            return tokens[5]
+        base = 4 if include_root else 3
+        if len(tokens) > base:
+            class_idx = (
+                base if UnsClass.from_token(tokens[base]) is not None else base + 1
+            )
+            if class_idx < len(tokens) and tokens[class_idx] in _RESERVED_TOKENS:
+                return tokens[class_idx]
         return None
 
     @staticmethod

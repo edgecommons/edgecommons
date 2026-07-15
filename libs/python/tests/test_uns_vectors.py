@@ -63,13 +63,14 @@ def _case_ids(cases):
 def _build_identity(inp):
     """The build-case identity contract: hierarchyLevels[i] pairs with
     identityValues[<level>]; identityValues and component pass through the sanitizer
-    FIRST; instance is used verbatim."""
+    FIRST; instance is used verbatim. D-U28: the instance is optional — an absent
+    ``instance`` key yields a component-scope identity (no instance token)."""
     hier = [
         HierEntry(level, ConfigManager.sanitize(inp["identityValues"][level]))
         for level in inp["hierarchyLevels"]
     ]
     return MessageIdentity(
-        hier, ConfigManager.sanitize(inp["component"]), inp["instance"]
+        hier, ConfigManager.sanitize(inp["component"]), inp.get("instance")
     )
 
 
