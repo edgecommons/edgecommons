@@ -1,11 +1,14 @@
 # PROPOSAL — UNS optional-instance addressing (resolves D‑CAM‑18)
 
-> **Status: PROPOSAL, pending owner ratification. No code has moved.** This document is the reviewable
-> artifact for a change to the canonical UNS **topic grammar**. It defines the new grammar, quotes the
-> exact amendments it would make to `UNS-CANONICAL-DESIGN.md`, `DESIGN-uns.md`, `SOUTHBOUND.md`, and
-> `camera-adapter/DESIGN.md`, and gives the four-language core implementation plan and the
-> validation/migration plan. The canonical docs and the four libraries are **not** touched until this
-> is ratified — approve the wording here first.
+> **Status: design RATIFIED 2026-07-15 (see §11); implementation not yet started. No code has moved.**
+> This document is the agreed design for a change to the canonical UNS **topic grammar**. It defines the
+> new grammar, quotes the exact amendments it will make to `UNS-CANONICAL-DESIGN.md`, `DESIGN-uns.md`,
+> `SOUTHBOUND.md`, and `camera-adapter/DESIGN.md`, and gives the four-language core implementation plan
+> and the validation/migration plan. The three previously-open decisions are now settled: **(1) the rule
+> applies to all classes** (retire `main` everywhere), **(2) migration is a single coordinated cutover**
+> (feasible while the only deployments are org-controlled test infra), **(3) the wire `identity.instance`
+> is omitted when absent.** The canonical docs and the four libraries are updated in follow-up work
+> against this agreed design.
 >
 > Proposed decision id: **D‑U28** (next free id in the D‑U register; confirm against
 > `UNS-CANONICAL-DESIGN.md` at merge). Supersedes the addressing half of **M9 / D‑U16** in
@@ -262,43 +265,50 @@ This changes UNS topic/class behaviour, so per the org rules it is not done unti
 5. A baseline deployed component regression proving the runtime path (heartbeat/metric/cfg at the new
    topics) did not break.
 
-## 9. Migration off the shipped `main/*` topics
+## 9. Migration off the shipped `main/*` topics — single cutover (ratified)
 
-`main/state` / `main/metric` / `main/cfg` are live (Phases 1–3 merged). The migration is
-**expand-contract**, and it works because a `main`-form topic still parses (main is simply an instance
-token at the instance slot):
+`main/state` / `main/metric` / `main/cfg` are live (Phases 1–3 merged), but the only deployments are
+org-controlled test infra, so migration is a **single coordinated cutover** (§11 decision 2) rather than
+a transition window:
 
-1. **Expand** — update consumers and the `uns-bridge` to subscribe both forms
-   (`.../+/{class}` and `.../{class}`).
-2. **Flip** — switch publishers (heartbeat/metric/cfg/command inbox) to the component-scope (no-instance)
-   form across all four languages, deployed together.
-3. **Contract** — once no publisher emits `main/*`, drop the legacy `.../+/{class}`-only assumptions from
-   consumers.
+1. Land the four-language change (publishers emit the component-scope, no-instance form; the
+   `identity.instance` key is omitted when absent) and regenerate `uns-test-vectors/` together.
+2. Redeploy all components/skeletons and consumers/`uns-bridge` from the same cut. Old `main/*`
+   publishers and new no-instance publishers are never expected to coexist in a live fleet.
+3. No wire-version bump (`ecv1` → `ecv2`): the prefix denotes the envelope version, not the topic-shape
+   revision, and the cutover replaces the shape atomically.
 
-No wire-version bump (`ecv1` → `ecv2`) is required for expand-contract, because old and new forms
-coexist and both parse. See §11 for the alternative (a coordinated single-cutover) if the owner prefers
-not to run a transition window.
+`main` is not made illegal — an instance genuinely named `main` remains a valid, unambiguous
+instance-scoped token (it is not a reserved class token). What is retired is `main`'s use as the
+**component-scope sentinel**: component-scope now means the instance token is simply absent.
+
+Note this is independent of the **permanent** two-subscription model in §4: receiving both component-
+and instance-scoped commands always requires two subscription templates. The single cutover only removes
+any *transitional* need to subscribe the old `main`-form alongside the new form.
 
 ## 10. Proposed decision-register entry (D‑U28)
 
-> **D‑U28 — Optional instance token (component vs instance scope).** The UNS instance token is optional:
-> present = instance-scoped, absent = component/global-scoped. The `main` sentinel instance is retired.
-> An instance id may not equal a reserved class token (`state`/`metric`/`cfg`/`log`/`data`/`evt`/`cmd`/
-> `app`), which keeps the component-scope and instance-scope subscription templates disjoint. A
-> scope-spanning subscriber binds both `.../+/{class}/#` and `.../{class}/#`. This supersedes the
-> per-instance-topic **addressing** of the southbound command family (M9 / §2.2); the family's
-> capabilities survive as conventions (only `sb/status` universal). Resolves camera-adapter §27 Q8 and
-> D‑CAM‑18. D‑U15 (`data/{channel}` naming) is unaffected.
+> **D‑U28 — Optional instance token (component vs instance scope). Ratified 2026-07-15.** The UNS
+> instance token is optional **for all classes**: present = instance-scoped, absent =
+> component/global-scoped. The `main` sentinel instance is retired (an instance genuinely named `main`
+> stays a valid instance-scoped token; only its sentinel use is removed). On the wire the
+> `identity.instance` key is **omitted when absent**. An instance id may not equal a reserved class token
+> (`state`/`metric`/`cfg`/`log`/`data`/`evt`/`cmd`/`app`), which keeps the component-scope and
+> instance-scope subscription templates disjoint. A scope-spanning subscriber binds both
+> `.../+/{class}/#` and `.../{class}/#`. Migration is a single coordinated cutover across org-controlled
+> test infra (no `ecv1`→`ecv2` bump). This supersedes the per-instance-topic **addressing** of the
+> southbound command family (M9 / §2.2); the family's capabilities survive as conventions (only
+> `sb/status` universal). Resolves camera-adapter §27 Q8 and D‑CAM‑18. D‑U15 (`data/{channel}` naming)
+> is unaffected.
 
-## 11. Open sub-questions for the owner
+## 11. Ratified decisions (2026-07-15)
 
-1. **Scope of the rule — all classes, or `cmd` only?** Recommended: **all classes** (retire `main`
-   everywhere — heartbeat/metric/cfg/evt/cmd). A `cmd`-only version leaves `cmd` omitting the instance
-   while `state` still says `main`, which is the same inconsistency this change exists to remove. All
-   classes costs more migration but is the coherent end state.
-2. **Migration strategy — expand-contract (§9) vs a coordinated single-cutover.** Recommended:
-   **expand-contract**, since old and new forms coexist and it avoids a flag day. A single-cutover is
-   simpler to reason about but requires deploying every component and consumer atomically.
-3. **Wire identity element — omit `instance` vs explicit `null`.** Recommended: **omit** the key when
-   absent (smaller envelope, and "absent" is the scope signal). Consumers reading `identity.instance`
-   must treat missing as component scope; this is part of the interop-vector surface.
+1. **Scope — all classes.** The optional-instance rule applies to every class (heartbeat/metric/cfg/evt/
+   cmd/data/state/log); `main` is retired everywhere. A `cmd`-only version would leave `cmd` omitting the
+   instance while `state` still said `main` — the same inconsistency this change exists to remove.
+2. **Migration — single coordinated cutover** (§9). Feasible because the only deployments are
+   org-controlled test infra; old `main`-form and new no-instance publishers are never expected to
+   coexist in a live fleet, so no transition window is needed.
+3. **Wire identity — omit `instance` when absent.** The `identity.instance` key is left out of the
+   envelope for component-scope (smaller envelope; "absent" is itself the scope signal). Consumers
+   reading `identity.instance` treat missing as component scope; this is pinned in the interop vectors.
