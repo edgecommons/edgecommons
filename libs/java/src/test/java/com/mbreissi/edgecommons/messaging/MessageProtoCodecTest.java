@@ -1,12 +1,16 @@
 package com.mbreissi.edgecommons.messaging;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.protobuf.ByteString;
 import com.mbreissi.edgecommons.messaging.proto.MessageBodyCase;
 import com.mbreissi.edgecommons.messaging.proto.MessageBodySchema;
+import com.mbreissi.edgecommons.messaging.proto.MessageProtoCodec;
 import com.mbreissi.edgecommons.proto.v1.EdgeCommonsMessage;
+import com.mbreissi.edgecommons.proto.v1.Header;
+import com.mbreissi.edgecommons.proto.v1.Identity;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
@@ -20,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MessageProtoCodecTest {
@@ -297,6 +302,346 @@ class MessageProtoCodecTest {
                 .getAsJsonObject().getAsJsonArray("messages").size());
         assertTrue(JsonParser.parseString(Files.readString(failures))
                 .getAsJsonObject().getAsJsonArray("cases").size() >= 3);
+    }
+
+    @Test
+    void southboundSampleSnakeCaseAliasesAndRawQualityAreParsed() throws Exception {
+        // The wire parser accepts both camelCase and snake_case sample keys. A snake_case-only
+        // sample must land in the same typed proto fields as its camelCase twin.
+        JsonObject body = new JsonObject();
+        JsonObject signal = new JsonObject();
+        signal.addProperty("id", "sig-1");
+        body.add("signal", signal);
+        JsonArray samples = new JsonArray();
+        JsonObject sample = new JsonObject();
+        sample.addProperty("value", 7);
+        sample.add("quality_raw", binaryMarker(new byte[] {9, 8}));
+        sample.addProperty("source_ts", "2026-07-06T17:59:59.900Z");
+        sample.addProperty("source_ts_ms", 111L);
+        sample.addProperty("server_ts", "2026-07-06T18:00:00Z");
+        sample.addProperty("server_ts_ms", 222L);
+        samples.add(sample);
+        body.add("samples", samples);
+
+        EdgeCommonsMessage proto = EdgeCommonsMessage.parseFrom(MessageBuilder.create("SouthboundSignalUpdate", "1.0")
+                .withSouthboundSignalUpdate(body).build().toBytes());
+
+        assertEquals("2026-07-06T17:59:59.900Z",
+                proto.getSouthboundSignalUpdate().getSamples(0).getSourceTs(),
+                "the snake_case source_ts alias maps to the sourceTs field");
+        assertEquals(111L, proto.getSouthboundSignalUpdate().getSamples(0).getSourceTsMs(),
+                "source_ts_ms alias maps to sourceTsMs");
+        assertEquals("2026-07-06T18:00:00Z",
+                proto.getSouthboundSignalUpdate().getSamples(0).getServerTs(),
+                "server_ts alias maps to serverTs");
+        assertEquals(222L, proto.getSouthboundSignalUpdate().getSamples(0).getServerTsMs(),
+                "server_ts_ms alias maps to serverTsMs");
+        assertArrayEquals(new byte[] {9, 8},
+                proto.getSouthboundSignalUpdate().getSamples(0).getQualityRaw().getBytesValue().toByteArray(),
+                "the quality_raw alias maps to the qualityRaw field");
+    }
+
+    @Test
+    void unparseableSourceTimestampIsPreservedAndUnknownKeysSurvive() {
+        // A non-ISO sourceTs is kept verbatim (no derived epoch millis), and any unknown key on a
+        // sample or on the telemetry body round-trips through the proto extra map.
+        JsonObject body = new JsonObject();
+        JsonObject signal = new JsonObject();
+        signal.addProperty("id", "sig-2");
+        body.add("signal", signal);
+        JsonArray samples = new JsonArray();
+        JsonObject sample = new JsonObject();
+        sample.addProperty("value", 1);
+        sample.addProperty("sourceTs", "not-a-timestamp");
+        sample.addProperty("custom_tag", "keep-me");
+        samples.add(sample);
+        body.add("samples", samples);
+        body.addProperty("batch", "b-9");
+
+        Message decoded = Message.fromBytes(MessageBuilder.create("SouthboundSignalUpdate", "1.0")
+                .withSouthboundSignalUpdate(body).build().toBytes());
+        JsonObject decodedBody = (JsonObject) decoded.getBody();
+        JsonObject decodedSample = decodedBody.getAsJsonArray("samples").get(0).getAsJsonObject();
+
+        assertEquals("not-a-timestamp", decodedSample.get("sourceTs").getAsString(),
+                "a non-ISO sourceTs is preserved verbatim");
+        assertFalse(decodedSample.has("sourceTsMs"),
+                "an unparseable sourceTs must not derive a sourceTsMs");
+        assertEquals("keep-me", decodedSample.get("custom_tag").getAsString(),
+                "an unknown sample key round-trips through the extra map");
+        assertEquals("b-9", decodedBody.get("batch").getAsString(),
+                "an unknown telemetry-body key round-trips through the extra map");
+    }
+
+    @Test
+    void stateSnakeCaseUptimeAndInstanceDetailRoundTripAndNonObjectInstancesAreSkipped() {
+        JsonObject state = new JsonObject();
+        state.addProperty("status", "RUNNING");
+        state.addProperty("uptime_secs", 99L);
+        JsonArray instances = new JsonArray();
+        instances.add("not-an-object");                 // skipped by the parser
+        JsonObject inst = new JsonObject();
+        inst.addProperty("instance", "kep1");
+        inst.addProperty("connected", true);
+        inst.addProperty("detail", "session ok");
+        instances.add(inst);
+        state.add("instances", instances);
+
+        Message decoded = Message.fromBytes(MessageBuilder.create("state", "1.0")
+                .withStateUpdate(state).build().toBytes());
+        JsonObject body = (JsonObject) decoded.getBody();
+
+        assertEquals(99L, body.get("uptimeSecs").getAsLong(),
+                "the snake_case uptime_secs alias maps to uptimeSecs");
+        JsonArray decodedInstances = body.getAsJsonArray("instances");
+        assertEquals(1, decodedInstances.size(),
+                "a non-object entry in instances[] is skipped, not encoded");
+        assertEquals("session ok",
+                decodedInstances.get(0).getAsJsonObject().get("detail").getAsString(),
+                "the instance connectivity detail round-trips");
+    }
+
+    @Test
+    void configUpdateWithoutConfigWrapperTreatsWholeBodyAsConfig() {
+        JsonObject body = new JsonObject();
+        body.addProperty("mode", "auto");
+        body.addProperty("rateMs", 500);
+
+        Message decoded = Message.fromBytes(MessageBuilder.create("cfg", "1.0")
+                .withConfigUpdate(body).build().toBytes());
+        JsonObject decodedBody = (JsonObject) decoded.getBody();
+
+        assertEquals("auto", decodedBody.getAsJsonObject("config").get("mode").getAsString(),
+                "a config body with no 'config' key is wrapped whole into the config field");
+        assertEquals(500, decodedBody.getAsJsonObject("config").get("rateMs").getAsInt());
+    }
+
+    @Test
+    void metricLargeFleetWorkaroundAndEmfProjectionRoundTrip() {
+        JsonObject metric = new JsonObject();
+        metric.addProperty("namespace", "EdgeCommons");
+        metric.addProperty("metricName", "Published");
+        metric.addProperty("largeFleetWorkaround", true);
+        JsonObject emf = new JsonObject();
+        emf.addProperty("_aws", "projected");
+        metric.add("emfProjection", emf);
+        JsonArray values = new JsonArray();
+        JsonObject v = new JsonObject();
+        v.addProperty("name", "Count");
+        v.addProperty("value", 2.0);
+        values.add(v);
+        metric.add("values", values);
+
+        Message decoded = Message.fromBytes(MessageBuilder.create("Metric", "1.0")
+                .withMetricUpdate(metric).build().toBytes());
+        JsonObject body = (JsonObject) decoded.getBody();
+
+        assertTrue(body.get("largeFleetWorkaround").getAsBoolean(),
+                "the large-fleet workaround flag round-trips");
+        assertEquals("projected", body.getAsJsonObject("emfProjection").get("_aws").getAsString(),
+                "the EMF projection object round-trips");
+    }
+
+    @Test
+    void metricSnakeCaseAliasesAreParsedAndNonObjectValuesSkipped() throws Exception {
+        JsonObject metric = new JsonObject();
+        metric.addProperty("namespace", "EdgeCommons");
+        metric.addProperty("metric_name", "Latency");
+        metric.addProperty("timestamp_ms", 1783360800000L);
+        metric.addProperty("large_fleet_workaround", true);
+        JsonObject emf = new JsonObject();
+        emf.addProperty("_aws", "x");
+        metric.add("emf_projection", emf);
+        JsonArray values = new JsonArray();
+        values.add("not-an-object");                    // skipped
+        JsonObject v = new JsonObject();
+        v.addProperty("name", "p99");
+        v.addProperty("value", 12.0);
+        v.addProperty("unit", "Milliseconds");
+        v.addProperty("storage_resolution", 1);
+        values.add(v);
+        metric.add("values", values);
+
+        EdgeCommonsMessage proto = EdgeCommonsMessage.parseFrom(MessageBuilder.create("Metric", "1.0")
+                .withMetricUpdate(metric).build().toBytes());
+
+        assertEquals("Latency", proto.getMetricUpdate().getMetricName(),
+                "the metric_name alias maps to metricName");
+        assertEquals(1783360800000L, proto.getMetricUpdate().getTimestampMs(),
+                "the timestamp_ms alias maps to timestampMs");
+        assertTrue(proto.getMetricUpdate().getLargeFleetWorkaround(),
+                "the large_fleet_workaround alias maps through");
+        assertTrue(proto.getMetricUpdate().hasEmfProjection(),
+                "the emf_projection alias maps to emfProjection");
+        assertEquals(1, proto.getMetricUpdate().getValuesCount(),
+                "a non-object metric value is skipped");
+        assertEquals(1, proto.getMetricUpdate().getValues(0).getStorageResolution(),
+                "the storage_resolution alias maps to storageResolution");
+    }
+
+    @Test
+    void eventSnakeCaseTimestampAndAlarmActiveFlagsRoundTrip() {
+        JsonObject event = new JsonObject();
+        event.addProperty("severity", "warn");
+        event.addProperty("type", "door");
+        event.addProperty("message", "ajar");
+        event.addProperty("timestamp_ms", 1783360800000L);
+        event.addProperty("alarm", true);
+        event.addProperty("active", false);
+
+        Message decoded = Message.fromBytes(MessageBuilder.create("evt", "1.0")
+                .withEvent(event).build().toBytes());
+        JsonObject body = (JsonObject) decoded.getBody();
+
+        assertEquals(1783360800000L, body.get("timestampMs").getAsLong(),
+                "the snake_case timestamp_ms alias maps to timestampMs");
+        assertTrue(body.get("alarm").getAsBoolean(), "the alarm flag round-trips");
+        assertFalse(body.get("active").getAsBoolean(),
+                "an explicit active=false is preserved (proto3 optional), not dropped");
+    }
+
+    @Test
+    void commandWithExplicitPayloadAndStatusFlagsRoundTrip() {
+        JsonObject command = new JsonObject();
+        command.addProperty("verb", "restart");
+        JsonObject payload = new JsonObject();
+        payload.addProperty("target", "svc-1");
+        command.add("payload", payload);
+        command.addProperty("ok", true);
+
+        Message decoded = Message.fromBytes(MessageBuilder.create("restart", "1.0")
+                .withCommand(command).build().toBytes());
+        JsonObject body = (JsonObject) decoded.getBody();
+
+        assertEquals("restart", body.get("verb").getAsString());
+        assertEquals("svc-1", body.getAsJsonObject("payload").get("target").getAsString(),
+                "an explicit command payload round-trips alongside status fields");
+        assertTrue(body.get("ok").getAsBoolean());
+    }
+
+    @Test
+    void commandErrorWithDetailsRoundTrips() {
+        JsonObject command = new JsonObject();
+        JsonObject error = new JsonObject();
+        error.addProperty("code", "E_TIMEOUT");
+        error.addProperty("message", "no reply");
+        JsonObject details = new JsonObject();
+        details.addProperty("waitedMs", 30000);
+        error.add("details", details);
+        command.add("error", error);
+
+        Message decoded = Message.fromBytes(MessageBuilder.create("setState.reply", "1.0")
+                .withCommand(command).build().toBytes());
+        JsonObject decodedError = ((JsonObject) decoded.getBody()).getAsJsonObject("error");
+
+        assertEquals("E_TIMEOUT", decodedError.get("code").getAsString());
+        assertEquals("no reply", decodedError.get("message").getAsString());
+        assertEquals(30000, decodedError.getAsJsonObject("details").get("waitedMs").getAsInt(),
+                "structured command error details survive the round trip");
+    }
+
+    @Test
+    void structuredBodyWithNullsAndArraysRoundTrips() {
+        JsonObject body = new JsonObject();
+        body.add("maybe", JsonNull.INSTANCE);
+        JsonArray arr = new JsonArray();
+        arr.add(1);
+        arr.add("two");
+        arr.add(true);
+        body.add("readings", arr);
+
+        Message decoded = Message.fromBytes(MessageBuilder.create("Sample", "1.0")
+                .withStructuredBody(body).build().toBytes());
+        JsonObject decodedBody = (JsonObject) decoded.getBody();
+
+        assertTrue(decodedBody.get("maybe").isJsonNull(),
+                "a null structured value round-trips as JSON null");
+        JsonArray readings = decodedBody.getAsJsonArray("readings");
+        assertEquals(1, readings.get(0).getAsInt());
+        assertEquals("two", readings.get(1).getAsString());
+        assertTrue(readings.get(2).getAsBoolean());
+    }
+
+    @Test
+    void contentEncodingRoundTrips() {
+        JsonObject body = new JsonObject();
+        body.addProperty("x", 1);
+
+        Message decoded = Message.fromBytes(MessageBuilder.create("Sample", "1.0")
+                .withStructuredBody(body).withContentEncoding("gzip").build().toBytes());
+
+        assertEquals("gzip", decoded.getContentEncoding(),
+                "the content encoding survives the protobuf round trip");
+    }
+
+    @Test
+    void bodilessMessageInferredAsBodyNotSetAndRoundTrips() {
+        Message message = MessageBuilder.create("NoBody", "1.0").build();
+        assertEquals(MessageBodyCase.BODY_NOT_SET, message.getBodyCase(),
+                "a message with no payload infers BODY_NOT_SET");
+
+        Message decoded = Message.fromBytes(message.toBytes());
+        assertEquals(MessageBodyCase.BODY_NOT_SET, decoded.getBodyCase(),
+                "an absent body round-trips as BODY_NOT_SET");
+        assertNull(decoded.getBody(), "no body is materialized for a bodiless message");
+    }
+
+    @Test
+    void inboundBinaryMarkerObjectInfersOpaqueBodyCase() {
+        JsonObject markerBody = binaryMarker(new byte[] {5, 6, 7});
+        Message message = MessageBuilder.create("Frame", "1.0").withPayload(markerBody).build();
+
+        assertEquals(MessageBodyCase.OPAQUE, MessageProtoCodec.bodyCase(message),
+                "a body carrying the binary marker is inferred OPAQUE");
+    }
+
+    @Test
+    void parsingProtoWithoutHeaderIsRejected() {
+        byte[] headerless = EdgeCommonsMessage.newBuilder().build().toByteArray();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> Message.fromBytes(headerless));
+        assertTrue(ex.getMessage().contains("header name and version"),
+                "a protobuf message with no header is rejected with guidance");
+    }
+
+    @Test
+    void parsingProtoWithMalformedIdentityIsRejected() {
+        byte[] bytes = EdgeCommonsMessage.newBuilder()
+                .setHeader(Header.newBuilder().setName("Evt").setVersion("1.0"))
+                .setIdentity(Identity.newBuilder().setComponent("comp"))  // no hier -> malformed
+                .build()
+                .toByteArray();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> Message.fromBytes(bytes));
+        assertTrue(ex.getMessage().contains("Malformed protobuf identity"),
+                "an identity with no hierarchy is rejected");
+    }
+
+    @Test
+    void binaryMarkerRejectsNonBase64EncodingAndLengthMismatch() {
+        JsonObject wrongEncoding = new JsonObject();
+        JsonObject d1 = new JsonObject();
+        d1.addProperty("encoding", "hex");
+        d1.addProperty("length", 1);
+        d1.addProperty("data", "AQ==");
+        wrongEncoding.add("_edgecommonsBinary", d1);
+        Message m1 = MessageBuilder.create("Sample", "1.0").withStructuredBody(wrongEncoding).build();
+        IllegalArgumentException e1 = assertThrows(IllegalArgumentException.class, m1::toBytes);
+        assertTrue(e1.getMessage().contains("base64"),
+                "a non-base64 binary-marker encoding is rejected");
+
+        JsonObject wrongLength = new JsonObject();
+        JsonObject d2 = new JsonObject();
+        d2.addProperty("encoding", "base64");
+        d2.addProperty("length", 99);
+        d2.addProperty("data", Base64.getEncoder().encodeToString(new byte[] {1, 2}));
+        wrongLength.add("_edgecommonsBinary", d2);
+        Message m2 = MessageBuilder.create("Sample", "1.0").withStructuredBody(wrongLength).build();
+        IllegalArgumentException e2 = assertThrows(IllegalArgumentException.class, m2::toBytes);
+        assertTrue(e2.getMessage().contains("length"),
+                "a binary marker whose declared length disagrees with the data is rejected");
     }
 
     private static JsonObject binaryMarker(byte[] bytes) {

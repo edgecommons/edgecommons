@@ -227,6 +227,17 @@ class MessageIdentityTest {
     }
 
     @Test
+    void fromDictReservedInstanceTokenIsCaughtAndYieldsNull() {
+        // A well-formed hier/component but a reserved-class-token instance makes the constructor
+        // throw; the lenient parser catches the RuntimeException and drops the identity (returns
+        // null) so the enclosing message still delivers.
+        JsonObject src = new MessageIdentity(multiLevelHier(), "comp", "kep1").toDict();
+        src.addProperty("instance", "state"); // reserved UNS class token
+
+        assertNull(MessageIdentity.fromDict(src));
+    }
+
+    @Test
     void toStringIsWireForm() {
         MessageIdentity id = new MessageIdentity(multiLevelHier(), "comp", "main");
         assertEquals(id.toDict().toString(), id.toString());
