@@ -200,7 +200,7 @@ describe("checkToken (the D-U26 token rule ≡ the sanitizer)", () => {
 });
 
 describe("reserved-class guard (§4.1)", () => {
-  it("predicate: position 4 always, position 5 only when includeRoot", () => {
+  it("predicate: locates the class by the class-token set, instance slot optional", () => {
     expect(reservedClassOf("ecv1/d/c/i/state", false)).toBe(UnsClass.State);
     expect(reservedClassOf("ecv1/d/c/i/metric/cpu", false)).toBe(UnsClass.Metric);
     expect(reservedClassOf("ecv1/d/c/i/data/temp", false)).toBeUndefined();
@@ -212,6 +212,19 @@ describe("reserved-class guard (§4.1)", () => {
     expect(reservedClassOf("cloudwatch/metric/put", false)).toBeUndefined();
     expect(reservedClassOf("ecv1x/d/c/i/state", false)).toBeUndefined();
     expect(reservedClassOf(undefined, false)).toBeUndefined();
+  });
+
+  it("predicate: component-scope reserved topics are rejected, app channels allowed (D-U28)", () => {
+    // Component scope (no instance slot): the class sits right after {component}.
+    expect(reservedClassOf("ecv1/gw-01/comp/state", false)).toBe(UnsClass.State);
+    expect(reservedClassOf("ecv1/gw-01/comp/cfg", false)).toBe(UnsClass.Cfg);
+    expect(reservedClassOf("ecv1/gw-01/comp/metric/cpu", false)).toBe(UnsClass.Metric);
+    expect(reservedClassOf("ecv1/gw-01/comp/log/app", false)).toBe(UnsClass.Log);
+    // An open class with a reserved-named channel is allowed (the channel is not the class).
+    expect(reservedClassOf("ecv1/gw-01/comp/app/state", false)).toBeUndefined();
+    // Component scope, rooted: {component} is one token further right.
+    expect(reservedClassOf("ecv1/dallas/gw-01/comp/state", true)).toBe(UnsClass.State);
+    expect(reservedClassOf("ecv1/dallas/gw-01/comp/app/state", true)).toBeUndefined();
   });
 
   it("guards publish/publishRaw/publishNorthbound*/request*/reply* on the messaging service", async () => {

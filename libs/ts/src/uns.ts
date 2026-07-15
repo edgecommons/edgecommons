@@ -438,12 +438,14 @@ export class Uns {
 
 /**
  * The §4.1 reserved-class guard predicate (D-U24): the reserved class a client-chosen topic
- * targets, or `undefined` when the topic is allowed. The class position is topic level 4
- * (0-based) always — the rootless grammar `ecv1/{device}/{component}/{instance}/{class}` — and
- * level 5 **only when this component's effective `topic.includeRoot` is true** (D-U27: bind
- * `includeRoot && hier.length >= 2`, the same effective-root rule topic-building uses).
- * Non-`ecv1` topics pass untouched (`edgecommons/reply-…`, `cloudwatch/metric/put`, foreign MQTT
- * bridging).
+ * targets, or `undefined` when the topic is allowed. The instance slot is optional (D-U28), so
+ * the class is located by the class-token set rather than a fixed position: `{component}` sits at
+ * level 2 (rootless) or level 3 **when this component's effective `topic.includeRoot` is true**
+ * (D-U27: `includeRoot && hier.length >= 2`, the same effective-root rule topic-building uses).
+ * `base` is the level right after `{component}`; the class is at `base` (component scope) iff that
+ * token is a class token, else at `base + 1` (an instance token is present — an instance can never
+ * be a class token). Non-`ecv1` topics pass untouched (`edgecommons/reply-…`, `cloudwatch/metric/put`,
+ * foreign MQTT bridging).
  */
 export function reservedClassOf(topic: string | undefined, includeRoot: boolean): UnsClass | undefined {
   if (topic === undefined || topic === null || !topic.startsWith(UNS_ROOT)) {
@@ -453,16 +455,14 @@ export function reservedClassOf(topic: string | undefined, includeRoot: boolean)
   if (tokens[0] !== UNS_ROOT) {
     return undefined;
   }
-  if (tokens.length >= 5) {
-    const cls = unsClassFromToken(tokens[4]);
-    if (cls !== undefined && RESERVED_CLASSES.has(cls)) {
-      return cls;
-    }
-  }
-  if (includeRoot && tokens.length >= 6) {
-    const cls = unsClassFromToken(tokens[5]);
-    if (cls !== undefined && RESERVED_CLASSES.has(cls)) {
-      return cls;
+  const base = includeRoot ? 4 : 3;
+  if (tokens.length > base) {
+    const classIdx = unsClassFromToken(tokens[base]) !== undefined ? base : base + 1;
+    if (classIdx < tokens.length) {
+      const cls = unsClassFromToken(tokens[classIdx]);
+      if (cls !== undefined && RESERVED_CLASSES.has(cls)) {
+        return cls;
+      }
     }
   }
   return undefined;

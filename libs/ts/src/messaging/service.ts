@@ -98,9 +98,9 @@ export class DefaultMessagingService implements IMessagingService {
   private readonly subscriptions = new Map<string, { sub: RawSubscription; dispatcher: Dispatcher }>();
 
   /**
-   * Whether the reserved-class publish guard also checks the class token at topic position 5 —
-   * this component's **effective** `topic.includeRoot` (§4.1, D-U24/D-U27). Late-bound by the
-   * runtime right after the config loads; default `false` before that (nothing publishes
+   * This component's **effective** `topic.includeRoot`, which shifts where the reserved-class
+   * publish guard looks for the class token by one level (§4.1, D-U24/D-U27/D-U28). Late-bound by
+   * the runtime right after the config loads; default `false` before that (nothing publishes
    * rooted topics pre-config).
    */
   private guardIncludeRoot = false;
