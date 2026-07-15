@@ -190,6 +190,59 @@
       }
     },
     {
+      "name": "build-component-scope-state-leaf",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "includeRoot": false,
+        "class": "state"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/state"
+      }
+    },
+    {
+      "name": "build-config-rendezvous-get",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "config",
+        "includeRoot": false,
+        "class": "cmd",
+        "channel": "get-configuration"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/config/cmd/get-configuration"
+      }
+    },
+    {
+      "name": "build-config-rendezvous-set",
+      "input": {
+        "hierarchyLevels": [
+          "device"
+        ],
+        "identityValues": {
+          "device": "gw-01"
+        },
+        "component": "opcua-adapter",
+        "includeRoot": false,
+        "class": "cmd",
+        "channel": "set-config"
+      },
+      "expected": {
+        "topic": "ecv1/gw-01/opcua-adapter/cmd/set-config"
+      }
+    },
+    {
       "name": "build-include-root-multi-level-leaf",
       "input": {
         "hierarchyLevels": [
@@ -1354,6 +1407,66 @@
       },
       "expected": {
         "reserved": false
+      }
+    },
+    {
+      "name": "guard-component-scope-state-reserved",
+      "input": {
+        "topic": "ecv1/gw-01/comp/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": true
+      }
+    },
+    {
+      "name": "guard-component-scope-cfg-reserved",
+      "input": {
+        "topic": "ecv1/gw-01/comp/cfg",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": true
+      }
+    },
+    {
+      "name": "guard-component-scope-metric-reserved",
+      "input": {
+        "topic": "ecv1/gw-01/comp/metric/cpu",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": true
+      }
+    },
+    {
+      "name": "guard-component-scope-log-reserved",
+      "input": {
+        "topic": "ecv1/gw-01/comp/log/tail",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": true
+      }
+    },
+    {
+      "name": "guard-component-scope-app-state-channel-allowed",
+      "input": {
+        "topic": "ecv1/gw-01/comp/app/state",
+        "includeRoot": false
+      },
+      "expected": {
+        "reserved": false
+      }
+    },
+    {
+      "name": "guard-component-scope-rooted-state-reserved",
+      "input": {
+        "topic": "ecv1/dallas/gw-01/comp/state",
+        "includeRoot": true
+      },
+      "expected": {
+        "reserved": true
       }
     },
     {

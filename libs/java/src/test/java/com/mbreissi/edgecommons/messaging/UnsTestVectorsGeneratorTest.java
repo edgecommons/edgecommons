@@ -177,6 +177,16 @@ class UnsTestVectorsGeneratorTest {
         cases.add(buildCase("build-dots-are-legal", SINGLE_LEVELS, SINGLE_VALUES,
                 "opcua-adapter", "main", false, "data", "v1.2",
                 topic("ecv1/gw-01/opcua-adapter/main/data/v1.2")));
+        // D-U28: component scope (no instance) omits the instance slot entirely.
+        cases.add(buildCase("build-component-scope-state-leaf", SINGLE_LEVELS, SINGLE_VALUES,
+                "opcua-adapter", null, false, "state", null,
+                topic("ecv1/gw-01/opcua-adapter/state")));
+        cases.add(buildCase("build-config-rendezvous-get", SINGLE_LEVELS, SINGLE_VALUES,
+                "config", null, false, "cmd", "get-configuration",
+                topic("ecv1/gw-01/config/cmd/get-configuration")));
+        cases.add(buildCase("build-config-rendezvous-set", SINGLE_LEVELS, SINGLE_VALUES,
+                "opcua-adapter", null, false, "cmd", "set-config",
+                topic("ecv1/gw-01/opcua-adapter/cmd/set-config")));
 
         // --- includeRoot true/false, incl. the D-U25 single-level no-op ---
         cases.add(buildCase("build-include-root-multi-level-leaf", MULTI_LEVELS, MULTI_VALUES,
@@ -422,6 +432,17 @@ class UnsTestVectorsGeneratorTest {
                 "ecv1/dallas/gw-01/comp/main/metric/cpu", true, true));
         cases.add(guardCase("guard-rooted-app-state-channel-allowed",
                 "ecv1/dallas/gw-01/comp/main/app/state", true, false));
+        // D-U28: component-scope reserved topics (NO instance slot) are ALSO caught - the guard
+        // locates the class by the class-token set, not a fixed position (an instance is never a
+        // class token, so the token after {component} is the class iff it is a class token).
+        cases.add(guardCase("guard-component-scope-state-reserved", "ecv1/gw-01/comp/state", false, true));
+        cases.add(guardCase("guard-component-scope-cfg-reserved", "ecv1/gw-01/comp/cfg", false, true));
+        cases.add(guardCase("guard-component-scope-metric-reserved", "ecv1/gw-01/comp/metric/cpu", false, true));
+        cases.add(guardCase("guard-component-scope-log-reserved", "ecv1/gw-01/comp/log/tail", false, true));
+        cases.add(guardCase("guard-component-scope-app-state-channel-allowed",
+                "ecv1/gw-01/comp/app/state", false, false));
+        cases.add(guardCase("guard-component-scope-rooted-state-reserved",
+                "ecv1/dallas/gw-01/comp/state", true, true));
         // Non-ecv1 topics are structurally exempt (D-U6/D-U21).
         cases.add(guardCase("guard-non-uns-reply-passes", "edgecommons/reply-8400f2", false, false));
         cases.add(guardCase("guard-cloudwatch-passes", "cloudwatch/metric/put", false, false));
@@ -1044,7 +1065,9 @@ class UnsTestVectorsGeneratorTest {
         input.add("hierarchyLevels", levelsArray);
         input.add("identityValues", valuesObject);
         input.addProperty("component", component);
-        input.addProperty("instance", instance);
+        if (instance != null) {
+            input.addProperty("instance", instance);   // D‑U28: omitted for component scope
+        }
         input.addProperty("includeRoot", includeRoot);
         input.addProperty("class", cls);
         if (channel != null) {

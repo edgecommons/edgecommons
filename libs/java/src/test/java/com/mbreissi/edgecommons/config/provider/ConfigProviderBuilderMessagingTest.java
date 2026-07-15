@@ -66,9 +66,9 @@ class ConfigProviderBuilderMessagingTest {
 
         assertNotNull(provider);
         assertTrue(provider instanceof ConfigComponentProvider);
-        assertTrue(provider.getConfigSource().contains("ecv1/thing/config/main/cmd/get-configuration"),
+        assertTrue(provider.getConfigSource().contains("ecv1/thing/config/cmd/get-configuration"),
                 "getConfigSource must report the UNS GET rendezvous: " + provider.getConfigSource());
-        assertTrue(provider.getConfigSource().contains("ecv1/thing/Comp/main/cmd/set-config"),
+        assertTrue(provider.getConfigSource().contains("ecv1/thing/Comp/cmd/set-config"),
                 "getConfigSource must report the set-config inbox: " + provider.getConfigSource());
     }
 }

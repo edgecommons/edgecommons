@@ -420,7 +420,7 @@ final class UnsTestVectors {
         }
         MessageIdentity identity = new MessageIdentity(hier,
                 ConfigManager.sanitize(input.get("component").getAsString()),
-                input.get("instance").getAsString());
+                input.has("instance") ? input.get("instance").getAsString() : null);   // D‑U28: absent ⇒ component scope
         UnsClass cls = UnsClass.fromToken(input.get("class").getAsString());
         assertNotNull(cls, "build input class token '" + input.get("class").getAsString() + "'");
         String channel = input.has("channel") ? input.get("channel").getAsString() : null;

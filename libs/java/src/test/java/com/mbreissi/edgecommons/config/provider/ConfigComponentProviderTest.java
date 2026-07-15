@@ -30,14 +30,14 @@ import static org.junit.jupiter.api.Assertions.*;
  * bootstrap contract (§1.5):
  *
  * <ul>
- *   <li>The GET request goes to {@code ecv1/{device}/config/main/cmd/get-configuration} and
+ *   <li>The GET request goes to {@code ecv1/{device}/config/cmd/get-configuration} and
  *       self-identifies in the body with {@code {"component": "<short name>"}} — the envelope
  *       carries no identity because the {@code ConfigManager} does not exist yet.</li>
  *   <li>Every test builds the provider with a <b>null</b> {@code ConfigManager}, exactly like the
  *       production bootstrap ({@code ConfigManagerFactory} passes null) — the slice-1a flagged
  *       NPE regression guard.</li>
  *   <li>A pushed {@code set-config} on the component's own inbox
- *       {@code ecv1/{device}/{component}/main/cmd/set-config} applies via
+ *       {@code ecv1/{device}/{component}/cmd/set-config} applies via
  *       {@code applyConfig} once the manager is attached, and is dropped (not an NPE) before.</li>
  *   <li>The 3-attempt retry contract from the framework request deadline (§5) is unchanged:
  *       each retry issues a FRESH request (a settled future can never complete).</li>
@@ -45,8 +45,8 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ConfigComponentProviderTest {
 
-    private static final String EXPECTED_GET_TOPIC = "ecv1/test-thing/config/main/cmd/get-configuration";
-    private static final String EXPECTED_SET_CONFIG_TOPIC = "ecv1/test-thing/Comp/main/cmd/set-config";
+    private static final String EXPECTED_GET_TOPIC = "ecv1/test-thing/config/cmd/get-configuration";
+    private static final String EXPECTED_SET_CONFIG_TOPIC = "ecv1/test-thing/Comp/cmd/set-config";
 
     /** MockMessagingService whose request() futures are scripted per attempt. */
     private static final class ScriptedMessaging extends MockMessagingService {
@@ -273,7 +273,7 @@ class ConfigComponentProviderTest {
         ConfigComponentProvider p = provider(messaging, "com.test.My/Comp+1", "plant#7/east");
 
         p.loadConfiguration();
-        assertEquals("ecv1/plant_7_east/config/main/cmd/get-configuration",
+        assertEquals("ecv1/plant_7_east/config/cmd/get-configuration",
                 messaging.requestTopics.get(0));
         JsonObject body = (JsonObject) messaging.requestMessages.get(0).getBody();
         assertEquals("My_Comp_1", body.get("component").getAsString());
@@ -284,7 +284,7 @@ class ConfigComponentProviderTest {
         p.start();
         JsonObject pushed = new JsonObject();
         pushed.addProperty("v", 2);
-        messaging.simulateMessage("ecv1/plant_7_east/My_Comp_1/main/cmd/set-config", setConfigPush(pushed));
+        messaging.simulateMessage("ecv1/plant_7_east/My_Comp_1/cmd/set-config", setConfigPush(pushed));
         assertEquals(1, manager.applied.size(), "the push must arrive on the sanitized inbox topic");
     }
 

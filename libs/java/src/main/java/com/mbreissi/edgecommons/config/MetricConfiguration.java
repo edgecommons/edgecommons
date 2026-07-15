@@ -85,7 +85,7 @@ public class MetricConfiguration
 
             // UNS-CANONICAL-DESIGN §4.3 / D-U9: the messaging target's topic is no longer
             // configurable (targetConfig.topic is removed from the schema) — the Messaging target
-            // builds the UNS metric topic ecv1/{device}/{component}/main/metric/{metricName}
+            // builds the UNS metric topic ecv1/{device}/{component}/metric/{metricName}
             // itself. Only the destination survives.
             if (target.equalsIgnoreCase("messaging")) {
                 if (jsonConfig.has("targetConfig"))
@@ -220,7 +220,7 @@ public class MetricConfiguration
      * The fixed topic of the {@code cloudwatchcomponent} target ({@code cloudwatch/metric/put},
      * the external AWS Greengrass component contract — D-U21), or {@code null} for every other
      * target. The {@code messaging} target no longer carries a configured topic: it publishes to
-     * the UNS metric topic {@code ecv1/{device}/{component}/main/metric/{metricName}} (§4.3).
+     * the UNS metric topic {@code ecv1/{device}/{component}/metric/{metricName}} (§4.3).
      */
     public String getTopic() {
         return topic;
