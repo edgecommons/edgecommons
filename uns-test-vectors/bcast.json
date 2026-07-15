@@ -5,11 +5,10 @@
     {
       "name": "republish-state",
       "republishes": "state",
-      "topic": "ecv1/gw-01/_bcast/main/cmd/republish-state",
+      "topic": "ecv1/gw-01/_bcast/cmd/republish-state",
       "input": {
         "device": "gw-01",
         "component": "_bcast",
-        "instance": "main",
         "includeRoot": false,
         "class": "cmd",
         "channel": "republish-state"
@@ -29,11 +28,10 @@
     {
       "name": "republish-cfg",
       "republishes": "cfg",
-      "topic": "ecv1/gw-01/_bcast/main/cmd/republish-cfg",
+      "topic": "ecv1/gw-01/_bcast/cmd/republish-cfg",
       "input": {
         "device": "gw-01",
         "component": "_bcast",
-        "instance": "main",
         "includeRoot": false,
         "class": "cmd",
         "channel": "republish-cfg"

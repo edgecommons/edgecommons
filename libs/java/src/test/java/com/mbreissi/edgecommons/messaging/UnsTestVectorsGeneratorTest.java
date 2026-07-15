@@ -854,7 +854,7 @@ class UnsTestVectorsGeneratorTest {
     private static JsonObject bcastCommand(String verb, String republishes,
             String uuid, String correlationId) {
         MessageIdentity bcast = new MessageIdentity(
-                List.of(new MessageIdentity.HierEntry("device", "gw-01")), "_bcast", "main");
+                List.of(new MessageIdentity.HierEntry("device", "gw-01")), "_bcast", null);   // D‑U28: component scope
         String topic = new com.mbreissi.edgecommons.uns.Uns(bcast, false)
                 .topic(com.mbreissi.edgecommons.uns.UnsClass.CMD, verb);
         Message message = MessageBuilder.create(verb, "1.0")
@@ -866,8 +866,7 @@ class UnsTestVectorsGeneratorTest {
         JsonObject input = new JsonObject();
         input.addProperty("device", "gw-01");
         input.addProperty("component", "_bcast");
-        input.addProperty("instance", "main");
-        input.addProperty("includeRoot", false);
+        input.addProperty("includeRoot", false);   // D‑U28: no instance ⇒ component scope
         input.addProperty("class", "cmd");
         input.addProperty("channel", verb);
         JsonObject c = new JsonObject();

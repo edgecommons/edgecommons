@@ -189,7 +189,8 @@ final class UnsTestVectors {
                     "'" + name + "' pseudo-component token");
             MessageIdentity bcast = new MessageIdentity(
                     List.of(new MessageIdentity.HierEntry("device", input.get("device").getAsString())),
-                    input.get("component").getAsString(), input.get("instance").getAsString());
+                    input.get("component").getAsString(),
+                    input.has("instance") ? input.get("instance").getAsString() : null);   // D‑U28: absent ⇒ component scope
             String topic = new Uns(bcast, input.get("includeRoot").getAsBoolean())
                     .topic(UnsClass.fromToken(input.get("class").getAsString()),
                             input.get("channel").getAsString());
