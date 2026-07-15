@@ -7,8 +7,9 @@
 > and the validation/migration plan. The three previously-open decisions are now settled: **(1) the rule
 > applies to all classes** (retire `main` everywhere), **(2) migration is a single coordinated cutover**
 > (feasible while the only deployments are org-controlled test infra), **(3) the wire `identity.instance`
-> is omitted when absent.** The canonical docs and the four libraries are updated in follow-up work
-> against this agreed design.
+> is omitted when absent.** Scope also ratified: **every existing component (§12) is brought into
+> compliance and has its user docs updated** as part of this rollout — not deferred. The canonical docs,
+> the four libraries, and all existing components are updated against this agreed design.
 >
 > Proposed decision id: **D‑U28** (next free id in the D‑U register; confirm against
 > `UNS-CANONICAL-DESIGN.md` at merge). Supersedes the addressing half of **M9 / D‑U16** in
@@ -259,7 +260,9 @@ This changes UNS topic/class behaviour, so per the org rules it is not done unti
 1. Per-language unit/coverage green in all four languages (90% line gate each).
 2. **`uns-test-vectors/` regenerated** and all four suites pass against them.
 3. **Cross-language local-MQTT interop** (`test-infra/interop/`, EMQX): every language acts as producer
-   and consumer of both scopes for each affected class and for `cmd` request/reply.
+   and consumer of both scopes for each affected class and for `cmd` request/reply. The consumer/relay
+   components (`uns-bridge`, `edge-console`, `telemetry-processor`, §12) are exercised as real consumers
+   of both scopes — a missing instance must relay/model/route as component scope.
 4. **Deployed Greengrass IPC interop on `lab-5950x`**: the four language skeletons exercise both scopes
    over real IPC (the command plane is reachable through IPC, so this is required, not optional).
 5. A baseline deployed component regression proving the runtime path (heartbeat/metric/cfg at the new
@@ -312,3 +315,37 @@ any *transitional* need to subscribe the old `main`-form alongside the new form.
 3. **Wire identity — omit `instance` when absent.** The `identity.instance` key is left out of the
    envelope for component-scope (smaller envelope; "absent" is itself the scope signal). Consumers
    reading `identity.instance` treat missing as component scope; this is pinned in the interop vectors.
+4. **All existing components in scope.** Retiring `main` is a wire-contract change, so every existing
+   component (§12) is brought into compliance and has its user docs updated as part of this rollout, not
+   deferred as follow-up. The consumer/relay components (uns-bridge, edge-console, telemetry-processor)
+   carry real code changes, not just a library bump.
+
+## 12. Existing-component compliance (ratified scope)
+
+Retiring `main` and changing instance addressing is a wire-contract change, so **every existing
+component is brought into compliance and has its user docs updated in the same rollout** (§11 decision
+4). Each is its own repo, bumps to the D‑U28 core library, and lands its own compliance change against
+this agreed design. Two kinds of impact:
+
+- **Publishers** inherit the topic change automatically on the library bump (heartbeat/metric/cfg/state
+  move to the component-scope, no-instance form). The code change is the bump; the **doc** change is
+  real — every `docs/` page and README showing `.../main/{class}` is rewritten to the no-instance form.
+- **Consumers, relays, and command surfaces** carry real code changes — wildcard consumer sets, topic
+  decomposition (missing instance = component scope), and the two-subscription command model (§4).
+
+| Component | Repo | Lang | D‑U28 work |
+|---|---|---|---|
+| **camera-adapter** | `camera-adapter` | Rust | Retire body-`instance` command routing → optional-instance topic scheme (instance-scope `.../{instance}/cmd/sb/{verb}`, component/fleet `.../cmd/sb/{verb}`); two-subscription inbox; §6.4 DESIGN + docs. (D‑CAM‑18 origin.) |
+| **opcua-adapter** | `opcua-adapter` | Java | Move the legacy `control/*` surface and the `cmd/sb/*` precedent onto optional-instance addressing; two-subscription inbox; docs. |
+| **modbus-adapter** | `modbus-adapter` | Python | As opcua-adapter (Python). |
+| **file-replicator** | `file-replicator` | Rust | Per-instance activation + control/event surface → optional-instance addressing; two-subscription inbox; docs. |
+| **uns-bridge** | `uns-bridge` | Rust | **Highest consumer impact.** The six-class topic-verbatim relay, command relay, and `reply_to` rewrite must handle the optional instance: subscribe both scope templates per class (or `ecv1/+/+/#` + filter) and treat a missing instance as component scope in every parse/relay/hop-tag path; docs. |
+| **edge-console** | `edge-console` | Rust | The last-known-value model keyed by device/component/instance/class must treat a missing instance as component scope; command views issue to both scopes; the six-wildcard consumer set updated; docs. |
+| **telemetry-processor** | `telemetry-processor` | Rust | Wildcard/templated route matching must accept the optional instance (both scope templates); docs. |
+| **config-component** | `config-component` | Rust | `config/main/cmd/get-configuration` rendezvous → `config/cmd/...`; docs. |
+
+Also in scope inside the monorepo: the core `examples/{java,python,rust,ts}` skeletons, the
+`templates/{java,python,rust,typescript}` the CLI scaffolds, and any `standalone-*.json` / README that
+hardcodes `main/{class}` — every such occurrence is rewritten to the no-instance form. The `uns-bridge`,
+`edge-console`, and `telemetry-processor` consumer changes join the interop matrix (§8) as real
+cross-component consumers of both scopes, not just the four library skeletons.
