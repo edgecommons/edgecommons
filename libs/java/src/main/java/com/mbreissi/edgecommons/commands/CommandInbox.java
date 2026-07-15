@@ -1549,6 +1549,7 @@ public final class CommandInbox implements AutoCloseable {
         }
 
         unsubscribeQuietly(filterToUnsubscribe);
+        unsubscribeQuietly(componentFilterToUnsubscribe);
     }
 
     private void attemptStoppingReply(DeferredEntry entry) {

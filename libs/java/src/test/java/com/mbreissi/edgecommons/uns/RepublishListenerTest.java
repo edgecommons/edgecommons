@@ -47,8 +47,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RepublishListenerTest {
 
     /** The default mock identity's device is {@code test-thing} (single 'device' level). */
-    private static final String STATE_TOPIC = "ecv1/test-thing/_bcast/main/cmd/republish-state";
-    private static final String CFG_TOPIC = "ecv1/test-thing/_bcast/main/cmd/republish-cfg";
+    private static final String STATE_TOPIC = "ecv1/test-thing/_bcast/cmd/republish-state";
+    private static final String CFG_TOPIC = "ecv1/test-thing/_bcast/cmd/republish-cfg";
 
     /** Records scheduled (task, delay) pairs; the test runs tasks synchronously on demand. */
     private static final class RecordingDelayer implements RepublishListener.Delayer {

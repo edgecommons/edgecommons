@@ -99,10 +99,13 @@ class MessageIdentityTest {
     }
 
     @Test
-    void withInstanceRejectsEmptyToken() {
-        MessageIdentity id = new MessageIdentity(multiLevelHier(), "comp", "main");
-        assertThrows(IllegalArgumentException.class, () -> id.withInstance(null));
-        assertThrows(IllegalArgumentException.class, () -> id.withInstance(""));
+    void withInstanceNullOrEmptyIsComponentScopeAndRejectsClassTokens() {
+        // D‑U28: an absent/empty instance is component/global scope (not an error); a present
+        // instance token may not collide with a reserved UNS class token.
+        MessageIdentity id = new MessageIdentity(multiLevelHier(), "comp", "kep1");
+        assertNull(id.withInstance(null).getInstance());
+        assertNull(id.withInstance("").getInstance());
+        assertThrows(IllegalArgumentException.class, () -> id.withInstance("state"));
     }
 
     // ----- toDict -----
@@ -143,13 +146,13 @@ class MessageIdentityTest {
     }
 
     @Test
-    void fromDictMissingInstanceDefaultsToMain() {
+    void fromDictMissingInstanceIsComponentScope() {
         JsonObject src = new MessageIdentity(multiLevelHier(), "comp", "kep1").toDict();
         src.remove("instance");
 
         MessageIdentity parsed = MessageIdentity.fromDict(src);
         assertNotNull(parsed);
-        assertEquals("main", parsed.getInstance());
+        assertNull(parsed.getInstance()); // D‑U28: absent instance ⇒ component scope
     }
 
     @Test

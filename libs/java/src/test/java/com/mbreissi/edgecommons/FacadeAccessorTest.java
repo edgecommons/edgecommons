@@ -19,14 +19,16 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 /**
  * Wiring tests for the publish-facade accessors (DESIGN-class-facades §3, D6): the instance-bound
- * {@code gg.instance(id).data()/events()/app()} (primary) and the {@code main}-instance convenience
- * {@code gg.getData()/getEvents()/getApp()} (== {@code instance("main")}). Fields are injected via
- * the protected no-arg constructor so nothing connects to IPC/MQTT (the pattern
- * {@code EdgeCommonsFacadeUnitTest} uses).
+ * {@code gg.instance(id).data()/events()/app()} (primary) and the component-scope convenience
+ * {@code gg.getData()/getEvents()/getApp()} (D‑U28: no instance token — topics carry no instance
+ * slot). Fields are injected via the protected no-arg constructor so nothing connects to IPC/MQTT
+ * (the pattern {@code EdgeCommonsFacadeUnitTest} uses).
  */
 class FacadeAccessorTest {
 
@@ -55,7 +57,7 @@ class FacadeAccessorTest {
     }
 
     @Test
-    void convenienceAccessorsEqualTheMainInstanceFacades() {
+    void convenienceAccessorsAreCachedComponentScopeFacades() {
         DataFacade data = gg.getData();
         EventsFacade events = gg.getEvents();
         AppFacade app = gg.getApp();
@@ -63,20 +65,24 @@ class FacadeAccessorTest {
         assertNotNull(events);
         assertNotNull(app);
 
-        // gg.getData() == gg.instance("main").data(), and cached (same object each call).
-        assertSame(data, gg.instance("main").data());
-        assertSame(events, gg.instance("main").events());
-        assertSame(app, gg.instance("main").app());
+        // The convenience accessors are cached (same object each call)...
         assertSame(data, gg.getData());
+        assertSame(events, gg.getEvents());
+        assertSame(app, gg.getApp());
+        // ...and are the component-scope facades, distinct from an instance-bound facade (D‑U28).
+        assertNotSame(data, gg.instance("main").data());
+        assertNotSame(events, gg.instance("main").events());
+        assertNotSame(app, gg.instance("main").app());
     }
 
     @Test
-    void componentBoundDataPublishesOnTheMainInstanceTopic() {
+    void componentBoundDataPublishesOnTheComponentScopeTopic() {
         gg.getData().publish("temp", 21.5);
 
         MockMessagingService.PublishedMessage pm = messaging.getPublishedMessages().get(0);
-        assertEquals("ecv1/gw-01/opcua-adapter/main/data/temp", pm.topic);
-        assertEquals("main", pm.message.getIdentity().getInstance());
+        // D‑U28: component scope — no instance slot in the topic and no instance key in the identity.
+        assertEquals("ecv1/gw-01/opcua-adapter/data/temp", pm.topic);
+        assertNull(pm.message.getIdentity().getInstance());
     }
 
     @Test
@@ -93,9 +99,9 @@ class FacadeAccessorTest {
         gg.getEvents().emit(Severity.INFO, "started", "up", null);
         gg.getApp().publish("Hello", "hi", new com.google.gson.JsonObject());
 
-        assertEquals("ecv1/gw-01/opcua-adapter/main/evt/info/started",
+        assertEquals("ecv1/gw-01/opcua-adapter/evt/info/started",
                 messaging.getPublishedMessages().get(0).topic);
-        assertEquals("ecv1/gw-01/opcua-adapter/main/app/hi",
+        assertEquals("ecv1/gw-01/opcua-adapter/app/hi",
                 messaging.getPublishedMessages().get(1).topic);
     }
 }

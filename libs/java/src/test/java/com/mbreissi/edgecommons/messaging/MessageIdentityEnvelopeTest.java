@@ -148,14 +148,15 @@ class MessageIdentityEnvelopeTest {
     // ----- builder stamping -----
 
     @Test
-    void buildWithConfigStampsComponentIdentityWithDefaultInstance() {
+    void buildWithConfigStampsComponentScopeIdentityByDefault() {
         Message message = MessageBuilder.create("Evt", "1.0")
                 .withPayload("x")
                 .withConfig(configWithIdentity(testIdentity()))
                 .build();
 
         assertNotNull(message.getIdentity());
-        assertEquals("main", message.getIdentity().getInstance());
+        // D‑U28: with no explicit withInstance token, the message is component-scoped (no instance).
+        assertNull(message.getIdentity().getInstance());
         assertEquals("test-component", message.getIdentity().getComponent());
         assertEquals("gw-01", message.getIdentity().getDevice());
     }
@@ -217,11 +218,22 @@ class MessageIdentityEnvelopeTest {
     }
 
     @Test
-    void withInstanceRejectsEmptyToken() {
-        MessageBuilder builder = MessageBuilder.create("Evt", "1.0");
-        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
-                () -> builder.withInstance(null));
-        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
-                () -> builder.withInstance(""));
+    void withInstanceNullOrEmptyStampsComponentScope() {
+        // D‑U28: a null/empty instance token means component scope (no instance key), so the
+        // component-scope publish facades (gg.getData()/getEvents()/getApp()) can build messages.
+        Message message = MessageBuilder.create("Evt", "1.0")
+                .withPayload("x")
+                .withConfig(configWithIdentity(testIdentity()))
+                .withInstance(null)
+                .build();
+        assertNotNull(message.getIdentity());
+        assertNull(message.getIdentity().getInstance());
+
+        Message empty = MessageBuilder.create("Evt", "1.0")
+                .withPayload("x")
+                .withConfig(configWithIdentity(testIdentity()))
+                .withInstance("")
+                .build();
+        assertNull(empty.getIdentity().getInstance());
     }
 }

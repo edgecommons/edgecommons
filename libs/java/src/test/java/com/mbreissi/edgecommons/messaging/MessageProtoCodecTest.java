@@ -19,9 +19,36 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MessageProtoCodecTest {
+
+    @Test
+    void componentScopeIdentityOmitsTheInstanceOnTheWireAndInstanceScopePreservesIt() {
+        // D‑U28: the identity's instance slot is optional. A component-scope identity (no instance)
+        // must survive the protobuf round trip carrying no instance; an instance-scope identity must
+        // carry its token back verbatim.
+        MessageIdentity component = new MessageIdentity(List.of(
+                new MessageIdentity.HierEntry("site", "dallas"),
+                new MessageIdentity.HierEntry("device", "gw-01")), "opcua-adapter", null);
+        MessageIdentity instance = component.withInstance("kep1");
+
+        JsonObject payload = new JsonObject();
+        payload.addProperty("v", 1);
+
+        Message componentDecoded = Message.fromBytes(MessageBuilder.create("Evt", "1.0")
+                .withStructuredPayload(payload).withIdentity(component).build().toBytes());
+        assertNull(componentDecoded.getIdentity().getInstance(),
+                "a component-scope identity carries no instance across the wire");
+        assertEquals("opcua-adapter", componentDecoded.getIdentity().getComponent());
+        assertEquals("dallas/gw-01", componentDecoded.getIdentity().getPath());
+
+        Message instanceDecoded = Message.fromBytes(MessageBuilder.create("Evt", "1.0")
+                .withStructuredPayload(payload).withIdentity(instance).build().toBytes());
+        assertEquals("kep1", instanceDecoded.getIdentity().getInstance(),
+                "an instance-scope identity round-trips its instance token");
+    }
 
     @Test
     void structuredBodyRoundTripsThroughBytes() {

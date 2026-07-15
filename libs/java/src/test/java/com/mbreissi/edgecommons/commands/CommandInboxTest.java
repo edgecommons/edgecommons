@@ -42,8 +42,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code commands()} facade — edge-console slice S2) over the mock messaging/config seams:
  *
  * <ul>
- *   <li>{@code start()} subscribes exactly the own-inbox wildcard
- *       ({@code ecv1/{device}/{component}/main/cmd/#}) on the primary connection;</li>
+ *   <li>{@code start()} subscribes exactly the two own-inbox wildcards (D‑U28): the component-scope
+ *       filter ({@code ecv1/{device}/{component}/cmd/#}) and the instance-scope filter
+ *       ({@code ecv1/{device}/{component}/+/cmd/#}) on the primary connection;</li>
  *   <li>each built-in verb dispatches and replies with the pinned body shape — {@code ping}
  *       (status + uptime), {@code reload-config} (ack / {@code RELOAD_FAILED}),
  *       {@code get-configuration} (redacted config / {@code NO_CONFIG});</li>
@@ -63,7 +64,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CommandInboxTest {
 
     /** The default mock identity: device {@code test-thing}, component {@code TestComponent}. */
-    private static final String INBOX_FILTER = "ecv1/test-thing/TestComponent/main/cmd/#";
+    private static final String COMPONENT_INBOX_FILTER = "ecv1/test-thing/TestComponent/cmd/#";
+    private static final String INSTANCE_INBOX_FILTER = "ecv1/test-thing/TestComponent/+/cmd/#";
+    /** D‑U28: the inbox subscribes both the component-scope and the instance-scope cmd wildcards. */
+    private static final Set<String> INBOX_FILTERS =
+            Set.of(COMPONENT_INBOX_FILTER, INSTANCE_INBOX_FILTER);
     private static final String REPLY_TO = "edgecommons/reply-test-1";
 
     private MockConfigurationService config;
@@ -135,8 +140,8 @@ class CommandInboxTest {
     @Test
     void startSubscribesTheOwnInboxWildcard() {
         inbox.start();
-        assertEquals(Set.of(INBOX_FILTER), messaging.getSubscribedTopics(),
-                "start() must subscribe exactly the own-inbox cmd wildcard");
+        assertEquals(INBOX_FILTERS, messaging.getSubscribedTopics(),
+                "start() must subscribe exactly the component- and instance-scope cmd wildcards");
         assertEquals(CommandInbox.StartupState.ACTIVE, inbox.startupStatus().state());
     }
 
@@ -144,7 +149,7 @@ class CommandInboxTest {
     void startIsIdempotent() {
         inbox.start();
         inbox.start();
-        assertEquals(Set.of(INBOX_FILTER), messaging.getSubscribedTopics());
+        assertEquals(INBOX_FILTERS, messaging.getSubscribedTopics());
     }
 
     @Test
@@ -182,12 +187,17 @@ class CommandInboxTest {
     void deliveryRacingSubscriptionAcknowledgementIsDispatchedOnlyAfterActive() throws Exception {
         class RacingMessaging extends MockMessagingService {
             private boolean dispatchedInsideSubscribe;
+            private boolean injected; // one racing delivery total (start subscribes two filters)
 
             @Override
             public void subscribeAcknowledged(String topic,
                     java.util.function.BiConsumer<String, Message> handler,
                     int maxConcurrency, int maxMessages, Duration timeout) {
                 super.subscribeAcknowledged(topic, handler, maxConcurrency, maxMessages, timeout);
+                if (injected) {
+                    return;
+                }
+                injected = true;
                 handler.accept(CommandInboxTest.topic(CommandInbox.PING),
                         CommandInboxTest.request(CommandInbox.PING));
                 dispatchedInsideSubscribe = !getPublishedMessages().isEmpty();

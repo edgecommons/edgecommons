@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <ul>
  *   <li>each tick publishes a {@code state} keepalive to the component's UNS state topic
- *       ({@code ecv1/{device}/{component}/main/state}) through the privileged
+ *       ({@code ecv1/{device}/{component}/state}) through the privileged
  *       {@code ReservedPublisher} seam — header name {@code "state"}, body
  *       {@code {"status":"RUNNING","uptimeSecs":n}};</li>
  *   <li>the measures are emitted as the metric {@code sys} through the metric subsystem;</li>
@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class HeartbeatPublishTest {
 
     /** The default mock identity's UNS state topic (device=test-thing, component=TestComponent). */
-    private static final String STATE_TOPIC = "ecv1/test-thing/TestComponent/main/state";
+    private static final String STATE_TOPIC = "ecv1/test-thing/TestComponent/state";
 
     /** A config whose heartbeat section is the given §4.3-shape JSON (or "{}" for pure defaults). */
     private static MockConfigurationService configWithHeartbeat(String heartbeatJson) {

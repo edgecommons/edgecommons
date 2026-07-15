@@ -31,7 +31,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 class LogServiceTest {
-    private static final String LOG_TOPIC_INFO = "ecv1/test-thing/TestComponent/main/log/info";
+    private static final String LOG_TOPIC_INFO = "ecv1/test-thing/TestComponent/log/info";
     private static final org.apache.logging.log4j.Logger PRECREATED_APP_LOGGER =
             LogManager.getLogger("com.mbreissi.edgecommons.opcua.opc.OpcUaConnection");
 
@@ -113,7 +113,7 @@ class LogServiceTest {
             logs.publish(LogRecord.builder().withLevel("WARN").withLogger("app").withMessage("warn").build());
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             MockMessagingService.PublishedMessage published = messaging.getPublishedMessages().get(0);
-            assertEquals("ecv1/test-thing/TestComponent/main/log/warn", published.topic);
+            assertEquals("ecv1/test-thing/TestComponent/log/warn", published.topic);
             assertTrue(published.reserved);
             assertNotNull(published.qos);
         } finally {

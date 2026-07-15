@@ -352,8 +352,11 @@ class UnsTestVectorsGeneratorTest {
                 "ecv1/gw-01/opcua-adapter/main/data/#", false, error("WILDCARD_IN_TOPIC")));
 
         // --- includeRoot sensitivity: the same topic under the two root modes ---
+        // D‑U28: the instance slot is optional, so under a rooted validator this parses as
+        // ecv1/{site=gw-01}/{device=opcua-adapter}/{component=main}/{class=state} — component scope,
+        // valid (it used to be BAD_CLASS when the instance slot was mandatory).
         cases.add(validateCase("validate-rootless-topic-under-rooted-mode",
-                "ecv1/gw-01/opcua-adapter/main/state", true, error("BAD_CLASS")));
+                "ecv1/gw-01/opcua-adapter/main/state", true, ok()));
         cases.add(validateCase("validate-rooted-topic-under-rootless-mode",
                 "ecv1/dallas/gw-01/opcua-adapter/main", false, error("BAD_CLASS")));
 
@@ -903,11 +906,18 @@ class UnsTestVectorsGeneratorTest {
         inboxInput.addProperty("includeRoot", false);
         inboxInput.addProperty("class", "cmd");
         JsonObject inbox = new JsonObject();
-        inbox.addProperty("filter", new com.mbreissi.edgecommons.uns.Uns(SINGLE_IDENTITY, false)
-                .filter(com.mbreissi.edgecommons.uns.UnsClass.CMD,
-                        new com.mbreissi.edgecommons.uns.UnsScope(null,
-                                SINGLE_IDENTITY.getDevice(), SINGLE_IDENTITY.getComponent(),
-                                SINGLE_IDENTITY.getInstance())));
+        com.mbreissi.edgecommons.uns.Uns inboxUns =
+                new com.mbreissi.edgecommons.uns.Uns(SINGLE_IDENTITY, false);
+        com.mbreissi.edgecommons.uns.UnsScope inboxScope =
+                new com.mbreissi.edgecommons.uns.UnsScope(null,
+                        SINGLE_IDENTITY.getDevice(), SINGLE_IDENTITY.getComponent(),
+                        SINGLE_IDENTITY.getInstance());
+        // D‑U28: the inbox subscribes both the instance-scope filter (the pinned instance slot) and
+        // the component-scope filter (no instance slot).
+        inbox.addProperty("filter",
+                inboxUns.filter(com.mbreissi.edgecommons.uns.UnsClass.CMD, inboxScope));
+        inbox.addProperty("componentFilter",
+                inboxUns.filter(com.mbreissi.edgecommons.uns.UnsClass.CMD, inboxScope, false));
         inbox.add("input", inboxInput);
         doc.add("inbox", inbox);
 

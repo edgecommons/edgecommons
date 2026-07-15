@@ -1031,7 +1031,7 @@
         "includeRoot": true
       },
       "expected": {
-        "error": "BAD_CLASS"
+        "ok": true
       }
     },
     {
