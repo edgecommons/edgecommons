@@ -33,6 +33,39 @@ SHOULD emit the canonical order below for readability; tests assert structural e
 
 ---
 
+## D‑U28 — Optional instance token (ratified 2026-07-15)
+
+**The UNS instance token is optional.** Instance **present** ⇒ the message/command is instance-scoped;
+instance **absent** ⇒ component/global-scoped. The `main` sentinel instance is **retired** (an instance
+genuinely named `main` stays a valid instance-scoped token; only its sentinel use is removed). This
+**supersedes** the `instance defaults to "main"` rule and the `DEFAULT_INSTANCE` constant wherever they
+appear below, the fixed class-token position in the reserved-class guard (§4.1), and the per-instance
+`cmd/sb/*` addressing of the southbound command family (`SOUTHBOUND.md` §2.2 / M9). Resolves
+camera-adapter D‑CAM‑18. Full design + four-language plan + migration:
+[`PROPOSAL-uns-optional-instance-addressing.md`](PROPOSAL-uns-optional-instance-addressing.md).
+
+Normative rules:
+1. **Grammar** — `[ecv1] [/ {site}]? / {device} / {component} [/ {instance}]? / {class} [/ {channel…}]`.
+   The `{instance}` slot may be absent (one fewer path segment); it is never empty.
+2. **Wire identity** — `identity.instance` is **omitted** from the envelope when absent (not `null`, not
+   `"main"`). A consumer reading `identity.instance` treats a missing key as component scope.
+3. **Reserved-class-id invariant** — an instance id may **not** equal a reserved class token
+   (`state`/`metric`/`cfg`/`log`/`data`/`evt`/`cmd`/`app`). This keeps the component-scope and
+   instance-scope subscription templates provably disjoint, and lets the guard (§4.1) locate the class
+   unambiguously: the token after `{component}` is the class iff it is a class token, else the instance.
+4. **Subscriptions** — a scope-spanning subscriber binds **both** `.../{class}/#` (component-scope) and
+   `.../+/{class}/#` (instance-scope); each is fixed-length in its own context, so no variable-length
+   parser is required. A component's own command inbox binds both `.../{me}/cmd/#` and `.../{me}/+/cmd/#`.
+5. **Scope** — the rule applies to **every class**: `main` is retired from `state`, `metric`, `cfg`,
+   `evt`, `cmd`, `data`, `log` alike (see the §4.3 publisher table and command addressing).
+6. **Migration** — a single coordinated cutover across org-controlled test infra (no `ecv1`→`ecv2`
+   bump; old `main/*` and new no-instance publishers are not expected to coexist in a live fleet).
+
+Status: **ratified; four-language + component rollout in progress** — this doc is the target spec, and
+the `main`-form spots below are being updated as that rollout lands.
+
+---
+
 ## Canonical API design
 
 ### 1. The top-level `identity` element
@@ -41,7 +74,8 @@ SHOULD emit the canonical order below for readability; tests assert structural e
 
 The envelope becomes `{header, identity, tags, body}` (raw messages remain `{raw}` and never carry
 identity). Canonical member order: `header`, `identity`, `tags`, `body`; inside `identity`: `hier`,
-`path`, `component`, `instance`; inside each `hier` entry: `level`, `value`.
+`path`, `component`, and `instance` **when present** (optional — D‑U28); inside each `hier` entry:
+`level`, `value`.
 
 ```json
 {
@@ -54,8 +88,7 @@ identity). Canonical member order: `header`, `identity`, `tags`, `body`; inside 
       { "level": "device",  "value": "gw-01" }
     ],
     "path":      "dallas/finishing/zone-3/gw-01",
-    "component": "opcua-adapter",
-    "instance":  "main"
+    "component": "opcua-adapter"
   },
   "tags": { "app": "line-ctl" },
   "body": { }
@@ -67,8 +100,9 @@ Rules:
 - `path` = the `/`-join of the `hier` values, precomputed by the publisher. On deserialize, a missing
   `path` is recomputed; a present one is taken as-is (publisher is authoritative).
 - `component` = the component's **UNS token = sanitized short name** (existing `{ComponentName}`
-  semantics: segment after the last `.` — D‑U18). `instance` defaults to `"main"`
-  (`MessageIdentity.DEFAULT_INSTANCE`).
+  semantics: segment after the last `.` — D‑U18). The `instance` token is **optional (D‑U28)**: present
+  ⇒ instance-scoped, absent ⇒ component/global-scoped; it is omitted from the wire when absent (no `main`
+  default) and may not equal a reserved class token.
 - All four keys are present when `identity` is present. `identity` itself is **optional on the wire**: a
   message built without a config-bound builder (the CONFIG_COMPONENT bootstrap request §1.5, or raw
   bridging of external systems) legally omits it.
@@ -88,13 +122,13 @@ One class serves as both the wire object and the component's resolved identity:
 package com.mbreissi.edgecommons.messaging;
 
 public final class MessageIdentity {
-    public static final String DEFAULT_INSTANCE = "main";
+    // DEFAULT_INSTANCE ("main") is RETIRED — D‑U28: the instance token is optional.
     public record HierEntry(String level, String value) { }
 
     private final List<HierEntry> hier;   // immutable, size >= 1; last = device
     private final String path;            // precomputed '/'-join of values
     private final String component;       // UNS component token (sanitized short name)
-    private final String instance;        // never null
+    private final String instance;        // null when component-scoped (D‑U28); may not be a class token
 
     public MessageIdentity(List<HierEntry> hier, String component, String instance); // validates + computes path
 
@@ -108,7 +142,7 @@ public final class MessageIdentity {
     public MessageIdentity withInstance(String instance);
 
     public JsonObject toDict();                          // canonical order: hier, path, component, instance
-    /** Lenient: missing instance -> "main"; missing path -> recomputed; malformed hier -> null + WARN. */
+    /** Lenient: missing instance -> absent/component scope (D‑U28); missing path -> recomputed; malformed hier -> null + WARN. */
     public static MessageIdentity fromDict(JsonObject src);
 }
 ```
@@ -141,14 +175,14 @@ message still delivers (mirrors the existing lenient envelope handling in all fo
 
 ```java
 // MessageBuilder (Java) — additions
-public MessageBuilder withInstance(String instance);        // validated token; default "main"
+public MessageBuilder withInstance(String instance);        // validated token; absent ⇒ component scope (D‑U28)
 public MessageBuilder withIdentity(MessageIdentity id);     // explicit override (tests, vectors, relays)
 
 public Message build() {
     // …existing header/tags/body…
     if (identityOverride != null)      message.identity = identityOverride;
     else if (configService != null)    message.identity =
-        configService.getComponentIdentity().withInstance(instance != null ? instance : MessageIdentity.DEFAULT_INSTANCE);
+        configService.getComponentIdentity().withInstance(instance);   // null instance ⇒ component scope (D‑U28)
     // no config, no override -> identity stays null (bootstrap/raw cases)
 }
 ```
@@ -162,10 +196,10 @@ capturing the config identity (`message.ts:232–238`).
 #### 1.5 Where it is resolved (config side — NO shared config)
 
 `ConfigManager` resolves identity **once at construction**, from the component's own config, and exposes
-`getComponentIdentity()` (instance `"main"`). Resolution algorithm (identical 4 ways, fail-fast):
+`getComponentIdentity()` (component scope — no instance token, D‑U28). Resolution algorithm (identical 4 ways, fail-fast):
 
 1. `levels` = top-level `hierarchy.levels` if present, else `["device"]` (zero-config default — the UNS
-   works out of the box as `ecv1/{thing}/{comp}/main/{class}`).
+   works out of the box as `ecv1/{thing}/{comp}/{class}` — component scope, D‑U28).
 2. Level **names** must match `^[A-Za-z0-9_-]+$`, be unique, non-empty (they become Parquet columns in
    Phase 4 — keep them strict).
 3. For every level **except the last**, the value comes from the top-level `identity` config object —
@@ -233,7 +267,7 @@ to that instance (§3). `topicFor` takes a `MessageIdentity` — typically from 
 #### 2.2 Grammar & normative validation rules
 
 ```
-[ecv1] [/ {site}]? / {device} / {component} / {instance} / {class} [/ {channel…}]
+[ecv1] [/ {site}]? / {device} / {component} [/ {instance}]? / {class} [/ {channel…}]
 ```
 
 1. **Token rule** (identical to the template sanitizer's blacklist, so any sanitized value passes — this
@@ -241,7 +275,9 @@ to that instance (§3). `topicFor` takes a `MessageIdentity` — typically from 
    (the sanitizer's `Character.isISOControl`, which also covers C1 U+0080–U+009F — **D‑U26**), and no
    `..` substring. Dots are legal (D5: literal-within-a-level). The
    validator deliberately does **not** impose a stricter whitelist than the sanitizer, or sanitized
-   values (thing names with spaces, etc.) would build unpublishable topics.
+   values (thing names with spaces, etc.) would build unpublishable topics. An **instance** token
+   additionally may not equal a reserved class token (`state`/`metric`/`cfg`/`log`/`data`/`evt`/`cmd`/
+   `app`) — **D‑U28**, keeping the component- and instance-scope subscription templates disjoint.
 2. **Depth guard**: total `/` count ≤ 7 (AWS IoT Core's 8-level limit) ⇒ channel ≤ **3 tokens** without
    root, ≤ **2 tokens** with `topic.includeRoot: true`. `topic()` enforces at build time; over-deep
    channel throws, never silently drops at IoT Core.
@@ -250,7 +286,7 @@ to that instance (§3). `topicFor` takes a `MessageIdentity` — typically from 
    channel token. `cmd` channels are lowercase-hyphenated verbs, optionally family-namespaced
    (`sb/status`).
 5. `validate(topic)` accepts only **concrete** topics (rejects `+`/`#`); checks the token rule, root
-   literal, minimum 5 tokens (6 rooted), class ∈ enum, leaf-class tail absence, depth, length.
+   literal, **minimum 4 tokens without an instance / 5 with one** (one more when rooted; D‑U28), class ∈ enum, leaf-class tail absence, depth, length.
    `filter()` output is correct by construction and not passed through `validate`.
 6. **Root** (D‑U11, low priority): `topic.includeRoot` (top-level `topic` config block, default `false`)
    inserts `hier[0].value` after `ecv1` in `topic()`/`topicFor()` and a `site` position in `filter()` —
@@ -317,7 +353,8 @@ public EdgeCommonsInstance instance(String instanceId);   // token validated (§
 ```
 
 Rules:
-- Component-level messages (everything not built through a handle) default to `instance == "main"`.
+- Component-level messages (everything not built through a handle) carry **no instance token** —
+  component scope (D‑U28); a handle (`gg.instance(id)`) adds the instance token for instance-scoped messages.
 - The handle does **not** verify the id against `component.instances[]` — instances may be created
   dynamically; the token-charset validation is the only gate (log DEBUG if the id is not in the
   configured instances list, as a diagnostic aid).
@@ -338,19 +375,22 @@ token) holding the config snapshot + id; `.uns()`, `.message(name, version) -> M
 
 #### 4.1 The guard (public surface)
 
-Reserved tokens: `state | metric | cfg | log` (`UnsClass.RESERVED`). The check, identical 4 ways:
+Reserved tokens: `state | metric | cfg | log` (`UnsClass.RESERVED`). The instance slot is optional
+(D‑U28), so the class is **located** first (using the full class-token set), then tested; identical 4 ways:
 
 ```
-reject if tokens[0] == "ecv1"
-      && ( tokens.length >= 5 && reserved(tokens[4])
-        || includeRoot && tokens.length >= 6 && reserved(tokens[5]) )
+base = includeRoot ? 4 : 3                                 // index of the token right after {component}
+classIdx = isClassToken(tokens[base]) ? base : base + 1    // instance absent ⇒ class at base; present ⇒ base+1
+reject if tokens[0] == "ecv1" && reserved(tokens[classIdx])
 ```
 
-- Class position 4 is always checked (rootless grammar). Position 5 is checked **only when this
-  component's `topic.includeRoot` is true** — checking it unconditionally would false-positive on
-  legitimate app channels (`ecv1/d/c/i/app/state`). The residual gap (a root-off component hand-forging
-  a rooted reserved topic) is accepted: the guard is **misuse prevention, not a security boundary** —
-  per-device broker ACLs are the durable enforcement (DESIGN-uns §7.5 pt 3).
+- The class is located by the class-token set, not a fixed position: an instance may never be a class
+  token (D‑U28), so the token after `{component}` is the class when it is a class token, else the
+  instance and the class follows. This never false-positives on a legitimate app channel whose channel
+  token is a reserved word (`ecv1/d/c/i/app/state` — the class is `app`, not the `state` channel). The
+  residual gap (a root-off component hand-forging a rooted reserved topic) is accepted: the guard is
+  **misuse prevention, not a security boundary** — per-device broker ACLs are the durable enforcement
+  (DESIGN-uns §7.5 pt 3).
 - **Guarded methods** (every public path that emits a client-chosen topic): `publish`, `publishRaw`,
   `publishNorthbound`, `publishNorthboundRaw` (D‑U8), `request`, `requestNorthbound`, **and `reply` /
   `replyNorthbound`** — the reply pair matters: a hostile requester could set `header.reply_to` to a
@@ -402,29 +442,32 @@ Hard-cut topic map, replacing the four legacy sites in this same phase:
 
 | Publisher | Old | New (via internal `uns()` + `ReservedPublisher`) |
 |---|---|---|
-| heartbeat → **state keepalive** | `edgecommons/{ThingName}/{ComponentName}/heartbeat` (`HeartbeatConfiguration.DEFAULT_TOPIC:53`) | `ecv1/{device}/{component}/main/state`, header `name:"state"`, body `{"status":"RUNNING","uptimeSecs":n}`; best-effort `{"status":"STOPPED"}` on graceful shutdown |
+| heartbeat → **state keepalive** | `edgecommons/{ThingName}/{ComponentName}/heartbeat` (`HeartbeatConfiguration.DEFAULT_TOPIC:53`) | `ecv1/{device}/{component}/state` (component scope, D‑U28), header `name:"state"`, body `{"status":"RUNNING","uptimeSecs":n}`; best-effort `{"status":"STOPPED"}` on graceful shutdown |
 | heartbeat measures | same message | a metric named **`sys`** through the normal metric subsystem each tick (D6) |
-| metric `messaging` target | `{ThingName}/{ComponentName}/metric` (`MetricConfiguration:18`) | `ecv1/{device}/{component}/main/metric/{metricName}` (name sanitized as a channel token) |
-| **cfg publisher (new)** | — | `ecv1/{device}/{component}/main/cfg` on startup + on config change; body `{"config": <effective, redacted>}`. Redaction v1: `$secret` refs never resolved; `messaging.*.credentials` + any `password`/`pin` key → `"***"` |
-| config-get (CONFIG_COMPONENT) | `edgecommons/{ThingName}/config/get/{ComponentName}` (`ConfigComponentProvider.java:22`) | request to `ecv1/{device}/config/main/cmd/get-configuration` — `config` is a **reserved-by-convention logical component name**; requester identified by the envelope (or body `{"component"}` in the pre-config bootstrap §1.5). `cmd` is not reserved — no seam needed |
-| config push | `edgecommons/{ThingName}/config/{ComponentName}/updated` (`:23`) | fire-and-forget `cmd`: `ecv1/{device}/{component}/main/cmd/set-config`, body = new config (a `cmd` without `reply_to` is a notification-style command — normative) |
+| metric `messaging` target | `{ThingName}/{ComponentName}/metric` (`MetricConfiguration:18`) | `ecv1/{device}/{component}/metric/{metricName}` (component scope, D‑U28; name sanitized as a channel token) |
+| **cfg publisher (new)** | — | `ecv1/{device}/{component}/cfg` (component scope, D‑U28) on startup + on config change; body `{"config": <effective, redacted>}`. Redaction v1: `$secret` refs never resolved; `messaging.*.credentials` + any `password`/`pin` key → `"***"` |
+| config-get (CONFIG_COMPONENT) | `edgecommons/{ThingName}/config/get/{ComponentName}` (`ConfigComponentProvider.java:22`) | request to `ecv1/{device}/config/cmd/get-configuration` (component scope, D‑U28) — `config` is a **reserved-by-convention logical component name**; requester identified by the envelope (or body `{"component"}` in the pre-config bootstrap §1.5). `cmd` is not reserved — no seam needed |
+| config push | `edgecommons/{ThingName}/config/{ComponentName}/updated` (`:23`) | fire-and-forget `cmd`: `ecv1/{device}/{component}/cmd/set-config` (component scope, D‑U28), body = new config (a `cmd` without `reply_to` is a notification-style command — normative) |
 | cloudwatch-component target | `cloudwatch/metric/put` | **unchanged** — external AWS Greengrass component contract (D‑U21) |
 
 **Command addressing — the two config flows + broadcast (D‑U19, resolved 2026-07-02 → component-inbox +
 broadcast):**
 - **Flow A — config *source* fetch** (a `CONFIG_COMPONENT` client pulls *its own* config): a request to
-  `ecv1/{device}/config/main/cmd/get-configuration`; the **config server is the sole subscriber** and
+  `ecv1/{device}/config/cmd/get-configuration` (component scope, D‑U28); the **config server is the sole subscriber** and
   replies via `reply_to`; the requester self-identifies (envelope, or body `{"component"}` pre-config).
   `config` is a reserved-by-convention **logical component name**.
 - **Flow B — console→component commands** (the built-in verbs `get-configuration`, `reload-config`,
-  `set-log-level`, `describe`, `sb/*`): addressed to the **target component's own inbox**
-  `ecv1/{device}/{component}/{instance}/cmd/{verb}`. A component's single `ecv1/{device}/{me}/+/cmd/#`
-  subscription is therefore topic-selective — it never receives another component's commands, no
-  body-filtering. `set-config` push (server→component) uses this same inbox.
+  `set-log-level`, `describe`, `sb/*`): addressed to the **target component's own inbox**. Under D‑U28
+  an **instance-scoped** command goes to `ecv1/{device}/{component}/{instance}/cmd/{verb}` and a
+  **component/fleet-scoped** command to `ecv1/{device}/{component}/cmd/{verb}` (no instance token). A
+  component therefore binds **two** topic-selective subscriptions — `ecv1/{device}/{me}/+/cmd/#`
+  (instance-scoped) and `ecv1/{device}/{me}/cmd/#` (component/fleet-scoped) — never receiving another
+  component's commands and never body-filtering. `set-config` push (server→component) uses the
+  component-scoped inbox.
 - **Broadcast** — a reserved pseudo-component token **`_bcast`**: a command to *all* components on a
-  device goes to `ecv1/{device}/_bcast/main/cmd/{verb}`, and every component also subscribes to
-  `ecv1/{device}/_bcast/main/cmd/#`. This standardizes (and fixes) the malformed
-  `ecv1/bcast/cmd/republish-state` in DESIGN-uns §9.3 → `ecv1/{device}/_bcast/main/cmd/republish-state`.
+  device goes to `ecv1/{device}/_bcast/cmd/{verb}`, and every component also subscribes to
+  `ecv1/{device}/_bcast/cmd/#`. This standardizes (and fixes) the malformed
+  `ecv1/bcast/cmd/republish-state` in DESIGN-uns §9.3 → `ecv1/{device}/_bcast/cmd/republish-state`.
   (Site-wide broadcast across devices = the console publishing per-device from its FleetModel, or a
   `+`-device refinement — deferred to Phase 3.) **Reserved tokens:** logical component `config`;
   pseudo-component `_bcast`; the `_`-prefix is reserved for system pseudo-components. **Phase 1
@@ -487,7 +530,7 @@ contract, not component configuration:
 - The canonical schema rejects stale `messaging.lwt`; `uns-bridge` also rejects
   `component.instances[site].lwt`.
 - The bridge derives the will topic from its resolved UNS state topic
-  (`ecv1/{device}/uns-bridge/main/state`) and uses the fixed payload `{"status":"UNREACHABLE"}` with QoS 1.
+  (`ecv1/{device}/uns-bridge/state` — component scope, D‑U28) and uses the fixed payload `{"status":"UNREACHABLE"}` with QoS 1.
 - The bridge registers the will only on its **site MQTT connection**. It is not registered on normal
   component local MQTT connections, and it is not an IPC/Greengrass transport feature.
 - Rust wiring: `uns-bridge` builds `MqttLastWill` internally and calls
@@ -518,7 +561,7 @@ southbound command family (M9); D‑U15/16 (Phase 5).
 > standalone, e2e-tested Rust component (`edgecommons/uns-bridge`, now published to GitHub, registered
 > in `registry/components.json` under `category: bridge`, and git-rev-pinned to the v0.2.0 UNS release
 > `b1d8d85`) — see [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md); the
-> **minimal `commands()` facade** — the component command inbox (`ecv1/{device}/{component}/main/cmd/#`),
+> **minimal `commands()` facade** — the component command inbox (D‑U28: `ecv1/{device}/{component}/cmd/#` + `ecv1/{device}/{component}/+/cmd/#`),
 > the built-ins `ping`/`reload-config`/Flow-B `get-configuration`, and the `register(verb, handler)`
 > seam — has shipped in **all four languages** (DESIGN-uns.md §9.5, slice S2; pinned by
 > `uns-test-vectors/commands.json`); and **the `data()`/`events()`/`app()`
@@ -583,7 +626,7 @@ Greengrass SDK operation names such as `PublishToIoTCore` remain only at the pro
 | D‑U16 | `writes.allow[]` matches stable `signal.id` | provisional, **Phase 5** (adapter-contract change, M9) | Med | Easy (deferred) | no |
 | **D‑U17** | M8 the bridge's site connection | ✅ **FINAL 2026-07-03 → NO CORE CHANGE (any language).** The site broker is the uns-bridge's **external system** (like the opcua-adapter's OPC UA endpoints), configured in the bridge's own `component.instances[]` and built by **reusing the core's already-`pub` MQTT objects** (`MqttProvider::connect` + `DefaultMessagingService`/raw `MessagingProvider`), inside the bridge. **No `messaging.connections` schema, no `gg.messaging()` API change, no keyed registry, no Java/Python/TS change** (at most a 1-line Rust `pub use`). Supersedes the earlier "named connection in the core" reading. §2.3, DESIGN-uns-bridge §1 | High | Easy | resolved |
 | **D‑U18** | `identity.component` = **sanitized short name** (existing `{ComponentName}` semantics), not reverse-DNS full name | ✅ **confirmed 2026-07-02** (user agreed). Matches every existing topic site + the design examples; dots legal in-level so full name stays possible later; cross-vendor collision on one device accepted pre-1.0 | High | Hard once fleets deploy | resolved |
-| **D‑U19** | Config-command addressing | ✅ **resolved 2026-07-02 → component-inbox + broadcast** (user). **Flow A** (config-source fetch) stays a request to `config/main` (server is sole subscriber, requester self-IDs). **Flow B** (console→component verbs incl. `get-configuration`) → the target component's OWN inbox `ecv1/{device}/{component}/{instance}/cmd/{verb}` (topic-selective, uniform for all verbs, no body-filtering); **broadcast** via reserved `_bcast` (`ecv1/{device}/_bcast/main/cmd/{verb}`). `set-config` push = component inbox. §4.3 | High | Moderate | resolved |
+| **D‑U19** | Config-command addressing | ✅ **resolved 2026-07-02 → component-inbox + broadcast** (user). **Flow A** (config-source fetch) stays a request to `config/main` (server is sole subscriber, requester self-IDs). **Flow B** (console→component verbs incl. `get-configuration`) → the target component's OWN inbox `ecv1/{device}/{component}/{instance}/cmd/{verb}` (topic-selective, uniform for all verbs, no body-filtering); **broadcast** via reserved `_bcast` (`ecv1/{device}/_bcast/cmd/{verb}`). `set-config` push = component inbox. §4.3 | High | Moderate | resolved |
 | **D‑U20** | Heartbeat `targets[]` REMOVED → `enabled/intervalSecs/measures/destination`; measures emit metric **`sys`** via normal metric subsystem | ✅ **confirmed 2026-07-02** (user). The measures **keep full sink flexibility** — they now flow through the metric subsystem's own targets (messaging/cloudwatch-component/EMF/local-log), which `heartbeat.targets[]` did not provide for measures; `heartbeat.destination` (local\|northbound) governs only the lightweight `state` keepalive. Supersedes the letter of D‑U9 for heartbeat | High | Moderate (schema break, intended) | resolved |
 | D‑U21 | `cloudwatch/metric/put` unchanged | external AWS Greengrass component contract; non-`ecv1` so guard-exempt | High | Easy | no |
 | D‑U22 | Topics byte-identical; envelopes structurally identical (member order not normative) | the four serializers already differ in order + the interop harness compares structurally; byte order would churn all four for zero consumer value | High | Easy | no |
@@ -625,7 +668,7 @@ Greengrass SDK operation names such as `PublishToIoTCore` remain only at the pro
 8. **Reserved names to document:** logical component `config` (Flow A, §4.3/D‑U19), pseudo-component
    `_bcast` (broadcast fan-out, §4.3), the `_`-prefix for system pseudo-components, and the `ecv1` root.
    This supersedes the malformed `ecv1/bcast/cmd/...` in DESIGN-uns §9.3 (now
-   `ecv1/{device}/_bcast/main/cmd/...`). Put the reserved-token warning in the identity docs now.
+   `ecv1/{device}/_bcast/cmd/...`). Put the reserved-token warning in the identity docs now.
 9. **Docs/templates surface is large**: schema-sync copies, CLI templates, examples, website
    config-schema reference + both "Sample Configurations" pages, and the "subscribe `heartbeat/+/+`"
    instructions in CLAUDE.md/README must all move to the six-wildcard set in the same train, or the
