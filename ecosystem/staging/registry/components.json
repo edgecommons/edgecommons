@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-07-08",
+  "updated": "2026-07-15",
   "components": [
     {
       "name": "opcua-adapter",
@@ -25,6 +25,18 @@
       "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
       "library": "edgecommons",
       "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "modbus", "edgecommons-adapter"]
+    },
+    {
+      "name": "camera-adapter",
+      "repo": "edgecommons/camera-adapter",
+      "language": "RUST",
+      "category": "adapter",
+      "protocol": "ONVIF / RTSP / GigE Vision (GenICam)",
+      "description": "Rust reference southbound camera adapter. Captures still images from ONVIF/RTSP and GigE Vision (GenICam) cameras on cron schedules or on-demand commands, persists them with checksums and metadata sidecars, and announces terminal results (with an optional thumbnail) on a unified namespace. Backed by a durable SQLite job catalog with a fleet-wide capture queue, byte-based admission, and retention.",
+      "status": "beta",
+      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "library": "edgecommons",
+      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "camera", "onvif", "edgecommons-adapter"]
     },
     {
       "name": "telemetry-processor",
