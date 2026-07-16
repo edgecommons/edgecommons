@@ -40,7 +40,26 @@ class LogServiceTest {
                 .getAsJsonObject());
     }
 
+    /**
+     * Config for the explicit-publish tests: native log capture is defaulted <b>off</b>. The global
+     * {@link LogBusAppender} captures the entire shared log4j LoggerContext, so a stray logger from
+     * another test class in the surefire JVM (e.g. a ConfigManager {@code FileWatcher} thread) would
+     * otherwise be captured mid-test and inflate the published-message count/order — a
+     * timing-dependent flake. Tests that specifically exercise native capture use
+     * {@link #captureConfig}. An explicit {@code captureNative} in the JSON is respected.
+     */
     private static MockConfigurationService config(String publishJson) {
+        JsonObject publish = JsonParser.parseString(publishJson).getAsJsonObject();
+        if (!publish.has("captureNative")) {
+            publish.addProperty("captureNative", false);
+        }
+        MockConfigurationService config = new MockConfigurationService();
+        config.setLoggingConfig(logging(publish.toString()));
+        return config;
+    }
+
+    /** Config for the native-capture tests: {@code captureNative} keeps its production default (on). */
+    private static MockConfigurationService captureConfig(String publishJson) {
         MockConfigurationService config = new MockConfigurationService();
         config.setLoggingConfig(logging(publishJson));
         return config;
@@ -262,7 +281,7 @@ class LogServiceTest {
     void serviceConstructorInstallsNativeLogAppender() {
         LoggerContext context = (LoggerContext) LogManager.getContext(false);
         LogBusAppender.uninstall(context);
-        MockConfigurationService config = config("{\"enabled\":true,\"minLevel\":\"INFO\"}");
+        MockConfigurationService config = captureConfig("{\"enabled\":true,\"minLevel\":\"INFO\"}");
         MockMessagingService messaging = new MockMessagingService();
         LogService logs = new LogService(config, messaging);
         try {
@@ -282,7 +301,7 @@ class LogServiceTest {
     void nativeAppenderCapturesPreExistingApplicationLoggers() {
         LoggerContext context = (LoggerContext) LogManager.getContext(false);
         LogBusAppender.uninstall(context);
-        MockConfigurationService config = config("{\"enabled\":true,\"minLevel\":\"INFO\"}");
+        MockConfigurationService config = captureConfig("{\"enabled\":true,\"minLevel\":\"INFO\"}");
         MockMessagingService messaging = new MockMessagingService();
         LogService logs = new LogService(config, messaging);
         try {
@@ -343,7 +362,7 @@ class LogServiceTest {
     void nativeAppenderCapturesParameterizedApplicationLogsFromWorkerThread() throws Exception {
         LoggerContext context = (LoggerContext) LogManager.getContext(false);
         LogBusAppender.uninstall(context);
-        MockConfigurationService config = config("{\"enabled\":true,\"minLevel\":\"INFO\"}");
+        MockConfigurationService config = captureConfig("{\"enabled\":true,\"minLevel\":\"INFO\"}");
         MockMessagingService messaging = new MockMessagingService();
         LogService logs = new LogService(config, messaging);
         try {
@@ -368,7 +387,7 @@ class LogServiceTest {
 
     @Test
     void log4jAppenderCapturesNativeLogEvents() {
-        MockConfigurationService config = config("{\"enabled\":true,\"minLevel\":\"INFO\"}");
+        MockConfigurationService config = captureConfig("{\"enabled\":true,\"minLevel\":\"INFO\"}");
         MockMessagingService messaging = new MockMessagingService();
         LogService logs = new LogService(config, messaging);
         try {
