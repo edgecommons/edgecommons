@@ -3,6 +3,12 @@
 # the single lockfile for the JS/TS workspace.
 node_modules/
 
+# The root package-lock.json is the ONLY lockfile for the JS/TS workspace. Ignore stray
+# per-package lockfiles (e.g. from a standalone `npm install` in a sub-directory), which npm
+# workspaces don't use and which can silently pin unintended registry resolutions.
+**/package-lock.json
+!/package-lock.json
+
 # Generated build output.
 build/
 
