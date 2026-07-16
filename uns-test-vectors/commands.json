@@ -2,6 +2,7 @@
   "description": "edgecommons UNS command-inbox vectors - the minimal commands() facade (DESIGN-uns 7.3/9.5, edge-console slice S2). Inbox filter + request topics byte-for-byte; request/reply envelopes structural (D-U22); reply bodies must equal a live inbox dispatch's output; the behavior flags/sets are normative for every language's command inbox",
   "inbox": {
     "filter": "ecv1/gw-01/opcua-adapter/main/cmd/#",
+    "componentFilter": "ecv1/gw-01/opcua-adapter/cmd/#",
     "input": {
       "device": "gw-01",
       "component": "opcua-adapter",

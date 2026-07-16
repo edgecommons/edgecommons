@@ -235,18 +235,15 @@ public class MessageBuilder {
     }
 
     /**
-     * Sets the per-message instance token stamped into the identity element (default
-     * {@value MessageIdentity#DEFAULT_INSTANCE}). Only takes effect when an identity is stamped
-     * (a config service is present or an explicit identity override carries it).
+     * Sets the per-message instance token stamped into the identity element. A {@code null}/empty
+     * token means component scope (D‑U28: the identity carries no instance key). Only takes effect
+     * when an identity is stamped (a config service is present or an explicit identity override
+     * carries it).
      *
-     * @param instance the instance token (non-null, non-empty)
-     * @throws IllegalArgumentException if {@code instance} is null or empty
+     * @param instance the instance token, or {@code null}/empty for component/global scope
      */
     public MessageBuilder withInstance(String instance) {
-        if (instance == null || instance.isEmpty()) {
-            throw new IllegalArgumentException("instance must be non-empty");
-        }
-        this.instance = instance;
+        this.instance = (instance == null || instance.isEmpty()) ? null : instance;
         return this;
     }
 
@@ -294,8 +291,7 @@ public class MessageBuilder {
         } else if (configService != null) {
             MessageIdentity componentIdentity = configService.getComponentIdentity();
             if (componentIdentity != null) {
-                message.identity = componentIdentity.withInstance(
-                        instance != null ? instance : MessageIdentity.DEFAULT_INSTANCE);
+                message.identity = componentIdentity.withInstance(instance);   // D‑U28: null ⇒ component scope
             }
         }
 

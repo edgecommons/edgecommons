@@ -67,7 +67,7 @@ class MessagingMetricTargetTest {
             assertEquals(1, published.size(), "destination " + dest);
             assertNull(published.get(0).qos, "local/IPC publishes carry no QOS (destination " + dest + ")");
             assertTrue(published.get(0).reserved);
-            assertEquals("ecv1/test-thing/TestComponent/main/metric/m", published.get(0).topic);
+            assertEquals("ecv1/test-thing/TestComponent/metric/m", published.get(0).topic);
         }
     }
 
@@ -85,6 +85,6 @@ class MessagingMetricTargetTest {
         assertNotNull(published.get(0).qos,
                 "northbound publishes carry a QOS (destination " + dest + ")");
         assertTrue(published.get(0).reserved);
-        assertEquals("ecv1/test-thing/TestComponent/main/metric/m", published.get(0).topic);
+        assertEquals("ecv1/test-thing/TestComponent/metric/m", published.get(0).topic);
     }
 }

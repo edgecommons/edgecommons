@@ -1,6 +1,6 @@
 //! Integration test for the `messaging` metric target against a live broker
 //! (UNS-CANONICAL-DESIGN §4.3): the full runtime publishes each metric to the
-//! library-owned UNS topic `ecv1/{device}/{component}/main/metric/{metricName}`
+//! library-owned UNS topic `ecv1/{device}/{component}/metric/{metricName}`
 //! through the privileged reserved-publish seam.
 //!
 //! Gated: no-op unless `EDGECOMMONS_IT_MQTT=1` is set. See `messaging_mqtt.rs` for the
@@ -72,7 +72,7 @@ async fn messaging_metric_target_publishes_emf_on_the_uns_topic() {
 
     // A unique thing name isolates this run's UNS topics on the shared broker.
     let thing = format!("metric-thing-{}", Uuid::new_v4());
-    let metric_topic = format!("ecv1/{thing}/MetricIt/main/metric/requests");
+    let metric_topic = format!("ecv1/{thing}/MetricIt/metric/requests");
 
     // Raw observer subscription so we can read the published envelope directly.
     let mc = messaging_config(&format!("it-metric-obs-{}", Uuid::new_v4()));

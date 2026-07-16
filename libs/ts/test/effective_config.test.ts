@@ -30,7 +30,7 @@ describe("EffectiveConfigPublisher", () => {
     expect(svc.published).toHaveLength(1);
     const rec = svc.published[0];
     expect(rec.kind).toBe("publishReserved");
-    expect(rec.topic).toBe("ecv1/thing-1/C/main/cfg");
+    expect(rec.topic).toBe("ecv1/thing-1/C/cfg");
     expect(rec.message!.header.name).toBe("cfg");
     expect(rec.message!.header.version).toBe("1.0");
     expect(rec.message!.getIdentity()?.component).toBe("C");

@@ -370,31 +370,45 @@ impl EdgeCommons {
         )
     }
 
-    /// The `data()` publish facade for the component's `main` instance — the
-    /// single-instance-component convenience, equivalent to `instance("main").data()`
-    /// (DESIGN-class-facades §3, D6). Builds/validates the `SouthboundSignalUpdate` body.
+    /// The `data()` publish facade at **component scope** (D-U28: no instance token) —
+    /// for an instance-scoped facade use [`Self::instance`]`(id).data()`.
+    /// Builds/validates the `SouthboundSignalUpdate` body.
     pub fn data(&self) -> facades::DataFacade {
-        self.instance(messaging::MessageIdentity::DEFAULT_INSTANCE)
-            .expect("the 'main' instance token always passes the §2.2 token rule")
-            .data()
+        self.component_scope().data()
     }
 
-    /// The `events()` publish facade for the component's `main` instance — equivalent to
-    /// `instance("main").events()` (DESIGN-class-facades §3, D6). Operator events & alarms on
-    /// the `evt` class.
+    /// The `events()` publish facade at **component scope** (D-U28: no instance token) —
+    /// for an instance-scoped facade use [`Self::instance`]`(id).events()`. Operator
+    /// events & alarms on the `evt` class.
     pub fn events(&self) -> facades::EventsFacade {
-        self.instance(messaging::MessageIdentity::DEFAULT_INSTANCE)
-            .expect("the 'main' instance token always passes the §2.2 token rule")
-            .events()
+        self.component_scope().events()
     }
 
-    /// The `app()` publish facade for the component's `main` instance — equivalent to
-    /// `instance("main").app()` (DESIGN-class-facades §3, D6). Free-form inter-component
-    /// pub/sub on the `app` class.
+    /// The `app()` publish facade at **component scope** (D-U28: no instance token) —
+    /// for an instance-scoped facade use [`Self::instance`]`(id).app()`. Free-form
+    /// inter-component pub/sub on the `app` class.
     pub fn app(&self) -> facades::AppFacade {
-        self.instance(messaging::MessageIdentity::DEFAULT_INSTANCE)
-            .expect("the 'main' instance token always passes the §2.2 token rule")
-            .app()
+        self.component_scope().app()
+    }
+
+    /// The component-scope handle (D-U28: no instance token) backing [`Self::data`],
+    /// [`Self::events`], and [`Self::app`]. Built fresh over the CURRENT config
+    /// snapshot — mirroring [`Self::uns`] / [`Self::instance`] rather than caching a
+    /// handle bound to a possibly-stale snapshot (the config is hot-reloadable). The
+    /// output is identical to the Java canonical's cached `componentHandle`.
+    fn component_scope(&self) -> EdgeCommonsInstance {
+        let cfg = self.config.load_full();
+        // Component scope: the empty instance token maps to no instance (D-U28); the
+        // bound Uns/builder therefore omit the instance slot. Construction cannot fail
+        // (an empty token is component scope, never a token-rule violation).
+        EdgeCommonsInstance::new(
+            String::new(),
+            cfg,
+            self.messaging.clone(),
+            self.facade_stream_sink.clone(),
+            self.facade_clock.clone(),
+        )
+        .expect("the component-scope handle always constructs")
     }
 
     /// The telemetry-streaming service for this component (the `streaming` feature).

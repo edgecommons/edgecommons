@@ -246,8 +246,7 @@ public final class LogService implements ConfigurationChangeListener, AutoClosea
         Message message = MessageBuilder.create("log", "1.0")
                 .withTimestamp(prepared.timestamp().toString())
                 .withPayload(prepared.body())
-                .withConfig(configManager)
-                .withInstance(MessageIdentity.DEFAULT_INSTANCE)
+                .withConfig(configManager)   // D‑U28: log is component scope (no instance)
                 .build();
         try {
             PUBLISHING.set(true);

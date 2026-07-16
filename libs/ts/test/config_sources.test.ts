@@ -154,7 +154,7 @@ describe("ConfigComponentSource", () => {
     expect(loaded).toEqual({ from: "config-component" });
     // D-U19 Flow A: server rendezvous under the logical component name `config`; the requester
     // self-identifies with the sanitized SHORT component name in the body.
-    expect(requestTopic).toBe("ecv1/thing-A/config/main/cmd/get-configuration");
+    expect(requestTopic).toBe("ecv1/thing-A/config/cmd/get-configuration");
     expect(requestBody).toEqual({ component: "C" });
   });
 
@@ -169,9 +169,9 @@ describe("ConfigComponentSource", () => {
     }) as typeof svc.request;
     const src = new ConfigComponentSource(svc, "thing/A+B", "com.example.My#Comp");
     await src.load();
-    expect(requestTopic).toBe("ecv1/thing_A_B/config/main/cmd/get-configuration");
+    expect(requestTopic).toBe("ecv1/thing_A_B/config/cmd/get-configuration");
     const watch = await src.watch(() => undefined);
-    expect(svc.subscriptions.has("ecv1/thing_A_B/My_Comp/main/cmd/set-config")).toBe(true);
+    expect(svc.subscriptions.has("ecv1/thing_A_B/My_Comp/cmd/set-config")).toBe(true);
     await watch!.close();
   });
 
@@ -196,7 +196,7 @@ describe("ConfigComponentSource", () => {
     const src = new ConfigComponentSource(svc, "thing-A", "com.example.C");
     const updates: unknown[] = [];
     const watch = await src.watch((doc) => updates.push(doc));
-    const setConfigTopic = "ecv1/thing-A/C/main/cmd/set-config";
+    const setConfigTopic = "ecv1/thing-A/C/cmd/set-config";
     expect(svc.subscriptions.has(setConfigTopic)).toBe(true);
 
     svc.emit(setConfigTopic, { reloaded: true });

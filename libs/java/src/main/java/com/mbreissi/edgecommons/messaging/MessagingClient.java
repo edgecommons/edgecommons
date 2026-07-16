@@ -529,20 +529,21 @@ public class MessagingClient
         {
             return null;
         }
-        if (tokens.length >= 5)
+        // D‑U28: the instance slot is optional. {component} sits at index 2 rootless / 3 rooted, so
+        // the class is the token right after it (component scope) or one further right (an instance
+        // token is present). An instance can never be a class token, so the class is the token after
+        // {component} iff that token is a class token, else the one after it.
+        int base = includeRoot ? 4 : 3;
+        if (tokens.length > base)
         {
-            UnsClass cls = UnsClass.fromToken(tokens[4]);
-            if (cls != null && UnsClass.RESERVED.contains(cls))
+            int classIdx = UnsClass.fromToken(tokens[base]) != null ? base : base + 1;
+            if (classIdx < tokens.length)
             {
-                return cls;
-            }
-        }
-        if (includeRoot && tokens.length >= 6)
-        {
-            UnsClass cls = UnsClass.fromToken(tokens[5]);
-            if (cls != null && UnsClass.RESERVED.contains(cls))
-            {
-                return cls;
+                UnsClass cls = UnsClass.fromToken(tokens[classIdx]);
+                if (cls != null && UnsClass.RESERVED.contains(cls))
+                {
+                    return cls;
+                }
             }
         }
         return null;

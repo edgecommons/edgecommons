@@ -29,7 +29,7 @@ function cfg(heartbeat: Record<string, unknown>): Config {
 }
 
 /** The component's UNS state topic for the test identity (thing-1 / C, rootless). */
-const STATE_TOPIC = "ecv1/thing-1/C/main/state";
+const STATE_TOPIC = "ecv1/thing-1/C/state";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -91,7 +91,7 @@ describe("Heartbeat.start (UNS state keepalive + sys metric, §4.3)", () => {
     // The envelope carries the component identity (single stamping site, §1.4).
     expect(rec.message!.getIdentity()?.device).toBe("thing-1");
     expect(rec.message!.getIdentity()?.component).toBe("C");
-    expect(rec.message!.getIdentity()?.instance).toBe("main");
+    expect(rec.message!.getIdentity()?.instance).toBeUndefined(); // D-U28: state keepalive is component scope
     await hb.stop();
   });
 

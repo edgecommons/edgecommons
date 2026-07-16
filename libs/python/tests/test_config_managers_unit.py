@@ -551,8 +551,8 @@ class TestConfigComponentManager:
         assert mgr.get_global_config() == {"k": "from-component"}
         # UNS Flow A (D-U19): the GET rides the config server's rendezvous; the pushed
         # set-config lands on this component's OWN inbox.
-        assert requested["topic"] == "ecv1/thing-1/config/main/cmd/get-configuration"
-        assert subscribed["topic"] == "ecv1/thing-1/C/main/cmd/set-config"
+        assert requested["topic"] == "ecv1/thing-1/config/cmd/get-configuration"
+        assert subscribed["topic"] == "ecv1/thing-1/C/cmd/set-config"
         # The bootstrap request self-identifies in the body and carries no identity.
         assert requested["msg"].get_body() == {"component": "C"}
         assert requested["msg"].get_identity() is None

@@ -309,7 +309,9 @@ mod tests {
 
     fn facade(messaging: Arc<RecordingMessaging>) -> AppFacade {
         let config = Arc::new(Config::from_value("opcua-adapter", "gw-01", json!({})).unwrap());
-        let uns = Uns::new(config.identity().clone(), false);
+        // Instance-bound facade (D-U28: config identity is component scope) - the `main`
+        // instance is bound explicitly, matching `gg.instance("main").app()`.
+        let uns = Uns::new(config.identity().with_instance("main").unwrap(), false);
         AppFacade::new(
             config,
             "main".to_string(),

@@ -1,11 +1,13 @@
 /**
  * The unified-namespace (UNS) topic builder + validator (UNS-CANONICAL-DESIGN §2), bound to a
  * {@link MessageIdentity} and the component's `topic.includeRoot` setting. Obtain the
- * component-bound instance via `gg.uns()` (instance `main`) or an instance-bound one via
- * `gg.instance(id).uns()`. Mirrors the Java `com.mbreissi.edgecommons.uns` package.
+ * component-bound instance via `gg.uns()` (component scope — no instance token, D-U28) or an
+ * instance-bound one via `gg.instance(id).uns()`. Mirrors the Java
+ * `com.mbreissi.edgecommons.uns` package.
  *
- * Grammar (§2.2): `ecv1 [/ {site}]? / {device} / {component} / {instance} / {class}
- * [/ {channel…}]` — the optional `site` position (the first hierarchy value) is emitted only
+ * Grammar (§2.2): `ecv1 [/ {site}]? / {device} / {component} [/ {instance}]? / {class}
+ * [/ {channel…}]` — the `{instance}` slot is optional (D-U28: present ⇒ instance scope, absent ⇒
+ * component scope); the optional `site` position (the first hierarchy value) is emitted only
  * when `topic.includeRoot` is `true` **and** the identity carries a multi-level hierarchy
  * (≥ 2 `hier` entries — D-U25). With a single-level hierarchy (`["device"]`) `hier[0]` *is*
  * the device, so includeRoot is a no-op (prepending would duplicate the device).
@@ -240,7 +242,8 @@ export class Uns {
    * rootless, ≤ 2 rooted), e.g. `"temp"` or `"sb/status"`. An absent/empty channel means "no
    * channel" (only legal for leaf classes).
    *
-   * @returns the concrete topic, e.g. `ecv1/gw-01/opcua-adapter/main/data/temp`
+   * @returns the concrete topic, e.g. `ecv1/gw-01/opcua-adapter/data/temp` (component scope) or
+   *          `ecv1/gw-01/opcua-adapter/kep1/data/temp` (instance scope)
    * @throws UnsValidationError on any §2.2 violation
    */
   topic(cls: UnsClass, channel?: string): string {
@@ -264,7 +267,10 @@ export class Uns {
     }
     segments.push(checkedToken(target.device, "device"));
     segments.push(checkedToken(target.component, "component"));
-    segments.push(checkedToken(target.instance, "instance"));
+    if (target.instance !== undefined) {
+      // D-U28: the instance slot is omitted entirely for component scope.
+      segments.push(checkedToken(target.instance, "instance"));
+    }
     segments.push(cls);
 
     const channelSupplied = channel !== undefined && channel !== "";
@@ -309,17 +315,27 @@ export class Uns {
    * The output is correct by construction and is NOT passed through {@link validate} (filters
    * legitimately carry wildcards).
    *
+   * D-U28 scope-aware: when `includeInstance` is `false` the instance slot is **omitted**
+   * entirely, yielding a component-scope filter (e.g. `ecv1/{device}/{component}/cmd/#`); when
+   * `true` (the default) the instance slot is present (a pinned token, or `+` when
+   * `scope.instance` is absent).
+   *
+   * @param cls             the UNS class
+   * @param scope           the wildcard scope
+   * @param includeInstance whether to render the optional instance slot (default `true`)
    * @returns the subscription filter, e.g. `ecv1/+/+/+/data/#`
    * @throws UnsValidationError when a pinned scope field violates the token rule
    */
-  filter(cls: UnsClass, scope: UnsScope): string {
+  filter(cls: UnsClass, scope: UnsScope, includeInstance = true): string {
     const segments: string[] = [UNS_ROOT];
     if (this.rooted(this.identityValue)) {
       segments.push(wildcardOr(scope.site, "site"));
     }
     segments.push(wildcardOr(scope.device, "device"));
     segments.push(wildcardOr(scope.component, "component"));
-    segments.push(wildcardOr(scope.instance, "instance"));
+    if (includeInstance) {
+      segments.push(wildcardOr(scope.instance, "instance"));
+    }
     segments.push(cls);
     const filter = segments.join("/");
     return isLeafClass(cls) ? filter : `${filter}/#`;
@@ -329,10 +345,13 @@ export class Uns {
    * Validates a **concrete** topic against the full §2.2 grammar under this instance's root
    * mode: wildcards are rejected (`WILDCARD_IN_TOPIC`); every token passes the token rule; the
    * first token must be the {@link UNS_ROOT} root literal; depth ≤ {@link MAX_TOPIC_SLASHES}
-   * separators; length ≤ {@link MAX_TOPIC_UTF8_BYTES} UTF-8 bytes; the class position (5th
-   * token rootless, 6th rooted — the root mode is effective only with a multi-level bound
-   * hierarchy, D-U25) must hold a {@link UnsClass} token; leaf classes must end at the class
-   * token and channeled classes must carry at least one channel token.
+   * separators; length ≤ {@link MAX_TOPIC_UTF8_BYTES} UTF-8 bytes; the class is **located** by
+   * the class-token set (D-U28: the instance slot is optional, so the token after `{component}`
+   * is the class when it is a class token, else the instance and the class follows) and must
+   * hold a {@link UnsClass} token; leaf classes must end at the class token and channeled classes
+   * must carry at least one channel token. The minimum length is 4 tokens without an instance / 5
+   * with one (one more when rooted; the root mode is effective only with a multi-level bound
+   * hierarchy, D-U25).
    *
    * @throws UnsValidationError with the precise code on the first violation found
    */
@@ -364,12 +383,24 @@ export class Uns {
       );
     }
     checkLength(topic);
-    const classPosition = this.rooted(this.identityValue) ? 5 : 4;
+    // D-U28: the instance slot is optional. The token right after {component} is the class iff it
+    // is a class token, else it is the instance and the class follows (an instance is never a
+    // class token). {component} sits at index 2 rootless / 3 rooted.
+    const rooted = this.rooted(this.identityValue);
+    const afterComponent = rooted ? 4 : 3;
+    if (tokens.length <= afterComponent) {
+      throw new UnsValidationError(
+        "BAD_CLASS",
+        `topic '${topic}' has too few levels (${tokens.length}): no class token at or after` +
+          ` position ${afterComponent} (effective root mode ${rooted})`,
+      );
+    }
+    const classPosition = unsClassFromToken(tokens[afterComponent]) !== undefined ? afterComponent : afterComponent + 1;
     if (tokens.length <= classPosition) {
       throw new UnsValidationError(
         "BAD_CLASS",
-        `topic '${topic}' has too few levels (${tokens.length}): the class token is expected` +
-          ` at position ${classPosition} (effective root mode ${this.rooted(this.identityValue)})`,
+        `topic '${topic}' carries an instance token but no class token follows` +
+          ` (expected at position ${classPosition})`,
       );
     }
     const cls = unsClassFromToken(tokens[classPosition]);
@@ -407,12 +438,14 @@ export class Uns {
 
 /**
  * The §4.1 reserved-class guard predicate (D-U24): the reserved class a client-chosen topic
- * targets, or `undefined` when the topic is allowed. The class position is topic level 4
- * (0-based) always — the rootless grammar `ecv1/{device}/{component}/{instance}/{class}` — and
- * level 5 **only when this component's effective `topic.includeRoot` is true** (D-U27: bind
- * `includeRoot && hier.length >= 2`, the same effective-root rule topic-building uses).
- * Non-`ecv1` topics pass untouched (`edgecommons/reply-…`, `cloudwatch/metric/put`, foreign MQTT
- * bridging).
+ * targets, or `undefined` when the topic is allowed. The instance slot is optional (D-U28), so
+ * the class is located by the class-token set rather than a fixed position: `{component}` sits at
+ * level 2 (rootless) or level 3 **when this component's effective `topic.includeRoot` is true**
+ * (D-U27: `includeRoot && hier.length >= 2`, the same effective-root rule topic-building uses).
+ * `base` is the level right after `{component}`; the class is at `base` (component scope) iff that
+ * token is a class token, else at `base + 1` (an instance token is present — an instance can never
+ * be a class token). Non-`ecv1` topics pass untouched (`edgecommons/reply-…`, `cloudwatch/metric/put`,
+ * foreign MQTT bridging).
  */
 export function reservedClassOf(topic: string | undefined, includeRoot: boolean): UnsClass | undefined {
   if (topic === undefined || topic === null || !topic.startsWith(UNS_ROOT)) {
@@ -422,16 +455,14 @@ export function reservedClassOf(topic: string | undefined, includeRoot: boolean)
   if (tokens[0] !== UNS_ROOT) {
     return undefined;
   }
-  if (tokens.length >= 5) {
-    const cls = unsClassFromToken(tokens[4]);
-    if (cls !== undefined && RESERVED_CLASSES.has(cls)) {
-      return cls;
-    }
-  }
-  if (includeRoot && tokens.length >= 6) {
-    const cls = unsClassFromToken(tokens[5]);
-    if (cls !== undefined && RESERVED_CLASSES.has(cls)) {
-      return cls;
+  const base = includeRoot ? 4 : 3;
+  if (tokens.length > base) {
+    const classIdx = unsClassFromToken(tokens[base]) !== undefined ? base : base + 1;
+    if (classIdx < tokens.length) {
+      const cls = unsClassFromToken(tokens[classIdx]);
+      if (cls !== undefined && RESERVED_CLASSES.has(cls)) {
+        return cls;
+      }
     }
   }
   return undefined;

@@ -41,6 +41,41 @@ def test_structured_body_round_trips_through_protobuf_bytes():
     assert decoded.get_tags().to_dict() == {"retention": "short", "priority": 5}
 
 
+def test_identity_component_scope_omits_instance_through_protobuf():
+    # D-U28: a component-scope identity carries no instance; the proto codec omits the
+    # instance field and parses an empty proto instance back to None.
+    from edgecommons.messaging.identity import HierEntry, MessageIdentity
+
+    identity = MessageIdentity([HierEntry("device", "gw-01")], "adapter")  # component scope
+    message = (
+        MessageBuilder.create("S", "1.0")
+        .with_identity(identity)
+        .with_structured_payload({"v": 1})
+        .build()
+    )
+    proto = message_proto._new("EdgeCommonsMessage")
+    proto.ParseFromString(message.to_bytes())
+    assert proto.identity.instance == ""  # omitted on the wire
+    decoded = Message.from_bytes(message.to_bytes())
+    assert decoded.get_identity().instance is None
+    assert "instance" not in decoded.get_identity().to_dict()
+
+
+def test_identity_instance_scope_survives_protobuf():
+    # A present instance token round-trips unchanged.
+    from edgecommons.messaging.identity import HierEntry, MessageIdentity
+
+    identity = MessageIdentity([HierEntry("device", "gw-01")], "adapter", "kep1")
+    message = (
+        MessageBuilder.create("S", "1.0")
+        .with_identity(identity)
+        .with_structured_payload({"v": 1})
+        .build()
+    )
+    decoded = Message.from_bytes(message.to_bytes())
+    assert decoded.get_identity().instance == "kep1"
+
+
 def test_structured_body_preserves_empty_containers():
     payload = {"emptyList": [], "emptyMap": {}, "nested": {"items": []}}
 

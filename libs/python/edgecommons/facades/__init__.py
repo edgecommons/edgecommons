@@ -14,9 +14,10 @@ privilege.
 - :class:`~edgecommons.facades.app_facade.AppFacade` -- the ``app`` class (free-form
   inter-component pub/sub): a named header + verbatim body.
 
-Obtain bound instances from ``gg.instance(id).data()/events()/app()`` (primary,
-per-instance) or the ``main``-instance convenience ``gg.data()/events()/app()``. Mirrors
-the Java canonical ``com.mbreissi.edgecommons.facades`` package.
+Obtain instance-bound facades from ``gg.instance(id).data()/events()/app()`` (primary,
+per-instance) or the component-scope convenience ``gg.data()/events()/app()`` (no
+instance token, D-U28). Mirrors the Java canonical
+``com.mbreissi.edgecommons.facades`` package.
 """
 from .app_facade import AppFacade, PreparedAppMessage
 from .channel import Channel

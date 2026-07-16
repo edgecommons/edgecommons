@@ -31,7 +31,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 class LogServiceTest {
-    private static final String LOG_TOPIC_INFO = "ecv1/test-thing/TestComponent/main/log/info";
+    private static final String LOG_TOPIC_INFO = "ecv1/test-thing/TestComponent/log/info";
     private static final org.apache.logging.log4j.Logger PRECREATED_APP_LOGGER =
             LogManager.getLogger("com.mbreissi.edgecommons.opcua.opc.OpcUaConnection");
 
@@ -40,10 +40,51 @@ class LogServiceTest {
                 .getAsJsonObject());
     }
 
+    /**
+     * Config for the explicit-publish tests: native log capture is defaulted <b>off</b>. The global
+     * {@link LogBusAppender} captures the entire shared log4j LoggerContext, so a stray logger from
+     * another test class in the surefire JVM (e.g. a ConfigManager {@code FileWatcher} thread) would
+     * otherwise be captured mid-test and inflate the published-message count/order — a
+     * timing-dependent flake. Tests that specifically exercise native capture use
+     * {@link #captureConfig}. An explicit {@code captureNative} in the JSON is respected.
+     */
     private static MockConfigurationService config(String publishJson) {
+        JsonObject publish = JsonParser.parseString(publishJson).getAsJsonObject();
+        if (!publish.has("captureNative")) {
+            publish.addProperty("captureNative", false);
+        }
+        MockConfigurationService config = new MockConfigurationService();
+        config.setLoggingConfig(logging(publish.toString()));
+        return config;
+    }
+
+    /** Config for the native-capture tests: {@code captureNative} keeps its production default (on). */
+    private static MockConfigurationService captureConfig(String publishJson) {
         MockConfigurationService config = new MockConfigurationService();
         config.setLoggingConfig(logging(publishJson));
         return config;
+    }
+
+    /**
+     * The body of the first published record whose {@code logger} equals {@code loggerName}.
+     *
+     * <p>The native {@link LogBusAppender} captures the whole shared log4j LoggerContext, so an
+     * unrelated logger active in the surefire JVM (for example a config {@code FileWatcher} thread
+     * left running by another test class) can publish a record ahead of the one under test.
+     * Selecting by logger keeps these native-capture assertions independent of cross-test emission
+     * order instead of assuming the record under test is published first.
+     */
+    private static JsonObject publishedBodyForLogger(MockMessagingService messaging, String loggerName) {
+        return messaging.getPublishedMessages().stream()
+                .map(published -> published.message.toDict().getAsJsonObject("body"))
+                .filter(body -> body.has("logger") && loggerName.equals(body.get("logger").getAsString()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "no published log record from logger '" + loggerName + "'; published loggers="
+                                + messaging.getPublishedMessages().stream()
+                                        .map(published -> published.message.toDict()
+                                                .getAsJsonObject("body").get("logger"))
+                                        .toList()));
     }
 
     @Test
@@ -113,7 +154,7 @@ class LogServiceTest {
             logs.publish(LogRecord.builder().withLevel("WARN").withLogger("app").withMessage("warn").build());
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             MockMessagingService.PublishedMessage published = messaging.getPublishedMessages().get(0);
-            assertEquals("ecv1/test-thing/TestComponent/main/log/warn", published.topic);
+            assertEquals("ecv1/test-thing/TestComponent/log/warn", published.topic);
             assertTrue(published.reserved);
             assertNotNull(published.qos);
         } finally {
@@ -240,7 +281,7 @@ class LogServiceTest {
     void serviceConstructorInstallsNativeLogAppender() {
         LoggerContext context = (LoggerContext) LogManager.getContext(false);
         LogBusAppender.uninstall(context);
-        MockConfigurationService config = config("{\"enabled\":true,\"minLevel\":\"INFO\"}");
+        MockConfigurationService config = captureConfig("{\"enabled\":true,\"minLevel\":\"INFO\"}");
         MockMessagingService messaging = new MockMessagingService();
         LogService logs = new LogService(config, messaging);
         try {
@@ -249,8 +290,7 @@ class LogServiceTest {
 
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             assertFalse(messaging.getPublishedMessages().isEmpty());
-            JsonObject body = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
-            assertEquals("edgecommons.capture.lifecycle", body.get("logger").getAsString());
+            JsonObject body = publishedBodyForLogger(messaging, "edgecommons.capture.lifecycle");
             assertEquals("captured without manual install", body.get("message").getAsString());
         } finally {
             logs.close();
@@ -261,7 +301,7 @@ class LogServiceTest {
     void nativeAppenderCapturesPreExistingApplicationLoggers() {
         LoggerContext context = (LoggerContext) LogManager.getContext(false);
         LogBusAppender.uninstall(context);
-        MockConfigurationService config = config("{\"enabled\":true,\"minLevel\":\"INFO\"}");
+        MockConfigurationService config = captureConfig("{\"enabled\":true,\"minLevel\":\"INFO\"}");
         MockMessagingService messaging = new MockMessagingService();
         LogService logs = new LogService(config, messaging);
         try {
@@ -269,8 +309,8 @@ class LogServiceTest {
 
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             assertFalse(messaging.getPublishedMessages().isEmpty());
-            JsonObject body = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
-            assertEquals("com.mbreissi.edgecommons.opcua.opc.OpcUaConnection", body.get("logger").getAsString());
+            JsonObject body = publishedBodyForLogger(
+                    messaging, "com.mbreissi.edgecommons.opcua.opc.OpcUaConnection");
             assertEquals("[palletizer1] connected to opc.tcp://example:49320 (policy=None)",
                     body.get("message").getAsString());
         } finally {
@@ -292,8 +332,8 @@ class LogServiceTest {
 
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             assertFalse(messaging.getPublishedMessages().isEmpty());
-            JsonObject body = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
-            assertEquals("com.mbreissi.edgecommons.opcua.opc.OpcUaConnection", body.get("logger").getAsString());
+            JsonObject body = publishedBodyForLogger(
+                    messaging, "com.mbreissi.edgecommons.opcua.opc.OpcUaConnection");
             assertEquals("[palletizer1] connected to opc.tcp://example:49320 (policy=None)",
                     body.get("message").getAsString());
         } finally {
@@ -322,7 +362,7 @@ class LogServiceTest {
     void nativeAppenderCapturesParameterizedApplicationLogsFromWorkerThread() throws Exception {
         LoggerContext context = (LoggerContext) LogManager.getContext(false);
         LogBusAppender.uninstall(context);
-        MockConfigurationService config = config("{\"enabled\":true,\"minLevel\":\"INFO\"}");
+        MockConfigurationService config = captureConfig("{\"enabled\":true,\"minLevel\":\"INFO\"}");
         MockMessagingService messaging = new MockMessagingService();
         LogService logs = new LogService(config, messaging);
         try {
@@ -335,8 +375,8 @@ class LogServiceTest {
 
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             assertFalse(messaging.getPublishedMessages().isEmpty());
-            JsonObject body = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
-            assertEquals("com.mbreissi.edgecommons.opcua.opc.OpcUaConnection", body.get("logger").getAsString());
+            JsonObject body = publishedBodyForLogger(
+                    messaging, "com.mbreissi.edgecommons.opcua.opc.OpcUaConnection");
             assertEquals("[palletizer1] connected to opc.tcp://example:49320 (policy=None)",
                     body.get("message").getAsString());
             assertEquals("adapter-palletizer1", body.get("thread").getAsString());
@@ -347,7 +387,7 @@ class LogServiceTest {
 
     @Test
     void log4jAppenderCapturesNativeLogEvents() {
-        MockConfigurationService config = config("{\"enabled\":true,\"minLevel\":\"INFO\"}");
+        MockConfigurationService config = captureConfig("{\"enabled\":true,\"minLevel\":\"INFO\"}");
         MockMessagingService messaging = new MockMessagingService();
         LogService logs = new LogService(config, messaging);
         try {
@@ -358,8 +398,7 @@ class LogServiceTest {
 
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             assertFalse(messaging.getPublishedMessages().isEmpty());
-            JsonObject body = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
-            assertEquals("edgecommons.capture.test", body.get("logger").getAsString());
+            JsonObject body = publishedBodyForLogger(messaging, "edgecommons.capture.test");
             assertEquals("captured appender message", body.get("message").getAsString());
         } finally {
             logs.close();
@@ -396,9 +435,8 @@ class LogServiceTest {
 
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             assertFalse(messaging.getPublishedMessages().isEmpty());
-            JsonObject body = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
+            JsonObject body = publishedBodyForLogger(messaging, "OpcUaConnection");
             assertEquals("INFO", body.get("level").getAsString());
-            assertEquals("OpcUaConnection", body.get("logger").getAsString());
             assertEquals("adapter-palletizer1", body.get("thread").getAsString());
             assertEquals("[palletizer1] connected to opc.tcp://example:49320 (policy=None)",
                     body.get("message").getAsString());

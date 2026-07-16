@@ -62,13 +62,13 @@ public final class ConfigComponentProvider extends ConfigProvider {
      * Flow-A GET request topic (§4.3): the config server's rendezvous under the
      * reserved-by-convention logical component name {@code config}, instance {@code main}.
      */
-    public static final String GET_TOPIC_TEMPLATE = "ecv1/{device}/config/main/cmd/get-configuration";
+    public static final String GET_TOPIC_TEMPLATE = "ecv1/{device}/config/cmd/get-configuration";   // D‑U28: component scope (no `main`)
 
     /**
      * The pushed {@code set-config} command's topic — this component's OWN inbox (§4.3): the
      * server-to-component push replacing the legacy {@code .../updated} subscription.
      */
-    public static final String SET_CONFIG_TOPIC_TEMPLATE = "ecv1/{device}/{component}/main/cmd/set-config";
+    public static final String SET_CONFIG_TOPIC_TEMPLATE = "ecv1/{device}/{component}/cmd/set-config";   // D‑U28: component scope (no `main`)
 
     private final String source;
     private final String setConfigTopic;

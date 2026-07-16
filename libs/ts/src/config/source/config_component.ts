@@ -6,8 +6,8 @@
  *
  * Wire contract (a convention shared with the config server, matching Java/Python/Rust
  * verbatim):
- * - **Flow A — GET**: a request to `ecv1/{device}/config/main/cmd/get-configuration` (with
- *   `{device}` = the sanitized resolved thing name). `config` is a **reserved-by-convention
+ * - **Flow A — GET**: a request to `ecv1/{device}/config/cmd/get-configuration` (component scope,
+ *   D-U28; with `{device}` = the sanitized resolved thing name). `config` is a **reserved-by-convention
  *   logical component name** — the config server is the sole subscriber and replies via
  *   `reply_to` with the configuration as the message body. Because this request runs during
  *   config bootstrap — *before* the {@link Config} snapshot (and therefore the component
@@ -15,8 +15,8 @@
  *   body** with `{"component": "<short name>"}` (§1.5).
  * - **set-config push**: the server pushes a fire-and-forget `cmd` (no `reply_to` — a
  *   notification-style command) to the component's own inbox
- *   `ecv1/{device}/{component}/main/cmd/set-config`; the body is a lineage bundle,
- *   delivered to the watch callback.
+ *   `ecv1/{device}/{component}/cmd/set-config` (component scope, D-U28); the body is a lineage
+ *   bundle, delivered to the watch callback.
  *
  * The topics are minted locally from the resolved thing name and component name handed to the
  * constructor (the same inputs the config model later uses), both passed through the normative
@@ -38,14 +38,14 @@ import { ConfigSource, ConfigWatch } from "./index";
 
 /**
  * Flow-A GET request topic (§4.3): the config server's rendezvous under the
- * reserved-by-convention logical component name `config`, instance `main`.
+ * reserved-by-convention logical component name `config`, component scope (no instance, D-U28).
  */
-const GET_TOPIC_TEMPLATE = "ecv1/{device}/config/main/cmd/get-configuration";
+const GET_TOPIC_TEMPLATE = "ecv1/{device}/config/cmd/get-configuration";
 /**
  * The pushed `set-config` command's topic — this component's OWN inbox (§4.3): the
- * server-to-component push replacing the legacy `.../updated` subscription.
+ * server-to-component push replacing the legacy `.../updated` subscription (component scope, D-U28).
  */
-const SET_CONFIG_TOPIC_TEMPLATE = "ecv1/{device}/{component}/main/cmd/set-config";
+const SET_CONFIG_TOPIC_TEMPLATE = "ecv1/{device}/{component}/cmd/set-config";
 /** Per-attempt reply timeout (ms) — the pre-config built-in request deadline (§5). */
 const REPLY_TIMEOUT_MS = 30_000;
 /** Maximum request attempts before giving up. */

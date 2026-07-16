@@ -24,7 +24,7 @@ import org.apache.logging.log4j.Logger;
  * Configuration model for the component heartbeat (UNS-CANONICAL-DESIGN §4.3, D-U14/D-U20).
  *
  * <p>The heartbeat is a library-owned UNS {@code state} keepalive published each tick to
- * {@code ecv1/{device}/{component}/main/state} (body {@code {"status":"RUNNING","uptimeSecs":n}},
+ * {@code ecv1/{device}/{component}/state} (body {@code {"status":"RUNNING","uptimeSecs":n}},
  * best-effort {@code {"status":"STOPPED"}} on graceful shutdown), with the enabled system measures
  * emitted as the metric {@code sys} through the normal metric subsystem. The legacy
  * {@code targets[]} array (the heartbeat topic-override drift knobs) is removed — hard cut;

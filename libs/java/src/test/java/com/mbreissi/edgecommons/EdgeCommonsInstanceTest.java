@@ -162,13 +162,13 @@ class EdgeCommonsInstanceTest {
     }
 
     @Test
-    void componentLevelMessagesStayOnMain() {
-        // Contrast: a message built without the handle defaults to instance "main".
+    void componentLevelMessagesAreComponentScope() {
+        // D‑U28: a message built without the handle is component scope (no instance token).
         EdgeCommons gg = gg();
         Message msg = com.mbreissi.edgecommons.messaging.MessageBuilder.create("reading", "1.0")
                 .withConfig(gg.getConfigManager())
                 .build();
-        assertEquals(MessageIdentity.DEFAULT_INSTANCE, msg.getIdentity().getInstance());
+        assertNull(msg.getIdentity().getInstance());
     }
 
     // ----- EdgeCommons.getUns() -----

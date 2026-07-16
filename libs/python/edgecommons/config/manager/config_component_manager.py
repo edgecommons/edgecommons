@@ -5,18 +5,19 @@ component's own command inbox.
 
 Wire contract (a convention shared with the config server):
 
-- **Flow A — GET**: a request to ``ecv1/{device}/config/main/cmd/get-configuration``
+- **Flow A — GET**: a request to ``ecv1/{device}/config/cmd/get-configuration``
   (with ``{device}`` = the sanitized resolved thing name). ``config`` is a
   **reserved-by-convention logical component name** — the config server is the sole
   subscriber and replies via ``reply_to`` with the configuration as the message body.
-  Because this request runs during config bootstrap — *before* the component identity
-  is resolved — it carries no envelope identity; the requester **self-identifies in
-  the body** with ``{"component": "<short name>"}`` (§1.5).
+  The rendezvous is at **component scope** (D-U28 — no instance token). Because this
+  request runs during config bootstrap — *before* the component identity is resolved —
+  it carries no envelope identity; the requester **self-identifies in the body** with
+  ``{"component": "<short name>"}`` (§1.5).
 - **set-config push**: the server pushes a fire-and-forget ``cmd`` (no ``reply_to`` —
   a notification-style command) to the component's own inbox
-  ``ecv1/{device}/{component}/main/cmd/set-config`` (with ``{component}`` = the
-  sanitized short component name, instance ``main``); the body is the new
-  configuration, applied via ``configuration_changed``.
+  ``ecv1/{device}/{component}/cmd/set-config`` (with ``{component}`` = the sanitized
+  short component name, component scope, D-U28 — no instance token); the body is the
+  new configuration, applied via ``configuration_changed``.
 
 The topics are minted locally from the resolved thing name and the component short
 name (the same inputs identity resolution later uses) — never from
@@ -41,12 +42,14 @@ logger = logging.getLogger("ConfigComponentManager")
 
 class ConfigComponentManager(ConfigManager):
     #: Flow-A GET request topic (§4.3): the config server's rendezvous under the
-    #: reserved-by-convention logical component name ``config``, instance ``main``.
-    GET_TOPIC_TEMPLATE = "ecv1/{device}/config/main/cmd/get-configuration"
+    #: reserved-by-convention logical component name ``config`` (component scope, D-U28
+    #: — no instance token).
+    GET_TOPIC_TEMPLATE = "ecv1/{device}/config/cmd/get-configuration"
 
     #: The pushed ``set-config`` command's topic — this component's OWN inbox (§4.3):
-    #: the server-to-component push replacing the legacy ``.../updated`` subscription.
-    SET_CONFIG_TOPIC_TEMPLATE = "ecv1/{device}/{component}/main/cmd/set-config"
+    #: the server-to-component push replacing the legacy ``.../updated`` subscription
+    #: (component scope, D-U28 — no instance token).
+    SET_CONFIG_TOPIC_TEMPLATE = "ecv1/{device}/{component}/cmd/set-config"
 
     def load_and_apply_config(self, topic: str, message: Message):
         logger.info("set-config push received")

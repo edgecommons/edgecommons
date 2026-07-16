@@ -135,7 +135,7 @@ describe("Config.fromValue", () => {
       expect(id.path).toBe("thing-7");
       expect(id.device).toBe("thing-7");
       expect(id.component).toBe("MyComponent");
-      expect(id.instance).toBe("main");
+      expect(id.instance).toBeUndefined(); // D-U28: the resolved component identity is component-scoped
       expect(cfg.topicIncludeRoot).toBe(false);
       expect(cfg.messagingRequestTimeoutSeconds).toBe(30);
       expect(cfg.messagingRequestTimeoutMs()).toBe(30_000);

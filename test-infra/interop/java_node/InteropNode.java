@@ -112,14 +112,14 @@ public class InteropNode {
      */
     static final String INTEROP_DEVICE = "interop-device";
 
-    /** The component's own command inbox topic for one verb. */
+    /** The component's own command inbox topic for one verb (component scope, D-U28: no instance). */
     static String commandTopic(String component, String verb) {
-        return "ecv1/" + INTEROP_DEVICE + "/" + component + "/main/cmd/" + verb;
+        return "ecv1/" + INTEROP_DEVICE + "/" + component + "/cmd/" + verb;
     }
 
-    /** The component's reserved {@code state} keepalive topic. */
+    /** The component's reserved {@code state} keepalive topic (component scope, D-U28: no instance). */
     static String stateTopic(String component) {
-        return "ecv1/" + INTEROP_DEVICE + "/" + component + "/main/state";
+        return "ecv1/" + INTEROP_DEVICE + "/" + component + "/state";
     }
 
     /**
@@ -420,7 +420,7 @@ public class InteropNode {
     }
 
     static String ggP1CommandTopic(String actor) {
-        return "ecv1/interop-device/interop-p1-" + actor + "/main/cmd/deferred";
+        return "ecv1/interop-device/interop-p1-" + actor + "/cmd/deferred";
     }
 
     static String ggP1ConfirmedTopic(String runId, String publisher, String targetActor) {
@@ -1110,7 +1110,8 @@ public class InteropNode {
                             && identity != null
                             && "interop-device".equals(wireIdentityDevice(identity))
                             && identity.get("component").getAsString().startsWith("interop-log-")
-                            && "main".equals(identity.get("instance").getAsString())
+                            // Component scope (D-U28): the wire identity omits `instance`.
+                            && !identity.has("instance")
                             && header != null
                             && "log".equals(header.get("name").getAsString())
                             && "1.0".equals(header.get("version").getAsString());
@@ -1178,7 +1179,7 @@ public class InteropNode {
             java.util.concurrent.ConcurrentHashMap<String, JsonObject> received = new java.util.concurrent.ConcurrentHashMap<>();
             java.util.concurrent.ConcurrentHashMap<String, String> errors = new java.util.concurrent.ConcurrentHashMap<>();
             CountDownLatch latch = new CountDownLatch(expectedLangs.length);
-            prov.subscribe("ecv1/interop-device/+/main/log/warn", (topic, m) -> {
+            prov.subscribe("ecv1/interop-device/+/log/warn", (topic, m) -> {
                 try {
                     JsonObject body = (JsonObject) m.getBody();
                     JsonObject identity = m.getIdentity() == null ? null : m.getIdentity().toDict();
@@ -1190,7 +1191,9 @@ public class InteropNode {
                     boolean ok = java.util.Arrays.asList(expectedLangs).contains(publisher)
                             && "interop-device".equals(wireIdentityDevice(identity))
                             && identity != null
-                            && "main".equals(identity.get("instance").getAsString())
+                            // D-U28: component-scope log record omits the instance token on
+                            // the wire; its absence is the omit-when-absent proof over IPC.
+                            && !identity.has("instance")
                             && "edgecommons.log.v1".equals(body.get("schema").getAsString())
                             && "WARN".equals(body.get("level").getAsString())
                             && ("interop." + publisher).equals(body.get("logger").getAsString())
@@ -1488,7 +1491,9 @@ public class InteropNode {
             // constructor (null provider, guard intact) proves the real guard without a
             // broker connection.
             MessagingClient client = new MessagingClient() { };
-            String topic = "ecv1/dev1/comp1/main/state";
+            // Reserved-class target selectable (D-U28): instance-scoped default or the
+            // component-scoped ecv1/dev1/comp1/state — the guard must reject both.
+            String topic = args.length > 1 ? args[1] : "ecv1/dev1/comp1/main/state";
             JsonObject payload = new JsonObject();
             payload.addProperty("from", LANG);
             try {

@@ -161,11 +161,16 @@ class UnsValidateTest {
     // ----- rooted vs rootless class position -----
 
     @Test
-    void rootedGrammarExpectsSixMinimumTokens() {
+    void rootedGrammarExpectsFiveMinimumTokensWithOptionalInstance() {
+        // D‑U28: the instance slot is optional, so the rooted grammar's minimum is five tokens
+        // (ecv1/{site}/{device}/{component}/{class}, component scope) with an optional sixth
+        // instance token before the class.
         assertDoesNotThrow(() -> ROOTED.validate("ecv1/dallas/gw-01/opcua-adapter/main/state"));
-        // A rootless-shaped topic under a rooted validator: no 6th token -> missing class.
+        // Component scope (no instance): still valid, class sits right after {component}.
+        assertDoesNotThrow(() -> ROOTED.validate("ecv1/gw-01/opcua-adapter/main/state"));
+        // Too few tokens for a rooted topic: no class token after {component}.
         assertEquals(UnsValidationException.Code.BAD_CLASS,
-                codeOf(() -> ROOTED.validate("ecv1/gw-01/opcua-adapter/main/state")));
+                codeOf(() -> ROOTED.validate("ecv1/dallas/gw-01/opcua-adapter")));
     }
 
     @Test
@@ -228,7 +233,7 @@ class UnsValidateTest {
         try {
             Uns uns = new Uns(cm.getComponentIdentity(), cm.isTopicIncludeRoot());
             String topic = uns.topic(UnsClass.STATE);
-            assertEquals("ecv1/gw 01/TestComponent/main/state", topic);
+            assertEquals("ecv1/gw 01/TestComponent/state", topic);
             assertDoesNotThrow(() -> uns.validate(topic));
         } finally {
             cm.close();
@@ -243,7 +248,7 @@ class UnsValidateTest {
         try {
             Uns uns = new Uns(cm.getComponentIdentity(), cm.isTopicIncludeRoot());
             String topic = uns.topic(UnsClass.STATE);
-            assertEquals("ecv1/gw_01/TestComponent/main/state", topic);
+            assertEquals("ecv1/gw_01/TestComponent/state", topic);
             assertDoesNotThrow(() -> uns.validate(topic));
         } finally {
             cm.close();

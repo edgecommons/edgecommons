@@ -74,9 +74,11 @@ fn interop_instance_connectivity() -> Vec<InstanceConnectivity> {
     ]
 }
 
-/// The identity a requester/subscriber derives from the `<component>` argument alone: the fixed
-/// interop device, that component token, and the default `main` instance — the same identity the
-/// responder/publisher resolves from its own runtime config.
+/// The component-scope identity a requester/subscriber derives from the `<component>` argument
+/// alone (D-U28: no instance token) — the fixed interop device and that component token, the same
+/// identity the responder/publisher resolves from its own runtime config. The library-owned `state`
+/// keepalive and `status` command inbox are component-scoped, so this mints
+/// `ecv1/interop-device/{component}/{class}` with no instance segment.
 fn interop_identity(component_token: &str) -> MessageIdentity {
     MessageIdentity::new(
         vec![HierEntry {
@@ -573,7 +575,7 @@ async fn run_gg_log_matrix(args: &[String]) -> ! {
     let run_id_for_handler = run_id.clone();
     let expected_for_handler = expected.clone();
     svc.subscribe(
-        "ecv1/interop-device/+/main/log/warn",
+        "ecv1/interop-device/+/log/warn",
         message_handler(move |topic, m| {
             let rh = rh.clone();
             let eh = eh.clone();
@@ -588,7 +590,11 @@ async fn run_gg_log_matrix(args: &[String]) -> ! {
                 let expected_message = format!("gg-log-interop-{run_id}-{publisher}");
                 let ok = expected.contains(publisher)
                     && identity.is_some_and(|id| {
-                        id.device() == "interop-device" && id.instance() == "main"
+                        // D-U28: the LogService publishes component-scope, so the record's
+                        // identity carries the device and component but NO instance token
+                        // (omitted on the wire). Asserting `instance() == None` proves the
+                        // omit-when-absent contract survives the real Greengrass IPC hop.
+                        id.device() == "interop-device" && id.instance().is_none()
                     })
                     && m.body["schema"].as_str() == Some("edgecommons.log.v1")
                     && m.body["level"].as_str() == Some("WARN")
@@ -930,7 +936,7 @@ fn gg_p1_target_actor(target_language: &str, sender_actor: &str) -> String {
 
 #[cfg(feature = "greengrass")]
 fn gg_p1_command_topic(actor: &str) -> String {
-    format!("ecv1/interop-device/interop-p1-{actor}/main/cmd/deferred")
+    format!("ecv1/interop-device/interop-p1-{actor}/cmd/deferred")
 }
 
 #[cfg(feature = "greengrass")]
@@ -1387,7 +1393,7 @@ async fn run_gg_config_update(args: &[String]) -> ! {
     let received = Arc::new(std::sync::Mutex::new(serde_json::Map::new()));
 
     for token in ["opcua-adapter", "modbus-adapter"] {
-        let push_topic = format!("ecv1/lab-5950x/{token}/main/cmd/set-config");
+        let push_topic = format!("ecv1/lab-5950x/{token}/cmd/set-config");
         let received_for_handler = received.clone();
         let token_for_handler = token.to_string();
         svc.subscribe(
@@ -1613,7 +1619,7 @@ async fn run_gg_config_update_file(args: &[String]) -> ! {
     let received = Arc::new(std::sync::Mutex::new(serde_json::Map::new()));
 
     for token in &tokens {
-        let push_topic = format!("ecv1/lab-5950x/{token}/main/cmd/set-config");
+        let push_topic = format!("ecv1/lab-5950x/{token}/cmd/set-config");
         let received_for_handler = received.clone();
         let token_for_handler = token.clone();
         svc.subscribe(
@@ -2011,7 +2017,7 @@ async fn main() {
             }
         }
         // status-request <component> — pull that component's built-in `status` verb over its own
-        // command inbox (ecv1/interop-device/<component>/main/cmd/status) and print the verb's
+        // command inbox (ecv1/interop-device/<component>/cmd/status) and print the verb's
         // result object (the inbox wraps it as {"ok":true,"result":{…}}).
         "status-request" => {
             let component_token = args[2].clone();
@@ -2455,7 +2461,8 @@ async fn main() {
                             && identity.is_some_and(|id| {
                                 id.device() == "interop-device"
                                     && id.component().starts_with("interop-log-")
-                                    && id.instance() == "main"
+                                    // Component scope (D-U28): the wire identity omits `instance`.
+                                    && id.instance().is_none()
                             })
                             && m.header.name == "log"
                             && m.header.version == "1.0";
@@ -2623,7 +2630,9 @@ async fn main() {
         // guarded public service; must fail with EdgeCommonsError::ReservedTopic (§4.1).
         "uns-guard" => {
             let svc = provider("guard").await;
-            let topic = "ecv1/dev1/comp1/main/state";
+            // Reserved-class target selectable (D-U28): instance-scoped default or the
+            // component-scoped ecv1/dev1/comp1/state — the guard must reject both.
+            let topic = args.get(2).map(String::as_str).unwrap_or("ecv1/dev1/comp1/main/state");
             match svc.publish_raw(topic, &json!({ "from": LANG })).await {
                 Err(EdgeCommonsError::ReservedTopic(detail)) => {
                     println!(

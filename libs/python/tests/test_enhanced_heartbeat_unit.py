@@ -5,7 +5,7 @@ services (long interval so the loop never ticks during a test), so no broker or 
 timing is needed. Complements the timing-based test_heartbeat_loop.py.
 
 The heartbeat is the UNS ``state`` keepalive (UNS-CANONICAL-DESIGN §4.3, D-U14/D-U20):
-``ecv1/{device}/{component}/main/state`` with body
+``ecv1/{device}/{component}/state`` (component scope, D-U28) with body
 ``{"status":"RUNNING","uptimeSecs":n}`` through the privileged ``_publish_reserved*``
 seam, plus the measures as the ``sys`` metric through the metric subsystem; a
 best-effort ``{"status":"STOPPED"}`` is published once on stop().
@@ -139,15 +139,15 @@ class TestPublishState:
         hb._publish_state("RUNNING", include_uptime=True)
         msg._publish_reserved.assert_called_once()
         topic, message = msg._publish_reserved.call_args[0]
-        assert topic == "ecv1/thing-1/comp/main/state"
+        assert topic == "ecv1/thing-1/comp/state"  # D-U28: component scope
         assert message.get_header().name == "state"
         assert message.get_header().version == "1.0"
         body = message.get_body()
         assert body["status"] == "RUNNING"
         assert isinstance(body["uptimeSecs"], int)
-        # the config-bound builder stamps the component identity (instance main)
+        # the config-bound builder stamps the component identity (component scope, D-U28)
         assert message.get_identity().component == "comp"
-        assert message.get_identity().instance == "main"
+        assert message.get_identity().instance is None
 
     def test_stopped_state_has_no_uptime(self, hb):
         msg = MagicMock()
@@ -325,7 +325,7 @@ class TestPublishStateNow:
         hb.publish_state_now()
         msg._publish_reserved.assert_called_once()
         topic, message = msg._publish_reserved.call_args[0]
-        assert topic == "ecv1/thing-1/comp/main/state"
+        assert topic == "ecv1/thing-1/comp/state"  # D-U28: component scope
         assert message.get_header().name == "state"
         body = message.get_body()
         assert body["status"] == "RUNNING"

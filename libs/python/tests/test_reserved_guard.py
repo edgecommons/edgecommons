@@ -72,13 +72,27 @@ def _msg(reply_to=None):
 
 class TestGuardPredicate:
     @pytest.mark.parametrize("topic,include_root,reserved", [
-        # position 4 (rootless grammar), always checked
+        # instance-scope class position (rootless grammar)
         ("ecv1/gw/comp/main/state", False, "state"),
         ("ecv1/gw/comp/main/metric/cpu", False, "metric"),
         ("ecv1/gw/comp/main/cfg", False, "cfg"),
         ("ecv1/gw/comp/main/log/tail", False, "log"),
         ("ecv1/gw/comp/main/cfg", True, "cfg"),
-        # position 5 only when the effective root mode is on (D-U24/D-U27)
+        # D-U28: component scope (no instance token) — the class sits right after
+        # {component}, and reserved-class publishes there must be rejected too
+        ("ecv1/gw/comp/state", False, "state"),
+        ("ecv1/gw/comp/metric/cpu", False, "metric"),
+        ("ecv1/gw/comp/cfg", False, "cfg"),
+        ("ecv1/gw/comp/log/tail", False, "log"),
+        # component-scope app channel whose channel token is a reserved word stays allowed
+        ("ecv1/gw/comp/app/state", False, None),
+        ("ecv1/gw/comp/data/temp", False, None),
+        ("ecv1/gw/comp/cmd/set-config", False, None),
+        # rooted component scope (site + device + component + class)
+        ("ecv1/site/gw/comp/state", True, "state"),
+        ("ecv1/site/gw/comp/app/state", True, None),
+        # the class position shifts one right only when the effective root mode is on
+        # (D-U24/D-U27)
         ("ecv1/site/gw/comp/main/state", True, "state"),
         ("ecv1/site/gw/comp/main/state", False, None),
         # legit app channels whose first token is a reserved word
@@ -151,6 +165,21 @@ class TestGuardedMethods:
         from edgecommons.messaging.message import Message
         MessagingClient.reply(Message(), _msg())
         assert len(provider.replies) == 1
+
+    def test_publish_rejects_component_scope_reserved(self, provider):
+        # D-U28: a raw publish to a component-scope reserved topic (no instance token)
+        # must be rejected just like the instance-scope form.
+        with pytest.raises(ReservedTopicError) as e:
+            MessagingClient.publish("ecv1/gw/comp/state", _msg())
+        assert e.value.topic == "ecv1/gw/comp/state"
+        assert e.value.class_token == "state"
+        assert provider.published == []
+
+    def test_publish_allows_component_scope_app_state_channel(self, provider):
+        # D-U28: the component-scope 'app' channel whose channel token is a reserved
+        # word ('state') is a legitimate publish — 'app' wins the class position.
+        MessagingClient.publish("ecv1/gw/comp/app/state", _msg())
+        assert len(provider.published) == 1
 
     def test_allowed_topics_pass(self, provider):
         MessagingClient.publish("ecv1/gw/comp/main/data/temp", _msg())

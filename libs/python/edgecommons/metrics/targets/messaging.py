@@ -58,8 +58,9 @@ class Messaging(MetricTarget):
 
     def _metric_topic(self, metric_name: str):
         """The metric's UNS topic —
-        ``ecv1[/{site}]/{device}/{component}/main/metric/{name}`` with the metric name
-        passed through the template sanitizer (the §2.2 channel-token rule), or
+        ``ecv1[/{site}]/{device}/{component}/metric/{name}`` (component scope, no
+        instance — D-U28) with the metric name passed through the template sanitizer
+        (the §2.2 channel-token rule), or
         ``None`` (WARN once) when no component identity is resolved (mock/test
         bring-up)."""
         identity = self.config_manager.get_component_identity()

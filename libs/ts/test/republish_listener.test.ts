@@ -12,8 +12,9 @@ import { RepublishListener } from "../src/republish_listener";
 import { RecordingMessagingService } from "./_fakes";
 
 /** The default test identity's device is `test-thing` (single 'device' level, like the Java test). */
-const STATE_TOPIC = "ecv1/test-thing/_bcast/main/cmd/republish-state";
-const CFG_TOPIC = "ecv1/test-thing/_bcast/main/cmd/republish-cfg";
+// D-U28: the _bcast pseudo-component is component-scoped (no instance token).
+const STATE_TOPIC = "ecv1/test-thing/_bcast/cmd/republish-state";
+const CFG_TOPIC = "ecv1/test-thing/_bcast/cmd/republish-cfg";
 
 const config = (): Config => Config.fromValue("com.example.C", "test-thing", {});
 

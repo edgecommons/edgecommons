@@ -105,6 +105,47 @@ class TestCheckToken:
         assert "[EMPTY_TOKEN]" in str(e.value)
 
 
+class TestDU28OptionalInstance:
+    """D-U28: the instance slot is optional — component scope omits it; the validator
+    locates the class dynamically by the class-token set; the filter can omit the
+    instance slot."""
+
+    def test_component_scope_topic_omits_instance(self):
+        # _identity() is component scope (instance=None) -> no instance path segment.
+        assert Uns(_identity(), False).topic(UnsClass.STATE) == "ecv1/gw-01/opcua-adapter/state"
+        assert (
+            Uns(_identity(), False).topic(UnsClass.DATA, "temp")
+            == "ecv1/gw-01/opcua-adapter/data/temp"
+        )
+
+    def test_instance_scope_topic_keeps_instance(self):
+        ident = _identity("kep1")
+        assert Uns(ident, False).topic(UnsClass.STATE) == "ecv1/gw-01/opcua-adapter/kep1/state"
+
+    def test_filter_component_scope_omits_instance_slot(self):
+        uns = Uns(_identity(), False)
+        assert uns.filter(UnsClass.CMD, UnsScope.all()) == "ecv1/+/+/+/cmd/#"
+        assert (
+            uns.filter(UnsClass.CMD, UnsScope.all(), include_instance=False)
+            == "ecv1/+/+/cmd/#"
+        )
+
+    def test_validate_locates_class_for_both_scopes(self):
+        uns = Uns(_identity(), False)
+        uns.validate("ecv1/gw-01/opcua-adapter/state")            # component scope
+        uns.validate("ecv1/gw-01/opcua-adapter/kep1/state")       # instance scope
+
+    def test_validate_too_few_levels_is_bad_class(self):
+        with pytest.raises(UnsValidationError) as e:
+            Uns(_identity(), False).validate("ecv1/gw-01/opcua-adapter")
+        assert e.value.code == UnsValidationError.BAD_CLASS
+
+    def test_validate_instance_without_following_class_is_bad_class(self):
+        with pytest.raises(UnsValidationError) as e:
+            Uns(_identity(), False).validate("ecv1/gw-01/opcua-adapter/kep1")
+        assert e.value.code == UnsValidationError.BAD_CLASS
+
+
 class TestEdgeCommonsInstance:
     def _cm(self):
         class Cm:
@@ -161,13 +202,14 @@ class TestFacadeAccessors:
     def test_uns_bound_to_component_identity_and_cached(self):
         gg = self._gg()
         uns = gg.uns()
-        assert uns.topic(UnsClass.STATE) == "ecv1/gw-01/opcua-adapter/main/state"
+        # D-U28: gg.uns() is component scope (no instance token).
+        assert uns.topic(UnsClass.STATE) == "ecv1/gw-01/opcua-adapter/state"
         assert gg.uns() is uns  # cached
 
     def test_uns_include_root(self):
         gg = self._gg(include_root=True)
         assert gg.uns().topic(UnsClass.STATE) == \
-            "ecv1/dallas/gw-01/opcua-adapter/main/state"
+            "ecv1/dallas/gw-01/opcua-adapter/state"
 
     def test_uns_before_init_raises(self):
         gg = object.__new__(EdgeCommons)

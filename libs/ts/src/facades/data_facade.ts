@@ -72,15 +72,15 @@ export class DataFacade {
    */
   constructor(
     private readonly configProvider: () => Config,
-    private readonly instanceId: string,
+    private readonly instanceId: string | undefined,
     private readonly uns: Uns,
     private readonly messaging: IMessagingService,
     private readonly streamSink: StreamSink | undefined,
     private readonly clockMillis: ClockMillis = () => Date.now(),
   ) {}
 
-  /** The instance token this facade is bound to. */
-  instanceIdValue(): string {
+  /** The instance token this facade is bound to, or `undefined` for component scope (D-U28). */
+  instanceIdValue(): string | undefined {
     return this.instanceId;
   }
 
@@ -223,8 +223,11 @@ export class DataFacade {
   private configuredChannel(): Channel | undefined {
     try {
       const config = this.configProvider();
-      const fromInstance = publishChannelOf(config.instance(this.instanceId));
-      if (fromInstance !== undefined) return fromInstance;
+      // D-U28: component scope (undefined instance) has no per-instance publish.channel override.
+      if (this.instanceId !== undefined) {
+        const fromInstance = publishChannelOf(config.instance(this.instanceId));
+        if (fromInstance !== undefined) return fromInstance;
+      }
       return publishChannelOf(config.global());
     } catch (e) {
       logger.debug(`publish.channel lookup failed (defaulting to LOCAL): ${errMsg(e)}`);

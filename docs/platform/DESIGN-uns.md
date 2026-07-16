@@ -443,7 +443,7 @@ boundaries.
 
 Because retain and consumer-side miss-detection don't exist, correctness rests on three layers, in
 priority: (1) the periodic **keepalive** `state` (both transports); (2) a **broadcast re-announce**
-(`ecv1/{device}/_bcast/main/cmd/republish-state` — the reserved `_bcast` pseudo-component, see
+(`ecv1/{device}/_bcast/cmd/republish-state` — the reserved `_bcast` pseudo-component, see
 UNS-CANONICAL-DESIGN §4.3) for an instant snapshot on a consumer's (re)connect, with jittered
 replies; (3) the consumer's own **last-known-value cache** — each entry **timestamped**, so a late joiner
 gets the value *and* its age (the application-layer "retained value" pattern; the console realizes this in
@@ -461,7 +461,7 @@ sequenceDiagram
   participant SB as site broker
   participant C1 as component
   Con->>SB: subscribe the six UNS patterns
-  Con->>SB: publish ecv1/{device}/_bcast/main/cmd/republish-state
+  Con->>SB: publish ecv1/{device}/_bcast/cmd/republish-state
   SB->>C1: deliver broadcast
   Note over C1: wait a random 0 to 2s to avoid a stampede
   C1-->>Con: state
@@ -478,12 +478,12 @@ and the lever the edge-console's config-review pulls. The wire contract is pinne
 the Python/Rust/TS mirrors replicate ALL of the following (shipped, four-way parity):
 
 - **Subscriptions** — at startup, on the component's **primary** (local/IPC) connection, the two
-  exact own-device topics `ecv1/{device}/_bcast/main/cmd/republish-state` and
+  exact own-device topics `ecv1/{device}/_bcast/cmd/republish-state` and
   `…/republish-cfg`, built through the topic builder with the reserved `_bcast` pseudo-component
   identity (single-level hierarchy `[{device}]`, instance `main` — so the topic is **rootless by
   D-U25 regardless of the component's own hierarchy/root mode**, matching what the bridge
   publishes). Unsubscribed on shutdown, before messaging closes. (When the Phase-3 `commands()`
-  facade lands its full `ecv1/{device}/_bcast/main/cmd/#` inbox, it may absorb these two
+  facade lands its full `ecv1/{device}/_bcast/cmd/#` inbox, it may absorb these two
   subscriptions — the observable behavior below is what's normative, not the subscription count.)
 - **Trigger** — an envelope whose `header.name` equals the topic's verb. `version`, `body` and any
   `reply_to` are ignored; there is **no reply** (fire-and-forget notification). Malformed or
@@ -521,13 +521,13 @@ structural, reply bodies equal to a live inbox dispatch, behavior flags/sets nor
 Python/Rust/TS mirrors replicate ALL of the following:
 
 - **Inbox subscription** — at startup, on the component's **primary** (local/IPC) connection, the
-  single own-inbox wildcard `ecv1/{device}/{component}/main/cmd/#`, built through the topic
-  builder's filter API under the component's own identity + root mode with every scope token
-  pinned (rooted deployments get `ecv1/{site}/{device}/…/cmd/#` automatically). Unsubscribed on
-  shutdown, before messaging closes. One subscription total — registering a custom verb never
-  subscribes anything new. Only the **`main`-instance** inbox exists in this slice; per-instance
-  inboxes ride the full facade (Phase 5). (This inbox does NOT absorb the §9.4 `_bcast` topics —
-  those live under the `_bcast` pseudo-component, a different path.)
+  component binds its own-inbox wildcards, built through the topic builder's filter API under the
+  component's own identity + root mode. Under **D‑U28** that is **two** subscriptions:
+  `ecv1/{device}/{component}/cmd/#` (component/fleet-scoped) and `ecv1/{device}/{component}/+/cmd/#`
+  (instance-scoped) — rooted deployments get the `ecv1/{site}/{device}/…/cmd/#` forms automatically.
+  Both are unsubscribed on shutdown, before messaging closes; registering a custom verb never
+  subscribes anything new. (These inboxes do NOT absorb the §9.4 `_bcast` topics — those live under
+  the `_bcast` pseudo-component, a different path.)
 - **Verb identification** — the verb is the **topic channel**: everything after `cmd/`
   (`/`-namespaced verbs like `sb/status` included). The envelope's **`header.name` must equal the
   topic's verb** (the §9.4 rule); the pair is the well-formedness gate.
@@ -576,7 +576,7 @@ Python/Rust/TS mirrors replicate ALL of the following:
     source; Java: `EffectiveConfigPublisher.redactedEffectiveConfig()`), or `NO_CONFIG`. This is
     **Flow B** (the console pulls a component's own config as a reply) — distinct from **Flow A**
     (§4.3, shipped earlier), where a *component* fetches its own config *from a config server* at
-    `ecv1/{device}/config/main/cmd/get-configuration`. Same verb token, different recipient and
+    `ecv1/{device}/config/cmd/get-configuration`. Same verb token, different recipient and
     payload. *(Known future consideration: a config-server component named `config` would need a
     library-privileged override of this built-in to serve Flow A — deferred to the full facade's
     `register(verb, schema, handler, {danger})`.)*
@@ -618,7 +618,7 @@ a precise error — silent coexistence of old and new topics is the worst outcom
 | M6 | **Request/reply hardening** — internal default deadline + optional timeout overload + guaranteed reply-topic cleanup; `reply()`/`subscribe()` unchanged | P0 |
 | M7 | **MQTT LWT hook** in `MessagingProvider` — `uns-bridge` derives and sets it on the site-broker connection → whole-device UNREACHABLE; generic HOST/K8s component config does not expose an LWT. **Retain deferred** (redundant with broadcast `republish-state` + the consumer's timestamped cache; can't express staleness; if ever wanted, owned by the bridge). | P0 |
 | M8 | **Named/secondary MessagingClient** (two connections in one process; the bridge needs it) | P0 |
-| M9 | **Southbound command family** — `sb/browse` (paged), `sb/read` (ref-accepting), **confirmed `sb/write`** (with optional read-back), `sb/subscribe-preview` + adapter `writes.allow[]`; an adapter-contract change | P1 |
+| M9 | **Southbound command family** — `sb/browse` (paged), `sb/read` (ref-accepting), **confirmed `sb/write`** (with optional read-back), `sb/subscribe-preview` + adapter `writes.allow[]`; an adapter-contract change. **Addressing resolved by D‑U28** (optional-instance UNS grammar); the verb family is a convention (only `sb/status` universal), not a per-instance-topic mandate. | P1 |
 | M11 | **Heartbeat defaults + parity** — on / 5 s / local target in all four languages, reconciled into the `state` keepalive ([edgecommons#33](https://github.com/edgecommons/edgecommons/issues/33)) | P1 |
 | M14 | **`uns-test-vectors/`** — cross-language byte-identical topic + well-formed top-level `identity` assertions in the interop harness, under the 90% coverage gate | P1 |
 | M15 | **UNS in the streaming service** — auto-enrich records with identity + header + tags; Parquet/AVRO hierarchy columns + partitioning; broker-sink partition key = device; `stream:<name>` preserves originating identity | P1 |

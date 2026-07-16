@@ -40,7 +40,7 @@ Per-instance connectivity — one provider, two surfaces (pull + push):
 
   python_node.py status-request <component>
       Pull <component>'s built-in `status` verb over its command inbox
-      (ecv1/interop-device/<component>/main/cmd/status) and print one JSON line
+      (ecv1/interop-device/<component>/cmd/status) and print one JSON line
       {"ok": true, "reply_body": {"status": "RUNNING", "uptimeSecs": n, "instances": [...]}}.
 
   python_node.py state-instances-pub <component>
@@ -618,7 +618,8 @@ def run_log_sub(topic, token):
                 and identity is not None
                 and _wire_identity_device(identity) == "interop-device"
                 and identity.get("component", "").startswith("interop-log-")
-                and identity.get("instance") == "main"
+                # Component scope (D-U28): the wire identity omits `instance` entirely.
+                and "instance" not in identity
                 and header is not None
                 and header.get("name") == "log"
                 and header.get("version") == "1.0"
@@ -810,7 +811,7 @@ def _gg_p1_target_actor(target_language, sender_actor):
 
 
 def _gg_p1_command_topic(actor):
-    return f"ecv1/interop-device/interop-p1-{actor}/main/cmd/deferred"
+    return f"ecv1/interop-device/interop-p1-{actor}/cmd/deferred"
 
 
 
@@ -1114,7 +1115,9 @@ def run_gg_log_matrix(run_id, langs_csv, _unused=None):
             ok = (
                 publisher in expected_langs
                 and _wire_identity_device(identity) == "interop-device"
-                and (identity or {}).get("instance") == "main"
+                # D-U28: the component-scope log record omits the instance token on the
+                # wire; its absence is the omit-when-absent proof over Greengrass IPC.
+                and "instance" not in (identity or {})
                 and body.get("schema") == "edgecommons.log.v1"
                 and body.get("level") == "WARN"
                 and body.get("logger") == f"interop.{publisher}"
@@ -1137,7 +1140,7 @@ def run_gg_log_matrix(run_id, langs_csv, _unused=None):
                 maybe_done()
 
     prov.subscribe(
-        "ecv1/interop-device/+/main/log/warn",
+        "ecv1/interop-device/+/log/warn",
         log_handler,
         max_concurrency=1,
         max_messages=64,
@@ -1394,12 +1397,17 @@ def run_uns_sub(topic):
         prov.disconnect()
 
 
-def run_uns_guard():
-    """Attempt a reserved-class publish through the guarded public surface (must fail)."""
+def run_uns_guard(topic=None):
+    """Attempt a reserved-class publish through the guarded public surface (must fail).
+
+    ``topic`` selects the reserved target (D-U28): the instance-scoped
+    ``ecv1/dev1/comp1/main/state`` (default) or the component-scoped
+    ``ecv1/dev1/comp1/state`` — the guard must reject both.
+    """
     from edgecommons.messaging.errors import ReservedTopicError
     from edgecommons.messaging.messaging_client import MessagingClient
 
-    topic = "ecv1/dev1/comp1/main/state"
+    topic = topic or "ecv1/dev1/comp1/main/state"
     try:
         # The guard (§4.1) fires before the provider is dereferenced, so no broker
         # connection (and no MessagingClient.init) is needed to prove it.
@@ -1438,12 +1446,14 @@ def _canonical_instances():
 
 
 def _interop_identity(component_token):
-    """The wire identity of an interop component on the fixed ``interop-device`` thing."""
+    """The component-scope wire identity of an interop component on the fixed
+    ``interop-device`` thing. No instance token (D-U28): the library-owned `state`
+    keepalive and the `status` command inbox are component-scoped, so a peer derives
+    ``ecv1/interop-device/{component}/{class}`` from this identity."""
     return MessageIdentity.from_dict({
         "hier": [{"level": "device", "value": "interop-device"}],
         "path": "interop-device",
         "component": component_token,
-        "instance": "main",
     })
 
 
@@ -1636,7 +1646,7 @@ if __name__ == "__main__":
     elif role == "uns-sub":
         sys.exit(run_uns_sub(sys.argv[2]))
     elif role == "uns-guard":
-        sys.exit(run_uns_guard())
+        sys.exit(run_uns_guard(sys.argv[2] if len(sys.argv) > 2 else None))
     elif role == "status-responder":
         run_status_responder(sys.argv[2])
     elif role == "status-request":

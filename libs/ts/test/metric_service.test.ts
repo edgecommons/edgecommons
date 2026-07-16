@@ -162,7 +162,7 @@ describe("MetricEmitter lifecycle", () => {
     await e.emitMetricNow("requests", { count: 9 });
     expect(svc.published).toHaveLength(1);
     // The messaging target now mints the UNS metric topic per metric (§4.3).
-    expect(svc.published[0].topic).toBe("ecv1/thing-1/C/main/metric/requests");
+    expect(svc.published[0].topic).toBe("ecv1/thing-1/C/metric/requests");
   });
 
   it("onConfigurationChange keeps the previous target on rebuild error", async () => {

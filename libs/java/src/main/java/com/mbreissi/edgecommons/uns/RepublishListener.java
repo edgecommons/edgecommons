@@ -222,7 +222,7 @@ public final class RepublishListener implements AutoCloseable {
             // hierarchy/root mode.
             MessageIdentity bcast = new MessageIdentity(
                     List.of(new MessageIdentity.HierEntry("device", identity.getDevice())),
-                    BCAST_COMPONENT, MessageIdentity.DEFAULT_INSTANCE);
+                    BCAST_COMPONENT, null);   // D‑U28: _bcast is component scope (no instance)
             Uns uns = new Uns(bcast, false);
             for (Command command : commands) {
                 String topic = uns.topic(UnsClass.CMD, command.verb);

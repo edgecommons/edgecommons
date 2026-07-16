@@ -11,8 +11,8 @@ identity (see ``ConfigManager.get_component_identity()``). It carries:
   recomputed.
 - ``component`` — the publishing component's UNS token (the sanitized short name,
   i.e. the existing ``{ComponentName}`` semantics).
-- ``instance`` — the per-message instance token, never ``None``
-  (default :data:`MessageIdentity.DEFAULT_INSTANCE`).
+- ``instance`` — the per-message instance token, or ``None`` for component/global
+  scope (D-U28); never a reserved class token when present.
 
 Serialization (:meth:`MessageIdentity.to_dict`) emits the canonical member order
 ``hier, path, component, instance``. Deserialization (:meth:`MessageIdentity.from_dict`)
@@ -59,8 +59,12 @@ class HierEntry:
 class MessageIdentity:
     """The immutable UNS identity element: ``hier``/``path``/``component``/``instance``."""
 
-    #: The default per-message instance token, used when no instance is specified.
-    DEFAULT_INSTANCE = "main"
+    #: Class tokens an instance id may not equal (D-U28): keeping the component-scope
+    #: and instance-scope UNS subscription templates disjoint, and letting the
+    #: reserved-class guard locate the class unambiguously.
+    RESERVED_CLASS_TOKENS = frozenset(
+        {"state", "metric", "cfg", "log", "data", "evt", "cmd", "app"}
+    )
 
     __slots__ = ("_hier", "_path", "_component", "_instance")
 
@@ -71,18 +75,27 @@ class MessageIdentity:
 
         :param hier: ordered hierarchy entries (non-empty; last entry = device)
         :param component: the component UNS token (non-empty)
-        :param instance: the instance token, or ``None`` for :data:`DEFAULT_INSTANCE`
+        :param instance: the instance token, or ``None``/empty for component/global
+            scope (D-U28); a present token may not be a reserved class token
         :param path: an explicit wire ``path`` (used by :meth:`from_dict`), or ``None``
-        :raises ValueError: if ``hier`` is empty or ``component`` is empty
+        :raises ValueError: if ``hier`` is empty, ``component`` is empty, or ``instance``
+            is a reserved class token
         """
         if not hier:
             raise ValueError("MessageIdentity hier must contain at least one entry")
         if not component:
             raise ValueError("MessageIdentity component must be non-empty")
+        # D-U28: absent/empty ⇒ component scope (None); a present instance may not be a
+        # reserved class token.
+        if instance and instance in MessageIdentity.RESERVED_CLASS_TOKENS:
+            raise ValueError(
+                f"MessageIdentity instance '{instance}' must not be a reserved UNS"
+                " class token"
+            )
         self._hier = tuple(hier)
         self._path = path if path is not None else "/".join(e.value for e in self._hier)
         self._component = component
-        self._instance = instance if instance else MessageIdentity.DEFAULT_INSTANCE
+        self._instance = instance if instance else None
 
     @property
     def hier(self):
@@ -100,8 +113,8 @@ class MessageIdentity:
         return self._component
 
     @property
-    def instance(self) -> str:
-        """The per-message instance token (never ``None``)."""
+    def instance(self) -> Optional[str]:
+        """The per-message instance token, or ``None`` for component/global scope (D-U28)."""
         return self._instance
 
     @property
@@ -111,29 +124,32 @@ class MessageIdentity:
         serialized separately."""
         return self._hier[-1].value
 
-    def with_instance(self, instance: str) -> "MessageIdentity":
-        """Returns a copy of this identity with a different per-message instance token.
+    def with_instance(self, instance: Optional[str]) -> "MessageIdentity":
+        """Returns a copy of this identity with a different per-message instance token,
+        or component scope when ``instance`` is ``None``/empty (D-U28).
 
-        :raises ValueError: if ``instance`` is ``None`` or empty
+        :param instance: the instance token, or ``None``/empty for component/global scope
+        :raises ValueError: if ``instance`` is a reserved class token
         """
-        if not instance:
-            raise ValueError("MessageIdentity instance must be non-empty")
         return MessageIdentity(list(self._hier), self._component, instance, self._path)
 
     def to_dict(self) -> dict:
         """Serializes this identity to its wire form, in the canonical member order
-        ``hier, path, component, instance``."""
-        return {
+        ``hier, path, component, instance`` — the ``instance`` key is OMITTED when the
+        identity is component-scoped (D-U28)."""
+        result = {
             "hier": [{"level": e.level, "value": e.value} for e in self._hier],
             "path": self._path,
             "component": self._component,
-            "instance": self._instance,
         }
+        if self._instance is not None:
+            result["instance"] = self._instance
+        return result
 
     @staticmethod
     def from_dict(src) -> Optional["MessageIdentity"]:
-        """Lenient wire-form parser: a missing ``instance`` defaults to
-        :data:`DEFAULT_INSTANCE`; a missing ``path`` is recomputed from the hier values
+        """Lenient wire-form parser: a missing/empty ``instance`` means component scope
+        (absent, D-U28); a missing ``path`` is recomputed from the hier values
         (a present one is taken as-is — the publisher is authoritative); a malformed
         identity (non-dict, missing/empty/non-list ``hier``, malformed hier entries, or a
         missing ``component``) yields ``None`` plus a WARN log so the enclosing message
@@ -175,7 +191,7 @@ class MessageIdentity:
                 )
                 return None
             path = _as_non_empty_str(src.get("path"))          # None -> recomputed
-            instance = _as_non_empty_str(src.get("instance"))  # None -> DEFAULT_INSTANCE
+            instance = _as_non_empty_str(src.get("instance"))  # None -> component scope (D-U28)
             return MessageIdentity(hier, component, instance, path)
         except Exception as e:  # noqa: BLE001 - lenient by design (mirrors Java)
             logger.warning(f"Malformed message identity ({e}); dropping identity")

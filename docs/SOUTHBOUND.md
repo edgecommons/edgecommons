@@ -183,32 +183,36 @@ against a browsed address space). For the command surface (§2.2), a Modbus `<si
 `{ "name": "<configured signal>" }` (the friendly, stable form) or an explicit
 `{ "unitId"?, "table", "address", "type", ... }` for arbitrary access.
 
-### 2.2 Command surface — the `cmd/sb/*` family (Phase 5 / M9 — target design, NOT yet shipped)
+### 2.2 Command surface — the `sb/*` command family (addressing per D‑U28)
 
-> **Status: roadmap for the UNS topic family and the cross-adapter facade; a first per-adapter
-> capability precedent already exists.** This section is the approved **target design** for the
-> southbound command family (DESIGN-uns §11 mandate **M9**; decisions D‑U15/D‑U16), scheduled for
-> **Phase 5** of the UNS train. The `cmd/sb/*` **topic family**, the `writes.allow[]` config
-> convention, and a generalized cross-adapter `commands()` facade are **not built**. The shipping
-> adapters currently still expose their **legacy per-instance control topics** — config-template
-> `write.topic` / `read.topic` for batch write and on-demand read, plus the
-> `southbound/{ComponentName}/{InstanceId}/control/{status|subscriptions|nodes}` topics. That said,
-> `opcua-adapter` has already landed the **capabilities** this family targets — paged address-space
-> browse (`control/nodes`), a confirmed write with per-entry `SouthboundWriteResult` acknowledgment,
-> and regex include/exclude matchers for on-demand reads (merged 2026-07-02,
-> "command-surface-parity", `opcua-adapter@5dbb789`) — on its own legacy topics, ahead of the UNS
-> migration. Treat this as a validated reference implementation of the *behavior* §2.2 specifies,
-> not as the family itself being shipped.
+> **Status: addressing resolved by D‑U28; the verb family is a convention, not a per-instance-topic
+> mandate.** Command addressing follows the optional-instance UNS grammar (**D‑U28**,
+> `UNS-CANONICAL-DESIGN.md`): an instance-scoped command is addressed to
+> `ecv1/{device}/{component}/{instance}/cmd/sb/{verb}` and a component/fleet-scoped command to
+> `ecv1/{device}/{component}/cmd/sb/{verb}` (no instance token). Of the verbs below, only **`sb/status`**
+> is universal — every southbound adapter implements it; `sb/browse` / `sb/read` / `sb/write` /
+> `sb/subscribe-preview` are **signal-adapter conventions**, and `writes.allow[]` (D‑U16) stays a
+> convention for adapters that implement `sb/write`. Component authors may add domain verbs (e.g. the
+> camera adapter's `sb/capture`). The shipping adapters still expose their **legacy per-instance control
+> topics** — `write.topic` / `read.topic` and
+> `southbound/{ComponentName}/{InstanceId}/control/{status|subscriptions|nodes}` — pending migration to
+> the UNS command inbox; `opcua-adapter` has landed the **capabilities** (paged address-space browse,
+> a confirmed write with per-entry `SouthboundWriteResult`, regex include/exclude reads; merged
+> 2026-07-02, `opcua-adapter@5dbb789`) on its legacy topics as a reference implementation of the
+> *behavior*, not the family itself being shipped.
 
 Beyond streaming subscriptions, an adapter exposes an on-demand command surface as **built-in `cmd`
-verbs on its UNS inbox**, family-namespaced under `sb/` and addressed to
+verbs on its UNS inbox**, family-namespaced under `sb/` and addressed per **D‑U28** — instance-scoped to
+`ecv1/{device}/{component}/{instance}/cmd/sb/{verb}`, component/fleet-scoped to
+`ecv1/{device}/{component}/cmd/sb/{verb}` (no instance token):
 
 ```text
-ecv1/{device}/{component}/{instance}/cmd/sb/{verb}
+ecv1/{device}/{component}[/{instance}]?/cmd/sb/{verb}
 ```
 
-(the `cmd` class is the one class whose identity path names the **recipient**; the verbs are
-registered through the `commands()` facade and advertised in `describe`):
+(the `cmd` class is the one class whose identity path names the **recipient** — the instance when
+present, else the component; the verbs are registered through the `commands()` facade and advertised in
+`describe`):
 
 | Verb (`cmd/sb/…`) | Kind | Purpose |
 |---|---|---|

@@ -3,7 +3,8 @@
  * facade — edge-console slice S2) over the {@link RecordingMessagingService} fake. Mirrors the
  * Java `CommandInboxTest`, adapted to the TS async handler/action seams:
  *
- * - `start()` subscribes exactly the own-inbox wildcard (`ecv1/{device}/{component}/main/cmd/#`)
+ * - `start()` subscribes both D-U28 own-inbox wildcards — component-scope
+ *   (`ecv1/{device}/{component}/cmd/#`) and instance-scope (`ecv1/{device}/{component}/+/cmd/#`) —
  *   on the primary connection;
  * - each built-in verb dispatches and replies with the pinned body shape — `ping`
  *   (status + uptime), `status` (ping's body plus the `instances` sample, omitted when there are
@@ -42,14 +43,19 @@ import { Message, MessageBuilder } from "../src/message";
 import { UnsValidationError } from "../src/uns";
 import { RecordingMessagingService, tick } from "./_fakes";
 
-/** The default test identity: device `test-thing`, component `TestComponent` (single level). */
-const INBOX_FILTER = "ecv1/test-thing/TestComponent/main/cmd/#";
+/**
+ * The default test identity: device `test-thing`, component `TestComponent` (single level). Under
+ * D-U28 the component identity is component-scoped, so the inbox subscribes both the component-scope
+ * filter ({@link INBOX_FILTER}) and the instance-scope wildcard ({@link INSTANCE_FILTER}).
+ */
+const INBOX_FILTER = "ecv1/test-thing/TestComponent/cmd/#";
+const INSTANCE_FILTER = "ecv1/test-thing/TestComponent/+/cmd/#";
 const REPLY_TO = "edgecommons/reply-test-1";
 
 const config = (): Config => Config.fromValue("com.example.TestComponent", "test-thing", {});
 
 function topic(verb: string): string {
-  return `ecv1/test-thing/TestComponent/main/cmd/${verb}`;
+  return `ecv1/test-thing/TestComponent/cmd/${verb}`;
 }
 
 /** A well-formed request for a verb: `header.name` = verb, pinned `reply_to`. */
@@ -123,10 +129,10 @@ describe("CommandInbox", () => {
 
   // ===================== subscription lifecycle =====================
 
-  it("start() subscribes the own-inbox wildcard", async () => {
+  it("start() subscribes both D-U28 own-inbox wildcards (component + instance scope)", async () => {
     expect(inbox.state()).toBe(CommandInboxState.Stopped);
     await inbox.start();
-    expect(new Set(messaging.subscriptions.keys())).toEqual(new Set([INBOX_FILTER]));
+    expect(new Set(messaging.subscriptions.keys())).toEqual(new Set([INSTANCE_FILTER, INBOX_FILTER]));
     expect(inbox.state()).toBe(CommandInboxState.Active);
   });
 
@@ -137,7 +143,8 @@ describe("CommandInbox", () => {
     await inbox.start();
     expect(inbox.state()).toBe(CommandInboxState.Failed);
     expect(inbox.startupError()).toBe("COMMAND_INBOX_SUBSCRIPTION_FAILED");
-    expect(messaging.unsubscribed).toEqual([INBOX_FILTER]);
+    // D-U28: a failed attempt tears down both the instance- and component-scope filters.
+    expect(new Set(messaging.unsubscribed)).toEqual(new Set([INSTANCE_FILTER, INBOX_FILTER]));
     await inbox.close();
     expect(inbox.state()).toBe(CommandInboxState.Stopped);
     expect(inbox.startupError()).toBeUndefined();
@@ -162,34 +169,35 @@ describe("CommandInbox", () => {
   it("start() is idempotent", async () => {
     await inbox.start();
     await inbox.start();
-    expect(new Set(messaging.subscriptions.keys())).toEqual(new Set([INBOX_FILTER]));
+    expect(new Set(messaging.subscriptions.keys())).toEqual(new Set([INSTANCE_FILTER, INBOX_FILTER]));
   });
 
   it("shares one bounded startup attempt across concurrent callers", async () => {
-    let releaseSubscription!: () => void;
+    const releases: Array<() => void> = [];
     let subscribeCalls = 0;
     messaging.subscribe = async (filter, handler) => {
       subscribeCalls++;
       messaging.subscriptions.set(filter, handler);
       await new Promise<void>((resolve) => {
-        releaseSubscription = resolve;
+        releases.push(resolve);
       });
     };
 
     const first = inbox.start(100);
     const second = inbox.start(100);
     await Promise.resolve();
-    expect(subscribeCalls).toBe(1);
+    // Single-flight: one startup attempt, which subscribes BOTH D-U28 inbox filters.
+    expect(subscribeCalls).toBe(2);
     expect(inbox.state()).toBe(CommandInboxState.Starting);
 
-    releaseSubscription();
+    releases.forEach((release) => release());
     await Promise.all([first, second]);
     expect(inbox.state()).toBe(CommandInboxState.Active);
-    expect(subscribeCalls).toBe(1);
+    expect(subscribeCalls).toBe(2);
   });
 
   it("retains a delivery racing subscription acknowledgement until ACTIVE", async () => {
-    let releaseSubscription!: () => void;
+    const releases: Array<() => void> = [];
     let handlerRan = false;
     inbox.register("startup-race", () => {
       handlerRan = true;
@@ -198,7 +206,7 @@ describe("CommandInbox", () => {
     messaging.subscribe = async (filter, handler) => {
       messaging.subscriptions.set(filter, handler);
       await new Promise<void>((resolve) => {
-        releaseSubscription = resolve;
+        releases.push(resolve);
       });
     };
 
@@ -208,32 +216,34 @@ describe("CommandInbox", () => {
     expect(inbox.state()).toBe(CommandInboxState.Starting);
     expect(handlerRan).toBe(false);
 
-    releaseSubscription();
+    releases.forEach((release) => release());
     await starting;
     expect(inbox.state()).toBe(CommandInboxState.Active);
     await waitFor(() => handlerRan);
   });
 
   it("times out with a stable error and removes a late successful subscription", async () => {
-    let releaseSubscription!: () => void;
-    let lateHandler!: (deliveredTopic: string, message: Message) => void | Promise<void>;
+    const releases: Array<() => void> = [];
+    const lateHandlers: Array<(deliveredTopic: string, message: Message) => void | Promise<void>> = [];
     messaging.subscribe = (filter, handler) => new Promise<void>((resolve) => {
-      lateHandler = handler;
-      releaseSubscription = () => {
+      lateHandlers.push(handler);
+      releases.push(() => {
         messaging.subscriptions.set(filter, handler);
         resolve();
-      };
+      });
     });
 
     await inbox.start(10);
     expect(inbox.state()).toBe(CommandInboxState.Failed);
     expect(inbox.startupError()).toBe("COMMAND_INBOX_SUBSCRIPTION_FAILED");
+    // D-U28: both filters are torn down on the timed-out attempt.
     expect(messaging.unsubscribed).toContain(INBOX_FILTER);
+    expect(messaging.unsubscribed).toContain(INSTANCE_FILTER);
 
-    releaseSubscription();
+    releases.forEach((release) => release());
     await waitFor(() => messaging.unsubscribed.filter((filter) => filter === INBOX_FILTER).length >= 2);
     expect(inbox.state()).toBe(CommandInboxState.Failed);
-    await lateHandler(topic(CommandInbox.PING), request(CommandInbox.PING));
+    await lateHandlers[0](topic(CommandInbox.PING), request(CommandInbox.PING));
     expect(messaging.published).toHaveLength(0);
     expect(messaging.subscriptions.has(INBOX_FILTER)).toBe(false);
   });
@@ -395,11 +405,11 @@ describe("CommandInbox", () => {
     const result = body.result as Record<string, unknown>;
     expect(result.schemaVersion).toBe("edgecommons.component.describe.v1");
     expect(result.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    // D-U28: the component-scoped inbox's describe identity omits the instance token.
     expect(result.component).toEqual({
       hier: [{ level: "device", value: "test-thing" }],
       path: "test-thing",
       component: "TestComponent",
-      instance: "main",
     });
     expect(result.commands).toEqual([
       { verb: CommandInbox.DESCRIBE, builtIn: true },
@@ -1006,6 +1016,14 @@ describe("CommandInbox", () => {
     await inbox.start();
     // MQTT "#" also matches the parent level (".../cmd") - nothing to dispatch there.
     await deliver(messaging, "ecv1/test-thing/TestComponent/main/cmd", request(CommandInbox.PING));
+    expect(messaging.published).toHaveLength(0);
+  });
+
+  it("an empty delivery topic is ignored, never crashes (D-U28 guard)", async () => {
+    await inbox.start();
+    // A provider that delivers an empty topic must be tolerated: no verb to extract, nothing
+    // to dispatch, no reply.
+    await deliver(messaging, "", request(CommandInbox.PING));
     expect(messaging.published).toHaveLength(0);
   });
 

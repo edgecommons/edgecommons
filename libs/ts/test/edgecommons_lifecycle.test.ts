@@ -157,6 +157,22 @@ describe("EdgeCommons lifecycle (mocked)", () => {
     }
   });
 
+  it("exposes component-scope data/events/app facades backed by one lazily-cached handle (D-U28)", async () => {
+    const gg = await buildWith(BASE);
+    try {
+      // First calls lazily build the component-scope handle (no instance token) and its facades.
+      expect(gg.data()).toBeDefined();
+      expect(gg.events()).toBeDefined();
+      expect(gg.app()).toBeDefined();
+      // Repeat calls exercise the cached-handle branch of componentScope() (no rebuild).
+      expect(gg.data()).toBeDefined();
+      expect(gg.events()).toBeDefined();
+      expect(gg.app()).toBeDefined();
+    } finally {
+      await gg.close();
+    }
+  });
+
   it("MQTT transport without a messaging-config path throws a messaging EdgeCommonsError at build", async () => {
     process.env.EDGECOMMONS_NO_MC = JSON.stringify(BASE);
     try {
@@ -517,7 +533,7 @@ describe("EdgeCommons lifecycle (mocked)", () => {
     });
     try {
       const { UnsClass } = await import("../src/uns");
-      expect(gg.uns().topic(UnsClass.State)).toBe("ecv1/dallas/lc-thing/Lc/main/state");
+      expect(gg.uns().topic(UnsClass.State)).toBe("ecv1/dallas/lc-thing/Lc/state");
       expect(gg.uns()).toBe(gg.uns()); // cached
       expect(gg.uns().identity().component).toBe("Lc");
       // The messaging guard was late-bound to the EFFECTIVE root (D-U27): a rooted reserved

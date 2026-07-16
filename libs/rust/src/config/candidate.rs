@@ -341,8 +341,45 @@ mod tests {
         }
     }
 
+    /// Serializes the tests that share the process-wide validator budget and
+    /// waits until every permit has been returned before the caller proceeds.
+    ///
+    /// Cargo runs tests in parallel by default, and
+    /// `repeated_timeouts_never_exceed_the_process_worker_budget` intentionally
+    /// saturates the four-permit budget with detached, timed-out workers that
+    /// release their permits asynchronously. Without this guard a co-scheduled
+    /// test is starved of permits, so its validators spuriously time out and it
+    /// fails only under CI's parallelism. Holding the returned guard for the
+    /// test's duration prevents overlap; the drain loop reclaims any permit a
+    /// prior test's not-yet-unwound worker still holds.
+    fn budget_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static BUDGET_TEST_GUARD: Mutex<()> = Mutex::new(());
+        let guard = BUDGET_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let mut permits = Vec::new();
+            while let Some(permit) = worker_budget().try_acquire() {
+                permits.push(permit);
+            }
+            let acquired = permits.len();
+            drop(permits); // restore the budget to full before proceeding
+            if acquired == MAX_VALIDATOR_WORKERS {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "validator worker budget was never restored to full"
+            );
+            std::thread::yield_now();
+        }
+        guard
+    }
+
     #[test]
     fn validators_receive_independent_owned_copies_and_redacted_prior() {
+        let _budget = budget_test_guard();
         let observed = Arc::new(Mutex::new(Vec::new()));
         let first = named(
             "mutator",
@@ -384,6 +421,7 @@ mod tests {
 
     #[test]
     fn repeated_timeouts_never_exceed_the_process_worker_budget() {
+        let _budget = budget_test_guard();
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
         let entered = Arc::new(AtomicUsize::new(0));
         let live = Arc::new(AtomicUsize::new(0));

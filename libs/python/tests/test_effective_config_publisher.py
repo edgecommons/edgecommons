@@ -87,7 +87,7 @@ class TestPublish:
         pub.publish_now()
         assert len(messaging.reserved) == 1
         topic, msg = messaging.reserved[0]
-        assert topic == "ecv1/gw-01/opcua-adapter/main/cfg"
+        assert topic == "ecv1/gw-01/opcua-adapter/cfg"  # D-U28: component scope
         assert msg.get_header().name == "cfg"
         assert msg.get_header().version == "1.0"
         body = msg.get_body()

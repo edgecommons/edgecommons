@@ -7,7 +7,7 @@
 //! ## Overview
 //! A background `tokio` task ticks at `heartbeat.intervalSecs` (default 5 s) and,
 //! when `heartbeat.enabled` (the default), publishes each tick:
-//! 1. a **`state` keepalive** to `ecv1/{device}/{component}/main/state` — header
+//! 1. a **`state` keepalive** to `ecv1/{device}/{component}/state` — header
 //!    name `state`, body `{"status":"RUNNING","uptimeSecs":<n>}` — through the
 //!    privileged [`ReservedMessaging`] seam (the `state` class is reserved).
 //!    `heartbeat.destination` (`local` | `northbound`) selects the keepalive's
@@ -792,7 +792,8 @@ mod tests {
         let published = recorder.reserved_local();
         assert_eq!(published.len(), 1, "one state keepalive through the seam");
         let (topic, msg) = &published[0];
-        assert_eq!(topic, "ecv1/thing-1/MyComp/main/state");
+        // D-U28: the state keepalive is component scope (no instance slot).
+        assert_eq!(topic, "ecv1/thing-1/MyComp/state");
         assert_eq!(msg.header.name, "state");
         assert_eq!(msg.header.version, "1.0");
         assert_eq!(msg.body["status"], "RUNNING");
@@ -802,7 +803,7 @@ mod tests {
             .as_ref()
             .expect("state envelope carries identity");
         assert_eq!(identity.device(), "thing-1");
-        assert_eq!(identity.instance(), "main");
+        assert_eq!(identity.instance(), None);
         assert!(
             recorder.reserved_iot().is_empty(),
             "local destination must not hit IoT Core"
@@ -1028,7 +1029,7 @@ mod tests {
             "at least the out-of-band RUNNING keepalive"
         );
         let (topic, msg) = states.last().unwrap();
-        assert_eq!(topic, "ecv1/thing-1/MyComp/main/state");
+        assert_eq!(topic, "ecv1/thing-1/MyComp/state");
         assert_eq!(msg.header.name, "state");
         assert_eq!(msg.body["status"], "RUNNING");
         assert!(msg.body.get("uptimeSecs").is_some());
@@ -1081,7 +1082,7 @@ mod tests {
         assert_eq!(recorder.reserved_iot().len(), 1);
         assert_eq!(
             recorder.reserved_iot()[0].0,
-            "ecv1/thing-1/MyComp/main/state"
+            "ecv1/thing-1/MyComp/state"
         );
     }
 
@@ -1102,7 +1103,7 @@ mod tests {
         publish_state(&config, recorder.as_ref(), "RUNNING", Some(1), Vec::new()).await;
         assert_eq!(
             recorder.reserved_local()[0].0,
-            "ecv1/dallas/gw-01/MyComp/main/state"
+            "ecv1/dallas/gw-01/MyComp/state"
         );
     }
 
@@ -1133,7 +1134,7 @@ mod tests {
         assert!(
             states
                 .iter()
-                .all(|(t, _)| t == "ecv1/thing-1/MyComp/main/state")
+                .all(|(t, _)| t == "ecv1/thing-1/MyComp/state")
         );
         assert!(states.iter().all(|(_, m)| m.body["status"] == "RUNNING"));
         // uptimeSecs is present and non-decreasing.

@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Unit tests for the {@link Messaging} metric target on its UNS topic scheme (UNS-CANONICAL-DESIGN
- * §4.3): each metric publishes to {@code ecv1/{device}/{component}/main/metric/{metricName}} (the
+ * §4.3): each metric publishes to {@code ecv1/{device}/{component}/metric/{metricName}} (the
  * name sanitized as a channel token) through the privileged {@code ReservedPublisher} seam, with
  * {@code targetConfig.destination} still selecting local vs northbound (D-U9). Uses
  * {@link MockMessagingService} to capture publishes without a broker.
@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class MessagingTest {
 
     /** The default mock identity's UNS metric topic prefix (device=test-thing, component=TestComponent). */
-    private static final String METRIC_TOPIC_PREFIX = "ecv1/test-thing/TestComponent/main/metric/";
+    private static final String METRIC_TOPIC_PREFIX = "ecv1/test-thing/TestComponent/metric/";
 
     /** Config that selects the messaging target with a caller-supplied destination. */
     private static class MsgConfig extends MockConfigurationService {
@@ -78,7 +78,7 @@ class MessagingTest {
         List<MockMessagingService.PublishedMessage> published = mock.getPublishedMessages();
         assertEquals(1, published.size());
         assertEquals(METRIC_TOPIC_PREFIX + "m1", published.get(0).topic,
-                "the metric topic is ecv1/{device}/{component}/main/metric/{metricName}");
+                "the metric topic is ecv1/{device}/{component}/metric/{metricName}");
         assertNotNull(published.get(0).message);
         assertTrue(published.get(0).reserved,
                 "metric publishes must go through the privileged ReservedPublisher seam");

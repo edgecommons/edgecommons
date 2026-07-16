@@ -826,7 +826,7 @@ public class ConfigManager
         String configuredToken = configuredComponentToken();
         String componentToken = sanitizedIdentityValue("component",
                 configuredToken != null ? configuredToken : componentName);
-        return new MessageIdentity(hier, componentToken, MessageIdentity.DEFAULT_INSTANCE);
+        return new MessageIdentity(hier, componentToken, null);   // D‑U28: component scope (no instance)
     }
 
     /** Returns {@code component.token} when configured. */

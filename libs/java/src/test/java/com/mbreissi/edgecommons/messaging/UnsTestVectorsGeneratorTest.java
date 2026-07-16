@@ -177,6 +177,16 @@ class UnsTestVectorsGeneratorTest {
         cases.add(buildCase("build-dots-are-legal", SINGLE_LEVELS, SINGLE_VALUES,
                 "opcua-adapter", "main", false, "data", "v1.2",
                 topic("ecv1/gw-01/opcua-adapter/main/data/v1.2")));
+        // D-U28: component scope (no instance) omits the instance slot entirely.
+        cases.add(buildCase("build-component-scope-state-leaf", SINGLE_LEVELS, SINGLE_VALUES,
+                "opcua-adapter", null, false, "state", null,
+                topic("ecv1/gw-01/opcua-adapter/state")));
+        cases.add(buildCase("build-config-rendezvous-get", SINGLE_LEVELS, SINGLE_VALUES,
+                "config", null, false, "cmd", "get-configuration",
+                topic("ecv1/gw-01/config/cmd/get-configuration")));
+        cases.add(buildCase("build-config-rendezvous-set", SINGLE_LEVELS, SINGLE_VALUES,
+                "opcua-adapter", null, false, "cmd", "set-config",
+                topic("ecv1/gw-01/opcua-adapter/cmd/set-config")));
 
         // --- includeRoot true/false, incl. the D-U25 single-level no-op ---
         cases.add(buildCase("build-include-root-multi-level-leaf", MULTI_LEVELS, MULTI_VALUES,
@@ -352,8 +362,11 @@ class UnsTestVectorsGeneratorTest {
                 "ecv1/gw-01/opcua-adapter/main/data/#", false, error("WILDCARD_IN_TOPIC")));
 
         // --- includeRoot sensitivity: the same topic under the two root modes ---
+        // D‑U28: the instance slot is optional, so under a rooted validator this parses as
+        // ecv1/{site=gw-01}/{device=opcua-adapter}/{component=main}/{class=state} — component scope,
+        // valid (it used to be BAD_CLASS when the instance slot was mandatory).
         cases.add(validateCase("validate-rootless-topic-under-rooted-mode",
-                "ecv1/gw-01/opcua-adapter/main/state", true, error("BAD_CLASS")));
+                "ecv1/gw-01/opcua-adapter/main/state", true, ok()));
         cases.add(validateCase("validate-rooted-topic-under-rootless-mode",
                 "ecv1/dallas/gw-01/opcua-adapter/main", false, error("BAD_CLASS")));
 
@@ -419,6 +432,17 @@ class UnsTestVectorsGeneratorTest {
                 "ecv1/dallas/gw-01/comp/main/metric/cpu", true, true));
         cases.add(guardCase("guard-rooted-app-state-channel-allowed",
                 "ecv1/dallas/gw-01/comp/main/app/state", true, false));
+        // D-U28: component-scope reserved topics (NO instance slot) are ALSO caught - the guard
+        // locates the class by the class-token set, not a fixed position (an instance is never a
+        // class token, so the token after {component} is the class iff it is a class token).
+        cases.add(guardCase("guard-component-scope-state-reserved", "ecv1/gw-01/comp/state", false, true));
+        cases.add(guardCase("guard-component-scope-cfg-reserved", "ecv1/gw-01/comp/cfg", false, true));
+        cases.add(guardCase("guard-component-scope-metric-reserved", "ecv1/gw-01/comp/metric/cpu", false, true));
+        cases.add(guardCase("guard-component-scope-log-reserved", "ecv1/gw-01/comp/log/tail", false, true));
+        cases.add(guardCase("guard-component-scope-app-state-channel-allowed",
+                "ecv1/gw-01/comp/app/state", false, false));
+        cases.add(guardCase("guard-component-scope-rooted-state-reserved",
+                "ecv1/dallas/gw-01/comp/state", true, true));
         // Non-ecv1 topics are structurally exempt (D-U6/D-U21).
         cases.add(guardCase("guard-non-uns-reply-passes", "edgecommons/reply-8400f2", false, false));
         cases.add(guardCase("guard-cloudwatch-passes", "cloudwatch/metric/put", false, false));
@@ -851,7 +875,7 @@ class UnsTestVectorsGeneratorTest {
     private static JsonObject bcastCommand(String verb, String republishes,
             String uuid, String correlationId) {
         MessageIdentity bcast = new MessageIdentity(
-                List.of(new MessageIdentity.HierEntry("device", "gw-01")), "_bcast", "main");
+                List.of(new MessageIdentity.HierEntry("device", "gw-01")), "_bcast", null);   // D‑U28: component scope
         String topic = new com.mbreissi.edgecommons.uns.Uns(bcast, false)
                 .topic(com.mbreissi.edgecommons.uns.UnsClass.CMD, verb);
         Message message = MessageBuilder.create(verb, "1.0")
@@ -863,8 +887,7 @@ class UnsTestVectorsGeneratorTest {
         JsonObject input = new JsonObject();
         input.addProperty("device", "gw-01");
         input.addProperty("component", "_bcast");
-        input.addProperty("instance", "main");
-        input.addProperty("includeRoot", false);
+        input.addProperty("includeRoot", false);   // D‑U28: no instance ⇒ component scope
         input.addProperty("class", "cmd");
         input.addProperty("channel", verb);
         JsonObject c = new JsonObject();
@@ -903,11 +926,18 @@ class UnsTestVectorsGeneratorTest {
         inboxInput.addProperty("includeRoot", false);
         inboxInput.addProperty("class", "cmd");
         JsonObject inbox = new JsonObject();
-        inbox.addProperty("filter", new com.mbreissi.edgecommons.uns.Uns(SINGLE_IDENTITY, false)
-                .filter(com.mbreissi.edgecommons.uns.UnsClass.CMD,
-                        new com.mbreissi.edgecommons.uns.UnsScope(null,
-                                SINGLE_IDENTITY.getDevice(), SINGLE_IDENTITY.getComponent(),
-                                SINGLE_IDENTITY.getInstance())));
+        com.mbreissi.edgecommons.uns.Uns inboxUns =
+                new com.mbreissi.edgecommons.uns.Uns(SINGLE_IDENTITY, false);
+        com.mbreissi.edgecommons.uns.UnsScope inboxScope =
+                new com.mbreissi.edgecommons.uns.UnsScope(null,
+                        SINGLE_IDENTITY.getDevice(), SINGLE_IDENTITY.getComponent(),
+                        SINGLE_IDENTITY.getInstance());
+        // D‑U28: the inbox subscribes both the instance-scope filter (the pinned instance slot) and
+        // the component-scope filter (no instance slot).
+        inbox.addProperty("filter",
+                inboxUns.filter(com.mbreissi.edgecommons.uns.UnsClass.CMD, inboxScope));
+        inbox.addProperty("componentFilter",
+                inboxUns.filter(com.mbreissi.edgecommons.uns.UnsClass.CMD, inboxScope, false));
         inbox.add("input", inboxInput);
         doc.add("inbox", inbox);
 
@@ -1035,7 +1065,9 @@ class UnsTestVectorsGeneratorTest {
         input.add("hierarchyLevels", levelsArray);
         input.add("identityValues", valuesObject);
         input.addProperty("component", component);
-        input.addProperty("instance", instance);
+        if (instance != null) {
+            input.addProperty("instance", instance);   // D‑U28: omitted for component scope
+        }
         input.addProperty("includeRoot", includeRoot);
         input.addProperty("class", cls);
         if (channel != null) {

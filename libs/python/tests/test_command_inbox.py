@@ -4,8 +4,9 @@ a conformance section replaying ``uns-test-vectors/commands.json`` through a liv
 inbox. Mirrors ``libs/java/.../commands/CommandInboxTest.java``.
 
 Covers:
-- ``start()`` subscribes exactly the own-inbox wildcard
-  (``ecv1/{device}/{component}/main/cmd/#``) on the primary connection;
+- ``start()`` subscribes exactly the two own-inbox wildcards (D-U28): the
+  component-scope filter (``ecv1/{device}/{component}/cmd/#``) and the instance-scope
+  filter (``ecv1/{device}/{component}/+/cmd/#``) on the primary connection;
 - each built-in verb dispatches and replies with the pinned body shape - ``ping``
   (status + uptime), ``status`` (ping's body plus the per-instance ``instances[]``
   sample - omitted when the component reports none), ``reload-config`` (ack /
@@ -39,7 +40,10 @@ from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.messaging.messaging_client import MessagingClient
 from edgecommons.uns import UnsValidationError
 
-INBOX_FILTER = "ecv1/test-thing/TestComponent/main/cmd/#"
+# D-U28: the inbox subscribes both the component-scope and instance-scope cmd wildcards.
+COMPONENT_INBOX_FILTER = "ecv1/test-thing/TestComponent/cmd/#"
+INSTANCE_INBOX_FILTER = "ecv1/test-thing/TestComponent/+/cmd/#"
+INBOX_FILTERS = {COMPONENT_INBOX_FILTER, INSTANCE_INBOX_FILTER}
 REPLY_TO = "edgecommons/reply-test-1"
 
 
@@ -171,15 +175,15 @@ def h():
 
 def test_start_subscribes_the_own_inbox_wildcard(h):
     h.inbox.start()
-    assert h.messaging.subscribed_topics() == {INBOX_FILTER}, (
-        "start() must subscribe exactly the own-inbox cmd wildcard"
+    assert h.messaging.subscribed_topics() == INBOX_FILTERS, (
+        "start() must subscribe exactly the component- and instance-scope cmd wildcards"
     )
 
 
 def test_start_is_idempotent(h):
     h.inbox.start()
     h.inbox.start()
-    assert h.messaging.subscribed_topics() == {INBOX_FILTER}
+    assert h.messaging.subscribed_topics() == INBOX_FILTERS
 
 
 def test_missing_identity_disables_the_inbox(h):
@@ -236,6 +240,28 @@ def test_ping_replies_status_and_uptime(h):
     assert body["ok"] is True
     assert body["result"]["status"] == "RUNNING"
     assert body["result"]["uptimeSecs"] == 1234
+
+
+def test_component_scope_command_dispatches(h):
+    # D-U28: a command arriving on the component-scope inbox (.../cmd/{verb}, no
+    # instance) dispatches by verb extracted from the "/cmd/" marker.
+    h.uptime = 9
+    h.inbox.start()
+    component_topic = "ecv1/test-thing/TestComponent/cmd/ping"
+    h.messaging.simulate_message(component_topic, _request(CommandInbox.PING))
+    body = h.only_reply_body()
+    assert body["ok"] is True
+    assert body["result"]["uptimeSecs"] == 9
+
+
+def test_instance_scope_command_dispatches(h):
+    # D-U28: a command arriving on an instance-scope inbox (.../{instance}/cmd/{verb})
+    # also dispatches; the verb is taken after the "/cmd/" marker for either scope.
+    h.inbox.start()
+    h.messaging.simulate_message(
+        "ecv1/test-thing/TestComponent/cam-7/cmd/ping", _request(CommandInbox.PING)
+    )
+    assert h.only_reply_body()["ok"] is True
 
 
 def test_ping_is_answered_even_when_heartbeat_disabled(h):
@@ -419,7 +445,7 @@ def test_describe_includes_built_ins_custom_verbs_and_panels(h):
     result = body["result"]
     assert result["schemaVersion"] == "edgecommons.component.describe.v1"
     assert result["component"]["component"] == "TestComponent"
-    assert result["component"]["instance"] == "main"
+    assert "instance" not in result["component"]  # D-U28: component scope
     assert result["component"]["path"] == "test-thing"
     verbs = {entry["verb"]: entry["builtIn"] for entry in result["commands"]}
     assert verbs[CommandInbox.PING] is True
@@ -656,7 +682,7 @@ def test_handle_ignores_a_delivery_with_an_empty_verb(h):
     # ".../cmd/#" also matches the exact ".../cmd/" level (an empty trailing verb) -
     # nothing to dispatch there either.
     h.inbox.start()
-    h.inbox._handle(INBOX_FILTER[:-1], _request(CommandInbox.PING))
+    h.inbox._handle(INSTANCE_INBOX_FILTER[:-1], _request(CommandInbox.PING))
     assert not h.messaging.published
 
 
@@ -796,7 +822,11 @@ class TestCommandsJsonConformance:
         messaging = FakeMessaging()
         inbox = CommandInbox(config, messaging, lambda: 42, lambda: True, lambda: None)
         inbox.start()
-        assert messaging.subscribed_topics() == {vectors["inbox"]["filter"]}
+        # D-U28: the inbox subscribes both the instance-scope and component-scope filters.
+        assert messaging.subscribed_topics() == {
+            vectors["inbox"]["filter"],
+            vectors["inbox"]["componentFilter"],
+        }
 
     def _dispatch_case(self, case, vectors, *, uptime=42, reload_ok=True, redacted=None):
         config = self._harness_for(vectors)
@@ -866,9 +896,19 @@ class TestCommandsJsonConformance:
         assert reply.get_header().correlation_id == case["request"]["header"]["correlation_id"], (
             f"'{case['name']}' correlation_id must equal the request's"
         )
+        # The live responder stamps its own component-scope identity (D-U28: no instance
+        # key). Mirroring the Java conformance runner, the LIVE round trip asserts the
+        # reply BODY; the golden reply identity is a structural round-trip fixture
+        # (parses + re-serializes to itself), not the live reply's identity.
         assert reply.get_identity() is not None
-        assert reply.get_identity().to_dict() == golden["identity"], (
-            f"'{case['name']}' responder identity"
+        assert reply.get_identity().component == golden["identity"]["component"], (
+            f"'{case['name']}' responder component"
+        )
+        assert reply.get_identity().instance is None, (
+            f"'{case['name']}' responder identity is component scope (D-U28)"
+        )
+        assert MessageIdentity.from_dict(golden["identity"]).to_dict() == golden["identity"], (
+            f"'{case['name']}' golden reply identity must round-trip"
         )
         assert reply.get_body() == golden["body"], (
             f"'{case['name']}' reply body must equal a live inbox dispatch's output"

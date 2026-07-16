@@ -20,7 +20,7 @@ import java.util.Objects;
 
 /**
  * The library-owned {@code cfg} publisher (UNS-CANONICAL-DESIGN §4.3): announces the component's
- * effective (redacted) configuration on {@code ecv1/{device}/{component}/main/cfg} — once at
+ * effective (redacted) configuration on {@code ecv1/{device}/{component}/cfg} — once at
  * startup (after initialization completes) and again on every configuration change. The body is
  * {@code {"config": <effective config, redacted>}}; the {@code cfg} class is reserved, so the
  * publish goes through the privileged {@link com.mbreissi.edgecommons.messaging.ReservedPublisher}

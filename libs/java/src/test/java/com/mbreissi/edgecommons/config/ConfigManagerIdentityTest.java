@@ -52,7 +52,7 @@ class ConfigManagerIdentityTest {
         assertEquals("dallas/finishing/zone-3/gw-01", id.getPath());
         assertEquals("gw-01", id.getDevice());
         assertEquals("TestComponent", id.getComponent());
-        assertEquals(MessageIdentity.DEFAULT_INSTANCE, id.getInstance());
+        assertNull(id.getInstance());   // D‑U28: component identity is component-scoped
     }
 
     @Test
@@ -67,7 +67,7 @@ class ConfigManagerIdentityTest {
         assertEquals("thing-7", id.getPath());
         assertEquals("thing-7", id.getDevice());
         assertEquals("TestComponent", id.getComponent());
-        assertEquals("main", id.getInstance());
+        assertNull(id.getInstance());   // D‑U28: component identity is component-scoped
     }
 
     @Test
@@ -212,7 +212,8 @@ class ConfigManagerIdentityTest {
                  "identity":{"site":"dallas"}}""");
 
         JsonObject dict = cm.getComponentIdentity().toDict();
-        assertEquals(List.of("hier", "path", "component", "instance"), List.copyOf(dict.keySet()));
+        // D‑U28: component-scope identity omits the instance key entirely.
+        assertEquals(List.of("hier", "path", "component"), List.copyOf(dict.keySet()));
         assertEquals("dallas/gw-01", dict.get("path").getAsString());
     }
 }

@@ -312,7 +312,8 @@ describe("Message / MessageBuilder", () => {
     expect(obj.tags).toEqual({ region: "us" });
     // Canonical member order: header, identity, tags, body.
     expect(Object.keys(obj)).toEqual(["header", "identity", "tags", "body"]);
-    expect(msg.getIdentity()?.instance).toBe("main");
+    // D-U28: a config-stamped message with no per-message instance is component-scoped.
+    expect(msg.getIdentity()?.instance).toBeUndefined();
     expect(msg.getIdentity()?.component).toBe("opcua-adapter");
   });
 
@@ -324,8 +325,37 @@ describe("Message / MessageBuilder", () => {
     expect(msg.getIdentity()?.instance).toBe("kep1");
   });
 
-  it("withInstance rejects an empty token", () => {
-    expect(() => MessageBuilder.create("d", "1").withInstance("")).toThrow(/non-empty/);
+  it("fromObject leniently drops an identity whose instance is a reserved class token (D-U28)", () => {
+    // The MessageIdentity constructor rejects a reserved-token instance; the lenient fromObject
+    // parser catches that and returns undefined rather than propagating the throw.
+    const id = MessageIdentity.fromObject({
+      hier: [{ level: "device", value: "d" }],
+      component: "c",
+      instance: "state",
+    });
+    expect(id).toBeUndefined();
+  });
+
+  it("withInstance(empty/undefined) means component scope, not a throw (D-U28)", () => {
+    const empty = MessageBuilder.create("d", "1")
+      .withConfig({ parsed: { tags: {} }, componentIdentity: IDENTITY })
+      .withInstance("")
+      .build();
+    expect(empty.getIdentity()?.instance).toBeUndefined();
+    const none = MessageBuilder.create("d", "1")
+      .withConfig({ parsed: { tags: {} }, componentIdentity: IDENTITY })
+      .withInstance(undefined)
+      .build();
+    expect(none.getIdentity()?.instance).toBeUndefined();
+  });
+
+  it("withInstance rejects a reserved class token (D-U28)", () => {
+    expect(() =>
+      MessageBuilder.create("d", "1")
+        .withConfig({ parsed: { tags: {} }, componentIdentity: IDENTITY })
+        .withInstance("state")
+        .build(),
+    ).toThrow(/reserved UNS class token/);
   });
 
   it("withIdentity overrides the config identity verbatim (instance token not applied)", () => {
@@ -356,7 +386,7 @@ describe("Message / MessageBuilder", () => {
 });
 
 describe("MessageIdentity", () => {
-  it("computes path, device, and defaults instance to 'main'", () => {
+  it("computes path, device, and leaves instance undefined for component scope (D-U28)", () => {
     const id = new MessageIdentity(
       [
         { level: "site", value: "dallas" },
@@ -367,15 +397,22 @@ describe("MessageIdentity", () => {
     );
     expect(id.path).toBe("dallas/zone-3/gw-01");
     expect(id.device).toBe("gw-01");
-    expect(id.instance).toBe("main");
+    expect(id.instance).toBeUndefined(); // D-U28: no `main` default
     expect(id.hier).toHaveLength(3);
   });
 
-  it("withInstance returns a copy with the new token and validates it", () => {
+  it("withInstance returns a copy with the new token; empty ⇒ component scope (D-U28)", () => {
     const id = IDENTITY.withInstance("kep1");
     expect(id.instance).toBe("kep1");
-    expect(IDENTITY.instance).toBe("main"); // original untouched
-    expect(() => IDENTITY.withInstance("")).toThrow(/non-empty/);
+    expect(IDENTITY.instance).toBeUndefined(); // original untouched (component scope)
+    expect(IDENTITY.withInstance("").instance).toBeUndefined(); // empty ⇒ component scope, no throw
+  });
+
+  it("rejects a reserved class token as an instance (D-U28)", () => {
+    expect(() => IDENTITY.withInstance("cmd")).toThrow(/reserved UNS class token/);
+    expect(() => new MessageIdentity([{ level: "device", value: "gw-01" }], "comp", "metric")).toThrow(
+      /reserved UNS class token/,
+    );
   });
 
   it("constructor validates hier and component", () => {
@@ -385,22 +422,25 @@ describe("MessageIdentity", () => {
     expect(() => new MessageIdentity([{ level: "l", value: "v" }], "")).toThrow(/component must be non-empty/);
   });
 
-  it("toObject emits the canonical member order hier, path, component, instance", () => {
+  it("toObject omits instance for component scope, keeps canonical order when present (D-U28)", () => {
+    // Component scope: the `instance` key is omitted entirely.
     const obj = IDENTITY.toObject();
-    expect(Object.keys(obj)).toEqual(["hier", "path", "component", "instance"]);
+    expect(Object.keys(obj)).toEqual(["hier", "path", "component"]);
     expect(obj.hier).toEqual([
       { level: "site", value: "dallas" },
       { level: "device", value: "gw-01" },
     ]);
+    // Instance scope: the `instance` key appears last in canonical order.
+    expect(Object.keys(IDENTITY.withInstance("kep1").toObject())).toEqual(["hier", "path", "component", "instance"]);
   });
 
-  it("fromObject is lenient: recomputes a missing path, defaults a missing instance", () => {
+  it("fromObject is lenient: recomputes a missing path, a missing instance ⇒ component scope (D-U28)", () => {
     const id = MessageIdentity.fromObject({
       hier: [{ level: "device", value: "gw-01" }],
       component: "comp",
     });
     expect(id?.path).toBe("gw-01");
-    expect(id?.instance).toBe("main");
+    expect(id?.instance).toBeUndefined();
   });
 
   it("fromObject takes a present path as-is (publisher authoritative)", () => {

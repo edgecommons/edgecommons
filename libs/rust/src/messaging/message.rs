@@ -23,7 +23,7 @@
 //! The top-level [`MessageIdentity`] element (UNS-CANONICAL-DESIGN §1) carries the
 //! publisher's enterprise-hierarchy identity: the ordered `hier` levels (last entry =
 //! the device), the precomputed `path`, the `component` UNS token, and the
-//! per-message `instance` (default `"main"`). It is **optional on the wire**: a
+//! per-message `instance` (`None` ⇒ component scope, D-U28). It is **optional on the wire**: a
 //! message built without a config-bound builder (the CONFIG_COMPONENT bootstrap
 //! request, raw bridging of external systems) legally omits it.
 //!
@@ -228,32 +228,32 @@ pub struct HierEntry {
 ///   recomputed.
 /// - `component` — the publishing component's UNS token (the sanitized short name,
 ///   the existing `{ComponentName}` semantics — D-U18).
-/// - `instance` — the per-message instance token, never empty (default
-///   [`Self::DEFAULT_INSTANCE`]).
+/// - `instance` — the per-message instance token, or `None` for component/global
+///   scope (D-U28); never a reserved UNS class token.
 ///
 /// Serialization emits the canonical member order `hier, path, component, instance`
-/// (field order = emit order). Deserialization ([`Self::from_wire`]) is deliberately
-/// lenient: a malformed identity yields `None` plus a WARN log and the enclosing
-/// message still delivers.
+/// (field order = emit order; `instance` is **omitted** when `None` — D-U28).
+/// Deserialization ([`Self::from_wire`]) is deliberately lenient: a malformed
+/// identity yields `None` plus a WARN log and the enclosing message still delivers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MessageIdentity {
     hier: Vec<HierEntry>,
     path: String,
     component: String,
-    instance: String,
+    /// D-U28: `None` ⇒ component/global scope (the `instance` wire key is omitted);
+    /// a present token is never a reserved UNS class token.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instance: Option<String>,
 }
 
 impl MessageIdentity {
-    /// The default per-message instance token, used when no instance is specified.
-    pub const DEFAULT_INSTANCE: &'static str = "main";
-
     /// Creates a validated identity, precomputing `path` as the `'/'`-join of the
-    /// `hier` values. An absent/empty `instance` defaults to
-    /// [`Self::DEFAULT_INSTANCE`].
+    /// `hier` values. An absent/empty `instance` means component/global scope
+    /// (D-U28: the identity carries no `instance`).
     ///
     /// # Errors
     /// [`EdgeCommonsError::Messaging`] when `hier` is empty, an entry's level/value is empty,
-    /// or `component` is empty.
+    /// `component` is empty, or a present `instance` equals a reserved UNS class token.
     pub fn new(
         hier: Vec<HierEntry>,
         component: impl Into<String>,
@@ -288,10 +288,7 @@ impl MessageIdentity {
             .map(|e| e.value.as_str())
             .collect::<Vec<_>>()
             .join("/");
-        let instance = match instance {
-            Some(i) if !i.is_empty() => i,
-            _ => Self::DEFAULT_INSTANCE.to_string(),
-        };
+        let instance = normalize_instance(instance.as_deref())?;
         Ok(MessageIdentity {
             hier,
             path,
@@ -315,9 +312,10 @@ impl MessageIdentity {
         &self.component
     }
 
-    /// Returns the per-message instance token (never empty).
-    pub fn instance(&self) -> &str {
-        &self.instance
+    /// Returns the per-message instance token, or `None` for component/global scope
+    /// (D-U28).
+    pub fn instance(&self) -> Option<&str> {
+        self.instance.as_deref()
     }
 
     /// Computed accessor — the last `hier` entry's value. NOT a wire field: the
@@ -327,34 +325,28 @@ impl MessageIdentity {
         &self.hier[self.hier.len() - 1].value
     }
 
-    /// Returns a copy of this identity with a different per-message instance token.
+    /// Returns a copy of this identity with a different per-message instance token,
+    /// or component/global scope when `instance` is empty (D-U28).
     ///
     /// # Errors
-    /// [`EdgeCommonsError::Messaging`] when `instance` is empty.
+    /// [`EdgeCommonsError::Messaging`] when a present `instance` equals a reserved UNS class token.
     pub fn with_instance(&self, instance: impl Into<String>) -> Result<MessageIdentity> {
         let instance = instance.into();
-        if instance.is_empty() {
-            return Err(EdgeCommonsError::Messaging(
-                "MessageIdentity instance must be non-empty".to_string(),
-            ));
-        }
         Ok(MessageIdentity {
             hier: self.hier.clone(),
             path: self.path.clone(),
             component: self.component.clone(),
-            instance,
+            instance: normalize_instance(Some(&instance))?,
         })
     }
 
     /// Infallible internal variant of [`Self::with_instance`] for the builder's
-    /// stamping site (empty falls back to [`Self::DEFAULT_INSTANCE`]).
-    pub(crate) fn with_instance_or_default(&self, instance: &str) -> MessageIdentity {
-        let instance = if instance.is_empty() {
-            Self::DEFAULT_INSTANCE
-        } else {
-            instance
-        }
-        .to_string();
+    /// stamping site: an empty/absent token means component scope (D-U28: `None`).
+    /// A present token is not re-validated here (the builder is app-driven and
+    /// `build()` is infallible); validation happens at the [`Self::new`] /
+    /// [`Self::with_instance`] construction sites.
+    pub(crate) fn with_instance_infallible(&self, instance: Option<&str>) -> MessageIdentity {
+        let instance = instance.filter(|s| !s.is_empty()).map(str::to_string);
         MessageIdentity {
             hier: self.hier.clone(),
             path: self.path.clone(),
@@ -363,12 +355,13 @@ impl MessageIdentity {
         }
     }
 
-    /// Lenient wire-form parser (mirrors Java `MessageIdentity.fromDict`): a missing
-    /// `instance` defaults to [`Self::DEFAULT_INSTANCE`]; a missing `path` is
+    /// Lenient wire-form parser (mirrors Java `MessageIdentity.fromDict`): a missing/empty
+    /// `instance` means component scope (`None`, D-U28); a missing `path` is
     /// recomputed from the hier values (a present one is taken as-is — the publisher
     /// is authoritative); a malformed identity (non-object element,
-    /// missing/empty/non-array `hier`, malformed hier entries, or a missing
-    /// `component`) yields `None` plus a WARN log so the enclosing message still
+    /// missing/empty/non-array `hier`, malformed hier entries, a missing
+    /// `component`, or an `instance` equal to a reserved class token) yields `None`
+    /// plus a WARN log so the enclosing message still
     /// delivers.
     pub fn from_wire(src: &Value) -> Option<MessageIdentity> {
         let Some(obj) = src.as_object() else {
@@ -422,15 +415,50 @@ impl MessageIdentity {
                 .collect::<Vec<_>>()
                 .join("/"),
         };
-        let instance = non_empty_str(obj.get("instance"))
-            .unwrap_or(Self::DEFAULT_INSTANCE)
-            .to_string();
+        // D-U28: a missing/empty instance means component scope; a present instance
+        // that is a reserved class token makes the identity malformed (dropped
+        // leniently, mirroring the Java canonical routing through the constructor).
+        let instance = match non_empty_str(obj.get("instance")) {
+            None => None,
+            Some(token) => match normalize_instance(Some(token)) {
+                Ok(instance) => instance,
+                Err(_) => {
+                    tracing::warn!(
+                        instance = token,
+                        "Malformed message identity: 'instance' is a reserved UNS class token; \
+                         dropping identity"
+                    );
+                    return None;
+                }
+            },
+        };
         Some(MessageIdentity {
             hier,
             path,
             component: component.to_string(),
             instance,
         })
+    }
+}
+
+/// D-U28 instance normalization: an empty/absent token means component/global scope
+/// (`None`); a present token may not equal a reserved UNS class token
+/// (`state`/`metric`/`cfg`/`log`/`data`/`evt`/`cmd`/`app`), which would collapse the
+/// component-scope and instance-scope UNS templates and defeat the reserved-class guard.
+///
+/// # Errors
+/// [`EdgeCommonsError::Messaging`] when a present token is a reserved UNS class token.
+fn normalize_instance(instance: Option<&str>) -> Result<Option<String>> {
+    match instance.filter(|s| !s.is_empty()) {
+        None => Ok(None),
+        Some(token) => {
+            if crate::uns::UnsClass::from_token(token).is_some() {
+                return Err(EdgeCommonsError::Messaging(format!(
+                    "MessageIdentity instance '{token}' must not be a reserved UNS class token"
+                )));
+            }
+            Ok(Some(token.to_string()))
+        }
     }
 }
 
@@ -947,7 +975,9 @@ fn to_proto_identity(identity: &MessageIdentity) -> pb::Identity {
             .collect(),
         path: identity.path().to_string(),
         component: identity.component().to_string(),
-        instance: identity.instance().to_string(),
+        // D-U28: component scope omits the instance; proto3's empty-string default
+        // IS the "absent" wire form (parsed back to None by from_proto_identity).
+        instance: identity.instance().unwrap_or_default().to_string(),
     }
 }
 
@@ -1613,8 +1643,8 @@ fn extend_extra(obj: &mut Map<String, Value>, extra: BTreeMap<String, pb::EcValu
 /// §1.4): an explicit [`Self::identity`] override wins and is stamped verbatim;
 /// otherwise, when the builder is config-bound ([`Self::from_config`]), the
 /// component's resolved identity is stamped with the per-message instance token
-/// ([`Self::instance`], default [`MessageIdentity::DEFAULT_INSTANCE`]); with
-/// neither, `identity` stays `None` (bootstrap/raw messages legally omit it).
+/// ([`Self::instance`]; absent/empty ⇒ component scope, D-U28); with neither,
+/// `identity` stays `None` (bootstrap/raw messages legally omit it).
 #[derive(Debug, Clone)]
 pub struct MessageBuilder {
     header: MessageHeader,
@@ -1829,10 +1859,10 @@ impl MessageBuilder {
         self
     }
 
-    /// Set the per-message instance token stamped into the identity element
-    /// (default [`MessageIdentity::DEFAULT_INSTANCE`]). Only takes effect when a
-    /// config-resolved identity is stamped (an explicit [`Self::identity`] override
-    /// is stamped verbatim). An empty token falls back to the default.
+    /// Set the per-message instance token stamped into the identity element. An
+    /// absent/empty token means component scope (D-U28: the identity carries no
+    /// `instance`). Only takes effect when a config-resolved identity is stamped (an
+    /// explicit [`Self::identity`] override is stamped verbatim).
     pub fn instance(mut self, instance: impl Into<String>) -> Self {
         self.instance = Some(instance.into());
         self
@@ -1869,11 +1899,8 @@ impl MessageBuilder {
             Some(identity_override)
         } else {
             self.config_identity.map(|component_identity| {
-                component_identity.with_instance_or_default(
-                    self.instance
-                        .as_deref()
-                        .unwrap_or(MessageIdentity::DEFAULT_INSTANCE),
-                )
+                // D-U28: an absent/empty instance token stamps component scope (no instance).
+                component_identity.with_instance_infallible(self.instance.as_deref())
             })
         };
         Message {
@@ -2288,7 +2315,8 @@ mod tests {
         let value: Value = serde_json::to_value(&m).unwrap();
         assert_eq!(value["identity"]["path"], "dallas/gw-01");
         assert_eq!(value["identity"]["component"], "opcua-adapter");
-        assert_eq!(value["identity"]["instance"], "main");
+        // D-U28: test_identity() is component scope (built with None) - the instance key is omitted.
+        assert!(value["identity"].get("instance").is_none());
         assert_eq!(value["identity"]["hier"][1]["value"], "gw-01");
 
         let back = Message::from_slice(&bytes).unwrap();
@@ -2301,11 +2329,15 @@ mod tests {
         assert_eq!(id.device(), "gw-01");
         assert_eq!(id.path(), "dallas/gw-01");
         assert_eq!(id.component(), "opcua-adapter");
-        assert_eq!(id.instance(), "main");
+        // D-U28: built with None => component scope.
+        assert_eq!(id.instance(), None);
         let kep = id.with_instance("kep1").unwrap();
-        assert_eq!(kep.instance(), "kep1");
+        assert_eq!(kep.instance(), Some("kep1"));
         assert_eq!(kep.device(), "gw-01");
-        assert!(id.with_instance("").is_err());
+        // D-U28: an empty token is component scope (no longer an error).
+        assert_eq!(id.with_instance("").unwrap().instance(), None);
+        // D-U28: a reserved class token is rejected.
+        assert!(id.with_instance("state").is_err());
     }
 
     #[test]
@@ -2353,6 +2385,78 @@ mod tests {
     }
 
     #[test]
+    fn d_u28_reserved_class_token_instance_is_rejected() {
+        // A present instance may not equal any of the eight UNS class tokens (D-U28).
+        for token in ["state", "metric", "cfg", "log", "data", "evt", "cmd", "app"] {
+            assert!(
+                MessageIdentity::new(
+                    vec![HierEntry {
+                        level: "device".into(),
+                        value: "gw-01".into()
+                    }],
+                    "c",
+                    Some(token.to_string()),
+                )
+                .is_err(),
+                "instance '{token}' must be rejected"
+            );
+        }
+        // A non-class token is fine.
+        assert_eq!(
+            MessageIdentity::new(
+                vec![HierEntry {
+                    level: "device".into(),
+                    value: "gw-01".into()
+                }],
+                "c",
+                Some("kep1".to_string()),
+            )
+            .unwrap()
+            .instance(),
+            Some("kep1")
+        );
+    }
+
+    #[test]
+    fn d_u28_component_scope_identity_omits_instance_and_round_trips() {
+        // A component-scope identity serializes without the `instance` key and survives
+        // the protobuf round trip as component scope (empty proto instance ⇒ None).
+        let id = MessageIdentity::new(
+            vec![HierEntry {
+                level: "device".into(),
+                value: "gw-01".into(),
+            }],
+            "opcua-adapter",
+            None,
+        )
+        .unwrap();
+        let m = MessageBuilder::new("state", "1.0")
+            .identity(id)
+            .payload(json!({ "status": "RUNNING" }))
+            .build();
+        assert!(
+            serde_json::to_value(&m).unwrap()["identity"]
+                .get("instance")
+                .is_none()
+        );
+        let back = Message::from_slice(&m.to_vec().unwrap()).unwrap();
+        assert_eq!(back.identity.unwrap().instance(), None);
+    }
+
+    #[test]
+    fn d_u28_wire_parse_drops_reserved_instance_token() {
+        // A peer sending an instance equal to a class token yields a dropped (None) identity.
+        assert!(
+            MessageIdentity::from_wire(&json!({
+                "hier": [ { "level": "device", "value": "gw-01" } ],
+                "component": "c",
+                "instance": "state"
+            }))
+            .is_none()
+        );
+    }
+
+    #[test]
     fn lenient_identity_parse_drops_malformed_and_defaults_missing() {
         // Missing instance -> "main"; missing path -> recomputed.
         let parsed = MessageIdentity::from_wire(&json!({
@@ -2360,7 +2464,8 @@ mod tests {
             "component": "c"
         }))
         .unwrap();
-        assert_eq!(parsed.instance(), "main");
+        // D-U28: a missing instance parses to component scope (None).
+        assert_eq!(parsed.instance(), None);
         assert_eq!(parsed.path(), "gw-01");
 
         // A present path is authoritative (taken as-is).
@@ -2514,7 +2619,8 @@ mod tests {
         let identity = m.identity.expect("config-bound builder stamps identity");
         assert_eq!(identity.device(), "thing-9");
         assert_eq!(identity.component(), "MyComp");
-        assert_eq!(identity.instance(), "main");
+        // D-U28: a config-stamped message with no explicit instance is component scope.
+        assert_eq!(identity.instance(), None);
         let tags = m.tags.expect("config-bound builder stamps tags");
         assert_eq!(tags.extra.get("site"), Some(&json!("f1")));
         assert!(
@@ -2530,22 +2636,23 @@ mod tests {
             .from_config(&cfg)
             .instance("kep1")
             .build();
-        assert_eq!(m.identity.unwrap().instance(), "kep1");
+        assert_eq!(m.identity.unwrap().instance(), Some("kep1"));
 
         // An explicit override is stamped verbatim; the instance token is ignored.
+        // (test_identity() is component scope, D-U28.)
         let m = MessageBuilder::new("N", "1.0")
             .from_config(&cfg)
             .identity(test_identity())
             .instance("kep1")
             .build();
-        assert_eq!(m.identity.unwrap().instance(), "main");
+        assert_eq!(m.identity.unwrap().instance(), None);
 
-        // An empty instance token falls back to the default.
+        // D-U28: an empty instance token means component scope (no instance).
         let m = MessageBuilder::new("N", "1.0")
             .from_config(&cfg)
             .instance("")
             .build();
-        assert_eq!(m.identity.unwrap().instance(), "main");
+        assert_eq!(m.identity.unwrap().instance(), None);
     }
 
     #[test]

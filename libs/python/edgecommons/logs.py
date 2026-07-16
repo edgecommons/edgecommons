@@ -18,7 +18,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Optional
 
-from edgecommons.messaging.identity import MessageIdentity
 from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.messaging.qos import Qos
 from edgecommons.uns import Uns, UnsClass
@@ -255,10 +254,8 @@ class LogService:
         identity = config_manager.get_component_identity()
         uns = None
         if identity is not None:
-            uns = Uns(
-                identity.with_instance(MessageIdentity.DEFAULT_INSTANCE),
-                config_manager.is_topic_include_root(),
-            )
+            # D-U28: log is component scope (the resolved identity carries no instance).
+            uns = Uns(identity, config_manager.is_topic_include_root())
         with self._lock:
             if publish_config.queue.max_records != self._config.queue.max_records:
                 self._resize_queue_locked(publish_config.queue.max_records)
@@ -400,8 +397,7 @@ class LogService:
         topic = uns.topic(UnsClass.LOG, topic_level)
         msg = (
             MessageBuilder.create(LOG_HEADER_NAME, LOG_HEADER_VERSION)
-            .with_config(config_manager)
-            .with_instance(MessageIdentity.DEFAULT_INSTANCE)
+            .with_config(config_manager)   # D-U28: log is component scope (no instance)
             .with_timestamp(body["timestamp"])
             .with_timestamp_ms(_epoch_millis(body["timestamp"]))
             .with_payload(body)

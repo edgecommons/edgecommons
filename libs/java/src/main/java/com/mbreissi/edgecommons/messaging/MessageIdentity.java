@@ -28,8 +28,8 @@ import java.util.stream.Collectors;
  *       recomputed.</li>
  *   <li>{@code component} — the publishing component's UNS token (the sanitized short name,
  *       i.e. the existing {@code {ComponentName}} semantics).</li>
- *   <li>{@code instance} — the per-message instance token, never {@code null}
- *       (default {@value #DEFAULT_INSTANCE}).</li>
+ *   <li>{@code instance} — the per-message instance token, or {@code null} for
+ *       component/global scope (D‑U28); never a reserved class token.</li>
  * </ul>
  *
  * <p>Serialization ({@link #toDict()}) emits the canonical member order
@@ -41,8 +41,13 @@ public final class MessageIdentity {
 
     private static final Logger LOGGER = LogManager.getLogger(MessageIdentity.class);
 
-    /** The default per-message instance token, used when no instance is specified. */
-    public static final String DEFAULT_INSTANCE = "main";
+    /**
+     * Class tokens an instance id may not equal (D‑U28): keeping the component-scope and
+     * instance-scope UNS subscription templates disjoint, and letting the reserved-class guard
+     * locate the class unambiguously.
+     */
+    private static final java.util.Set<String> RESERVED_CLASS_TOKENS =
+            java.util.Set.of("state", "metric", "cfg", "log", "data", "evt", "cmd", "app");
 
     /**
      * One level of the enterprise hierarchy: the level's configured {@code level} name and this
@@ -63,7 +68,7 @@ public final class MessageIdentity {
     private final List<HierEntry> hier;   // immutable, size >= 1; last = device
     private final String path;            // precomputed '/'-join of the hier values
     private final String component;       // UNS component token (sanitized short name)
-    private final String instance;        // never null
+    private final String instance;        // null ⇒ component scope (D‑U28); never a class token
 
     /**
      * Creates a validated identity, precomputing {@code path} as the {@code '/'}-join of the
@@ -71,7 +76,7 @@ public final class MessageIdentity {
      *
      * @param hier      the ordered hierarchy entries (non-null, size &gt;= 1; last entry = device)
      * @param component the component UNS token (non-null, non-empty)
-     * @param instance  the instance token, or {@code null} for {@value #DEFAULT_INSTANCE}
+     * @param instance  the instance token, or {@code null}/empty for component/global scope (D‑U28)
      * @throws IllegalArgumentException if {@code hier} is null/empty or {@code component} is
      *                                  null/empty (entry-level validation is in {@link HierEntry})
      */
@@ -95,7 +100,12 @@ public final class MessageIdentity {
                 ? path
                 : this.hier.stream().map(HierEntry::value).collect(Collectors.joining("/"));
         this.component = component;
-        this.instance = (instance == null || instance.isEmpty()) ? DEFAULT_INSTANCE : instance;
+        // D‑U28: absent/empty ⇒ component scope (null); a present instance may not be a class token.
+        if (instance != null && !instance.isEmpty() && RESERVED_CLASS_TOKENS.contains(instance)) {
+            throw new IllegalArgumentException(
+                    "MessageIdentity instance '" + instance + "' must not be a reserved UNS class token");
+        }
+        this.instance = (instance == null || instance.isEmpty()) ? null : instance;
     }
 
     /** Returns the immutable, ordered hierarchy entries (the last entry is the device). */
@@ -113,7 +123,7 @@ public final class MessageIdentity {
         return component;
     }
 
-    /** Returns the per-message instance token (never {@code null}). */
+    /** Returns the per-message instance token, or {@code null} for component/global scope (D‑U28). */
     public String getInstance() {
         return instance;
     }
@@ -127,15 +137,13 @@ public final class MessageIdentity {
     }
 
     /**
-     * Returns a copy of this identity with a different per-message instance token.
+     * Returns a copy of this identity with a different per-message instance token, or component
+     * scope when {@code instance} is {@code null}/empty (D‑U28).
      *
-     * @param instance the instance token (non-null, non-empty)
-     * @throws IllegalArgumentException if {@code instance} is null or empty
+     * @param instance the instance token, or {@code null}/empty for component/global scope
+     * @throws IllegalArgumentException if {@code instance} is a reserved class token
      */
     public MessageIdentity withInstance(String instance) {
-        if (instance == null || instance.isEmpty()) {
-            throw new IllegalArgumentException("MessageIdentity instance must be non-empty");
-        }
         return new MessageIdentity(hier, path, component, instance);
     }
 
@@ -157,12 +165,14 @@ public final class MessageIdentity {
         retVal.add("hier", hierArray);
         retVal.addProperty("path", path);
         retVal.addProperty("component", component);
-        retVal.addProperty("instance", instance);
+        if (instance != null) {
+            retVal.addProperty("instance", instance);   // D‑U28: omitted when component-scoped
+        }
         return retVal;
     }
 
     /**
-     * Lenient wire-form parser: a missing {@code instance} defaults to {@value #DEFAULT_INSTANCE};
+     * Lenient wire-form parser: a missing {@code instance} means component scope (absent, D‑U28);
      * a missing {@code path} is recomputed from the hier values (a present one is taken as-is —
      * the publisher is authoritative); a malformed identity (missing/empty/non-array {@code hier},
      * malformed hier entries, or a missing {@code component}) yields {@code null} plus a WARN log
@@ -203,7 +213,7 @@ public final class MessageIdentity {
                 return null;
             }
             String path = asNonEmptyString(src.get("path"));         // null -> recomputed
-            String instance = asNonEmptyString(src.get("instance")); // null -> DEFAULT_INSTANCE
+            String instance = asNonEmptyString(src.get("instance")); // null -> component scope (D‑U28)
             return new MessageIdentity(hier, path, component, instance);
         } catch (RuntimeException e) {
             LOGGER.warn("Malformed message identity ({}); dropping identity", e.getMessage());

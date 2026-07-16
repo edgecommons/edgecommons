@@ -1,6 +1,6 @@
 //! Integration test for the heartbeat UNS `state` keepalive against a live broker
 //! (UNS-CANONICAL-DESIGN §4.3, D-U14): the full runtime publishes
-//! `ecv1/{device}/{component}/main/state` each tick through the privileged
+//! `ecv1/{device}/{component}/state` each tick through the privileged
 //! reserved-publish seam.
 //!
 //! Gated: no-op unless `EDGECOMMONS_IT_MQTT=1` is set. Logs go to console
@@ -72,7 +72,7 @@ async fn heartbeat_publishes_uns_state_keepalive() {
 
     // A unique thing name isolates this run's UNS topics on the shared broker.
     let thing = format!("hb-thing-{}", Uuid::new_v4());
-    let state_topic = format!("ecv1/{thing}/HbIt/main/state");
+    let state_topic = format!("ecv1/{thing}/HbIt/state");
 
     // Observer client on the state topic.
     let mc = messaging_config(&format!("it-hb-obs-{}", Uuid::new_v4()));
@@ -173,7 +173,7 @@ async fn heartbeat_publishes_uns_state_keepalive() {
             .expect("state envelope carries identity");
         assert_eq!(identity.device(), thing);
         assert_eq!(identity.component(), "HbIt");
-        assert_eq!(identity.instance(), "main");
+        assert_eq!(identity.instance(), None);
     }
 
     // Dropping the runtime publishes the best-effort STOPPED state.

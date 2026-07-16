@@ -189,7 +189,8 @@ final class UnsTestVectors {
                     "'" + name + "' pseudo-component token");
             MessageIdentity bcast = new MessageIdentity(
                     List.of(new MessageIdentity.HierEntry("device", input.get("device").getAsString())),
-                    input.get("component").getAsString(), input.get("instance").getAsString());
+                    input.get("component").getAsString(),
+                    input.has("instance") ? input.get("instance").getAsString() : null);   // D‑U28: absent ⇒ component scope
             String topic = new Uns(bcast, input.get("includeRoot").getAsBoolean())
                     .topic(UnsClass.fromToken(input.get("class").getAsString()),
                             input.get("channel").getAsString());
@@ -246,11 +247,16 @@ final class UnsTestVectors {
         MessageIdentity identity = new MessageIdentity(
                 List.of(new MessageIdentity.HierEntry("device", input.get("device").getAsString())),
                 input.get("component").getAsString(), input.get("instance").getAsString());
-        String filter = new Uns(identity, input.get("includeRoot").getAsBoolean())
-                .filter(UnsClass.fromToken(input.get("class").getAsString()),
-                        new UnsScope(null, identity.getDevice(), identity.getComponent(),
-                                identity.getInstance()));
+        Uns inboxUns = new Uns(identity, input.get("includeRoot").getAsBoolean());
+        UnsScope inboxScope = new UnsScope(null, identity.getDevice(), identity.getComponent(),
+                identity.getInstance());
+        UnsClass inboxClass = UnsClass.fromToken(input.get("class").getAsString());
+        // D‑U28: the inbox subscribes both the instance-scope and the component-scope cmd filters.
+        String filter = inboxUns.filter(inboxClass, inboxScope);
+        String componentFilter = inboxUns.filter(inboxClass, inboxScope, false);
         assertEquals(inbox.get("filter").getAsString(), filter, "inbox filter");
+        assertEquals(inbox.get("componentFilter").getAsString(), componentFilter,
+                "inbox component-scope filter");
 
         // ---- a LIVE inbox with the pinned action seams the vectors document ----
         JsonArray verbs = doc.getAsJsonArray("verbs");
@@ -266,8 +272,9 @@ final class UnsTestVectors {
         CommandInbox live = new CommandInbox(config, messaging,
                 () -> 42L, () -> true, pinnedConfig::deepCopy);
         live.start();
-        assertEquals(Set.of(filter), messaging.getSubscribedTopics(),
-                "the live inbox must subscribe exactly the pinned filter");
+        assertEquals(Set.of(filter, componentFilter), messaging.getSubscribedTopics(),
+                "the live inbox must subscribe exactly the pinned instance- and component-scope"
+                        + " filters");
 
         for (int i = 0; i < verbs.size(); i++) {
             JsonObject c = verbs.get(i).getAsJsonObject();
@@ -413,7 +420,7 @@ final class UnsTestVectors {
         }
         MessageIdentity identity = new MessageIdentity(hier,
                 ConfigManager.sanitize(input.get("component").getAsString()),
-                input.get("instance").getAsString());
+                input.has("instance") ? input.get("instance").getAsString() : null);   // D‑U28: absent ⇒ component scope
         UnsClass cls = UnsClass.fromToken(input.get("class").getAsString());
         assertNotNull(cls, "build input class token '" + input.get("class").getAsString() + "'");
         String channel = input.has("channel") ? input.get("channel").getAsString() : null;

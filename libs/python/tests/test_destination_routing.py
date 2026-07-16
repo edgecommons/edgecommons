@@ -68,7 +68,7 @@ def test_heartbeat_local_destination_publishes_locally():
     _heartbeat(fm, "local")._publish_state("RUNNING", include_uptime=True)
     assert len(fm.local) == 1 and len(fm.iot) == 0
     topic, message = fm.local[0]
-    assert topic == "ecv1/thing/comp/main/state"
+    assert topic == "ecv1/thing/comp/state"  # D-U28: component scope
     assert message.get_body()["status"] == "RUNNING"
     assert "uptimeSecs" in message.get_body()
 

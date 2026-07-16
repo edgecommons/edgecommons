@@ -221,8 +221,8 @@ class EdgeCommonsLifecycleTest {
 
         gg = bringUp("com.test.RepubComponent", "repub-thing", appCfg, msgCfg);
 
-        String stateTopic = "ecv1/repub-thing/RepubComponent/main/state";
-        String cfgTopic = "ecv1/repub-thing/RepubComponent/main/cfg";
+        String stateTopic = "ecv1/repub-thing/RepubComponent/state";
+        String cfgTopic = "ecv1/repub-thing/RepubComponent/cfg";
         java.util.List<com.mbreissi.edgecommons.messaging.Message> states =
                 new java.util.concurrent.CopyOnWriteArrayList<>();
         java.util.List<com.mbreissi.edgecommons.messaging.Message> cfgs =
@@ -231,10 +231,10 @@ class EdgeCommonsLifecycleTest {
         gg.getMessaging().subscribe(cfgTopic, (topic, message) -> cfgs.add(message));
         try {
             com.google.gson.JsonObject empty = new com.google.gson.JsonObject();
-            gg.getMessaging().publish("ecv1/repub-thing/_bcast/main/cmd/republish-state",
+            gg.getMessaging().publish("ecv1/repub-thing/_bcast/cmd/republish-state",
                     com.mbreissi.edgecommons.messaging.MessageBuilder
                             .create("republish-state", "1.0").withPayload(empty).build());
-            gg.getMessaging().publish("ecv1/repub-thing/_bcast/main/cmd/republish-cfg",
+            gg.getMessaging().publish("ecv1/repub-thing/_bcast/cmd/republish-cfg",
                     com.mbreissi.edgecommons.messaging.MessageBuilder
                             .create("republish-cfg", "1.0").withPayload(empty).build());
 

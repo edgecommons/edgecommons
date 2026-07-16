@@ -5,8 +5,8 @@ Builder for creating Message instances with fluent API.
 explicit :meth:`MessageBuilder.with_identity` override wins; otherwise, when a config
 service is present, the component's resolved identity
 (``ConfigManager.get_component_identity()``) is stamped with the per-message instance
-token (:meth:`MessageBuilder.with_instance`, default ``"main"``); with neither,
-``identity`` stays ``None`` (bootstrap/raw messages legally omit it).
+token (:meth:`MessageBuilder.with_instance`; absent ⇒ component scope, D-U28); with
+neither, ``identity`` stays ``None`` (bootstrap/raw messages legally omit it).
 """
 import json
 from typing import TYPE_CHECKING, Optional
@@ -188,16 +188,15 @@ class MessageBuilder:
         self.reply_to = reply_to
         return self
 
-    def with_instance(self, instance: str) -> 'MessageBuilder':
-        """Sets the per-message instance token stamped into the identity element
-        (default ``"main"``). Only takes effect when an identity is stamped (a config
+    def with_instance(self, instance: Optional[str]) -> 'MessageBuilder':
+        """Sets the per-message instance token stamped into the identity element. A
+        ``None``/empty token means component scope (D-U28: the identity carries no
+        ``instance`` key). Only takes effect when an identity is stamped (a config
         service is present; an explicit identity override is stamped verbatim).
 
-        :raises ValueError: if ``instance`` is ``None`` or empty
+        :param instance: the instance token, or ``None``/empty for component/global scope
         """
-        if not instance:
-            raise ValueError("instance must be non-empty")
-        self.instance = instance
+        self.instance = instance if instance else None
         return self
 
     def with_identity(self, identity: Optional[MessageIdentity]) -> 'MessageBuilder':
@@ -228,9 +227,8 @@ class MessageBuilder:
         elif self.config_service is not None:
             component_identity = self.config_service.get_component_identity()
             if component_identity is not None:
-                message.identity = component_identity.with_instance(
-                    self.instance if self.instance else MessageIdentity.DEFAULT_INSTANCE
-                )
+                # D-U28: a None per-message instance ⇒ component scope (no instance key).
+                message.identity = component_identity.with_instance(self.instance)
 
         if isinstance(self.payload, str):
             try:

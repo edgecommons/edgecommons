@@ -259,8 +259,8 @@ async fn build_target(
         "log" => log_target()?,
         "messaging" => {
             // UNS §4.3: the messaging target publishes the reserved `metric` class
-            // on ecv1/{device}/{component}/main/metric/{name} — it needs the
-            // crate-private reserved-publish seam (§4.2), wired by the runtime.
+            // on ecv1/{device}/{component}/metric/{name} (component scope, D-U28) — it
+            // needs the crate-private reserved-publish seam (§4.2), wired by the runtime.
             let reserved = reserved.ok_or_else(|| {
                 EdgeCommonsError::Metrics(
                     "metric target 'messaging' requires the library runtime's privileged \
@@ -599,7 +599,7 @@ mod tests {
             1,
             "messaging target should publish EMF via the seam"
         );
-        assert_eq!(published[0].0, "ecv1/t/C/main/metric/m");
+        assert_eq!(published[0].0, "ecv1/t/C/metric/m");
     }
 
     #[tokio::test]

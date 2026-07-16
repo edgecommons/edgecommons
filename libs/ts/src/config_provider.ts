@@ -3,7 +3,7 @@
  *
  * A dedicated configuration-manager component: it answers GetConfiguration request/reply over
  * Greengrass IPC on the UNS Flow-A rendezvous the consumer's `CONFIG_COMPONENT` source uses —
- * `ecv1/{device}/config/main/cmd/get-configuration` (UNS-CANONICAL-DESIGN §4.3, D-U19; the
+ * `ecv1/{device}/config/cmd/get-configuration` (component scope, D-U28; UNS-CANONICAL-DESIGN §4.3, D-U19; the
  * server is the sole subscriber under the reserved-by-convention logical component name
  * `config`) — returning a full edgecommons config document to the requester that self-identifies
  * in the body with `{"component": "<bootstrap short name>"}`. Lets the TS `CONFIG_COMPONENT`
@@ -20,7 +20,7 @@ import { sanitize } from "./config/template";
 
 const CONSUMER_NAME = process.argv[2] ?? "com.mbreissi.edgecommons.TsEdgeVerify";
 const THING = process.env.AWS_IOT_THING_NAME ?? "lab-5950x";
-const GET_TOPIC = `ecv1/${sanitize(THING)}/config/main/cmd/get-configuration`;
+const GET_TOPIC = `ecv1/${sanitize(THING)}/config/cmd/get-configuration`;
 const CONSUMER_TOKEN = sanitize(CONSUMER_NAME.split(".").pop() ?? CONSUMER_NAME);
 
 /** The config served to the consumer (mirrors the GG_CONFIG recipe values). */

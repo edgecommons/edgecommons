@@ -152,7 +152,7 @@ class ConfigManager:
         self._latest_base_layer: Optional[Dict[str, Any]] = None
         self._latest_base_source: Optional[str] = None
         # The component's resolved UNS identity (hierarchy + identity values + device +
-        # component token, instance "main"), resolved ONCE by init() from the
+        # component token, component scope — no instance, D-U28), resolved ONCE by init() from the
         # component's OWN config (no shared config) — see get_component_identity().
         # None until init() runs (test/subclass bring-up without init keeps it None,
         # mirroring the Java protected constructor).
@@ -534,8 +534,8 @@ class ConfigManager:
         return 0.0 if value <= 0 else value
 
     def get_component_identity(self) -> Optional[MessageIdentity]:
-        """The component's resolved UNS identity (instance ``"main"``), resolved once
-        by ``init()`` from the component's OWN config:
+        """The component's resolved UNS identity (component scope — no instance token,
+        D-U28), resolved once by ``init()`` from the component's OWN config:
 
         1. ``levels`` = top-level ``hierarchy.levels`` when present, else the
            zero-config default ``["device"]``.
@@ -644,7 +644,7 @@ class ConfigManager:
         component_token = self._sanitized_identity_value(
             "component", configured_token if configured_token is not None else self._component_name
         )
-        return MessageIdentity(hier, component_token, MessageIdentity.DEFAULT_INSTANCE)
+        return MessageIdentity(hier, component_token, None)   # D-U28: component scope (no instance)
 
     @staticmethod
     def _configured_component_token(config: dict) -> Optional[str]:

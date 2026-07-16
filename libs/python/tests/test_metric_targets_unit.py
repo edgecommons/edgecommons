@@ -186,8 +186,8 @@ class TestMessagingTarget:
 
     def test_emit_publishes_local_on_uns_metric_topic(self, monkeypatch):
         # UNS-CANONICAL-DESIGN par. 4.3: the messaging target publishes to
-        # ecv1/{device}/{component}/main/metric/{metricName} through the privileged
-        # seam (the metric class is reserved).
+        # ecv1/{device}/{component}/metric/{metricName} (component scope, D-U28) through
+        # the privileged seam (the metric class is reserved).
         published = []
         monkeypatch.setattr(
             messaging_mod.MessagingClient, "_publish_reserved",
@@ -202,7 +202,7 @@ class TestMessagingTarget:
         target.emit_metric_now(_metric(), {"latency": 5.0})
         assert len(published) == 1
         topic, msg = published[0]
-        assert topic == "ecv1/thing-1/comp/main/metric/perf"
+        assert topic == "ecv1/thing-1/comp/metric/perf"  # D-U28: component scope
         assert "_aws" in msg.get_body()
 
     def test_emit_publishes_northbound(self, monkeypatch):
@@ -219,7 +219,7 @@ class TestMessagingTarget:
         assert target.send_to_local is False
         target.emit_metric_now(_metric(), {"latency": 5.0})
         assert len(published) == 1
-        assert published[0][0] == "ecv1/thing-1/comp/main/metric/perf"
+        assert published[0][0] == "ecv1/thing-1/comp/metric/perf"  # D-U28: component scope
 
     def test_metric_name_sanitized_into_channel_token(self, monkeypatch):
         published = []
@@ -238,7 +238,7 @@ class TestMessagingTarget:
             .build()
         )
         target.emit_metric_now(metric, {"latency": 5.0})
-        assert published[0][0] == "ecv1/thing-1/comp/main/metric/per_f"
+        assert published[0][0] == "ecv1/thing-1/comp/metric/per_f"  # D-U28: component scope
 
     def test_no_identity_warns_once_and_drops(self, monkeypatch):
         published = []

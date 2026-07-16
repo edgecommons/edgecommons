@@ -380,7 +380,8 @@ python3 main.py --platform HOST --transport MQTT ./messaging-config.json -c FILE
 Messages built with a config-bound builder carry a top-level **`identity`** element
 (UNS-CANONICAL-DESIGN §1) between `header` and `tags`: the ordered enterprise hierarchy (`hier`,
 whose **last entry is the device**), the precomputed `path`, the publishing `component` token and
-the per-message `instance` (default `"main"`).
+the optional per-message `instance` (present ⇒ instance-scoped, absent ⇒ component/global scope;
+omitted from the wire when absent and never a reserved class token).
 
 ```python
 identity = message.get_identity()      # MessageIdentity or None
@@ -392,7 +393,8 @@ if identity is not None:
 
 `MessageBuilder.build()` is the single stamping site: an explicit `with_identity(...)` override
 wins; otherwise a `with_config(...)` builder stamps the component's resolved identity with the
-`with_instance(...)` token (default `"main"`); with neither, `identity` stays `None`
+optional `with_instance(...)` token (absent ⇒ component scope, no `instance` key); with neither,
+`identity` stays `None`
 (bootstrap/raw messages legally omit it). Inbound parsing is lenient: a malformed `identity`
 yields `None` plus a WARN and the message still delivers.
 

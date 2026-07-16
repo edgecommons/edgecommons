@@ -310,6 +310,9 @@ class _LifecycleMessaging:
         self.block_ack = False
         self.ack_entered = threading.Event()
         self.ack_release = threading.Event()
+        # D-U28: start() subscribes two filters; a real broker delivers a matching
+        # message once, so the pre-ack deliveries fire only on the first subscribe.
+        self._delivered = False
 
     def subscribe_acknowledged(
         self,
@@ -322,8 +325,10 @@ class _LifecycleMessaging:
         self.callback = callback
         self.callbacks.append(callback)
         self.ack_entered.set()
-        for delivery in self.deliver_on_subscribe:
-            callback(*delivery)
+        if not self._delivered:
+            self._delivered = True
+            for delivery in self.deliver_on_subscribe:
+                callback(*delivery)
         if self.block_ack:
             self.ack_release.wait(timeout_secs)
         if self.failure is not None:

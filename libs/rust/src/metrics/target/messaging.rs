@@ -1,7 +1,7 @@
 //! # Metrics target — messaging
 //!
 //! **One-liner purpose**: Publish EMF metrics to the library-owned UNS metric topic
-//! `ecv1[/{site}]/{device}/{component}/main/metric/{metricName}` through the
+//! `ecv1[/{site}]/{device}/{component}/metric/{metricName}` through the
 //! privileged reserved-publish seam (UNS-CANONICAL-DESIGN §4.3).
 //!
 //! ## Overview
@@ -71,8 +71,8 @@ impl MessagingMetricTarget {
     }
 
     /// The metric's UNS topic —
-    /// `ecv1[/{site}]/{device}/{component}/main/metric/{name}` with the metric name
-    /// passed through the template sanitizer (the §2.2 channel-token rule).
+    /// `ecv1[/{site}]/{device}/{component}/metric/{name}` (component scope, D-U28) with
+    /// the metric name passed through the template sanitizer (the §2.2 channel-token rule).
     fn metric_topic(&self, metric: &Metric) -> Result<String> {
         // The RAW includeRoot flag (Java parity): Uns applies D-U25 internally.
         Uns::new(
@@ -165,7 +165,8 @@ mod tests {
         let published = recorder.reserved_local();
         assert_eq!(published.len(), 1);
         let (topic, msg) = &published[0];
-        assert_eq!(topic, "ecv1/thing-1/MyComp/main/metric/requests");
+        // D-U28: the metric class is component scope (no instance slot).
+        assert_eq!(topic, "ecv1/thing-1/MyComp/metric/requests");
         // EMF is carried in the envelope BODY (not raw); envelope is a "Metric" message.
         assert!(!msg.is_raw());
         assert_eq!(msg.header.name, "Metric");
@@ -174,7 +175,7 @@ mod tests {
         // Identity + tags are stamped from the config (withConfig parity).
         let identity = msg.identity.as_ref().expect("identity stamped");
         assert_eq!(identity.device(), "thing-1");
-        assert_eq!(identity.instance(), "main");
+        assert_eq!(identity.instance(), None);
         let tags = msg.tags.as_ref().expect("tags stamped");
         assert_eq!(tags.extra.get("site"), Some(&json!("factory-1")));
     }
@@ -186,7 +187,7 @@ mod tests {
         t.emit(&metric("req/rate+p99"), &values()).await.unwrap();
         assert_eq!(
             recorder.reserved_local()[0].0,
-            "ecv1/thing-1/MyComp/main/metric/req_rate_p99"
+            "ecv1/thing-1/MyComp/metric/req_rate_p99"
         );
     }
 

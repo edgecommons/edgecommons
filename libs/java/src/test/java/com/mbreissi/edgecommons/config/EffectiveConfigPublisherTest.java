@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * The library-owned {@code cfg} publisher (UNS-CANONICAL-DESIGN §4.3): publishes the effective
- * (redacted) config to {@code ecv1/{device}/{component}/main/cfg} through the privileged seam —
+ * (redacted) config to {@code ecv1/{device}/{component}/cfg} through the privileged seam —
  * at startup ({@code publishNow}) and on every configuration change — with redaction v1:
  * {@code $secret} refs stay unresolved, {@code messaging.*.credentials} values and any
  * {@code password}/{@code pin} key become {@code "***"}.
@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class EffectiveConfigPublisherTest {
 
     /** The default mock identity's UNS cfg topic (device=test-thing, component=TestComponent). */
-    private static final String CFG_TOPIC = "ecv1/test-thing/TestComponent/main/cfg";
+    private static final String CFG_TOPIC = "ecv1/test-thing/TestComponent/cfg";
 
     private static JsonObject obj(String json) {
         return JsonParser.parseString(json).getAsJsonObject();

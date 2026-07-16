@@ -35,8 +35,8 @@ streaming is not configured it falls back to a LOCAL publish (readiness / no-str
 local). Northbound / stream transport failures are caught and logged -- they must never
 flip local readiness.
 
-Library-internal: obtain the bound instance via ``gg.instance(id).data()`` (or the
-``main``-instance convenience ``gg.data()``).
+Library-internal: obtain the instance-bound facade via ``gg.instance(id).data()`` (or the
+component-scope convenience ``gg.data()`` — no instance token, D-U28).
 
 Mirrors Java's ``DataFacade`` (``com.mbreissi.edgecommons.facades.DataFacade``).
 """
@@ -89,8 +89,7 @@ class DataFacade:
         """
         if config_manager is None:
             raise ValueError("config_manager must not be None")
-        if not instance_id:
-            raise ValueError("instance_id must not be None/empty")
+        # D-U28: instance_id is None for component scope (no instance token).
         if uns is None:
             raise ValueError("uns must not be None")
         if messaging_client is None:
