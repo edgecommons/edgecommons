@@ -325,6 +325,17 @@ describe("Message / MessageBuilder", () => {
     expect(msg.getIdentity()?.instance).toBe("kep1");
   });
 
+  it("fromObject leniently drops an identity whose instance is a reserved class token (D-U28)", () => {
+    // The MessageIdentity constructor rejects a reserved-token instance; the lenient fromObject
+    // parser catches that and returns undefined rather than propagating the throw.
+    const id = MessageIdentity.fromObject({
+      hier: [{ level: "device", value: "d" }],
+      component: "c",
+      instance: "state",
+    });
+    expect(id).toBeUndefined();
+  });
+
   it("withInstance(empty/undefined) means component scope, not a throw (D-U28)", () => {
     const empty = MessageBuilder.create("d", "1")
       .withConfig({ parsed: { tags: {} }, componentIdentity: IDENTITY })

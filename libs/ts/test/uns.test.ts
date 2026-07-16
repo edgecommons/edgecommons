@@ -167,6 +167,8 @@ describe("Uns.validate", () => {
     expect(codeOf(() => uns.validate("ecv1/d/c/i/data"))).toBe("CHANNEL_REQUIRED");
     expect(codeOf(() => uns.validate("ecv1/d/c/i/bogus/x"))).toBe("BAD_CLASS");
     expect(codeOf(() => uns.validate("ecv1/d/c/i"))).toBe("BAD_CLASS");
+    // D-U28: fewer levels than {component}+class (no token at/after the class position at all).
+    expect(codeOf(() => uns.validate("ecv1/d/c"))).toBe("BAD_CLASS");
     expect(codeOf(() => uns.validate("ecv1/+/c/i/state"))).toBe("WILDCARD_IN_TOPIC");
     expect(codeOf(() => uns.validate("ecv1/d/c/i/data/#"))).toBe("WILDCARD_IN_TOPIC");
   });

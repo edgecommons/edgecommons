@@ -1019,6 +1019,14 @@ describe("CommandInbox", () => {
     expect(messaging.published).toHaveLength(0);
   });
 
+  it("an empty delivery topic is ignored, never crashes (D-U28 guard)", async () => {
+    await inbox.start();
+    // A provider that delivers an empty topic must be tolerated: no verb to extract, nothing
+    // to dispatch, no reply.
+    await deliver(messaging, "", request(CommandInbox.PING));
+    expect(messaging.published).toHaveLength(0);
+  });
+
   it("a failing reply publish is swallowed", async () => {
     const failing = new RecordingMessagingService();
     failing.reply = async () => {

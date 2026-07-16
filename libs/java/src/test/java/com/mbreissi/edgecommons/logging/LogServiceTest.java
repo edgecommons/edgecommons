@@ -46,6 +46,28 @@ class LogServiceTest {
         return config;
     }
 
+    /**
+     * The body of the first published record whose {@code logger} equals {@code loggerName}.
+     *
+     * <p>The native {@link LogBusAppender} captures the whole shared log4j LoggerContext, so an
+     * unrelated logger active in the surefire JVM (for example a config {@code FileWatcher} thread
+     * left running by another test class) can publish a record ahead of the one under test.
+     * Selecting by logger keeps these native-capture assertions independent of cross-test emission
+     * order instead of assuming the record under test is published first.
+     */
+    private static JsonObject publishedBodyForLogger(MockMessagingService messaging, String loggerName) {
+        return messaging.getPublishedMessages().stream()
+                .map(published -> published.message.toDict().getAsJsonObject("body"))
+                .filter(body -> body.has("logger") && loggerName.equals(body.get("logger").getAsString()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "no published log record from logger '" + loggerName + "'; published loggers="
+                                + messaging.getPublishedMessages().stream()
+                                        .map(published -> published.message.toDict()
+                                                .getAsJsonObject("body").get("logger"))
+                                        .toList()));
+    }
+
     @Test
     void explicitPublishUsesReservedLogTopicAndEnvelopeShape() {
         MockConfigurationService config = config("{\"enabled\":true}");
@@ -249,8 +271,7 @@ class LogServiceTest {
 
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             assertFalse(messaging.getPublishedMessages().isEmpty());
-            JsonObject body = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
-            assertEquals("edgecommons.capture.lifecycle", body.get("logger").getAsString());
+            JsonObject body = publishedBodyForLogger(messaging, "edgecommons.capture.lifecycle");
             assertEquals("captured without manual install", body.get("message").getAsString());
         } finally {
             logs.close();
@@ -269,8 +290,8 @@ class LogServiceTest {
 
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             assertFalse(messaging.getPublishedMessages().isEmpty());
-            JsonObject body = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
-            assertEquals("com.mbreissi.edgecommons.opcua.opc.OpcUaConnection", body.get("logger").getAsString());
+            JsonObject body = publishedBodyForLogger(
+                    messaging, "com.mbreissi.edgecommons.opcua.opc.OpcUaConnection");
             assertEquals("[palletizer1] connected to opc.tcp://example:49320 (policy=None)",
                     body.get("message").getAsString());
         } finally {
@@ -292,8 +313,8 @@ class LogServiceTest {
 
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             assertFalse(messaging.getPublishedMessages().isEmpty());
-            JsonObject body = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
-            assertEquals("com.mbreissi.edgecommons.opcua.opc.OpcUaConnection", body.get("logger").getAsString());
+            JsonObject body = publishedBodyForLogger(
+                    messaging, "com.mbreissi.edgecommons.opcua.opc.OpcUaConnection");
             assertEquals("[palletizer1] connected to opc.tcp://example:49320 (policy=None)",
                     body.get("message").getAsString());
         } finally {
@@ -335,8 +356,8 @@ class LogServiceTest {
 
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             assertFalse(messaging.getPublishedMessages().isEmpty());
-            JsonObject body = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
-            assertEquals("com.mbreissi.edgecommons.opcua.opc.OpcUaConnection", body.get("logger").getAsString());
+            JsonObject body = publishedBodyForLogger(
+                    messaging, "com.mbreissi.edgecommons.opcua.opc.OpcUaConnection");
             assertEquals("[palletizer1] connected to opc.tcp://example:49320 (policy=None)",
                     body.get("message").getAsString());
             assertEquals("adapter-palletizer1", body.get("thread").getAsString());
@@ -358,8 +379,7 @@ class LogServiceTest {
 
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             assertFalse(messaging.getPublishedMessages().isEmpty());
-            JsonObject body = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
-            assertEquals("edgecommons.capture.test", body.get("logger").getAsString());
+            JsonObject body = publishedBodyForLogger(messaging, "edgecommons.capture.test");
             assertEquals("captured appender message", body.get("message").getAsString());
         } finally {
             logs.close();
@@ -396,9 +416,8 @@ class LogServiceTest {
 
             assertTrue(logs.flush(Duration.ofSeconds(2)));
             assertFalse(messaging.getPublishedMessages().isEmpty());
-            JsonObject body = messaging.getPublishedMessages().get(0).message.toDict().getAsJsonObject("body");
+            JsonObject body = publishedBodyForLogger(messaging, "OpcUaConnection");
             assertEquals("INFO", body.get("level").getAsString());
-            assertEquals("OpcUaConnection", body.get("logger").getAsString());
             assertEquals("adapter-palletizer1", body.get("thread").getAsString());
             assertEquals("[palletizer1] connected to opc.tcp://example:49320 (policy=None)",
                     body.get("message").getAsString());
