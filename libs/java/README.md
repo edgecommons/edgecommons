@@ -358,7 +358,7 @@ Key dependencies included:
 - **Topic Design**: Use the UNS grammar `ecv1/{device}/{component}/{instance}/{class}[/channel]` via `gg.getUns()` (builder + validator); it works identically over Greengrass IPC and MQTT. The `state`/`metric`/`cfg`/`log` classes are library-owned (a raw publish to them is rejected).
 
 #### Monitoring
-- Monitor component health through the UNS `state` keepalives — subscribe `ecv1/+/+/+/state` (system measures arrive as the `sys` metric via the configured metric target)
+- Monitor component health through the UNS `state` keepalives — subscribe `ecv1/+/+/state` (add `ecv1/+/+/+/state` for instance-scoped publishers; system measures arrive as the `sys` metric via the configured metric target)
 - Use structured logging with appropriate log levels
 - Configure metrics emission for your target environment (CloudWatch, local logs, etc.)
 

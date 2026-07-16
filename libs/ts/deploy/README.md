@@ -11,7 +11,7 @@ to `/tmp/ts_ipc_verify_result.json` (and stdout / the component log):
 2. **raw** publish/ingest over IPC,
 3. **cross-language** — ingests the UNS `state` keepalive envelope published over
    IPC by a peer edgecommons component (e.g. the deployed Java skeleton on
-   `ecv1/<device>/<component>/main/state`).
+   `ecv1/<device>/<component>/state`).
 
 ## Prerequisites
 

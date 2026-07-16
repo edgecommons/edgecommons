@@ -147,8 +147,8 @@ renaming; default `"site"`).
 
 | Direction | Classes | Subscribed on | Filter (built via `uns().filter()`) | Republished on |
 |---|---|---|---|---|
-| **Uplink** device → site | `state`, `cfg`, `evt`, `metric`, `data`, `log` — the six consumer wildcards (DESIGN-uns §4); **`app` optional, default OFF** (§3.6 policy) | PRIMARY | `ecv1/+/+/+/state` · `ecv1/+/+/+/cfg` · `ecv1/+/+/+/evt/#` · `ecv1/+/+/+/metric/#` · `ecv1/+/+/+/data/#` · `ecv1/+/+/+/log/#` | NAMED, **same topic string** |
-| **Downlink** site → device | `cmd` only (incl. broadcast: `+` on the component position matches `_bcast`) | NAMED | `ecv1/{device}/+/+/cmd/#` — **pinned to this bridge's own device token** | PRIMARY, same topic string (after `reply_to` rewrite §3.5) |
+| **Uplink** device → site | `state`, `cfg`, `evt`, `metric`, `data`, `log` — the consumer wildcards at **both scopes** (component and instance, DESIGN-uns §4); **`app` optional, default OFF** (§3.6 policy) | PRIMARY | `ecv1/+/+/state` · `ecv1/+/+/cfg` · `ecv1/+/+/evt/#` · `ecv1/+/+/metric/#` · `ecv1/+/+/data/#` · `ecv1/+/+/log/#` · `ecv1/+/+/+/state` · `ecv1/+/+/+/cfg` · `ecv1/+/+/+/evt/#` · `ecv1/+/+/+/metric/#` · `ecv1/+/+/+/data/#` · `ecv1/+/+/+/log/#` | NAMED, **same topic string** |
+| **Downlink** site → device | `cmd` only (incl. broadcast: `+` on the component position matches `_bcast`) | NAMED | `ecv1/{device}/+/cmd/#` (component scope, incl. `_bcast`) · `ecv1/{device}/+/+/cmd/#` (instance scope) — **pinned to this bridge's own device token** | PRIMARY, same topic string (after `reply_to` rewrite §3.5) |
 | **Reply back-haul** device → site | replies to rewritten `reply_to` topics | PRIMARY (per-request ephemeral subscription) | `edgecommons/reply-<uuid>` (bridge-minted) | NAMED, to the original site-side reply topic |
 
 Explicit non-flows (v1): `cmd` is **never uplinked** (a device component cannot command a peer
@@ -277,7 +277,7 @@ Normative points:
 
 - **Defaults**: `state`/`cfg`/`evt`/`metric`/`data` **on**, `log` **off** (off-by-default at the
   source and unbounded-volume), `app` **off** (device-local application chatter; enabling it makes
-  the bridge relay a seventh filter `ecv1/+/+/+/app/#`). `data` is the only class rate-capped by
+  the bridge relay the `app` filters `ecv1/+/+/app/#` and `ecv1/+/+/+/app/#`). `data` is the only class rate-capped by
   default.
 - **Rate cap** = token bucket per class (`maxRatePerSec` refill, `burst` capacity, default
   `burst = 2×rate`). Exceeding traffic **drops** (never queues — the live UNS path is
@@ -291,13 +291,13 @@ Normative points:
   after the rehydration broadcast. Flagged **needs-user** (scope call: evt-only vs none vs all).
 - **Reconnect rehydration — the late-join lever lands here** (DESIGN-uns §9.3 layer 2): on each
   site-connection re-establishment (rising edge of `connected()`), the bridge publishes
-  `ecv1/{device}/_bcast/main/cmd/republish-state` and `…/republish-cfg` **on the device bus**;
+  `ecv1/{device}/_bcast/cmd/republish-state` and `…/republish-cfg` **on the device bus**;
   every component's jittered re-announce then rides the uplink, and the site view rehydrates
   `state`/`cfg` without retain. (This makes the bridge the first consumer of the Phase-3
   `republish-*` broadcast listener + minimal `commands()` scaffolding already planned in the
   canonical build checklist.)
 - **Visible drop counters — as `metric`s** through the normal metric subsystem (so they surface on
-  the device bus at `ecv1/{device}/uns-bridge/main/metric/…`, get uplinked by the bridge itself,
+  the device bus at `ecv1/{device}/uns-bridge/metric/…`, get uplinked by the bridge itself,
   and reach whatever metric target is configured):
 
 | Metric (measure names) | Meaning |
@@ -316,7 +316,7 @@ The load-bearing D9/§9.3 LWT use, now concrete. The bridge derives it internall
 connection (§1.1 example); neither generic `messaging.lwt` nor `component.instances[site].lwt` is user
 configuration:
 
-- **Topic**: `ecv1/{device}/uns-bridge/main/state` — the bridge's **own UNS state topic** (the
+- **Topic**: `ecv1/{device}/uns-bridge/state` — the bridge's **own UNS state topic** (the
   exact string the committed tests already pin, `config.rs:293–299`, `mqtt.rs:590–601`). There is
   no device-level topic in the grammar; the bridge *is* the device's reachability proxy, so its
   state topic is the device-reachability channel by definition. Consumers (the console FleetModel)
@@ -507,9 +507,9 @@ Two principals; usernames from mTLS cert CN. EMQX 5 authz file sketch:
 {allow, all, publish,   ["ecv1/${username}/#", "edgecommons/+"]}.      % own subtree + reply back-haul
 {allow, all, subscribe, ["ecv1/${username}/+/+/cmd/#", "edgecommons/+"]}.  % own downlink cmds + (defensive) replies
 %% Site consumers (console/historian/MES; CN in a consumer group — separate listener or user prefix):
-%%   subscribe the six class wildcards + reply topics; publish cmd + reply topics only.
+%%   subscribe the class wildcards (both scopes) + reply topics; publish cmd + reply topics only.
 {allow, {username, {re, "^consumer-"}}, subscribe, ["ecv1/#", "edgecommons/+"]}.
-{allow, {username, {re, "^consumer-"}}, publish,   ["ecv1/+/+/+/cmd/#", "ecv1/+/_bcast/main/cmd/#", "edgecommons/+"]}.
+{allow, {username, {re, "^consumer-"}}, publish,   ["ecv1/+/+/cmd/#", "ecv1/+/+/+/cmd/#", "ecv1/+/_bcast/cmd/#", "edgecommons/+"]}.
 {deny, all}.
 ```
 
@@ -542,14 +542,14 @@ broker *and* a site broker:
        the device broker → assert it arrives on the site broker, same topic, structurally equal
        plus `tags._relay == ["<dev>/uns-bridge"]`.
      - **reply_to rewrite round-trip**: fake responder on the device broker
-       (`…/comp/main/cmd/ping` → `reply()`); site-side client requests with `reply_to`; assert the
+       (`…/comp/cmd/ping` → `reply()`); site-side client requests with `reply_to`; assert the
        reply lands on the site-side reply topic with `correlation_id` preserved, **and** that the
        device side observed a *different* `edgecommons/reply-…` topic (the rewrite happened).
      - **TTL expiry**: request with no responder → after `ttlSecs` the `relay_reply_expired`
        metric increments and `relay_pending_replies` returns to 0 (observed via the bridge's
        metric messages on the device broker).
      - **LWT / reachability**: run the bridge as a child process, `SIGKILL` it → the site
-       subscriber on `ecv1/<dev>/uns-bridge/main/state` receives `{"status":"UNREACHABLE"}`
+       subscriber on `ecv1/<dev>/uns-bridge/state` receives `{"status":"UNREACHABLE"}`
        (socket close → immediate will; no keepalive wait). Graceful-stop variant asserts the same
        terminal UNREACHABLE after the best-effort `STOPPED`.
      - **Rate cap**: burst N ≫ cap `data` messages → site receives ≤ `burst + rate·t`, and
@@ -557,7 +557,7 @@ broker *and* a site broker:
      - **Loop guard**: publish an envelope pre-stamped with the bridge's own `_relay` id → assert
        it never appears on the site broker; `relay_loop_dropped` increments.
      - **Disconnect/rehydrate**: `docker pause` the site broker → publish states → `unpause` →
-       assert the device bus sees `…/_bcast/main/cmd/republish-state` and the site view converges;
+       assert the device bus sees `…/_bcast/cmd/republish-state` and the site view converges;
        buffered `evt`s replay.
   3. **Interop tie-in (monorepo)** — unchanged single-EMQX interop keeps owning cross-language
      envelope/topic conformance; the bridge repo consumes `uns-test-vectors/` for its golden
@@ -584,7 +584,7 @@ broker *and* a site broker:
 | D‑B8 | Loop protection | Reserved tag key `tags._relay` = JSON array of hop ids (`{device}/uns-bridge`), drop-if-self + `maxHops` (default 4); raw messages covered by uplink/downlink class disjointness; `_`-prefixed tag keys become library-reserved; same-tier broker-to-broker cycles unsupported (documented residual) | Med-High | Easy | no |
 | D‑B9 | Reply correlation map | Bridge-minted `edgecommons/reply-` device topics; TTL 60 s (2× the 30 s request default, paired knob), `maxPending` 1024 evict-oldest; expiry unsubscribes + counts; reply relays verbatim (correlation_id preserved) | High | Easy | no |
 | D‑B10 | Disconnect durability | Live path drops + counts by default (durability = streaming's job); **exception: bounded `evt` replay buffer (default on, 1000, drop-oldest)**; `state`/`cfg` rehydrate via `republish-*` `_bcast` on reconnect (the §9.3 late-join lever) | Med | Easy | **yes** — scope of the evt buffer (evt-only vs none vs all classes) |
-| D‑B11 | LWT | Private bridge-console contract derived by the bridge. Topic = the bridge's own state topic `ecv1/{device}/uns-bridge/main/state`; payload = bare `{"status":"UNREACHABLE"}` (raw, event-time = delivery-time); QoS 1, no retain; fires on graceful stop too — **intended** (a stopped bridge = an unreachable device); no configurable LWT or advisory cross-check | High | Easy | no |
+| D‑B11 | LWT | Private bridge-console contract derived by the bridge. Topic = the bridge's own state topic `ecv1/{device}/uns-bridge/state`; payload = bare `{"status":"UNREACHABLE"}` (raw, event-time = delivery-time); QoS 1, no retain; fires on graceful stop too — **intended** (a stopped bridge = an unreachable device); no configurable LWT or advisory cross-check | High | Easy | no |
 | D‑B12 | Multi-site rooting across the bridge | Relay never rewrites topics; a rooted site broker means components set `topic.includeRoot` end-to-end (D2/D‑U11); bridge-side root injection deferred to an enterprise-tier phase | Med | Moderate | no |
 | D‑B13 | Recipe home | `uns-bridge/deploy/site-broker/` (broker+bridge deploy as a pair; docs-site syncs it); EMQX everywhere; ACL file = the durable enforcement | Med-High | Easy | no |
 | D‑B14 | Test infra | Dual-EMQX compose in the bridge repo (site broker on 1884/8884; device broker reuses/mirrors `edgecommons-emqx`); relay core is pure-logic over trait fakes for the 90 % gate; e2e list in §6 | High | Easy | no |

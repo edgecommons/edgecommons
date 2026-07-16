@@ -257,20 +257,20 @@ wildcard with any MQTT client (for example MQTTX or `mosquitto_sub`) pointed at 
 <TabItem label="Linux">
 
 ```bash
-mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -v
+mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/state' -t 'ecv1/+/+/+/state' -v
 ```
 
 </TabItem>
 <TabItem label="Windows">
 
 ```powershell
-mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -v
+mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/state' -t 'ecv1/+/+/+/state' -v
 ```
 
 </TabItem>
 </Tabs>
 
-You should see periodic `state` envelopes on `ecv1/<device>/<component>/main/state` with body
+You should see periodic `state` envelopes on `ecv1/<device>/<component>/state` with body
 `{"status":"RUNNING","uptimeSecs":n}` — the device and component are also carried in each message's
 `identity` element. From there, use the [Messaging guide](/guides/messaging/) to publish/subscribe
 on your own topics, and the [Configuration guide](/guides/configuration/) to drive behavior from

@@ -65,8 +65,8 @@ addressing, UNS-CANONICAL-DESIGN §4.3 / D-U19):
 
 | Flow | Topic | Direction |
 |---|---|---|
-| get-configuration (request/reply) | `ecv1/{device}/config/main/cmd/get-configuration` | component → config server |
-| set-config push (fire-and-forget `cmd`, no `reply_to`) | `ecv1/{device}/{component}/main/cmd/set-config` | config server → component |
+| get-configuration (request/reply) | `ecv1/{device}/config/cmd/get-configuration` | component → config server |
+| set-config push (fire-and-forget `cmd`, no `reply_to`) | `ecv1/{device}/{component}/cmd/set-config` | config server → component |
 
 - **`config` is a reserved-by-convention logical component name** — the config server is the
   *sole subscriber* of the `get-configuration` rendezvous under it. Do not name a component
@@ -84,10 +84,10 @@ addressing, UNS-CANONICAL-DESIGN §4.3 / D-U19):
   exactly like a hot reload (schema-validated, reject-and-keep).
 
 **Server side (convention, not implemented by this library):** an external config-manager
-component must subscribe to `ecv1/{device}/config/main/cmd/get-configuration`, reply to each
+component must subscribe to `ecv1/{device}/config/cmd/get-configuration`, reply to each
 request with the requesting component's configuration as the body, and push configuration
 changes as `set-config` commands to each component's inbox
-`ecv1/{device}/{component}/main/cmd/set-config`.
+`ecv1/{device}/{component}/cmd/set-config`.
 
 ## 3. Configuration Structure
 
@@ -102,7 +102,7 @@ These sections are managed by edgecommons and configure framework behavior:
 - **`tags`**: Component tagging for organization and templating
 
 `logging.publish` is the optional structured log-bus publisher. When enabled, Java publishes
-`edgecommons.log.v1` records to `ecv1/{device}/{component}/main/log/{level}` through the reserved `log`
+`edgecommons.log.v1` records to `ecv1/{device}/{component}/log/{level}` through the reserved `log`
 class seam. The publisher is disabled by default; `captureNative` captures the configured logging stack
 and `captureConsole` requests stdout/stderr capture where supported.
 

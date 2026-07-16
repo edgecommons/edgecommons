@@ -257,7 +257,7 @@ the resolved platform on the manager.
 | Platform | `getPlatform()` → `Platform` | `get_platform()` | not on `Config` — see note | not on `Config` — see note |
 
 The UNS component identity — the resolved `hierarchy`/`identity` values plus the component token,
-instance `main` — is resolved **once at construction**, fail-fast on inconsistency, and is what the
+component-scoped with no instance token — is resolved **once at construction**, fail-fast on inconsistency, and is what the
 message builder stamps on every config-bound envelope. See the
 [UNS API reference](/reference/uns/#messageidentity).
 

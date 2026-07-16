@@ -15,8 +15,9 @@ java -jar target/<<JARNAME>>-1.0.0.jar --platform HOST --transport MQTT ./test-c
 ```
 
 Needs a local MQTT broker (e.g. `docker run -d -p 1883:1883 emqx/emqx:latest`). Subscribe to
-`ecv1/+/+/+/state` to see the component's heartbeat keepalives (the library publishes them
-automatically to `ecv1/{device}/{component}/main/state`) and `ecv1/+/+/+/app/#` for the scaffold's
+`ecv1/+/+/state` (add `ecv1/+/+/+/state` to also catch instance-scoped publishers) to see the
+component's heartbeat keepalives (the library publishes them automatically to
+`ecv1/{device}/{component}/state`) and `ecv1/+/+/app/#` (plus `ecv1/+/+/+/app/#`) for the scaffold's
 status messages. If you enable the telemetry-streaming subsystem, add
 `--enable-native-access=ALL-UNNAMED` (the FFM/Panama binding to `edgestreamlog`).
 
@@ -29,12 +30,12 @@ facades** (`docs/platform/DESIGN-class-facades.md`) rather than hand-built topic
 
 | Surface | Where | Topic |
 |---|---|---|
-| Metric (`loopTicks`: `tickCount` counter + `uptimeSecs` gauge) | `gg.getMetrics()` | `ecv1/{device}/{component}/main/metric/loopTicks` (target-dependent; `messaging` target shown) |
-| Data signal (`demo-signal`: a sine-wave reading) | `gg.getData().signal("demo-signal").addSample(value).publish()` | `ecv1/{device}/{component}/main/data/demo-signal` |
-| Event (`sample-event`, severity + context) | `gg.getEvents().emit(Severity.INFO, "sample-event", message, context)` | `ecv1/{device}/{component}/main/evt/info/sample-event` |
-| Custom command verb (`set-greeting`) | `EdgeCommonsBuilder.configureCommands(...)` | `ecv1/{device}/{component}/main/cmd/set-greeting` |
+| Metric (`loopTicks`: `tickCount` counter + `uptimeSecs` gauge) | `gg.getMetrics()` | `ecv1/{device}/{component}/metric/loopTicks` (target-dependent; `messaging` target shown) |
+| Data signal (`demo-signal`: a sine-wave reading) | `gg.getData().signal("demo-signal").addSample(value).publish()` | `ecv1/{device}/{component}/data/demo-signal` |
+| Event (`sample-event`, severity + context) | `gg.getEvents().emit(Severity.INFO, "sample-event", message, context)` | `ecv1/{device}/{component}/evt/info/sample-event` |
+| Custom command verb (`set-greeting`) | `EdgeCommonsBuilder.configureCommands(...)` | `ecv1/{device}/{component}/cmd/set-greeting` |
 
-Subscribe `ecv1/+/+/+/metric/#`, `ecv1/+/+/+/data/#` and `ecv1/+/+/+/evt/#` to see them (metrics
+Subscribe `ecv1/+/+/metric/#`, `ecv1/+/+/data/#` and `ecv1/+/+/evt/#` (add the `ecv1/+/+/+/…` instance-scope form to also catch instance-scoped publishers) to see them (metrics
 only publish over MQTT when `metricEmission.target` is `messaging`; the default `log` target
 writes a local file instead — see `test-configs/<<COMPONENTNAME>>.json`). The `DataFacade` defaults
 an omitted sample `quality` to `GOOD` (marked `qualityRaw:"unspecified"` on the wire) — pass an
@@ -43,7 +44,7 @@ the `evt/{severity}/{type}` channel from the body's own severity + type, so the 
 never disagree; use `raiseAlarm`/`clearAlarm` for stateful alarms instead of one-shot `emit`.
 Invoke the custom verb with a request/reply tool (e.g. MQTTX) by publishing
 `{"header":{"name":"set-greeting","version":"1.0"},"body":{"greeting":"Hi there"}}` to
-`ecv1/{device}/{component}/main/cmd/set-greeting`; the next `app` status publish reflects the new
+`ecv1/{device}/{component}/cmd/set-greeting`; the next `app` status publish reflects the new
 greeting. Replace all four with your own metrics/signals/events/verbs.
 
 The scaffold uses `initialReady(false)` and `configureCommands(...)`: the custom verb is installed

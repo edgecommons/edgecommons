@@ -7,8 +7,9 @@
 > **UNS adoption status (2026-07).** The library's UNS core has since shipped
 > ([`platform/DESIGN-uns.md`](platform/DESIGN-uns.md)): the envelope gained a top-level **`identity`**
 > element (`tags.thing` removed), and the southbound data plane's contract topic is now the UNS
-> **`data`** class — `ecv1/{device}/{component}/{instance}/data/{signalPath}` (`docs/SOUTHBOUND.md`
-> §2.0) — with the six-wildcard consumer set (`ecv1/+/+/+/data/#` for telemetry). **The processor and
+> **`data`** class — `ecv1/{device}/{component}/[{instance}/]data/{signalPath}` (`docs/SOUTHBOUND.md`
+> §2.0, the instance token optional) — with the consumer wildcard set (`ecv1/+/+/data/#` and
+> `ecv1/+/+/+/data/#` for telemetry). **The processor and
 > the adapters have NOT yet adopted it** — that is **Phase 5 (component adoption)** of the UNS train.
 > The `southbound/{site}/…` topics throughout this doc are the **legacy scheme the shipping processor
 > still subscribes**; its migration re-points the route `subscribe[]` filters at the UNS `data` class

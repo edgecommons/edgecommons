@@ -11,7 +11,7 @@ This is the API reference for the **unified namespace**: the `gg.uns()` topic bu
 the `gg.instance(id)` handle, the `MessageIdentity` type, the normative validation rules, the
 reserved-class publish guard, and the `data()`/`events()`/`app()` **class-publish facades** — the
 sanctioned way to publish the three app-usable UNS classes. For the concept — the grammar, the
-classes, the six-wildcard consumer pattern — read the [Unified Namespace guide](/guides/unified-namespace/)
+classes, the consumer wildcard pattern — read the [Unified Namespace guide](/guides/unified-namespace/)
 first; for a task-oriented walkthrough of publishing telemetry/events, see
 [Publishing telemetry and events](/guides/unified-namespace/#publishing-telemetry-and-events)
 in that guide.
@@ -28,7 +28,7 @@ once; the runtime device still comes from the thing name, and `identity.device` 
 
 | Handle | Java | Python | Rust | TypeScript |
 |--------|------|--------|------|------------|
-| Topic builder (component-level, instance `main`) | `gg.getUns()` | `gg.uns()` | `gg.uns()` | `gg.uns()` |
+| Topic builder (component-level, no instance token) | `gg.getUns()` | `gg.uns()` | `gg.uns()` | `gg.uns()` |
 | Instance-scoped handle | `gg.instance(id)` | `gg.instance(id)` | `gg.instance(id)` → `Result` | `gg.instance(id)` |
 
 `gg.instance(id)` validates the instance token (charset rule below) and caches the handle per id. It
@@ -404,7 +404,7 @@ public final class MessageIdentity {
 }
 ```
 
-The component's resolved identity is `configManager.getComponentIdentity()` (instance `main`).
+The component's resolved identity is `configManager.getComponentIdentity()` (component-level, no instance token).
 
 </TabItem>
 <TabItem label="Python">
@@ -503,7 +503,7 @@ the topic consistently. Use them; reach for the raw path only when a body is gen
 
 ### Accessors
 
-Same convention as `uns()`/`instance()` above: a component-level convenience (instance `main`) and an
+Same convention as `uns()`/`instance()` above: a component-level convenience (no instance token) and an
 instance-scoped form.
 
 | Handle | Java | Python | Rust | TypeScript |
@@ -906,8 +906,8 @@ under the instance's or the global `component.*` config as `publish: { channel: 
 ## The command inbox: commands()
 
 Where `data()`/`events()`/`app()` publish the outbound app classes, **`commands()`** is the inbound
-side of the `cmd` class: a library-owned **command inbox** every component runs on its `main`
-instance. It subscribes the component's own command wildcard `ecv1/{device}/{component}/main/cmd/#`
+side of the `cmd` class: a library-owned **command inbox** every component runs at component scope.
+It subscribes the component's own command wildcard `ecv1/{device}/{component}/cmd/#`
 on the PRIMARY (local/IPC) connection and dispatches each incoming `cmd` envelope to a handler by
 **verb** — the topic channel after `cmd/` (`/`-namespaced verbs included), which the envelope's
 `header.name` must equal. It is available in **all four languages**, pinned by
@@ -981,7 +981,7 @@ its own `ecv1/{device}/#` subtree.
 <LinkCard
   title="Unified Namespace guide"
   href="/guides/unified-namespace/"
-  description="The concept: the grammar, the eight classes, identity + hierarchy, and the six-wildcard consumer pattern."
+  description="The concept: the grammar, the eight classes, identity + hierarchy, and the consumer wildcard pattern."
 />
 
 <LinkCard

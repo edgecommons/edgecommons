@@ -67,7 +67,7 @@ logging.level: "INFO"  ->  (edit config)  ->  logging.level: "DEBUG"  // takes e
 ## UNS log bus publishing
 
 `logging.publish.enabled` turns on the library-owned log publisher. Records publish to
-`ecv1/{device}/{component}/main/log/{level}` with envelope header `{name:"log", version:"1.0"}` and body
+`ecv1/{device}/{component}/log/{level}` with envelope header `{name:"log", version:"1.0"}` and body
 schema `edgecommons.log.v1`. The `log` class remains reserved: raw public `messaging().publish(...)`
 calls to `.../log/...` are rejected.
 

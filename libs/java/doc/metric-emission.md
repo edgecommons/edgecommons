@@ -140,7 +140,7 @@ Publishes metrics through the messaging system in EMF format, supporting both lo
 **Implementation details:**
 - Uses MessagingClient for both local/IPC and IoT Core publishing
 - Topic: the library-owned **UNS metric topic**
-  `ecv1/{device}/{component}/main/metric/{metricName}` (rooted form when `topic.includeRoot` is
+  `ecv1/{device}/{component}/metric/{metricName}` (rooted form when `topic.includeRoot` is
   true; the metric name is sanitized as a channel token). The former `targetConfig.topic` override
   was removed with the UNS hard cut — the `metric` class is reserved and published through the
   library-internal `ReservedPublisher` seam (see [messaging.md](messaging.md)).
@@ -276,7 +276,7 @@ ship the client, so their KUBERNETES default is unconditionally `prometheus`.
   }
 }
 ```
-Metrics publish to `ecv1/{device}/{component}/main/metric/{metricName}` on IoT Core.
+Metrics publish to `ecv1/{device}/{component}/metric/{metricName}` on IoT Core.
 
 ## EMF (Embedded Metric Format)
 

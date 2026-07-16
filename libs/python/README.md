@@ -34,7 +34,7 @@ The old `-m STANDALONE` is now `--platform HOST` (dual-MQTT); the old `-m GREENG
   `gg.instance(id)` with the reserved classes guarded. [doc](doc/messaging.md)
 - **Metrics** — pluggable targets: CloudWatch (EMF), cloudwatch-component, messaging (UNS `metric`
   topic), local log, prometheus. [doc](doc/metric-emission.md)
-- **Heartbeat** — the UNS `state` keepalive (`ecv1/{device}/{component}/main/state`, on/5 s/local)
+- **Heartbeat** — the UNS `state` keepalive (`ecv1/{device}/{component}/state`, on/5 s/local)
   plus system measures (CPU/memory/disk/threads/FDs) emitted as the `sys` metric. [doc](doc/heartbeat.md)
 - **Logging** — Python `logging` with file rotation and per-logger levels. [doc](doc/logging.md)
 - **Credentials** (`get_credentials()`) — encrypted local vault with optional AWS Secrets Manager
@@ -162,7 +162,7 @@ The legacy `-m/--mode` flag has been removed: `-m GREENGRASS` → `--platform GR
 docker compose -f ../../test-infra/compose.yaml up -d   # EMQX broker (or `docker run … emqx/emqx`)
 python3 main.py --platform HOST --transport MQTT standalone-messaging.json -c FILE config.json -t my-device
 ```
-Subscribe to `ecv1/+/+/+/state` (e.g. with MQTTX) to see the UNS state keepalives (heartbeats);
+Subscribe to `ecv1/+/+/state` (add `ecv1/+/+/+/state` for instance-scoped publishers; e.g. with MQTTX) to see the UNS state keepalives (heartbeats);
 subscribe to the component's topics to see its messages and publish to drive request/response.
 
 ## Testing

@@ -12,9 +12,9 @@ The **heartbeat** subsystem is your component's liveness beacon on the
 component code**:
 
 1. Publishes a **`state` keepalive** to the component's UNS state topic
-   `ecv1/{device}/{component}/main/state` — an envelope named `state` with body
+   `ecv1/{device}/{component}/state` — an envelope named `state` with body
    `{"status": "RUNNING", "uptimeSecs": <n>}`. This *is* the liveness signal a console, historian,
-   or watchdog subscribes to (`ecv1/+/+/+/state`).
+   or watchdog subscribes to (`ecv1/+/+/state`, plus `ecv1/+/+/+/state` for instance-scoped publishers).
 2. Emits the enabled **system measures** (CPU, memory, disk, threads, open files, file descriptors)
    as a single metric named **`sys`** through the normal [metrics](/guides/metrics/) subsystem — so
    the measures inherit the metric subsystem's full sink routing (log file, messaging, CloudWatch,
@@ -44,7 +44,7 @@ the `state` body with per-connection reachability.
 
 ## The state keepalive
 
-Each tick publishes one envelope to `ecv1/{device}/{component}/main/state`:
+Each tick publishes one envelope to `ecv1/{device}/{component}/state`:
 
 ```json
 {
@@ -74,7 +74,7 @@ Watch a device's components come alive from any MQTT client:
 ```bash
 # Bring up the local broker (EMQX), then subscribe to all state keepalives.
 docker compose -f test-infra/compose.yaml up -d
-mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -v
+mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/state' -t 'ecv1/+/+/+/state' -v
 ```
 
 </TabItem>
@@ -83,7 +83,7 @@ mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -v
 ```powershell
 # Bring up the local broker (EMQX), then subscribe to all state keepalives.
 docker compose -f test-infra/compose.yaml up -d
-mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -v
+mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/state' -t 'ecv1/+/+/+/state' -v
 ```
 
 </TabItem>
@@ -96,7 +96,7 @@ servers, a Modbus adapter polling several slaves, a file-replicator watching sev
 directories. Each can be reachable or down **independently** — and an operator wants to see which. The
 `state` keepalive carries this per-connection reachability in an optional **`instances[]`** array,
 *without* minting a phantom UNS instance per connection (the component stays one component, addressed
-under `main`).
+at component scope with no instance token).
 
 You surface it by registering a **connectivity provider** — the heartbeat samples it on every RUNNING
 tick and, when it returns entries, folds them into the state body:
@@ -168,7 +168,7 @@ optional human detail (typically the endpoint, or a down reason). The RUNNING `s
   `null` / `None` / `undefined` clears it (the section disappears on the next tick).
 
 **Why an array and not per-connection instances.** A multi-server adapter is still *one* component —
-its identity, data, config, and lifecycle all live under `main`. Reporting each connection as a
+its identity, data, config, and lifecycle all live at component scope (no instance token). Reporting each connection as a
 first-class UNS instance would mint phantom components a console then has to reconcile. Instead the one
 `state` topic carries a connectivity sub-table, so a console shows a single component with a
 per-connection health view. The reference adapters use exactly this: **opcua-adapter** reports one
@@ -266,7 +266,7 @@ via the configuration-change listener; Rust and TypeScript re-read the live conf
 ## Related
 
 <CardGrid>
-  <LinkCard title="Unified Namespace" href="/guides/unified-namespace/" description="The state class, the topic grammar, and the six-wildcard consumer pattern." />
+  <LinkCard title="Unified Namespace" href="/guides/unified-namespace/" description="The state class, the topic grammar, and the consumer wildcard pattern." />
   <LinkCard title="API reference: Heartbeat" href="/reference/heartbeat/" description="The heartbeat types, lifecycle, HeartbeatMonitor, and the config model." />
   <LinkCard title="Metrics guide" href="/guides/metrics/" description="Where the sys measures metric goes — targets and routing." />
   <LinkCard title="Configuration guide" href="/guides/configuration/" description="Config sources and the schema that validates the heartbeat section." />

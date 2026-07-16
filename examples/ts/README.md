@@ -14,15 +14,15 @@ hierarchy level's value is always the resolved thing name (the *device*). With `
 the topics below render as `ecv1/my-thing/TsComponentSkeleton/main/…`.
 
 - **Request/reply** — subscribes to its `cmd` inbox verb
-  `ecv1/{device}/TsComponentSkeleton/main/cmd/echo` and replies to each request.
-- **Periodic publish** — publishes `ecv1/{device}/TsComponentSkeleton/main/data/seq` every
+  `ecv1/{device}/TsComponentSkeleton/cmd/echo` and replies to each request.
+- **Periodic publish** — publishes `ecv1/{device}/TsComponentSkeleton/data/seq` every
   `component.global.publish_interval` seconds, emitting a `messages_published` metric per send.
 - **IoT Core telemetry** — mirrors each data message to AWS IoT Core on the *same* UNS topic
   (a UNS address is broker-independent), and acks IoT Core commands received on
   `…/cmd/run-demo` to `…/evt/cmd-ack`.
 - **Dynamic config** — a config-change listener updates the publish interval live on a hot-reload.
 - **Heartbeat** — automatic: the library publishes a `state` keepalive on
-  `ecv1/{device}/TsComponentSkeleton/main/state` every `heartbeat.intervalSecs` (default 5 s),
+  `ecv1/{device}/TsComponentSkeleton/state` every `heartbeat.intervalSecs` (default 5 s),
   and emits the enabled CPU/memory measures as the `sys` metric through `metricEmission`.
 - **Graceful shutdown** — runs until SIGINT / SIGTERM, unsubscribes, and awaits `gg.close()`.
 
@@ -56,9 +56,9 @@ node dist/main.js \
   -t my-thing
 ```
 
-Subscribe to `ecv1/my-thing/TsComponentSkeleton/main/data/seq` in an MQTT client to see
+Subscribe to `ecv1/my-thing/TsComponentSkeleton/data/seq` in an MQTT client to see
 published messages (or `ecv1/my-thing/+/+/state` for the automatic heartbeat keepalives),
-and publish to `ecv1/my-thing/TsComponentSkeleton/main/cmd/echo` (with a `reply_to`
+and publish to `ecv1/my-thing/TsComponentSkeleton/cmd/echo` (with a `reply_to`
 header) to exercise request/reply.
 
 ## CLI contract

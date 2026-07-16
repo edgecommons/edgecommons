@@ -159,9 +159,9 @@ Bundle rules:
 
 The UNS topics remain unchanged:
 
-- GET: `ecv1/{device}/config/main/cmd/get-configuration`.
-- update: `ecv1/{device}/config/main/cmd/update-catalog`.
-- push: `ecv1/{device}/{component}/main/cmd/set-config`.
+- GET: `ecv1/{device}/config/cmd/get-configuration`.
+- update: `ecv1/{device}/config/cmd/update-catalog`.
+- push: `ecv1/{device}/{component}/cmd/set-config`.
 
 ## 5. Client Merge And Reload
 

@@ -13,7 +13,7 @@ conceptual overview — the `state` keepalive, the `sys` metric, and the measure
 [Heartbeat guide](/guides/heartbeat/).
 
 **What the heartbeat does** (identical in all four languages): every `intervalSecs` tick it
-publishes a **`state` keepalive** to `ecv1/{device}/{component}/main/state` (header name `state`,
+publishes a **`state` keepalive** to `ecv1/{device}/{component}/state` (header name `state`,
 version `1.0`, body `{"status":"RUNNING","uptimeSecs":n}` — optionally extended with a per-connection
 `instances[]` array, [see below](#per-instance-connectivity)) through the library's privileged
 reserved-publish path, and emits the enabled system measures as a metric named **`sys`** through the
@@ -50,7 +50,7 @@ raw `state` messages.
 
 A component that fronts several southbound connections reports each connection's reachability in the
 RUNNING `state` body's optional **`instances[]`** array — **without** minting a UNS instance per
-connection (identity, data, and lifecycle stay under `main`). You register a **connectivity
+connection (identity, data, and lifecycle stay at component scope, with no instance token). You register a **connectivity
 provider**; the heartbeat samples it on every RUNNING tick. This is the terse API surface — for the
 concept, the on-wire array, and worked examples, see the
 [guide's Per-instance connectivity section](/guides/heartbeat/#per-instance-connectivity).
@@ -510,7 +510,7 @@ the [guide's configuration section](/guides/heartbeat/#configuration).
 
 <CardGrid>
   <LinkCard title="Heartbeat guide" href="/guides/heartbeat/" description="The state keepalive, the sys metric, the measures table, and behavior notes." />
-  <LinkCard title="Unified Namespace" href="/guides/unified-namespace/" description="The state class, reserved classes, and the six-wildcard consumer pattern." />
+  <LinkCard title="Unified Namespace" href="/guides/unified-namespace/" description="The state class, reserved classes, and the consumer wildcard pattern." />
   <LinkCard title="API reference: Metrics" href="/reference/metrics/" description="Where the sys metric emits and how metric targets work." />
   <LinkCard title="API reference: UNS" href="/reference/uns/" description="The reserved-class guard and the per-language internal publish seams." />
 </CardGrid>

@@ -25,9 +25,9 @@ markers in `src/main/java/.../<<COMPONENTNAME>>.java`.
   + `identity`; the last hierarchy level is always the resolved thing name).
 - Defines and emits the standard **`southbound_health`** metric (connection state, poll/publish
   latency, read errors, stale tags). The `messaging` metric target publishes to the UNS metric
-  topic (`ecv1/{device}/{component}/main/metric/{metricName}`) automatically — no topic config.
+  topic (`ecv1/{device}/{component}/metric/{metricName}`) automatically — no topic config.
 - Heartbeat is **automatic**: the library publishes the `state` keepalive to
-  `ecv1/{device}/{component}/main/state` (on / 5 s / local by default; optional
+  `ecv1/{device}/{component}/state` (on / 5 s / local by default; optional
   `heartbeat: {enabled, intervalSecs, measures, destination}` to tune).
 - Relies on the library's SIGTERM/SIGINT hook for graceful shutdown (no manual hook;
   `main()` blocks on a latch).
@@ -86,7 +86,9 @@ java -jar target/<<JARNAME>>-1.0.0.jar --platform HOST --transport MQTT ./test-c
 ```
 
 Needs a local MQTT broker (e.g. `docker run -d -p 1883:1883 emqx/emqx:latest`). Subscribe to
-`ecv1/+/+/+/state` for the heartbeat keepalives and `ecv1/+/+/+/data/#` to see signal updates.
+`ecv1/+/+/state` for the heartbeat keepalives (the adapter's own `state` is component-scoped) and
+`ecv1/+/+/+/data/#` for the per-device signal updates (the adapter publishes those instance-scoped,
+one instance per device).
 
 ## Run under Greengrass
 

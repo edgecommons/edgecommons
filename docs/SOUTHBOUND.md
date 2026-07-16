@@ -134,8 +134,9 @@ gg.messaging().publish(topic,
   guard (≤ 3 channel tokens rootless, 2 rooted — enforced by `uns()` at build time). The stable
   `signal.id` in the body remains the identity consumers key on; the exact
   sanitized-`signalId`-as-channel rule is pinned in Phase 5 (D‑U15).
-- A fleet consumer subscribes **one wildcard** — `ecv1/+/+/+/data/#` — instead of per-adapter topic
-  templates (one of the six-wildcard UNS consumer set).
+- A fleet consumer subscribes the `data` class at **both scopes** — `ecv1/+/+/data/#` (component
+  scope) and `ecv1/+/+/+/data/#` (instance scope) — instead of per-adapter topic templates (part of
+  the UNS consumer wildcard set).
 - **Adapter adoption status:** the library surface this rides on (`identity` stamping,
   `gg.instance(id)`, the `uns()` builder, the `data` class) is **shipped in all four languages**;
   the reference adapters (`opcua-adapter`, `modbus-adapter`) re-point their publish paths in the UNS

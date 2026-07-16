@@ -145,14 +145,14 @@ four languages.
 
 Construct messages with `MessageBuilder` — not the raw constructors. The builder stamps the
 `uuid`, `correlation_id`, and `timestamp` for you, and — when you supply the config — the
-custom tags **and the UNS `identity` element** (with the per-message `instance` token, default
-`main`).
+custom tags **and the UNS `identity` element** (with the optional per-message `instance` token —
+omit it for a component-scoped message).
 
 <Aside type="note">
 **`build()` never requires config in any language.** Supplying the config is what stamps the
 custom tags and the config-resolved `identity` on the envelope; a builder without config produces a
 legal envelope with no `identity` (the bootstrap/raw-bridging case). Use `withInstance(...)` /
-`with_instance(...)` / `.instance(...)` to stamp a non-`main` instance token — or better, build
+`with_instance(...)` / `.instance(...)` to stamp an instance token — or better, build
 through an [instance handle](/reference/uns/#gginstance--the-instance-scoped-handle).
 </Aside>
 
@@ -163,7 +163,7 @@ through an [instance handle](/reference/uns/#gginstance--the-instance-scoped-han
 Message msg = MessageBuilder.create("TemperatureReading", "1.0")
     .withPayload(payload)        // JsonObject, Map, POJO, or List
     .withConfig(configManager)   // stamps tags + the UNS identity
-    .withInstance("kep1")        // optional per-message instance token (default "main")
+    .withInstance("kep1")        // optional per-message instance token (omit for component scope)
     .build();
 ```
 
@@ -175,7 +175,7 @@ msg = (
     MessageBuilder.create("TemperatureReading", "1.0")
     .with_payload({"celsius": 22.4})
     .with_config(config)         # stamps tags + the UNS identity
-    .with_instance("kep1")       # optional per-message instance token (default "main")
+    .with_instance("kep1")       # optional per-message instance token (omit for component scope)
     .build()
 )
 ```
@@ -192,7 +192,7 @@ use serde_json::json;
 let msg = MessageBuilder::new("TemperatureReading", "1.0")
     .payload(json!({ "celsius": 22.4 }))
     .from_config(&config)        // stamps tags + the UNS identity
-    .instance("kep1")            // optional per-message instance token (default "main")
+    .instance("kep1")            // optional per-message instance token (omit for component scope)
     .build();
 ```
 
@@ -203,7 +203,7 @@ let msg = MessageBuilder::new("TemperatureReading", "1.0")
 const msg = MessageBuilder.create("TemperatureReading", "1.0")
   .withPayload({ celsius: 22.4 })
   .withConfig(gg.config())       // stamps tags + the UNS identity
-  .withInstance("kep1")          // optional per-message instance token (default "main")
+  .withInstance("kep1")          // optional per-message instance token (omit for component scope)
   .build();
 ```
 
@@ -225,7 +225,7 @@ accept explicit `uuid` and `timestamp` setters for deterministic envelopes.
 
 ```java
 String topic = gg.getUns().topic(UnsClass.APP, "order/received");
-gg.getMessaging().publish(topic, msg);   // ecv1/{device}/{component}/main/app/order/received
+gg.getMessaging().publish(topic, msg);   // ecv1/{device}/{component}/app/order/received
 ```
 
 </TabItem>
@@ -235,7 +235,7 @@ gg.getMessaging().publish(topic, msg);   // ecv1/{device}/{component}/main/app/o
 from edgecommons.uns import UnsClass
 
 topic = gg.uns().topic(UnsClass.APP, "order/received")
-gg.get_messaging().publish(topic, msg)   # ecv1/{device}/{component}/main/app/order/received
+gg.get_messaging().publish(topic, msg)   # ecv1/{device}/{component}/app/order/received
 ```
 
 </TabItem>
@@ -829,7 +829,7 @@ subscriptions or threads can trip the shared-connection quota on Greengrass.
 <LinkCard
   title="Unified Namespace guide"
   href="/guides/unified-namespace/"
-  description="The topic grammar, the eight message classes, identity, and the six-wildcard consumer pattern."
+  description="The topic grammar, the eight message classes, identity, and the consumer wildcard pattern."
 />
 
 <LinkCard

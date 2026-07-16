@@ -25,7 +25,7 @@ component:      { global: {...}, instances: [ { id, ... }, ... ] }
 ```
 
 `logging.publish` is the optional structured log-bus publisher. When enabled, Rust publishes
-`edgecommons.log.v1` records to `ecv1/{device}/{component}/main/log/{level}` through the reserved `log`
+`edgecommons.log.v1` records to `ecv1/{device}/{component}/log/{level}` through the reserved `log`
 class seam. It is disabled by default; native capture observes `tracing` events.
 
 Validation fails **closed**: an invalid document is a hard error at startup, and an

@@ -19,8 +19,9 @@ pip install -r requirements.txt
 python3 main.py --platform HOST --transport MQTT test-configs/standalone-local.json -c FILE test-configs/config_2.json -t my-thing-name
 ```
 
-Subscribe to `ecv1/+/+/+/state` (e.g. with MQTTX) to see the component's heartbeats, and to
-`ecv1/+/+/+/app/#` to see its hello-world messages. All topics are unified-namespace (UNS)
+Subscribe to `ecv1/+/+/state` (e.g. with MQTTX) to see the component's heartbeats, and to
+`ecv1/+/+/app/#` to see its hello-world messages (add the `ecv1/+/+/+/…` instance-scope form to also
+catch instance-scoped publishers). All topics are unified-namespace (UNS)
 topics minted via `gg.uns()` from the component's config-resolved identity — the top-level
 `hierarchy` + `identity` blocks in `test-configs/config_*.json` (the last hierarchy level is
 always the resolved thing name from `-t/--thing`).

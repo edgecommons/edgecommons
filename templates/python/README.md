@@ -15,8 +15,9 @@ python3 main.py --platform HOST --transport MQTT ./test-configs/standalone-messa
 ```
 
 Needs a local MQTT broker (e.g. `docker run -d -p 1883:1883 emqx/emqx:latest`). Subscribe to
-`ecv1/+/+/+/state` to see the component's heartbeats. Topics follow the unified namespace
-(`ecv1/{device}/{component}/{instance}/{class}/...`): the component's place in it comes from the
+`ecv1/+/+/state` (add `ecv1/+/+/+/state` to also catch instance-scoped publishers) to see the
+component's heartbeats. Topics follow the unified namespace
+(`ecv1/{device}/{component}/[{instance}/]{class}/...`, the instance token optional): the component's place in it comes from the
 top-level `hierarchy` + `identity` config blocks (see `test-configs/config_1.json`; the last
 hierarchy level is always the resolved thing name), and application topics are minted in code via
 `gg.uns()` — never hand-written.
@@ -30,12 +31,12 @@ facades** (`docs/platform/DESIGN-class-facades.md`) rather than hand-built topic
 
 | Surface | Where | Topic |
 |---|---|---|
-| Metric (`loopTicks`: `tickCount` counter + `uptimeSecs` gauge) | `gg.get_metrics()` | `ecv1/{device}/{component}/main/metric/loopTicks` (target-dependent; `messaging` target shown) |
-| Data signal (`demo-signal`: a sine-wave reading) | `gg.data().publish("demo-signal", value)` | `ecv1/{device}/{component}/main/data/demo-signal` |
-| Event (`sample-event`, severity + context) | `gg.events().emit("sample-event", message, context, severity=Severity.INFO)` | `ecv1/{device}/{component}/main/evt/info/sample-event` |
-| Custom command verb (`set-greeting`) | `EdgeCommonsBuilder.configure_commands(...)` | `ecv1/{device}/{component}/main/cmd/set-greeting` |
+| Metric (`loopTicks`: `tickCount` counter + `uptimeSecs` gauge) | `gg.get_metrics()` | `ecv1/{device}/{component}/metric/loopTicks` (target-dependent; `messaging` target shown) |
+| Data signal (`demo-signal`: a sine-wave reading) | `gg.data().publish("demo-signal", value)` | `ecv1/{device}/{component}/data/demo-signal` |
+| Event (`sample-event`, severity + context) | `gg.events().emit("sample-event", message, context, severity=Severity.INFO)` | `ecv1/{device}/{component}/evt/info/sample-event` |
+| Custom command verb (`set-greeting`) | `EdgeCommonsBuilder.configure_commands(...)` | `ecv1/{device}/{component}/cmd/set-greeting` |
 
-Subscribe `ecv1/+/+/+/metric/#`, `ecv1/+/+/+/data/#` and `ecv1/+/+/+/evt/#` to see them (metrics
+Subscribe `ecv1/+/+/metric/#`, `ecv1/+/+/data/#` and `ecv1/+/+/evt/#` (add the `ecv1/+/+/+/…` instance-scope form to also catch instance-scoped publishers) to see them (metrics
 only publish over MQTT when `metricEmission.target` is `messaging`; the default `log` target
 writes a local file instead). `DataFacade` defaults an omitted sample `quality` to `GOOD` (marked
 `qualityRaw:"unspecified"` on the wire) — pass an explicit `Quality` when your source knows a read
@@ -43,7 +44,7 @@ failed or is stale. `EventsFacade` derives the `evt/{severity}/{type}` channel f
 severity + type, so the topic and body can never disagree; use `raise_alarm`/`clear_alarm` for
 stateful alarms instead of one-shot `emit`. Invoke the custom verb with a request/reply tool
 (e.g. MQTTX) by publishing `{"header":{"name":"set-greeting","version":"1.0"},"body":
-{"greeting":"Hi there"}}` to `ecv1/{device}/{component}/main/cmd/set-greeting`; the next `app`
+{"greeting":"Hi there"}}` to `ecv1/{device}/{component}/cmd/set-greeting`; the next `app`
 status publish reflects the new greeting. Replace all four with your own metrics/signals/events/verbs.
 
 The scaffold selects `initial_ready(False)` before the runtime starts. Its custom handler is installed
