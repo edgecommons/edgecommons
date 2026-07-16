@@ -105,19 +105,21 @@ exists to abstract these differences away so the same business logic runs everyw
   (`{hier, path, component, instance}`, from the top-level `hierarchy`/`identity` config; the old
   `tags.thing` is removed).
 - **uns** — the **Unified Namespace** (`docs/platform/DESIGN-uns.md` + `UNS-CANONICAL-DESIGN.md`,
-  the D‑U1…D‑U27 register): all topics follow `ecv1/{device}/{component}/{instance}/{class}[/channel]`
+  the D‑U1…D‑U28 register): topics follow `ecv1/{device}/{component}[/{instance}]/{class}[/channel]` — the
+  instance token is **optional** (present ⇒ instance-scoped, absent ⇒ component-scoped; the `main` sentinel is retired)
   (classes `state`/`metric`/`cfg`/`log` are **reserved**, library-owned — a raw publish to them is
   rejected — plus open `data`/`evt`/`cmd`/`app`). `gg.uns()` is the topic builder/validator
   (char-set + IoT-Core 7-slash depth guard at build time); `gg.instance(id)` pre-binds the
-  per-message instance token; a consumer covers the whole fleet with six wildcards
-  (`ecv1/+/+/+/{state|cfg|evt|metric|data|log}`). Cross-language conformance is pinned by
+  per-message instance token; a fleet consumer subscribes **both** scopes per class — the component-scope
+  `ecv1/+/+/{state|cfg|evt|metric|data|log}` and the instance-scope `ecv1/+/+/+/{state|cfg|evt|metric|data|log}`
+  (D-U28: the instance token is optional, so covering only one scope misses the other's traffic). Cross-language conformance is pinned by
   `uns-test-vectors/`. (The `uns-bridge`/site-broker realization (Phase 3) has shipped; the
   `data()`/`events()`/`app()` publish facades and the minimal `commands()` inbox are shipped in all
   four languages. The richer `status()`/`discovery()`/`telemetry()` facades and the `log`-tail
   publisher remain deferred — use `messaging()` + `uns()` for those.)
 - **metrics** — pluggable targets: CloudWatch EMF, cloudwatch-component, messaging (publishes on the
   UNS `metric` class), local log, prometheus.
-- **heartbeat** — the automatic UNS **`state` keepalive** (`ecv1/{device}/{component}/main/state`,
+- **heartbeat** — the automatic UNS **`state` keepalive** (`ecv1/{device}/{component}/state`,
   on by default / 5 s / local; best-effort `STOPPED` on shutdown) plus system measures
   (CPU/memory/disk/threads/FDs) emitted as the **`sys` metric** through the metric subsystem.
   Config is `heartbeat: {enabled, intervalSecs, measures, destination}` — the legacy `targets[]`
@@ -240,11 +242,15 @@ The HOST platform with the MQTT transport (and local testing) uses a local MQTT 
 ```bash
 docker compose -f test-infra/compose.yaml up -d   # EMQX (plaintext 1883 + mutual-TLS 8883)
 ```
-Subscribe to `ecv1/+/+/+/state` (e.g. with MQTTX) to see component state keepalives (the heartbeat),
-and to drive request/response topics. The full six-wildcard UNS consumer set (fleet-wide, zero
-per-component knowledge) is:
+Subscribe to `ecv1/+/+/state` (e.g. with MQTTX) to see component state keepalives (the heartbeat),
+and to drive request/response topics. A full UNS consumer (fleet-wide, zero per-component knowledge)
+subscribes **both** D-U28 scopes per class — component scope (no instance token) and instance scope:
 
 ```text
+# component scope
+ecv1/+/+/state          ecv1/+/+/cfg          ecv1/+/+/evt/#
+ecv1/+/+/metric/#       ecv1/+/+/data/#       ecv1/+/+/log/#
+# instance scope
 ecv1/+/+/+/state        ecv1/+/+/+/cfg        ecv1/+/+/+/evt/#
 ecv1/+/+/+/metric/#     ecv1/+/+/+/data/#     ecv1/+/+/+/log/#
 ```
