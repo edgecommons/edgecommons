@@ -45,7 +45,7 @@ Topics follow the Unified Namespace grammar `ecv1/{device}/{component}/{instance
 use edgecommons::uns::UnsClass;
 
 let topic = gg.uns().topic_with_channel(UnsClass::App, "order/received")?;
-// -> ecv1/gw-01/my-component/main/app/order/received
+// -> ecv1/gw-01/my-component/app/order/received
 svc.publish(&topic, &msg).await?;
 
 let inst = gg.instance("kep1")?;              // instance-scoped handle
@@ -98,8 +98,8 @@ bounded control payloads, not frame/video streaming.
 
 The envelope is `{header, identity, tags, body}`: `from_config` stamps the top-level **`identity`**
 element (`{hier, path, component, instance}`, resolved from the `hierarchy`/`identity` config
-blocks; `instance` defaults to `"main"` — override per message with `.instance("kep1")` or via
-`gg.instance(id).message(...)`). The former `tags.thing` field is **removed** (hard cut); `tags`
+blocks; `instance` is optional and omitted by default, giving a component-scoped topic — set one per
+message with `.instance("kep1")` or via `gg.instance(id).message(...)` for instance scope). The former `tags.thing` field is **removed** (hard cut); `tags`
 carries business metadata only. Header keys are **snake_case** (`correlation_id`, `reply_to`) and
 request/reply uses the `edgecommons/reply-` topic prefix — matching the Java/Python/TypeScript
 `MessageHeader` exactly so the four libraries interoperate on the same topics (byte-identical

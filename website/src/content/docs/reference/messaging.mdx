@@ -536,7 +536,7 @@ accessor, and `withInstance`), see the [UNS API reference](/reference/uns/#messa
 
 Construct messages with the builder, not raw constructors — it stamps `uuid`, `correlation_id`, and
 `timestamp` for you. Supplying the config is what stamps the custom tags **and the UNS `identity`**
-(with the per-message instance token, default `main`); `build()` **never requires config** in any
+(with the optional per-message instance token — omit it for a component-scoped message); `build()` **never requires config** in any
 language (a config-less build produces a legal envelope without `identity`). An explicit identity
 override always wins over the config-resolved one. All four builders expose explicit
 `uuid`/`timestamp` setters (deterministic envelopes for tests and vectors).
@@ -559,7 +559,7 @@ MessageBuilder withUuid(String uuid);
 MessageBuilder withTimestamp(String timestamp);
 MessageBuilder withPayload(Object payload);         // JsonObject / Map / POJO / List
 MessageBuilder withConfig(ConfigManager config);    // stamps tags + the UNS identity
-MessageBuilder withInstance(String instance);       // per-message instance token (default "main")
+MessageBuilder withInstance(String instance);       // per-message instance token (omit for component scope)
 MessageBuilder withIdentity(MessageIdentity id);    // explicit override (tests, vectors, relays)
 Message build();
 ```
@@ -584,7 +584,7 @@ def with_tags(self, tags): ...          # explicit tags (alternative to config)
 def with_uuid(self, uuid): ...
 def with_timestamp(self, ts): ...
 def with_reply_to(self, topic): ...
-def with_instance(self, instance): ...  # per-message instance token (default "main")
+def with_instance(self, instance): ...  # per-message instance token (omit for component scope)
 def with_identity(self, identity): ...  # explicit override (tests, vectors, relays)
 def build(self) -> Message: ...
 ```
@@ -605,7 +605,7 @@ impl MessageBuilder {
     pub fn reply_to(self, topic: impl Into<String>) -> Self;
     pub fn tag(self, key: impl Into<String>, value: Value) -> Self;
     pub fn from_config(self, config: &Config) -> Self;      // stamps tags + the UNS identity
-    pub fn instance(self, instance: impl Into<String>) -> Self;   // per-message token (default "main")
+    pub fn instance(self, instance: impl Into<String>) -> Self;   // per-message token (omit for component scope)
     pub fn identity(self, identity: MessageIdentity) -> Self;     // explicit override
     pub fn build(self) -> Message;
 }
@@ -630,7 +630,7 @@ class MessageBuilder {
   withUuid(uuid: string): this;
   withTimestamp(timestamp: string): this;
   withReplyTo(topic: string): this;
-  withInstance(instance: string): this;            // per-message instance token (default "main")
+  withInstance(instance: string): this;            // per-message instance token (omit for component scope)
   withIdentity(identity: MessageIdentity): this;   // explicit override
   build(): Message;
 }

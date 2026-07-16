@@ -42,8 +42,9 @@ python main.py --platform HOST --transport MQTT ./test-configs/standalone-messag
        -c FILE test-configs/<<COMPONENTNAME>>.json -t my-thing
 ```
 
-Watch it on the bus (e.g. with MQTTX): subscribe to `ecv1/+/+/+/state` for the component's
-heartbeat keepalives and `ecv1/+/+/+/data/#` for the published signal updates.
+Watch it on the bus (e.g. with MQTTX): subscribe to `ecv1/+/+/state` for the component's
+heartbeat keepalives (the adapter's own `state` is component-scoped) and `ecv1/+/+/+/data/#` for the
+published signal updates (published instance-scoped, one instance per device).
 
 > The on-demand read/write command surface stays on the per-instance `write.topic` / `read.topic`
 > subscriptions for now; the standardized southbound command family (`sb/*` verbs) moves to the UNS

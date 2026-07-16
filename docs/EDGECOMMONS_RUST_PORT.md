@@ -286,7 +286,7 @@ pub trait MetricTarget: Send + Sync {
 ### 9.4 Heartbeat
 
 A `tokio` interval task. Since the UNS change it does two things per tick: publishes the **`state`
-keepalive** to `ecv1/{device}/{component}/main/state` through the crate-private reserved-publish seam
+keepalive** to `ecv1/{device}/{component}/state` through the crate-private reserved-publish seam
 (on by default, 5 s, `heartbeat.destination: local|northbound`; best-effort `STOPPED` on graceful
 shutdown), and emits the enabled system measures (via `sysinfo`: CPU %, memory RSS, disk, threads;
 FDs via `/proc/self/fd` on Linux / `sysinfo` handles elsewhere) as the **`sys` metric** through

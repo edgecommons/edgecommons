@@ -53,7 +53,7 @@ The logging system is configured through the `logging` section of the component 
 ### UNS Log Bus Publishing
 
 `logging.publish.enabled` turns on the library-owned log publisher. Records are emitted to
-`ecv1/{device}/{component}/main/log/{level}` with envelope header `{name:"log", version:"1.0"}` and body
+`ecv1/{device}/{component}/log/{level}` with envelope header `{name:"log", version:"1.0"}` and body
 schema `edgecommons.log.v1`. The `log` class remains reserved; raw public `MessagingClient.publish(...)`
 calls to `.../log/...` are rejected.
 

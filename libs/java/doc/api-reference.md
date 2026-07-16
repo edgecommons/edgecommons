@@ -73,7 +73,7 @@ Returns the configuration manager instance.
 public LogService getLogs()
 ```
 Returns the structured UNS log publisher. It publishes `edgecommons.log.v1` records on
-`ecv1/{device}/{component}/main/log/{level}` through the reserved `log` class seam.
+`ecv1/{device}/{component}/log/{level}` through the reserved `log` class seam.
 
 ```java
 public static ParsedCommandLine processArgs(String componentName, String[] args, Options appOptions)
@@ -244,7 +244,7 @@ public String getTopic()
 ```
 Returns the fixed `cloudwatch/metric/put` contract topic for the `cloudwatchcomponent` target, or
 `null` otherwise. (The `messaging` target publishes to the UNS metric topic
-`ecv1/{device}/{component}/main/metric/{metricName}` — no configured topic.)
+`ecv1/{device}/{component}/metric/{metricName}` — no configured topic.)
 
 ```java
 public int getIntervalSecs()

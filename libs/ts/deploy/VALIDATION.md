@@ -8,9 +8,9 @@ real AWS IoT Greengrass v2 **Nucleus 2.17.0** on Ubuntu `lab-5950x`
 
 > **Note (2026-07): this run predates the UNS hard cut.** The topics recorded below are the
 > **legacy** scheme: the heartbeat is now the UNS `state` keepalive on
-> `ecv1/{device}/{component}/main/state` (subscribe `ecv1/+/+/+/state`, not
+> `ecv1/{device}/{component}/state` (subscribe `ecv1/+/+/state`, plus `ecv1/+/+/+/state` for instance-scoped publishers, not
 > `edgecommons/<thing>/<comp>/heartbeat`), and the CONFIG_COMPONENT rendezvous moved to
-> `ecv1/{device}/config/main/cmd/get-configuration`. The TS IoT-Core API family was also renamed
+> `ecv1/{device}/config/cmd/get-configuration`. The TS IoT-Core API family was also renamed
 > `Iot → IoT` (`publishNorthbound`, `subscribeNorthbound`, …), and the envelope gained a top-level
 > `identity` element (`tags.thing` removed). A future run re-validates against the UNS surface.
 

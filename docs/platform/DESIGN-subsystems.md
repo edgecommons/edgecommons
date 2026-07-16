@@ -221,7 +221,7 @@ follow-ups are recorded for a deliberate later decision:
   through the metric target — since the UNS change they are emitted as the **`sys` metric** through the
   normal metric subsystem (so on KUBERNETES they land in the prometheus registry — not "folded in"),
   while the heartbeat itself is the UNS **`state` keepalive** on
-  `ecv1/{device}/{component}/main/state` (a bus liveness beacon, orthogonal to scraping). The measure
+  `ecv1/{device}/{component}/state` (a bus liveness beacon, orthogonal to scraping). The measure
   timer is partly redundant with the scrape interval; the idiomatic pull pattern is a **scrape-time
   collector** (sample lazily when pulled). And k8s already exposes per-container CPU/mem via
   cAdvisor/kubelet, so per-pod heartbeat resource metrics are partly redundant at the infra layer
@@ -234,7 +234,7 @@ follow-ups are recorded for a deliberate later decision:
 
 **Seam today.** The heartbeat is the library-owned liveness signal (reshaped by the UNS train —
 UNS-CANONICAL-DESIGN §4.3): each tick it publishes the **`state` keepalive** to
-`ecv1/{device}/{component}/main/state` (on by default, 5 s, `heartbeat.destination: local|northbound`;
+`ecv1/{device}/{component}/state` (on by default, 5 s, `heartbeat.destination: local|northbound`;
 best-effort `STOPPED` on graceful shutdown) and emits the enabled CPU/mem/disk/threads/FDs measures as
 the **`sys` metric** through the metric subsystem. The legacy `heartbeat.targets[]` array is removed.
 At the time this design was grounded there was **no HTTP health endpoint** and **no auto-wired

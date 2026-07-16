@@ -18,7 +18,7 @@ same CLI contract, the same subsystem boundaries, the same on-wire message envel
 | Config | `src/config/` | Typed model + defaulting accessors, template substitution (sanitized), embedded JSON schema + `ajv` validation, all 5 sources, hot reload. |
 | Messaging | `src/messaging/` | Transport/service split: `MessagingProvider` (`StandaloneMqttProvider` dual-broker, `IpcMessagingProvider` Greengrass IPC) + `DefaultMessagingService` (envelope, dispatch, request/reply, strict confirmed publishing). |
 | Metrics | `src/metrics/` | `Metric`/`MetricBuilder`, EMF (ms timestamps), targets (log w/ rotation, messaging, cloudwatchcomponent, cloudwatch via optional `@aws-sdk/client-cloudwatch`, **prometheus** pull-based registry served over HTTP via optional `prom-client` — default on KUBERNETES), `MetricEmitter`. |
-| Heartbeat | `src/heartbeat.ts` | The UNS `state` keepalive (`ecv1/{device}/{component}/main/state`, `{"status":"RUNNING","uptimeSecs":n}`, best-effort `STOPPED` on shutdown) + the enabled cpu/mem/disk/… measures emitted as the `sys` metric through the metric subsystem; on/5 s/local by default; reacts to config reload. |
+| Heartbeat | `src/heartbeat.ts` | The UNS `state` keepalive (`ecv1/{device}/{component}/state`, `{"status":"RUNNING","uptimeSecs":n}`, best-effort `STOPPED` on shutdown) + the enabled cpu/mem/disk/… measures emitted as the `sys` metric through the metric subsystem; on/5 s/local by default; reacts to config reload. |
 | UNS | `src/uns.ts` | `gg.uns()` / `gg.instance(id).uns()` — the unified-namespace topic builder + validator (`ecv1[/{site}]/{device}/{component}/{instance}/{class}[/{channel…}]`), `UnsScope` filters, machine-readable `UnsValidationError` codes, and the reserved-class predicate behind the publish guard (`state|metric|cfg|log` are library-owned). |
 | Health | `src/health.ts` | Dependency-free HTTP `GET /livez` (process alive; never checks the broker), `/readyz` + `/startupz` (200 only when messaging-connected, `setReady`, required library gates, and not shutting down); on by default on KUBERNETES, opt-in via `health.enabled` elsewhere. |
 | Logging | `src/logging.ts`, `src/log_bus.ts` | Leveled logger with file rotation; reconfigures on reload; per-logger levels via `getLogger(name)`. Optional `logging.publish` sends structured records through `gg.logs()` to the reserved UNS `log` class. |
@@ -124,7 +124,7 @@ npm test           # vitest unit tests (cli, config, message, metrics, messaging
 ## Log bus publishing
 
 `logging.publish` enables the library-owned UNS log publisher. Records publish to
-`ecv1/{device}/{component}/main/log/{level}` with envelope header
+`ecv1/{device}/{component}/log/{level}` with envelope header
 `{name:"log", version:"1.0"}` and body schema `edgecommons.log.v1`. The `log`
 class remains reserved: raw public `messaging.publish(...)` to `.../log/...` is
 still rejected, and the publisher uses the internal reserved seam.

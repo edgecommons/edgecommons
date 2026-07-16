@@ -98,9 +98,9 @@ to find in the field.
 
 | Surface | Where | Topic |
 |---|---|---|
-| Metric (`processorThroughput`: `received`, `published`, `dropped`, `errors`) | `gg.get_metrics()` | `ecv1/{device}/{component}/main/metric/processorThroughput` (target-dependent) |
+| Metric (`processorThroughput`: `received`, `published`, `dropped`, `errors`) | `gg.get_metrics()` | `ecv1/{device}/{component}/metric/processorThroughput` (target-dependent) |
 | Event (`publish-failed`) | `gg.instance(route).events()` | `ecv1/{device}/{component}/{route}/evt/warning/publish-failed` |
-| `state` keepalive + command inbox (`ping` / `reload-config` / `get-configuration`) | automatic, library-owned | `ecv1/{device}/{component}/main/state`, `…/main/cmd/#` |
+| `state` keepalive + command inbox (`ping` / `reload-config` / `get-configuration`) | automatic, library-owned | `ecv1/{device}/{component}/state`, `…/cmd/#` |
 
 ## Run locally (HOST platform, MQTT transport)
 
@@ -117,7 +117,7 @@ Feed the route something to process and watch what it republishes:
 
 ```bash
 mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/data/#' -v
-mosquitto_pub -h localhost -p 1883 -t 'ecv1/gw-01/sim/main/data/temperature-1' \
+mosquitto_pub -h localhost -p 1883 -t 'ecv1/gw-01/sim/data/temperature-1' \
   -m '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"},"samples":[{"value":21.5}]}}'
 ```
 

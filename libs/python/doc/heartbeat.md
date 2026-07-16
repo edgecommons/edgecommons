@@ -137,9 +137,10 @@ No keepalive, no `sys` metric (and no `STOPPED` state on shutdown — nothing wa
 
 ## 6. Consuming heartbeats
 
-Subscribe to the UNS state class, e.g. all components on all devices:
+Subscribe to the UNS state class, e.g. all components on all devices, at both scopes (component and instance):
 
 ```
+ecv1/+/+/state
 ecv1/+/+/+/state
 ```
 

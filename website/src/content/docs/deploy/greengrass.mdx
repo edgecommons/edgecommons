@@ -322,10 +322,10 @@ publish the version you intend to deploy.
 
 - On the core device, check component status with the Greengrass CLI:
   `greengrass-cli component list` (and watch the Nucleus logs under `/greengrass/v2/logs/`).
-- Subscribe to `ecv1/+/+/+/state` to confirm the component is alive and publishing its
+- Subscribe to `ecv1/+/+/state` (add `ecv1/+/+/+/state` for instance-scoped publishers) to confirm the component is alive and publishing its
   [`state` keepalive](/guides/heartbeat/) — over IPC these surface on the local pub/sub bus (and on
   IoT Core when `heartbeat.destination` is `northbound`). The concrete topic is
-  `ecv1/{device}/{component}/main/state`, where the device is the resolved thing name.
+  `ecv1/{device}/{component}/state`, where the device is the resolved thing name.
 
 ## Next steps
 

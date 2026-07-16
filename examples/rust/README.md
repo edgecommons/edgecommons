@@ -16,14 +16,14 @@ hierarchy level's value is always the resolved thing name). Topics are never
 hand-written.
 
 - **Request/reply** — subscribes to its command inbox
-  `ecv1/<thing>/RustComponentSkeleton/main/cmd/request` and replies to each request;
+  `ecv1/<thing>/RustComponentSkeleton/cmd/request` and replies to each request;
   a periodic self-request demonstrates the framework request deadline
   (`EdgeCommonsError::RequestTimeout`, `messaging.requestTimeoutSeconds`).
-- **Periodic publish** — publishes `ecv1/<thing>/RustComponentSkeleton/main/data/sample`
+- **Periodic publish** — publishes `ecv1/<thing>/RustComponentSkeleton/data/sample`
   every `component.global.publish_interval` seconds, emitting a `messages_published`
   metric per send (and mirrors it to IoT Core on `…/data/telemetry`).
 - **Heartbeat** — automatic UNS `state` keepalive on
-  `ecv1/<thing>/RustComponentSkeleton/main/state` (on by default, every 5 s, local);
+  `ecv1/<thing>/RustComponentSkeleton/state` (on by default, every 5 s, local);
   the enabled CPU/memory measures emit as the metric `sys` (configured by the
   optional `heartbeat` block in `recipe.yaml` / `config.json`).
 - **Graceful shutdown** — runs until Ctrl-C / SIGTERM, unsubscribes, and drops the
@@ -44,11 +44,11 @@ cargo run -- \
   -t my-thing
 ```
 
-Subscribe to `ecv1/my-thing/RustComponentSkeleton/main/data/sample` (or `ecv1/#`) in
+Subscribe to `ecv1/my-thing/RustComponentSkeleton/data/sample` (or `ecv1/#`) in
 an MQTT client to see published messages, and publish to
-`ecv1/my-thing/RustComponentSkeleton/main/cmd/request` (with a `reply_to` header) to
+`ecv1/my-thing/RustComponentSkeleton/cmd/request` (with a `reply_to` header) to
 exercise request/reply. The `state` keepalive appears on
-`ecv1/my-thing/RustComponentSkeleton/main/state`.
+`ecv1/my-thing/RustComponentSkeleton/state`.
 
 ## CLI contract
 

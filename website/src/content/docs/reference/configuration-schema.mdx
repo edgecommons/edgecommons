@@ -172,7 +172,7 @@ case-insensitive token `json` in a `<lang>_format` field selects the structured 
 is the default on the `KUBERNETES` platform.
 
 When enabled, `logging.publish` emits `edgecommons.log.v1` records on
-`ecv1/{device}/{component}/main/log/{level}` through the library's reserved-publish seam. Public
+`ecv1/{device}/{component}/log/{level}` through the library's reserved-publish seam. Public
 component publishes to the `log` class remain rejected.
 
 ## `metricEmission`
@@ -203,7 +203,7 @@ applied in code, not by the schema).
 
 <Aside type="note" title="Messaging metric topic">
 The `messaging` target publishes to the fixed UNS metric topic
-`ecv1/{device}/{component}/main/metric/{metricName}`, and the `cloudwatchcomponent` target always
+`ecv1/{device}/{component}/metric/{metricName}`, and the `cloudwatchcomponent` target always
 uses the external AWS contract topic `cloudwatch/metric/put`. See the
 [Unified Namespace](/guides/unified-namespace/).
 </Aside>
@@ -224,7 +224,7 @@ host-callback `PutMetricData` sink).
 ## `heartbeat`
 
 The library-owned heartbeat: a UNS **`state` keepalive** published to
-`ecv1/{device}/{component}/main/state` each tick (body `{"status":"RUNNING","uptimeSecs":n}`, a
+`ecv1/{device}/{component}/state` each tick (body `{"status":"RUNNING","uptimeSecs":n}`, a
 best-effort `{"status":"STOPPED"}` on graceful shutdown), with the enabled system measures emitted
 as the metric **`sys`** through the metric subsystem. Object, strict.
 

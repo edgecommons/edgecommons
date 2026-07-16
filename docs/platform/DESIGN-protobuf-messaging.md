@@ -758,8 +758,8 @@ There are two mechanisms that are easy to conflate:
    dedicated EdgeCommons configuration-management component. The current repo
    still contains the client-side custom config-manager rendezvous over
    EdgeCommons UNS command topics:
-   `ecv1/{device}/config/main/cmd/get-configuration` for bootstrap fetch and
-   `ecv1/{device}/{component}/main/cmd/set-config` for push. The server-side
+   `ecv1/{device}/config/cmd/get-configuration` for bootstrap fetch and
+   `ecv1/{device}/{component}/cmd/set-config` for push. The server-side
    configuration-management component has not yet been re-written/ported.
 
 Recommended protobuf-design direction:

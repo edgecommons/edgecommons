@@ -122,7 +122,7 @@ python3 main.py --platform HOST --transport MQTT ./test-configs/standalone-messa
 Give it something to deliver, and watch it land:
 
 ```bash
-mosquitto_pub -h localhost -p 1883 -t 'ecv1/gw-01/sim/main/data/temperature-1' \
+mosquitto_pub -h localhost -p 1883 -t 'ecv1/gw-01/sim/data/temperature-1' \
   -m '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"}}}'
 ls -R ./out            # archive/temperature-1/<uuid>.json
 ```

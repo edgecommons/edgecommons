@@ -1,6 +1,6 @@
 ---
 title: Unified Namespace (UNS)
-description: The one topic namespace every EdgeCommons component publishes and subscribes on — the ecv1 topic grammar, the eight message classes, the identity element, and the six-wildcard consumer pattern.
+description: The one topic namespace every EdgeCommons component publishes and subscribes on — the ecv1 topic grammar, the eight message classes, the identity element, and the consumer wildcard pattern.
 sidebar:
   order: 2.5
 ---
@@ -19,7 +19,7 @@ This page is the concept reference the other guides build on; the exact API is i
 ## The topic grammar
 
 ```text
-ecv1 / {device} / {component} / {instance} / {class} [ / {channel...} ]
+ecv1 / {device} / {component} / [ {instance} / ] {class} [ / {channel...} ]
 ```
 
 | Segment | What it is |
@@ -27,7 +27,7 @@ ecv1 / {device} / {component} / {instance} / {class} [ / {channel...} ]
 | `ecv1` | The fused root literal: EdgeCommons namespace + grammar major version. Grammar bumps are `ecv1 → ecv2`; *payload* versions stay in `header.version`. |
 | `{device}` | The physical node — the resolved thing name (the last level of the [hierarchy](#identity-and-the-hierarchy)). |
 | `{component}` | The component's sanitized **short name** (the segment after the last `.`). |
-| `{instance}` | The logical instance the message pertains to; `main` for component-level messages. |
+| `{instance}` | Optional. The logical instance the message pertains to; present only for instance-scoped messages. Component-scoped messages omit it entirely. |
 | `{class}` | One of the eight closed [message classes](#the-eight-message-classes). |
 | `{channel...}` | Class-specific sub-path (a metric name, a signal path, a command verb). |
 
@@ -74,28 +74,32 @@ names the **publisher**.
 With zero component code, every component is already observable on the UNS:
 
 - **`state`** — the [heartbeat keepalive](/guides/heartbeat/), on by default every 5 s:
-  `ecv1/{device}/{component}/main/state` with body `{"status":"RUNNING","uptimeSecs":n}` (and a
+  `ecv1/{device}/{component}/state` with body `{"status":"RUNNING","uptimeSecs":n}` (and a
   best-effort `{"status":"STOPPED"}` on graceful shutdown).
-- **`metric`** — each metric on `ecv1/{device}/{component}/main/metric/{name}` when the
+- **`metric`** — each metric on `ecv1/{device}/{component}/metric/{name}` when the
   [metrics](/guides/metrics/) `messaging` target is selected; the heartbeat's system measures arrive
   as a metric named **`sys`**.
-- **`cfg`** — the effective (redacted) configuration on `ecv1/{device}/{component}/main/cfg` at
+- **`cfg`** — the effective (redacted) configuration on `ecv1/{device}/{component}/cfg` at
   startup and on every config change.
 </Aside>
 
-## The six-wildcard consumer pattern
+## The consumer wildcard pattern
 
-A consumer's **complete subscription set** is six uniform wildcards — no per-component branches:
+A consumer's **complete subscription set** is two uniform wildcards per class — a **component-scope**
+filter and an **instance-scope** filter — with no per-component branches:
 
 ```text
+ecv1/+/+/state          ecv1/+/+/cfg          ecv1/+/+/evt/#
+ecv1/+/+/metric/#       ecv1/+/+/data/#       ecv1/+/+/log/#
 ecv1/+/+/+/state        ecv1/+/+/+/cfg        ecv1/+/+/+/evt/#
 ecv1/+/+/+/metric/#     ecv1/+/+/+/data/#     ecv1/+/+/+/log/#
 ```
 
-That covers every component's liveness, config, events, metrics, telemetry, and log tail on
-the bus. Group and display by reading each message's `identity` — never by parsing the topic. The
-`uns()` API builds these filters for you (`gg.uns().filter(class, scope)`), scoped site-wide or
-narrowed to a device/component/instance.
+The `ecv1/+/+/{class}` filters catch component-scoped messages (no instance token); the
+`ecv1/+/+/+/{class}` filters catch instance-scoped messages. Together they cover every component's
+liveness, config, events, metrics, telemetry, and log tail on the bus. Group and display by reading
+each message's `identity` — never by parsing the topic. The `uns()` API builds these filters for you
+(`gg.uns().filter(class, scope)`), scoped site-wide or narrowed to a device/component/instance.
 
 To watch a device's components come alive from any MQTT client:
 
@@ -103,14 +107,14 @@ To watch a device's components come alive from any MQTT client:
 <TabItem label="Linux">
 
 ```bash
-mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -v
+mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/state' -t 'ecv1/+/+/+/state' -v
 ```
 
 </TabItem>
 <TabItem label="Windows">
 
 ```powershell
-mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -v
+mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/state' -t 'ecv1/+/+/+/state' -v
 ```
 
 </TabItem>
@@ -172,7 +176,8 @@ message. See the [Configuration guide](/guides/configuration/#uns-identity-hiera
 A component commonly serves many instances (an OPC UA adapter with `kep1`, `plc-2`, ...). The
 `{instance}` topic segment and the `identity.instance` field are resolved **per message** through an
 instance-scoped handle — `gg.instance("kep1")` — whose `uns()` mints topics and whose message
-builder stamps envelopes with that token. Component-level messages default to `main`. See
+builder stamps envelopes with that token. Component-level messages carry no instance token (component
+scope); a token is present only when you address a specific instance. See
 [`gg.instance()`](/reference/uns/#gginstance--the-instance-scoped-handle).
 
 ## Building and validating topics — `gg.uns()`
@@ -186,7 +191,7 @@ IoT Core depth budget at build time:
 
 ```java
 String t = gg.getUns().topic(UnsClass.APP, "order/received");
-// -> ecv1/gw-01/my-component/main/app/order/received
+// -> ecv1/gw-01/my-component/app/order/received
 gg.getMessaging().publish(t, msg);
 
 // address a peer's command inbox from a received message's identity:
@@ -362,15 +367,17 @@ escape hatch for exactly that — topic + identity handled, body untouched).
 
 ## Command addressing and reserved names
 
-- **A component's command inbox** is `ecv1/{device}/{component}/{instance}/cmd/{verb}` — one
-  `ecv1/{device}/{me}/+/cmd/#` subscription receives only your own commands, no body-filtering.
-  Verbs are lowercase-hyphenated, optionally family-namespaced (`sb/status`).
+- **A component's command inbox** is `ecv1/{device}/{component}/cmd/{verb}` at component scope, or
+  `ecv1/{device}/{component}/{instance}/cmd/{verb}` for a command addressed to a specific instance —
+  the `ecv1/{device}/{me}/cmd/#` and `ecv1/{device}/{me}/+/cmd/#` subscriptions together receive only
+  your own commands, no body-filtering. Verbs are lowercase-hyphenated, optionally family-namespaced
+  (`sb/status`).
 - **Config fetch** (the `CONFIG_COMPONENT` source): a request to
-  `ecv1/{device}/config/main/cmd/get-configuration`, where `config` is a **reserved-by-convention
+  `ecv1/{device}/config/cmd/get-configuration`, where `config` is a **reserved-by-convention
   logical component name** (the config server is its sole subscriber). Config **push** arrives on
-  the target component's own inbox: `ecv1/{device}/{component}/main/cmd/set-config`.
+  the target component's own inbox: `ecv1/{device}/{component}/cmd/set-config`.
 - **Reserved tokens**: the root `ecv1`; the logical component `config`; the pseudo-component
-  `_bcast` (device-wide command broadcast, `ecv1/{device}/_bcast/main/cmd/{verb}`); and the whole
+  `_bcast` (device-wide command broadcast, `ecv1/{device}/_bcast/cmd/{verb}`); and the whole
   `_`-prefix for system pseudo-components. Don't name components or instances with these.
 - **Reply topics are non-UNS** by design: the ephemeral `edgecommons/reply-...` request/reply topics
   are not `ecv1/`-rooted and pass the guard untouched.

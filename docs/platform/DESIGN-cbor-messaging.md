@@ -504,7 +504,7 @@ rule.
 | Byte-valued telemetry sample | `ecv1/{device}/camera/{instance}/data/{signal}` | structured `SouthboundSignalUpdate`, sample `value=bstr` | `header.name=SouthboundSignalUpdate` |
 | ROI thumbnail | `ecv1/{device}/camera/{instance}/data/roi-thumbnail` | opaque `body=bstr` | `content_type=image/jpeg`, `header.name=FramePreview` |
 | Protobuf app event | `ecv1/{device}/vision/{instance}/app/protobuf/events` | opaque `body=bstr` | `content_type=application/x-protobuf`, `header.name=ProtobufEvent` |
-| Binary command artifact | `ecv1/{device}/controller/main/cmd/upload-profile` | opaque `body=bstr` | `content_type=application/octet-stream`, command-specific `header.name` |
+| Binary command artifact | `ecv1/{device}/controller/cmd/upload-profile` | opaque `body=bstr` | `content_type=application/octet-stream`, command-specific `header.name` |
 | Binary command reply | `edgecommons/reply-<uuid>` | opaque or structured | preserve `correlation_id` |
 
 Large full-resolution media still belongs in files plus references, not on the

@@ -115,7 +115,7 @@ Only one value is a typed byte-array value.
 EdgeCommons MUST also support a true opaque binary payload on MQTT and Greengrass IPC:
 
 ```text
-MQTT topic:  ecv1/gw-01/camera/main/data/frame-preview
+MQTT topic:  ecv1/gw-01/camera/data/frame-preview
 MQTT bytes:  [EdgeCommons binary prelude][compact header][payload bytes...]
 ```
 
@@ -585,7 +585,7 @@ Binary messaging does not add new UNS classes. It adds wire forms that ride exis
 The topic owns routing. The binary header owns message metadata. A BinaryFrame published on:
 
 ```text
-ecv1/gw-01/camera/main/data/frame-preview
+ecv1/gw-01/camera/data/frame-preview
 ```
 
 must still have:
@@ -623,7 +623,7 @@ Use BinaryFrame when the payload is not a telemetry scalar value but the primary
 | ROI thumbnail bytes | `ecv1/{device}/camera/{instance}/data/roi-thumbnail` |
 | Compressed feature vector | `ecv1/{device}/vision/{instance}/data/features` |
 | App-level protobuf | `ecv1/{device}/my-app/{instance}/app/protobuf/events` |
-| Binary command artifact | `ecv1/{device}/controller/main/cmd/upload-profile` |
+| Binary command artifact | `ecv1/{device}/controller/cmd/upload-profile` |
 | Binary command reply | `edgecommons/reply-<uuid>` |
 
 Large full-resolution frames still use files plus references.

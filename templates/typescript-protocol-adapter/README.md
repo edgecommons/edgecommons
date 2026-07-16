@@ -79,7 +79,7 @@ adapter adds one verb:
 
 | Verb | Topic | Body |
 |---|---|---|
-| `sb/write` | `ecv1/{device}/{component}/main/cmd/sb/write` | `{"instance": "device-1", "signalId": "setpoint-1", "value": 42}` |
+| `sb/write` | `ecv1/{device}/{component}/cmd/sb/write` | `{"instance": "device-1", "signalId": "setpoint-1", "value": 42}` |
 
 The scope rides an `instance` body field rather than a topic segment, so one inbox serves every
 device this adapter owns. The write is refused with `WRITE_NOT_ALLOWED` unless `signalId` is on that

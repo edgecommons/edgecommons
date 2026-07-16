@@ -444,9 +444,9 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 </TabItem>
 </Tabs>
 
-   To confirm the component is alive, subscribe to `ecv1/+/+/+/state` on the broker (for example
+   To confirm the component is alive, subscribe to `ecv1/+/+/state` (add `ecv1/+/+/+/state` for instance-scoped publishers) on the broker (for example
    with MQTTX) and watch the periodic [`state` keepalives](/guides/heartbeat/) arrive on
-   `ecv1/<thing>/<component>/main/state` — every scaffolded component publishes them by default,
+   `ecv1/<thing>/<component>/state` — every scaffolded component publishes them by default,
    and mints its own topics through the [Unified Namespace](/guides/unified-namespace/) builder
    (`gg.uns()`).
 

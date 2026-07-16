@@ -298,8 +298,8 @@ The resolved identity is stamped on every config-bound message and is exposed as
 
 The library also **announces the effective configuration** on the UNS: at startup and on every
 config change it publishes a redacted snapshot (secrets and credentials masked, `$secret` refs never
-resolved) to `ecv1/{device}/{component}/main/cfg` — so a console or auditor can review any
-component's live config with a single `ecv1/+/+/+/cfg` subscription.
+resolved) to `ecv1/{device}/{component}/cfg` — so a console or auditor can review any
+component's live config with an `ecv1/+/+/cfg` subscription (add `ecv1/+/+/+/cfg` for instance-scoped publishers).
 
 ## Template variables
 
@@ -570,9 +570,9 @@ Four of the six sources hot-reload; two are read once at startup:
 - **`SHADOW`** subscribes to the device shadow's update topics through the current
   ShadowManager / IPC path and reapplies the config when the shadow's `desired` state changes.
 - **`CONFIG_COMPONENT`** fetches its config by sending a request to the config server's UNS command
-  inbox `ecv1/{device}/config/main/cmd/get-configuration` (`config` is a reserved logical component
+  inbox `ecv1/{device}/config/cmd/get-configuration` (`config` is a reserved logical component
   name) over the active messaging transport, then subscribes to its **own** command inbox
-  `ecv1/{device}/{component}/main/cmd/set-config` and reapplies each lineage bundle the
+  `ecv1/{device}/{component}/cmd/set-config` and reapplies each lineage bundle the
   ConfigComponent pushes.
 - **`GG_CONFIG`** and **`ENV`** do **not** hot-reload — the document is read once at startup. (A
   Greengrass deployment that revises the `GG_CONFIG` configuration restarts the component, so the new

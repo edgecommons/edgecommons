@@ -39,12 +39,12 @@ edge-console reads/drives (DESIGN-uns §7/§9), through the **app-usable class f
 
 | Surface | Where | Topic |
 |---|---|---|
-| Metric (`loopTicks`: `tickCount` counter + `uptimeSecs` gauge) | `gg.metrics()` | `ecv1/{device}/{component}/main/metric/loopTicks` (target-dependent; `messaging` target shown) |
-| Data signal (`demo-signal`: a sine-wave reading) | `gg.data().publish_value("demo-signal", value).await?` | `ecv1/{device}/{component}/main/data/demo-signal` |
-| Event (`sample-event`, severity + context) | `gg.events().emit(Severity::Info, "sample-event", message, context).await?` | `ecv1/{device}/{component}/main/evt/info/sample-event` |
-| Custom command verb (`set-greeting`) | `EdgeCommonsBuilder::configure_commands(...)` | `ecv1/{device}/{component}/main/cmd/set-greeting` |
+| Metric (`loopTicks`: `tickCount` counter + `uptimeSecs` gauge) | `gg.metrics()` | `ecv1/{device}/{component}/metric/loopTicks` (target-dependent; `messaging` target shown) |
+| Data signal (`demo-signal`: a sine-wave reading) | `gg.data().publish_value("demo-signal", value).await?` | `ecv1/{device}/{component}/data/demo-signal` |
+| Event (`sample-event`, severity + context) | `gg.events().emit(Severity::Info, "sample-event", message, context).await?` | `ecv1/{device}/{component}/evt/info/sample-event` |
+| Custom command verb (`set-greeting`) | `EdgeCommonsBuilder::configure_commands(...)` | `ecv1/{device}/{component}/cmd/set-greeting` |
 
-Subscribe `ecv1/+/+/+/metric/#`, `ecv1/+/+/+/data/#` and `ecv1/+/+/+/evt/#` to see them (metrics
+Subscribe `ecv1/+/+/metric/#`, `ecv1/+/+/data/#` and `ecv1/+/+/evt/#` (add the `ecv1/+/+/+/…` instance-scope form to also catch instance-scoped publishers) to see them (metrics
 only publish over MQTT when `metricEmission.target` is `messaging`; the default `log` target
 writes a local file instead). `DataFacade` defaults an omitted sample `quality` to `Quality::Good`
 (marked `qualityRaw:"unspecified"` on the wire) — pass an explicit `Quality` when your source
@@ -52,7 +52,7 @@ knows a read failed or is stale. `EventsFacade` derives the `evt/{severity}/{typ
 the body's own severity + type, so the topic and body can never disagree; use
 `raise_alarm`/`clear_alarm` for stateful alarms instead of one-shot `emit`. Invoke the custom verb
 with a request/reply tool (e.g. MQTTX) by publishing `{"header":{"name":"set-greeting","version":
-"1.0"},"body":{"greeting":"Hi there"}}` to `ecv1/{device}/{component}/main/cmd/set-greeting`; the
+"1.0"},"body":{"greeting":"Hi there"}}` to `ecv1/{device}/{component}/cmd/set-greeting`; the
 next `app` status publish reflects the new greeting. Replace all four with your own
 metrics/signals/events/verbs.
 

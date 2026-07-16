@@ -123,14 +123,16 @@ and `recipe.yaml`.
   languages — `{header, identity, tags, body}`, with the top-level **`identity`** element
   (`{hier, path, component, instance}`) stamped on every config-built message.
 - **uns** (`gg.uns()`) — the **Unified Namespace**: every component addresses the bus as
-  `ecv1/{device}/{component}/{instance}/{class}[/channel]` (classes: reserved `state`/`metric`/
+  `ecv1/{device}/{component}/[{instance}/]{class}[/channel]` (the instance token is optional —
+  present for instance scope, omitted for component scope; classes: reserved `state`/`metric`/
   `cfg`/`log` + open `data`/`evt`/`cmd`/`app`). `gg.uns()` builds and validates topics (IoT-Core
   depth-safe by construction); `gg.instance(id)` scopes topics/messages to a per-message instance;
-  a fleet consumer needs only six wildcards (`ecv1/+/+/+/{state|cfg|evt|metric|data|log}`).
+  a fleet consumer subscribes both scopes per class — `ecv1/+/+/{state|cfg|evt|metric|data|log}`
+  (component scope) and `ecv1/+/+/+/{state|cfg|evt|metric|data|log}` (instance scope).
   Design: `docs/platform/DESIGN-uns.md`.
 - **metrics** — pluggable targets: CloudWatch (EMF), cloudwatch-component, messaging (on the UNS
   `metric` class), local log, prometheus.
-- **heartbeat** — the automatic UNS **`state` keepalive** (`ecv1/{device}/{component}/main/state`,
+- **heartbeat** — the automatic UNS **`state` keepalive** (`ecv1/{device}/{component}/state`,
   on by default / 5 s / local) plus system measures (CPU/memory/disk/threads/FDs) emitted as the
   `sys` metric through the metric subsystem.
 - **logging** — console plus optional size-rotated file logging; per-language format token.

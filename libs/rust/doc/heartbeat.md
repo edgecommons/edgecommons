@@ -6,7 +6,7 @@ when the runtime is built and stops when `EdgeCommons` is dropped (RAII). Each t
 does two independent things:
 
 1. **State keepalive** — publishes a `state` envelope to the component's UNS state
-   topic `ecv1/{device}/{component}/main/state` (rooted form `ecv1/{site}/{device}/…`
+   topic `ecv1/{device}/{component}/state` (rooted form `ecv1/{site}/{device}/…`
    when `topic.includeRoot` is true). Header `name` is `"state"`; the body is
    `{"status": "RUNNING", "uptimeSecs": <seconds since start>}`. On graceful shutdown
    (dropping `EdgeCommons` / SIGTERM) a best-effort `{"status": "STOPPED"}` state is
@@ -58,7 +58,7 @@ The legacy `heartbeat.targets[]` array (per-target topic/destination overrides) 
 ```
 
 (Omitting the section entirely gives the defaults: `RUNNING` keepalive every 5 s to
-`ecv1/{device}/{component}/main/state` + `sys` with CPU and memory.)
+`ecv1/{device}/{component}/state` + `sys` with CPU and memory.)
 
 ## Measures
 
@@ -77,9 +77,10 @@ Counters without a portable source are simply omitted on platforms that lack the
 
 ## Consuming heartbeats
 
-Subscribe to the UNS state class — all components on all devices:
+Subscribe to the UNS state class — all components on all devices — at both scopes (component and instance):
 
 ```text
+ecv1/+/+/state
 ecv1/+/+/+/state
 ```
 

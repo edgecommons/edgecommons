@@ -29,9 +29,10 @@ Every component gets these subsystems out of the box — they are always present
   and subscriptions block until confirmed; request/reply uses correlation IDs and a framework-owned
   deadline; the message envelope is identical across all four languages.
 - **unified namespace (UNS)** — one topic grammar
-  (`ecv1/{device}/{component}/{instance}/{class}`) for everything on the bus, with a config-driven
-  **identity** element stamped on every envelope and a `gg.uns()` builder that validates every
-  topic. A consumer watches a whole fleet with [six wildcards](/guides/unified-namespace/).
+  (`ecv1/{device}/{component}/[{instance}/]{class}`, the instance token optional) for everything on
+  the bus, with a config-driven **identity** element stamped on every envelope and a `gg.uns()`
+  builder that validates every topic. A consumer watches a whole fleet with a small set of
+  [uniform wildcards](/guides/unified-namespace/).
 - **metrics** — pluggable targets: CloudWatch EMF, a cloudwatch component, the messaging bus (UNS
   `metric` topics), a local rotated log file, or a pull-based Prometheus endpoint.
 - **heartbeat** — the library-owned `state` keepalive (on by default, every 5 s) that makes every
