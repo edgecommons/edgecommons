@@ -912,9 +912,8 @@ impl CommandInbox {
             component: Some(identity.component().to_string()),
             instance: identity.instance().map(str::to_string),
         };
-        let build_filter = |include_instance: bool| {
-            uns.filter_scoped(UnsClass::Cmd, &scope, include_instance)
-        };
+        let build_filter =
+            |include_instance: bool| uns.filter_scoped(UnsClass::Cmd, &scope, include_instance);
         let (filter, component_filter) = match (build_filter(true), build_filter(false)) {
             (Ok(filter), Ok(component_filter)) => (filter, component_filter),
             (Err(error), _) | (_, Err(error)) => {
@@ -1761,7 +1760,11 @@ mod tests {
             .await;
 
         let replies = f.messaging.replies();
-        assert_eq!(replies.len(), 2, "both scopes are dispatched and replied to");
+        assert_eq!(
+            replies.len(),
+            2,
+            "both scopes are dispatched and replied to"
+        );
         for (_, reply) in &replies {
             assert_eq!(reply.body["ok"], json!(true));
             assert_eq!(reply.body["result"]["status"], "RUNNING");

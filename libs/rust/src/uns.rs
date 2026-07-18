@@ -1432,7 +1432,11 @@ mod tests {
         );
         // A rooted topic that genuinely lacks a class token still fails.
         assert_eq!(
-            code(rooted.validate("ecv1/gw-01/opcua-adapter/main").unwrap_err()),
+            code(
+                rooted
+                    .validate("ecv1/gw-01/opcua-adapter/main")
+                    .unwrap_err()
+            ),
             UnsValidationCode::BadClass
         );
         // Single-level + includeRoot is a no-op (D-U25): still the rootless positions.
