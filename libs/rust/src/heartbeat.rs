@@ -1080,10 +1080,7 @@ mod tests {
         publish_state(&config, recorder.as_ref(), "RUNNING", Some(1), Vec::new()).await;
         assert!(recorder.reserved_local().is_empty());
         assert_eq!(recorder.reserved_iot().len(), 1);
-        assert_eq!(
-            recorder.reserved_iot()[0].0,
-            "ecv1/thing-1/MyComp/state"
-        );
+        assert_eq!(recorder.reserved_iot()[0].0, "ecv1/thing-1/MyComp/state");
     }
 
     /// includeRoot with a multi-level hierarchy prepends the site level (D-U25).
@@ -1131,11 +1128,7 @@ mod tests {
             "expected >=2 keepalives, got {}",
             states.len()
         );
-        assert!(
-            states
-                .iter()
-                .all(|(t, _)| t == "ecv1/thing-1/MyComp/state")
-        );
+        assert!(states.iter().all(|(t, _)| t == "ecv1/thing-1/MyComp/state"));
         assert!(states.iter().all(|(_, m)| m.body["status"] == "RUNNING"));
         // uptimeSecs is present and non-decreasing.
         let uptimes: Vec<u64> = states

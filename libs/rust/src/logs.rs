@@ -814,10 +814,7 @@ mod tests {
             .publish(LogRecord::builder(LogLevel::Error, "app", "failed").build())
             .await
             .unwrap();
-        assert_eq!(
-            messaging.reserved_iot()[0].0,
-            "ecv1/gw-01/MyComp/log/error"
-        );
+        assert_eq!(messaging.reserved_iot()[0].0, "ecv1/gw-01/MyComp/log/error");
         assert!(messaging.reserved_local().is_empty());
     }
 
