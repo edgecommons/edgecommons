@@ -52,8 +52,8 @@
         "staleSignalSecs": {
           "type": "integer",
           "minimum": 1,
-          "default": 60,
-          "description": "A signal with no update for longer than this counts as stale. A signal that silently stops updating is otherwise indistinguishable from one that is simply not changing — which is why staleness is measured rather than assumed."
+          "default": 30,
+          "description": "A signal with no update for longer than this counts toward `southbound_health.staleSignals` (SOUTHBOUND.md §5). A signal that silently stops updating is otherwise indistinguishable from one that is simply not changing — which is why staleness is measured rather than assumed."
         }
       }
     }

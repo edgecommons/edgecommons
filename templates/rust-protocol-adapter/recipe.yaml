@@ -34,7 +34,7 @@ ComponentConfiguration:
             reconnectBackoffMinMs: 1000
             reconnectBackoffMaxMs: 60000
           healthThresholds:
-            staleSignalSecs: 60
+            staleSignalSecs: 30
         instances:
         - id: device-1
           adapter: sim

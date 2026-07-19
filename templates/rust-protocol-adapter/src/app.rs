@@ -10,37 +10,40 @@
 //!      └──────────── reconnect with backoff ◄────────────────────┘
 //! ```
 //!
-//! One task per instance: an instance is one device, and its connection lifecycle is its own.
+//! One task per instance: an instance is one device, and its connection lifecycle is its own. That
+//! task also owns a **control channel** ([`DeviceControl`]) — every command that must touch the
+//! (non-`Sync`) session or serialize with the poll loop is *sent* to the task, and *confirmed*
+//! through the reply that rides it. The command surface itself lives in [`crate::commands`].
 //!
 //! ## The contract you are implementing (docs/SOUTHBOUND.md)
 //!
 //! * Publish `SouthboundSignalUpdate` on the `data` class, **via the `data()` facade** — never
-//!   hand-build the body and never hand-write the topic. The facade constructs
-//!   `{device, signal, samples}`, mints `ecv1/{device}/{component}/{instance}/data/{signal}`, and
-//!   stamps identity. A hand-rolled topic is a topic that will disagree with the envelope.
+//!   hand-build the body and never hand-write the topic.
 //! * **Quality on every sample**, normalized to `GOOD | BAD | UNCERTAIN`, with the native code in
 //!   `qualityRaw`.
-//! * Emit **`southbound_health`**, dimensioned by instance, so an operator can see a link go down
-//!   without reading logs.
-//! * Report **per-instance connectivity** ([`connectivity_of`]), so the fleet sees which devices
-//!   this adapter is actually talking to — pushed on every `state` keepalive and returned by the
-//!   built-in `status` verb, from one provider.
-//! * Serve **read/write commands** — and allow-list the writes. An adapter that will write any
-//!   address it is asked to is a control-system vulnerability, not a feature.
+//! * Emit **`southbound_health`** (the exact §5 set — see [`crate::metrics`]), dimensioned by
+//!   instance, so an operator can see a link go down without reading logs.
+//! * Report **per-instance connectivity** ([`connectivity_of`]).
+//! * Serve **read/write/browse/reconnect/pause commands** — and allow-list the writes.
 
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use edgecommons::prelude::*;
 use serde::Deserialize;
 use serde_json::json;
+use tokio::sync::{mpsc, oneshot};
 
-use crate::device::{DeviceBackend, DeviceSession, Quality, SimBackend};
+use crate::device::{
+    BrowseError, BrowsePage, ConnectionConfig, DeviceBackend, Quality, Reading, SimBackend,
+};
+use crate::metrics::DeviceMetrics;
 
-/// The metric every southbound adapter emits (SOUTHBOUND.md §5).
-const HEALTH_METRIC: &str = "southbound_health";
+/// How often the periodic metrics emit runs, in the poll loop.
+const METRICS_INTERVAL: Duration = Duration::from_secs(30);
+/// The `component.global.healthThresholds.staleSignalSecs` default (SOUTHBOUND.md §4/§5).
+const DEFAULT_STALE_SIGNAL_SECS: u64 = 30;
 
 /// One device == one entry of `component.instances[]`.
 #[derive(Debug, Clone, Deserialize)]
@@ -52,7 +55,7 @@ pub struct DeviceConfig {
     /// Which backend to use. Matches [`crate::device::DeviceBackend::kind`].
     #[serde(default = "default_adapter")]
     pub adapter: String,
-    pub connection: crate::device::ConnectionConfig,
+    pub connection: ConnectionConfig,
     /// How often to read, in milliseconds.
     #[serde(default = "default_poll_ms")]
     pub poll_interval_ms: u64,
@@ -142,18 +145,24 @@ impl LinkState {
     }
 }
 
-/// The `southbound_health` measures, per instance (SOUTHBOUND.md §5), plus the link condition the
-/// connectivity provider reports.
+/// The shared per-device state the metrics emitter reads and the connectivity provider renders.
+/// The gauges (`connection_state`, latencies) and the interval counters (`read_errors`, `reconnects`)
+/// feed `southbound_health` ([`crate::metrics`]); `paused` and `link` feed the connectivity token and
+/// `sb/status`. One source, several surfaces — so a health dot, a metric, and a status reply can
+/// never disagree.
 #[derive(Default)]
 pub struct Health {
     /// 1 = connected, 0 = down.
     pub connection_state: AtomicU64,
     /// The [`LinkState`], as a `u8`. Read it through [`Health::link`].
     link: AtomicU8,
+    /// 1 = telemetry production is paused (`sb/pause`). Read by the connectivity provider and
+    /// `sb/status`; NOT a `southbound_health` measure (§5 has no `paused`).
+    pub paused: AtomicBool,
     pub poll_latency_ms: AtomicU64,
+    pub publish_latency_ms: AtomicU64,
     pub read_errors: AtomicU64,
     pub reconnects: AtomicU64,
-    pub signals_published: AtomicU64,
 }
 
 impl Health {
@@ -169,36 +178,97 @@ impl Health {
     pub fn link(&self) -> LinkState {
         LinkState::from_u8(self.link.load(Ordering::Relaxed))
     }
+
+    #[must_use]
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+}
+
+/// Flip the paused flag, returning whether the state actually changed (idempotent — pausing an
+/// already-paused device is not an error). The event is emitted by the caller, which holds the
+/// `events()` facade.
+#[must_use]
+pub fn set_paused(health: &Health, paused: bool) -> bool {
+    health.paused.swap(paused, Ordering::Relaxed) != paused
 }
 
 /// One device's connectivity sample, for the instance-connectivity provider registered in
 /// [`App::run`].
 ///
-/// * `connected` is the **normalized** flag — always present, so a console renders a health dot for
-///   this adapter without knowing anything about its protocol.
-/// * `state` is *this adapter's* vocabulary ([`LinkState`]) for the richer condition.
-/// * `attributes` is the **open** bag: domain data only this adapter understands (here, which
-///   backend the device speaks), carried without touching the two fields above that every consumer
-///   relies on.
+/// * `connected` is the **normalized** flag — always present.
+/// * `state` is *this adapter's* vocabulary ([`LinkState`]) — `PAUSED` when paused and up, else the
+///   raw link token (so a break while paused still reads `BACKOFF`, `connected` staying truthful).
+/// * `attributes` is the **open** bag: domain data only this adapter understands.
 #[must_use]
 pub fn connectivity_of(cfg: &DeviceConfig, health: &Health) -> InstanceConnectivity {
     let link = health.link();
+    let connected = link == LinkState::Online;
+    let paused = health.is_paused();
+    let state = if paused && connected { "PAUSED" } else { link.as_str() };
+
     let mut attributes = serde_json::Map::new();
     attributes.insert("adapter".to_string(), json!(cfg.adapter));
+    attributes.insert("paused".to_string(), json!(paused));
 
-    InstanceConnectivity::new(
-        &cfg.id,
-        link == LinkState::Online,
-        Some(cfg.connection.endpoint.clone()),
-    )
-    .with_state(link.as_str())
-    .with_attributes(attributes)
+    InstanceConnectivity::new(&cfg.id, connected, Some(cfg.connection.endpoint.clone()))
+        .with_state(state)
+        .with_attributes(attributes)
 }
+
+// =================================================================================================
+// The device control channel
+// =================================================================================================
+
+/// A confirmed, allow-listed write of one signal, on its way from the command inbox to the device's
+/// own task (`sb/write`).
+pub struct WriteRequest {
+    pub signal_id: String,
+    pub value: serde_json::Value,
+    /// The device's answer. A write is confirmed, not fire-and-forget.
+    pub ack: oneshot::Sender<std::result::Result<(), String>>,
+}
+
+/// One message on a device's **control channel**. Every `sb/*` verb that must touch the session or
+/// serialize with the poll loop is delivered as one of these, so the command inbox never touches the
+/// (non-`Sync`) session directly — the device's own task services them one at a time. The reply
+/// riding each variant is what makes reads/writes/reconnect *confirmed*.
+pub enum DeviceControl {
+    /// A confirmed, allow-listed write (`sb/write`). The allow-list is checked in the command layer
+    /// BEFORE this is ever sent.
+    Write(WriteRequest),
+    /// Live-read these ids now (`sb/read`). Serializes with the loop and works while paused.
+    ReadNow {
+        ids: Vec<String>,
+        reply: oneshot::Sender<std::result::Result<Vec<Reading>, String>>,
+    },
+    /// One page of address-space discovery (`sb/browse`).
+    Browse {
+        cursor: Option<String>,
+        max: usize,
+        reply: oneshot::Sender<std::result::Result<BrowsePage, BrowseError>>,
+    },
+    /// Pause telemetry production (`sb/pause`). Reply = whether the state changed.
+    Pause { reply: oneshot::Sender<bool> },
+    /// Resume telemetry production (`sb/resume`). Reply = whether the state changed.
+    Resume { reply: oneshot::Sender<bool> },
+    /// Drop + re-establish, one immediate attempt (`reconnect`). `Ok(())` ⇒ connected, `Err` ⇒
+    /// failed (mapped to `RECONNECT_FAILED`).
+    Reconnect { reply: oneshot::Sender<std::result::Result<(), String>> },
+    /// Force an immediate poll now (`repoll`). Reply = signals read, or `Err` when refused (paused).
+    Repoll { reply: oneshot::Sender<std::result::Result<u64, String>> },
+}
+
+// =================================================================================================
+// App
+// =================================================================================================
 
 pub struct App {
     config: Arc<Config>,
     metrics: Arc<dyn MetricService>,
     devices: Vec<DeviceConfig>,
+    /// `component.global.healthThresholds.staleSignalSecs`.
+    stale_signal_secs: u64,
 }
 
 struct ConfigListener;
@@ -218,6 +288,13 @@ impl App {
         let config = gg.config();
         let metrics = gg.metrics();
 
+        let stale_signal_secs = config
+            .global()
+            .get("healthThresholds")
+            .and_then(|h| h.get("staleSignalSecs"))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(DEFAULT_STALE_SIGNAL_SECS);
+
         let mut devices = Vec::new();
         for id in config.instance_ids() {
             match config
@@ -231,133 +308,67 @@ impl App {
         }
         anyhow::ensure!(!devices.is_empty(), "no valid devices in component.instances[]");
 
-        Ok(Self { config, metrics, devices })
+        Ok(Self { config, metrics, devices, stale_signal_secs })
     }
 
     pub async fn run(&self, gg: &EdgeCommons) -> anyhow::Result<()> {
-        // One write channel per device. The command handler cannot touch the session directly —
-        // the session lives in the device's own task and is not `Sync` — so a write is *sent* to
-        // that task, which serializes it against the poll loop. This is why an adapter is one
-        // task per device rather than a shared connection pool.
-        let mut writers: HashMap<String, tokio::sync::mpsc::Sender<WriteRequest>> = HashMap::new();
-        // Each device's health, shared with its task: the task writes it, the connectivity
-        // provider below reads it.
+        // Each device's health, shared with its task and read by the connectivity provider.
         let mut reported: Vec<(DeviceConfig, Arc<Health>)> = Vec::new();
+        // The per-device handles the command surface routes on.
+        let mut handles: Vec<crate::commands::DeviceHandle> = Vec::new();
 
         for device in &self.devices {
             // Per-instance facades: `data()` mints this device's topics and stamps its identity.
             let instance = gg.instance(&device.id)?;
 
-            // The health metric is dimensioned BY INSTANCE, so a fleet view can show one device
-            // down without averaging it away against the others.
-            self.metrics.define_metric(
-                MetricBuilder::create(HEALTH_METRIC)
-                    .with_config(&self.config)
-                    .add_measure("connectionState", "Count", 1)
-                    .add_measure("pollLatencyMs", "Milliseconds", 1)
-                    .add_measure("readErrors", "Count", 60)
-                    .add_measure("reconnects", "Count", 60)
-                    .add_measure("signalsPublished", "Count", 60)
-                    .add_dimension("instance", &device.id)
-                    .build(),
-            );
-
-            let (write_tx, write_rx) = tokio::sync::mpsc::channel::<WriteRequest>(16);
-            writers.insert(device.id.clone(), write_tx);
-
             let health = Arc::new(Health::default());
+            let dm = Arc::new(DeviceMetrics::new(
+                Arc::clone(&self.metrics),
+                Arc::clone(&self.config),
+                device.id.clone(),
+                Arc::clone(&health),
+                self.stale_signal_secs,
+            ));
+            // Pre-define the metric set so it is fixed and discoverable at startup.
+            dm.define_all();
+
+            // The signal inventory `sb/signals` shows — a config/backend view, no device round-trip.
+            let signals = make_backend(device)
+                .map(|b| b.inventory(&device.connection))
+                .unwrap_or_default();
+
+            let (control_tx, control_rx) = mpsc::channel::<DeviceControl>(16);
             reported.push((device.clone(), Arc::clone(&health)));
+            handles.push(crate::commands::DeviceHandle {
+                cfg: device.clone(),
+                control: control_tx,
+                health: Arc::clone(&health),
+                dm: Arc::clone(&dm),
+                signals,
+            });
 
             tokio::spawn(run_device(
                 device.clone(),
                 instance.data(),
                 instance.events(),
-                Arc::clone(&self.metrics),
+                dm,
                 health,
-                write_rx,
+                control_rx,
             ));
         }
 
         // ONE provider, TWO surfaces: the library pushes this sample into the `state` keepalive's
         // `instances[]` every tick, and returns the very same sample from the built-in `status`
-        // command verb when a console asks for it. Whoever watches and whoever asks cannot get
-        // different answers. Keep it cheap — it is sampled on the keepalive interval.
-        //
-        // Reporting one entry per device is the whole point of the adapter archetype: the fleet
-        // sees which of THIS component's devices are reachable, without minting a UNS instance per
-        // connection.
+        // command verb. Whoever watches and whoever asks cannot get different answers.
         let provider: Arc<InstanceConnectivityProvider> = Arc::new(move || {
             reported.iter().map(|(cfg, health)| connectivity_of(cfg, health)).collect()
         });
         gg.set_instance_connectivity_provider(Some(provider));
 
-        // The southbound command surface. `ping` / `reload-config` / `get-configuration` are
-        // already live — the library registered them before we ran. These are the adapter's own.
+        // The southbound command surface (`crate::commands`). `ping` / `reload-config` /
+        // `get-configuration` are already live — the library registered them before we ran.
         if let Some(commands) = gg.commands() {
-            let devices: HashMap<String, DeviceConfig> =
-                self.devices.iter().map(|d| (d.id.clone(), d.clone())).collect();
-
-            commands.register(
-                "sb/write",
-                command_handler(move |request| {
-                    let devices = devices.clone();
-                    let writers = writers.clone();
-                    async move {
-                        // Scope rides an `instance` body field rather than a topic segment, so one
-                        // inbox serves every device this adapter owns.
-                        let instance = request
-                            .body
-                            .get("instance")
-                            .and_then(|v| v.as_str())
-                            .ok_or_else(|| CommandError::new("BAD_ARGS", "expected `instance`"))?;
-                        let signal_id = request
-                            .body
-                            .get("signalId")
-                            .and_then(|v| v.as_str())
-                            .ok_or_else(|| CommandError::new("BAD_ARGS", "expected `signalId`"))?;
-                        let value = request
-                            .body
-                            .get("value")
-                            .ok_or_else(|| CommandError::new("BAD_ARGS", "expected `value`"))?;
-
-                        let cfg = devices
-                            .get(instance)
-                            .ok_or_else(|| CommandError::new("NO_SUCH_INSTANCE", instance))?;
-
-                        // THE ALLOW-LIST. Checked here, before the write ever reaches the device.
-                        // An adapter that writes whatever it is asked to is a control-system
-                        // vulnerability, and "the caller was authorized" is not this component's
-                        // judgement to make.
-                        if !cfg.writes.permits(signal_id) {
-                            return Err(CommandError::new(
-                                "WRITE_NOT_ALLOWED",
-                                format!(
-                                    "`{signal_id}` is not in this instance's writes.allow list"
-                                ),
-                            ));
-                        }
-
-                        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
-                        let tx = writers
-                            .get(instance)
-                            .ok_or_else(|| CommandError::new("NO_SUCH_INSTANCE", instance))?;
-                        tx.send(WriteRequest {
-                            signal_id: signal_id.to_string(),
-                            value: value.clone(),
-                            ack: ack_tx,
-                        })
-                        .await
-                        .map_err(|_| CommandError::new("DEVICE_UNAVAILABLE", "device task is gone"))?;
-
-                        // A write is CONFIRMED: the reply is the device's answer, not "we sent it".
-                        match ack_rx.await {
-                            Ok(Ok(())) => Ok(Some(json!({ "written": signal_id }))),
-                            Ok(Err(e)) => Err(CommandError::new("WRITE_FAILED", e)),
-                            Err(_) => Err(CommandError::new("DEVICE_UNAVAILABLE", "no answer")),
-                        }
-                    }
-                }),
-            )?;
+            crate::commands::register_all(&commands, handles)?;
         }
 
         gg.shutdown_signal().await;
@@ -367,195 +378,359 @@ impl App {
     }
 }
 
-/// A write, on its way from the command inbox to the device's own task.
-pub struct WriteRequest {
-    pub signal_id: String,
-    pub value: serde_json::Value,
-    /// The device's answer. A write is confirmed, not fire-and-forget.
-    pub ack: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
+/// Instantiate the backend for a device's `adapter`. A real adapter matches its protocol(s) here.
+fn make_backend(cfg: &DeviceConfig) -> Option<Box<dyn DeviceBackend>> {
+    match cfg.adapter.as_str() {
+        "sim" => Some(Box::new(SimBackend)),
+        other => {
+            tracing::error!(instance = %cfg.id, adapter = %other, "unknown adapter");
+            None
+        }
+    }
 }
 
-/// One device's lifecycle: connect, poll, publish, reconnect.
+// =================================================================================================
+// The device task
+// =================================================================================================
+
+/// One device's lifecycle: connect, poll, publish, reconnect — and service its control channel.
 ///
 /// The connect loop and the poll loop are nested on purpose. A read failure that breaks the link
-/// drops out of the poll loop and back into connect — which is the only place that knows how to
-/// back off. Retrying a read on a dead socket forever is the classic adapter bug.
+/// drops out of the poll loop and back into connect — the only place that knows how to back off.
 async fn run_device(
     cfg: DeviceConfig,
     data: DataFacade,
     events: EventsFacade,
-    metrics: Arc<dyn MetricService>,
+    dm: Arc<DeviceMetrics>,
     health: Arc<Health>,
-    mut writes: tokio::sync::mpsc::Receiver<WriteRequest>,
+    mut control: mpsc::Receiver<DeviceControl>,
 ) {
-    let backend: Box<dyn DeviceBackend> = match cfg.adapter.as_str() {
-        "sim" => Box::new(SimBackend),
-        other => {
-            tracing::error!(instance = %cfg.id, adapter = %other, "unknown adapter");
-            return;
-        }
+    let Some(backend) = make_backend(&cfg) else {
+        return;
     };
     let backoff = Backoff::default();
     let mut attempt: u32 = 0;
+    // A `reconnect` command's reply, held until the next connect settles it.
+    let mut pending_reconnect: Option<oneshot::Sender<std::result::Result<(), String>>> = None;
 
     loop {
-        match backend.connect(&cfg.connection).await {
-            Ok(session) => {
-                attempt = 0;
-                health.set_link(LinkState::Online);
-                emit_health(&metrics, &health).await;
-                let _ = events
-                    .emit(
-                        Severity::Info,
-                        "device-connected",
-                        Some(format!("connected to {}", cfg.connection.endpoint)),
-                        Some(json!({ "instance": cfg.id, "adapter": backend.kind() })),
-                    )
-                    .await;
-                // A raised alarm is cleared by the SAME wire type, so the pair rides one channel
-                // and a consumer can match them.
-                let _ = events.clear_alarm(Severity::Critical, "device-unreachable", None).await;
-
-                poll_until_disconnected(
-                    &cfg, session, &data, &metrics, &health, backend.kind(), &mut writes,
-                )
-                .await;
-
-                health.set_link(LinkState::Backoff);
-                health.reconnects.fetch_add(1, Ordering::Relaxed);
-                emit_health(&metrics, &health).await;
-                let _ = events
-                    .raise_alarm(
-                        Severity::Critical,
-                        "device-unreachable",
-                        Some(format!("lost the link to {}", cfg.connection.endpoint)),
-                        Some(json!({ "instance": cfg.id })),
-                    )
-                    .await;
-            }
-
-            // A permanent failure will fail identically forever, so back off to the ceiling
-            // immediately rather than hammering a device that is never going to answer.
-            Err(e) => {
-                health.set_link(LinkState::Backoff);
-                let permanent = !e.is_transient();
-                let wait = if permanent {
-                    Duration::from_millis(backoff.max_ms)
-                } else {
-                    backoff.delay(attempt, rand01())
-                };
-                tracing::warn!(
-                    instance = %cfg.id, error = %e, permanent,
-                    wait_ms = wait.as_millis() as u64, "connect failed"
-                );
-                attempt = attempt.saturating_add(1);
-                tokio::time::sleep(wait).await;
-            }
-        }
-    }
-}
-
-/// Read on the poll interval and publish, until the link breaks.
-async fn poll_until_disconnected(
-    cfg: &DeviceConfig,
-    mut session: Box<dyn DeviceSession>,
-    data: &DataFacade,
-    metrics: &Arc<dyn MetricService>,
-    health: &Arc<Health>,
-    adapter: &str,
-    writes: &mut tokio::sync::mpsc::Receiver<WriteRequest>,
-) {
-    let mut ticker = tokio::time::interval(Duration::from_millis(cfg.poll_interval_ms));
-    let mut since_health = Instant::now();
-
-    loop {
-        // Poll and write share this one task, so a write can never race a read on the same
-        // connection — most device protocols are a single request/response channel and would
-        // interleave into nonsense if two tasks talked at once.
-        tokio::select! {
-            Some(req) = writes.recv() => {
-                let result = session
-                    .write_signal(&req.signal_id, &req.value)
-                    .await
-                    .map_err(|e| e.to_string());
-                if let Err(e) = &result {
-                    tracing::warn!(instance = %cfg.id, signal = %req.signal_id, error = %e, "write failed");
+        // --- CONNECT (servicing control while down, so pause/reconnect don't block on backoff) ---
+        let session = loop {
+            dm.on_connect_attempt();
+            health.set_link(if attempt == 0 { LinkState::Connecting } else { LinkState::Backoff });
+            let now = Instant::now();
+            match backend.connect(&cfg.connection).await {
+                Ok(session) => {
+                    attempt = 0;
+                    dm.on_connected(now);
+                    health.set_link(LinkState::Online);
+                    dm.emit_now().await;
+                    let _ = events
+                        .emit(
+                            Severity::Info,
+                            "device-connected",
+                            Some(format!("connected to {}", cfg.connection.endpoint)),
+                            Some(json!({ "instance": cfg.id, "adapter": backend.kind() })),
+                        )
+                        .await;
+                    let _ = events.clear_alarm(Severity::Critical, "device-unreachable", None).await;
+                    if let Some(reply) = pending_reconnect.take() {
+                        let _ = reply.send(Ok(()));
+                    }
+                    break session;
                 }
-                // The command handler is waiting on this: a write is confirmed, not assumed.
-                let _ = req.ack.send(result);
-                continue;
-            }
-            _ = ticker.tick() => {}
-        }
-
-        let started = Instant::now();
-        let readings = match session.read_signals().await {
-            Ok(r) => r,
-            Err(e) if e.is_transient() => {
-                // The link is gone. Leave the poll loop so the connect loop can back off.
-                tracing::warn!(instance = %cfg.id, error = %e, "read failed; reconnecting");
-                health.read_errors.fetch_add(1, Ordering::Relaxed);
-                session.close().await;
-                return;
-            }
-            Err(e) => {
-                tracing::error!(instance = %cfg.id, error = %e, "permanent read failure");
-                health.read_errors.fetch_add(1, Ordering::Relaxed);
-                session.close().await;
-                return;
+                Err(e) => {
+                    dm.on_connect_failure();
+                    if let Some(reply) = pending_reconnect.take() {
+                        let _ = reply.send(Err(e.to_string()));
+                    }
+                    // A permanent failure fails identically forever — back off to the ceiling.
+                    let permanent = !e.is_transient();
+                    let wait = if permanent {
+                        Duration::from_millis(backoff.max_ms)
+                    } else {
+                        backoff.delay(attempt, rand01())
+                    };
+                    attempt = attempt.saturating_add(1);
+                    tracing::warn!(
+                        instance = %cfg.id, error = %e, permanent,
+                        wait_ms = wait.as_millis() as u64, "connect failed"
+                    );
+                    match serve_while_down(&mut control, &events, &health, wait).await {
+                        DownOutcome::Reconnect(reply) => {
+                            pending_reconnect = Some(reply);
+                            attempt = 0;
+                        }
+                        DownOutcome::Elapsed => {}
+                        DownOutcome::Closed => return,
+                    }
+                }
             }
         };
-        let latency = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        health.poll_latency_ms.store(latency, Ordering::Relaxed);
 
-        for r in readings {
-            // The data() facade builds the SouthboundSignalUpdate body, mints the topic, and
-            // stamps identity. Do not hand-build any of the three.
-            let quality = match r.quality {
-                Quality::Good => edgecommons::facades::Quality::Good,
-                Quality::Bad => edgecommons::facades::Quality::Bad,
-                Quality::Uncertain => edgecommons::facades::Quality::Uncertain,
-            };
-            let mut sample = Sample::with_quality(r.value.clone(), quality);
-            if let Some(raw) = &r.quality_raw {
-                sample = sample.quality_raw(raw);
+        // --- POLL (until the link breaks or a reconnect is requested) ---
+        let exit = run_polling(&cfg, session, &data, &events, &dm, &health, &mut control).await;
+
+        // The link is down (or a reconnect asked us to drop it).
+        health.set_link(LinkState::Backoff);
+        health.reconnects.fetch_add(1, Ordering::Relaxed);
+        dm.on_connection_dropped(Instant::now());
+        dm.emit_now().await;
+        let _ = events
+            .raise_alarm(
+                Severity::Critical,
+                "device-unreachable",
+                Some(format!("lost the link to {}", cfg.connection.endpoint)),
+                Some(json!({ "instance": cfg.id })),
+            )
+            .await;
+
+        match exit {
+            PollExit::LinkLost => {}
+            PollExit::Reconnect(reply) => {
+                pending_reconnect = Some(reply);
             }
-
-            let mut signal = data.signal(&r.signal_id);
-            if let Some(name) = &r.name {
-                signal = signal.name(name);
-            }
-            let update = signal
-                .device_parts(adapter, &cfg.id, &cfg.connection.endpoint)
-                .sample(sample)
-                .build();
-
-            if let Err(e) = data.publish(update).await {
-                tracing::warn!(instance = %cfg.id, signal = %r.signal_id, error = %e, "publish failed");
-            } else {
-                health.signals_published.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-
-        if since_health.elapsed() >= Duration::from_secs(60) {
-            emit_health(metrics, health).await;
-            since_health = Instant::now();
+            PollExit::Closed => return,
         }
     }
 }
 
-async fn emit_health(metrics: &Arc<dyn MetricService>, health: &Arc<Health>) {
-    let mut v = HashMap::new();
-    v.insert("connectionState".to_string(), health.connection_state.load(Ordering::Relaxed) as f64);
-    v.insert("pollLatencyMs".to_string(), health.poll_latency_ms.load(Ordering::Relaxed) as f64);
-    v.insert("readErrors".to_string(), health.read_errors.swap(0, Ordering::Relaxed) as f64);
-    v.insert("reconnects".to_string(), health.reconnects.swap(0, Ordering::Relaxed) as f64);
-    v.insert(
-        "signalsPublished".to_string(),
-        health.signals_published.swap(0, Ordering::Relaxed) as f64,
-    );
-    if let Err(e) = metrics.emit_metric(HEALTH_METRIC, v).await {
-        tracing::warn!(error = %e, "health metric emit failed");
+/// What ended the poll loop.
+enum PollExit {
+    /// A read broke the connection; reconnect via the connect loop.
+    LinkLost,
+    /// A `reconnect` command asked us to drop + re-establish; settle its reply on the next connect.
+    Reconnect(oneshot::Sender<std::result::Result<(), String>>),
+    /// The control channel closed (component shutdown).
+    Closed,
+}
+
+/// Read on the poll interval and publish, servicing the control channel, until the link breaks or a
+/// reconnect is requested.
+async fn run_polling(
+    cfg: &DeviceConfig,
+    mut session: Box<dyn crate::device::DeviceSession>,
+    data: &DataFacade,
+    events: &EventsFacade,
+    dm: &Arc<DeviceMetrics>,
+    health: &Arc<Health>,
+    control: &mut mpsc::Receiver<DeviceControl>,
+) -> PollExit {
+    let mut ticker = tokio::time::interval(Duration::from_millis(cfg.poll_interval_ms));
+    let mut since_metrics = Instant::now();
+
+    loop {
+        tokio::select! {
+            // Poll and control share this one task, so a write can never race a read on the same
+            // connection — most device protocols are a single request/response channel.
+            ctrl = control.recv() => {
+                let Some(ctrl) = ctrl else { return PollExit::Closed; };
+                match ctrl {
+                    DeviceControl::Write(req) => {
+                        let result = session
+                            .write_signal(&req.signal_id, &req.value)
+                            .await
+                            .map_err(|e| e.to_string());
+                        if let Err(e) = &result {
+                            tracing::warn!(instance = %cfg.id, signal = %req.signal_id, error = %e, "write failed");
+                        }
+                        let _ = req.ack.send(result);
+                    }
+                    DeviceControl::ReadNow { ids, reply } => {
+                        let result = session.read_named(&ids).await.map_err(|e| e.to_string());
+                        let _ = reply.send(result);
+                    }
+                    DeviceControl::Browse { cursor, max, reply } => {
+                        let _ = reply.send(session.browse(cursor, max).await);
+                    }
+                    DeviceControl::Pause { reply } => {
+                        let changed = set_paused(health, true);
+                        if changed {
+                            let _ = events
+                                .emit(
+                                    Severity::Warning,
+                                    "adapter-paused",
+                                    Some("telemetry production paused".to_string()),
+                                    Some(json!({ "instance": cfg.id })),
+                                )
+                                .await;
+                        }
+                        let _ = reply.send(changed);
+                    }
+                    DeviceControl::Resume { reply } => {
+                        let changed = set_paused(health, false);
+                        if changed {
+                            let _ = events
+                                .emit(
+                                    Severity::Info,
+                                    "adapter-resumed",
+                                    Some("telemetry production resumed".to_string()),
+                                    Some(json!({ "instance": cfg.id })),
+                                )
+                                .await;
+                        }
+                        let _ = reply.send(changed);
+                    }
+                    DeviceControl::Reconnect { reply } => {
+                        session.close().await;
+                        return PollExit::Reconnect(reply);
+                    }
+                    DeviceControl::Repoll { reply } => {
+                        if health.is_paused() {
+                            let _ = reply.send(Err("instance is paused - resume first".to_string()));
+                        } else {
+                            match poll_once(cfg, &mut session, data, dm, health).await {
+                                Ok(n) => {
+                                    let _ = reply.send(Ok(n));
+                                }
+                                Err(()) => {
+                                    let _ = reply.send(Err("link error".to_string()));
+                                    session.close().await;
+                                    return PollExit::LinkLost;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            _ = ticker.tick(), if !health.is_paused() => {
+                if poll_once(cfg, &mut session, data, dm, health).await.is_err() {
+                    session.close().await;
+                    return PollExit::LinkLost;
+                }
+            }
+        }
+
+        if since_metrics.elapsed() >= METRICS_INTERVAL {
+            dm.emit_periodic().await;
+            since_metrics = Instant::now();
+        }
+    }
+}
+
+/// One poll: read, publish each reading, record latencies + staleness. `Ok(n)` = signals published;
+/// `Err(())` = the *connection* broke (caller reconnects).
+async fn poll_once(
+    cfg: &DeviceConfig,
+    session: &mut Box<dyn crate::device::DeviceSession>,
+    data: &DataFacade,
+    dm: &Arc<DeviceMetrics>,
+    health: &Arc<Health>,
+) -> std::result::Result<u64, ()> {
+    let backend_adapter = cfg.adapter.clone();
+    let started = Instant::now();
+    let readings = match session.read_signals().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(instance = %cfg.id, error = %e, "read failed; reconnecting");
+            health.read_errors.fetch_add(1, Ordering::Relaxed);
+            return Err(());
+        }
+    };
+    let latency = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    health.poll_latency_ms.store(latency, Ordering::Relaxed);
+
+    let publish_started = Instant::now();
+    let mut published = 0u64;
+    for r in readings {
+        // The data() facade builds the SouthboundSignalUpdate body, mints the topic, and stamps
+        // identity. Do not hand-build any of the three.
+        let quality = match r.quality {
+            Quality::Good => edgecommons::facades::Quality::Good,
+            Quality::Bad => edgecommons::facades::Quality::Bad,
+            Quality::Uncertain => edgecommons::facades::Quality::Uncertain,
+        };
+        let mut sample = Sample::with_quality(r.value.clone(), quality);
+        if let Some(raw) = &r.quality_raw {
+            sample = sample.quality_raw(raw);
+        }
+
+        let mut signal = data.signal(&r.signal_id);
+        if let Some(name) = &r.name {
+            signal = signal.name(name);
+        }
+        let update = signal
+            .device_parts(&backend_adapter, &cfg.id, &cfg.connection.endpoint)
+            .sample(sample)
+            .build();
+
+        if let Err(e) = data.publish(update).await {
+            tracing::warn!(instance = %cfg.id, signal = %r.signal_id, error = %e, "publish failed");
+        } else {
+            published += 1;
+            // Feed the staleness tracker — a signal that keeps updating is not stale.
+            dm.on_signal_update(&r.signal_id, Instant::now());
+        }
+    }
+    let publish_latency = u64::try_from(publish_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    health.publish_latency_ms.store(publish_latency, Ordering::Relaxed);
+    Ok(published)
+}
+
+/// What servicing the control channel while the session is down concluded.
+enum DownOutcome {
+    /// A `reconnect` command wants us to connect *now* (cut the backoff short); settle its reply on
+    /// the next connect.
+    Reconnect(oneshot::Sender<std::result::Result<(), String>>),
+    /// The backoff window elapsed — retry the connect.
+    Elapsed,
+    /// The control channel closed (component shutdown).
+    Closed,
+}
+
+/// Service the control channel while the session is **down**, for up to `wait`. Pause/resume take
+/// effect (they only need the shared flag + event); the I/O verbs answer "disconnected" (the command
+/// layer maps that to `DEVICE_UNAVAILABLE` / `BROWSE_FAILED`); a `reconnect` returns its reply so the
+/// caller connects now.
+async fn serve_while_down(
+    control: &mut mpsc::Receiver<DeviceControl>,
+    events: &EventsFacade,
+    health: &Arc<Health>,
+    wait: Duration,
+) -> DownOutcome {
+    let deadline = Instant::now() + wait;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return DownOutcome::Elapsed;
+        }
+        tokio::select! {
+            biased;
+            ctrl = control.recv() => {
+                match ctrl {
+                    None => return DownOutcome::Closed,
+                    Some(DeviceControl::Reconnect { reply }) => return DownOutcome::Reconnect(reply),
+                    Some(DeviceControl::Pause { reply }) => {
+                        let changed = set_paused(health, true);
+                        if changed {
+                            let _ = events.emit(Severity::Warning, "adapter-paused", None, None).await;
+                        }
+                        let _ = reply.send(changed);
+                    }
+                    Some(DeviceControl::Resume { reply }) => {
+                        let changed = set_paused(health, false);
+                        if changed {
+                            let _ = events.emit(Severity::Info, "adapter-resumed", None, None).await;
+                        }
+                        let _ = reply.send(changed);
+                    }
+                    Some(DeviceControl::Write(req)) => {
+                        let _ = req.ack.send(Err("device is disconnected".to_string()));
+                    }
+                    Some(DeviceControl::ReadNow { reply, .. }) => {
+                        let _ = reply.send(Err("device is disconnected".to_string()));
+                    }
+                    Some(DeviceControl::Repoll { reply }) => {
+                        let _ = reply.send(Err("device is disconnected".to_string()));
+                    }
+                    Some(DeviceControl::Browse { reply, .. }) => {
+                        let _ = reply.send(Err(BrowseError::Failed("device is disconnected".to_string())));
+                    }
+                }
+            }
+            _ = tokio::time::sleep(remaining) => return DownOutcome::Elapsed,
+        }
     }
 }
 
@@ -608,8 +783,7 @@ mod tests {
         assert_eq!(b.delay(0, 1.0).as_millis(), 1_000);
         assert_eq!(b.delay(2, 1.0).as_millis(), 4_000);
         assert_eq!(b.delay(20, 1.0).as_millis(), 10_000, "capped");
-        // Jitter: the delay is a point in the window, not its edge — so a plant full of adapters
-        // does not reconnect in lockstep when a PLC reboots.
+        // Jitter: the delay is a point in the window, not its edge.
         assert_eq!(b.delay(2, 0.5).as_millis(), 2_000);
         assert_eq!(b.delay(2, 0.0).as_millis(), 0);
     }
@@ -634,14 +808,14 @@ mod tests {
         .unwrap();
         let health = Health::default();
 
-        // Before the first connect: not reachable, and the adapter's own token says why it is not
-        // yet — CONNECTING is not BACKOFF, and the boolean alone could not tell them apart.
+        // Before the first connect: not reachable, and the token says why — CONNECTING, not BACKOFF.
         let c = connectivity_of(&cfg, &health);
         assert_eq!(c.instance, "plc-1");
         assert!(!c.connected);
         assert_eq!(c.state.as_deref(), Some("CONNECTING"));
         assert_eq!(c.detail.as_deref(), Some("sim://plc-1"), "the endpoint, for a human");
         assert_eq!(c.attributes["adapter"], json!("sim"), "the open bag carries domain data");
+        assert_eq!(c.attributes["paused"], json!(false));
 
         health.set_link(LinkState::Online);
         let c = connectivity_of(&cfg, &health);
@@ -653,9 +827,30 @@ mod tests {
     }
 
     #[test]
+    fn a_paused_online_device_reports_paused_but_stays_connected() {
+        let cfg: DeviceConfig = serde_json::from_value(json!({
+            "id": "plc-1", "connection": { "endpoint": "sim://plc-1" }
+        }))
+        .unwrap();
+        let health = Health::default();
+        health.set_link(LinkState::Online);
+
+        assert!(set_paused(&health, true), "pausing changed the state");
+        assert!(!set_paused(&health, true), "pausing again is idempotent");
+        let c = connectivity_of(&cfg, &health);
+        assert_eq!(c.state.as_deref(), Some("PAUSED"), "paused + online = PAUSED");
+        assert!(c.connected, "connected stays truthful while paused");
+        assert_eq!(c.attributes["paused"], json!(true));
+
+        // A break while paused reports BACKOFF (not PAUSED), `connected` false.
+        health.set_link(LinkState::Backoff);
+        let c = connectivity_of(&cfg, &health);
+        assert_eq!(c.state.as_deref(), Some("BACKOFF"));
+        assert!(!c.connected);
+    }
+
+    #[test]
     fn the_normalized_flag_and_the_health_metric_cannot_disagree() {
-        // Both move through set_link, so the metric an operator charts and the connectivity a
-        // console renders are the same fact.
         let health = Health::default();
         health.set_link(LinkState::Online);
         assert_eq!(health.connection_state.load(Ordering::Relaxed), 1);

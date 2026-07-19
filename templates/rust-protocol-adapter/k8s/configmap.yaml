@@ -22,7 +22,7 @@ data:
             "reconnectBackoffMaxMs": 60000
           },
           "healthThresholds": {
-            "staleSignalSecs": 60
+            "staleSignalSecs": 30
           }
         },
         "instances": [

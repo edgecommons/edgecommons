@@ -60,6 +60,12 @@
     "src/app.rs": [
       "COMPONENTNAME"
     ],
+    "src/commands.rs": [
+      "COMPONENTNAME"
+    ],
+    "src/metrics.rs": [
+      "COMPONENTNAME"
+    ],
     "src/main.rs": [
       "COMPONENTFULLNAME",
       "COMPONENTNAME"

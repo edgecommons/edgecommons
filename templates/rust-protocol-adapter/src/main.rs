@@ -15,7 +15,9 @@
 //! ```
 
 mod app;
+mod commands;
 mod device;
+mod metrics;
 
 use edgecommons::prelude::*;
 
