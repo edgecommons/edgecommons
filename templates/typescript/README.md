@@ -11,7 +11,8 @@ heartbeat — so you write only business logic in [`src/app.ts`](src/app.ts).
 | Path | Purpose |
 |------|---------|
 | `src/main.ts` | Entry point: builds the `edgecommons` runtime from CLI args, runs the app. |
-| `src/app.ts` | Your component logic (starts as a minimal app + config-change listener). |
+| `src/app.ts` | Your component logic: the unit-tested decisions (connectivity provider, command verb) the runtime drives. |
+| `src/runtime.ts` | The thin live-runtime seam: wires the `edgecommons` handles together and drives the demo loop. Excluded from the coverage gate (needs a live runtime; validated by the deploy paths). |
 | `package.json` | Node manifest. Depends on the `edgecommons` library via a `file:` path dependency. |
 | `tsconfig.json` | TypeScript compiler config (emits `dist/`). |
 | `recipe.yaml` | Greengrass component recipe (default config + IPC access control). |
@@ -53,7 +54,7 @@ publish to them is rejected.
 ## The demonstrated monitoring + command surface
 
 Beyond the fully-automatic `state` keepalive and command inbox (`ping` / `reload-config` /
-`get-configuration`, live with zero code), `src/app.ts` demonstrates the rest of the surface an
+`get-configuration`, live with zero code), the scaffold demonstrates the rest of the surface an
 edge-console reads/drives (DESIGN-uns §7/§9), through the **app-usable class facades**
 (`docs/platform/DESIGN-class-facades.md`) rather than hand-built topics/bodies:
 

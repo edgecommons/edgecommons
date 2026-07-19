@@ -18,8 +18,10 @@ model — no platform branching in this component's own code.
 
 `src/proc.ts`'s `Processor` interface is the one thing a real pipeline stage implements. A stage
 takes a message and returns zero, one, or many; a stateful stage additionally implements `onTick`.
-`src/app.ts` (the route loop, the self-echo guard, the identity restamp, the bounded queue) never
-changes when you add a stage.
+The pieces around it never change when you add a stage: the self-echo guard, the identity restamp,
+the bounded queue, and the stats window live in `src/app.ts` (unit-tested), and the route loop that
+drives them lives in `src/runtime.ts` (the thin live-runtime seam, excluded from the coverage gate
+and validated by the deploy paths).
 
 ## Config location
 

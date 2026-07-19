@@ -16,6 +16,12 @@
  * session or serialize with the poll loop is *sent* to the loop, and *confirmed* through the reply
  * that rides it. The command surface itself lives in {@link module:commands} (`src/commands.ts`).
  *
+ * This module holds the adapter's **pure, unit-tested logic**: config parsing, the reconnect
+ * backoff, the control mailbox, health/connectivity, the southbound publish path, and the
+ * per-message control decisions ({@link handleControl}/{@link serveWhileDown}). The loop that drives
+ * them — the connect/poll/reconnect supervisor per device — is the thin live-runtime seam in
+ * `src/runtime.ts`, excluded from the coverage gate (it needs a live runtime; see `vitest.config.ts`).
+ *
  * ## The contract you are implementing (docs/SOUTHBOUND.md)
  *
  * * Publish `SouthboundSignalUpdate` on the `data` class, **via the `data()` facade** — never
@@ -29,12 +35,9 @@
  */
 import {
   Config,
-  ConfigurationChangeListener,
   DataFacade,
-  EdgeCommons,
   EventsFacade,
   InstanceConnectivity,
-  MetricService,
   Quality as LibQuality,
   Severity,
   logger,
@@ -44,21 +47,12 @@ import {
   BrowseError,
   BrowsePage,
   ConnectionConfig,
-  DeviceBackend,
-  DeviceError,
   DeviceSession,
   Quality,
   Reading,
-  SignalInfo,
-  backendFor,
 } from "./device";
 import { DeviceMetrics } from "./metrics";
-// `commands.ts` imports only TYPES from this module (erased at compile), so this value import of
-// `registerAll` creates no runtime import cycle. `DeviceHandle` is a type-only import.
-import { DeviceHandle, registerAll } from "./commands";
 
-/** How often the periodic metrics emit runs, in the poll loop (ms). */
-const METRICS_INTERVAL_MS = 30_000;
 /** The `component.global.healthThresholds.staleSignalSecs` default (SOUTHBOUND.md §4/§5). */
 const DEFAULT_STALE_SIGNAL_SECS = 30;
 const DEFAULT_POLL_MS = 5_000;
@@ -413,11 +407,8 @@ export async function publishReadings(
 
 // --- the app ---------------------------------------------------------------------------------
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-const rand01 = (): number => Math.random();
-
 /** One poll: read, publish, record latencies + staleness. `polled` = signals published. */
-async function pollOnce(
+export async function pollOnce(
   cfg: DeviceConfig,
   session: DeviceSession,
   data: DataFacade,
@@ -442,398 +433,184 @@ async function pollOnce(
 }
 
 /** What ended the poll loop. */
-type PollExit =
+export type PollExit =
   | { kind: "linkLost" }
   | { kind: "closed" }
   | { kind: "reconnect"; reply: (outcome: ReconnectOutcome) => void };
 
 /** What servicing the control channel while the session is down concluded. */
-type DownOutcome =
+export type DownOutcome =
   | { kind: "elapsed" }
   | { kind: "closed" }
   | { kind: "reconnect"; reply: (outcome: ReconnectOutcome) => void };
 
-export class App {
-  private readonly config: Config;
-  private readonly metrics: MetricService;
-  private readonly devices: DeviceConfig[] = [];
-  /** Each device's control channel: written by the command surface, drained by the device loop. */
-  private readonly control = new Map<string, Mailbox<DeviceControl>>();
-  /** Each device's health: written by its own loop, read by the connectivity provider. */
-  private readonly health = new Map<string, Health>();
-  /** Each device's operational-metrics emitter. */
-  private readonly deviceMetrics = new Map<string, DeviceMetrics>();
-  private readonly staleSignalSecs: number;
-  private readonly loops: Promise<void>[] = [];
-  private stopped = false;
+/**
+ * Parse `component.instances[]` into device configs, skipping a malformed device with a warning.
+ *
+ * A malformed device is skipped rather than killing the component — but if EVERY device is malformed
+ * there is nothing to run, and failing loudly beats idling silently.
+ *
+ * @throws Error when no device is valid
+ */
+export function buildDevices(config: Config): DeviceConfig[] {
+  const devices: DeviceConfig[] = [];
+  for (const id of config.instanceIds()) {
+    try {
+      devices.push(parseDevice(config.instance(id)));
+    } catch (e) {
+      logger.warn(`skipping malformed device '${id}': ${String(e)}`);
+    }
+  }
+  if (devices.length === 0) {
+    throw new Error("no valid devices in component.instances[]");
+  }
+  return devices;
+}
 
-  constructor(private readonly gg: EdgeCommons) {
-    this.config = gg.config();
-    this.metrics = gg.metrics();
-
-    const listener: ConfigurationChangeListener = {
-      onConfigurationChange: (config: Config): boolean => {
-        logger.info(`configuration changed (thing=${config.thingName})`);
-        return true;
-      },
-    };
-    gg.addConfigChangeListener(listener);
-
-    this.staleSignalSecs = readStaleSignalSecs(this.config);
-
-    // One device per instance. A malformed device is skipped with a warning rather than killing the
-    // component — but if EVERY device is malformed there is nothing to run, and failing loudly
-    // beats idling silently.
-    for (const id of this.config.instanceIds()) {
+/**
+ * Service one control message during polling. Returns a {@link PollExit} only for reconnect /
+ * link-lost; every other verb replies in place and returns `undefined` (stay in the poll loop).
+ *
+ * This is the per-message decision the poll loop delegates to — pure over its arguments (no runtime
+ * state), so it is unit-tested directly against the sim session; the loop that feeds it lives in the
+ * runtime seam (`src/runtime.ts`).
+ */
+export async function handleControl(
+  ctrl: DeviceControl,
+  cfg: DeviceConfig,
+  session: DeviceSession,
+  data: DataFacade,
+  events: EventsFacade,
+  dm: DeviceMetrics,
+  health: Health,
+): Promise<PollExit | undefined> {
+  switch (ctrl.kind) {
+    case "write": {
       try {
-        this.devices.push(parseDevice(this.config.instance(id)));
+        await session.writeSignal(ctrl.signalId, ctrl.value);
+        ctrl.ack({ ok: true });
       } catch (e) {
-        logger.warn(`skipping malformed device '${id}': ${String(e)}`);
+        logger.warn(`write failed instance=${cfg.id} signal=${ctrl.signalId}: ${String(e)}`);
+        ctrl.ack({ ok: false, error: String(e) });
       }
+      return undefined;
     }
-    if (this.devices.length === 0) {
-      throw new Error("no valid devices in component.instances[]");
-    }
-
-    // A device's health exists from the moment it is CONFIGURED, not from the moment its loop first
-    // connects: a configured device that is down must never be indistinguishable from a device
-    // nobody configured. ONE provider, TWO surfaces: the library pushes this sample into the `state`
-    // keepalive's `instances[]` every tick, and returns the very same sample from the built-in
-    // `status` verb when a console asks. Whoever watches and whoever asks cannot get different answers.
-    for (const device of this.devices) {
-      this.health.set(device.id, new Health());
-    }
-    gg.setInstanceConnectivityProvider(() =>
-      this.devices.map((d) => connectivityOf(d, this.health.get(d.id) as Health)),
-    );
-  }
-
-  async run(): Promise<void> {
-    // The per-device handles the command surface routes on.
-    const handles: DeviceHandle[] = [];
-
-    for (const device of this.devices) {
-      // Per-instance facades: data() mints THIS device's topics and stamps its identity.
-      const instance = this.gg.instance(device.id);
-
-      const health = this.health.get(device.id) as Health;
-      const dm = new DeviceMetrics(this.metrics, this.config, device.id, health, this.staleSignalSecs);
-      // Pre-define the metric set so it is fixed and discoverable at startup.
-      dm.defineAll();
-      this.deviceMetrics.set(device.id, dm);
-
-      // The signal inventory `sb/signals` shows — a config/backend view, no device round-trip.
-      const backend = backendFor(device.adapter);
-      const signals: SignalInfo[] = backend?.inventory?.(device.connection) ?? [];
-
-      const control = new Mailbox<DeviceControl>();
-      this.control.set(device.id, control);
-
-      handles.push({ cfg: device, control, health, dm, signals });
-
-      this.loops.push(
-        this.runDevice(device, instance.data(), instance.events(), dm, health, control).catch(
-          (e: unknown) => logger.error(`device loop '${device.id}' stopped: ${String(e)}`),
-        ),
-      );
-    }
-
-    // The southbound command surface (`src/commands.ts`). `ping` / `status` / `reload-config` /
-    // `get-configuration` are already live — the library registered them before we ran.
-    const commands = this.gg.commands();
-    if (commands) {
-      registerAll(commands, handles);
-    }
-
-    await Promise.all(this.loops);
-  }
-
-  /**
-   * One device's lifecycle: connect, poll, publish, reconnect — and service its control channel.
-   *
-   * The connect loop and the poll loop are nested on purpose. A read failure that breaks the link
-   * drops out of the poll loop and back into connect — the only place that knows how to back off.
-   */
-  private async runDevice(
-    cfg: DeviceConfig,
-    data: DataFacade,
-    events: EventsFacade,
-    dm: DeviceMetrics,
-    health: Health,
-    control: Mailbox<DeviceControl>,
-  ): Promise<void> {
-    const backend: DeviceBackend | undefined = backendFor(cfg.adapter);
-    if (!backend) {
-      logger.error(`unknown adapter '${cfg.adapter}' for instance '${cfg.id}'`);
-      return;
-    }
-
-    const backoff = new Backoff();
-    let attempt = 0;
-    // A `reconnect` command's reply, held until the next connect settles it.
-    let pendingReconnect: ((outcome: ReconnectOutcome) => void) | undefined;
-
-    while (!this.stopped) {
-      // --- CONNECT (servicing control while down, so pause/reconnect don't block on backoff) ---
-      let session: DeviceSession | undefined;
-      while (!this.stopped && session === undefined) {
-        dm.onConnectAttempt();
-        health.setLink(attempt === 0 ? "CONNECTING" : "BACKOFF");
-        const now = Date.now();
-        try {
-          session = await backend.connect(cfg.connection);
-          attempt = 0;
-          dm.onConnected(now);
-          health.setLink("ONLINE");
-          await dm.emitNow();
-          await events
-            .emit(Severity.Info, "device-connected", `connected to ${cfg.connection.endpoint}`, {
-              instance: cfg.id,
-              adapter: backend.kind,
-            })
-            .catch(() => undefined);
-          await events.clearAlarm("device-unreachable", { instance: cfg.id }).catch(() => undefined);
-          if (pendingReconnect) {
-            pendingReconnect({ ok: true });
-            pendingReconnect = undefined;
-          }
-        } catch (e) {
-          dm.onConnectFailure();
-          if (pendingReconnect) {
-            pendingReconnect({ ok: false, error: String(e) });
-            pendingReconnect = undefined;
-          }
-          // A permanent failure fails identically forever — back off to the ceiling.
-          const permanent = !DeviceError.isTransient(e);
-          const wait = permanent ? backoff.maxMs : backoff.delayMs(attempt, rand01());
-          attempt += 1;
-          logger.warn(`connect failed instance=${cfg.id} permanent=${permanent} waitMs=${wait}: ${String(e)}`);
-          const outcome = await this.serveWhileDown(control, events, health, wait);
-          if (outcome.kind === "reconnect") {
-            pendingReconnect = outcome.reply;
-            attempt = 0;
-          } else if (outcome.kind === "closed") {
-            return;
-          }
-        }
+    case "readNow": {
+      try {
+        const readings = await session.readNamed(ctrl.ids);
+        ctrl.reply({ ok: true, readings });
+      } catch (e) {
+        ctrl.reply({ ok: false, error: String(e) });
       }
-      if (session === undefined) return; // stopped while down
-
-      // --- POLL (until the link breaks or a reconnect is requested) ---
-      const exit = await this.runPolling(cfg, session, data, events, dm, health, control);
-
-      // The link is down (or a reconnect asked us to drop it).
-      health.setLink("BACKOFF");
-      health.reconnects += 1;
-      dm.onConnectionDropped(Date.now());
-      await dm.emitNow();
-      if (!this.stopped) {
+      return undefined;
+    }
+    case "browse": {
+      try {
+        const page = await session.browse(ctrl.cursor, ctrl.max);
+        ctrl.reply({ ok: true, page });
+      } catch (e) {
+        const error = BrowseError.isBrowseError(e) ? e : BrowseError.failed(String(e));
+        ctrl.reply({ ok: false, error });
+      }
+      return undefined;
+    }
+    case "pause": {
+      const changed = setPaused(health, true);
+      if (changed) {
         await events
-          .raiseAlarm("device-unreachable", `lost the link to ${cfg.connection.endpoint}`, {
-            instance: cfg.id,
-          })
+          .emit(Severity.Warning, "adapter-paused", "telemetry production paused", { instance: cfg.id })
           .catch(() => undefined);
       }
-
-      if (exit.kind === "closed") return;
-      if (exit.kind === "reconnect") pendingReconnect = exit.reply;
-      // linkLost: fall through and reconnect.
+      ctrl.reply(changed);
+      return undefined;
+    }
+    case "resume": {
+      const changed = setPaused(health, false);
+      if (changed) {
+        await events
+          .emit(Severity.Info, "adapter-resumed", "telemetry production resumed", { instance: cfg.id })
+          .catch(() => undefined);
+      }
+      ctrl.reply(changed);
+      return undefined;
+    }
+    case "reconnect": {
+      await session.close().catch(() => undefined);
+      return { kind: "reconnect", reply: ctrl.reply };
+    }
+    case "repoll": {
+      if (health.isPaused()) {
+        ctrl.reply({ ok: false, error: "instance is paused - resume first" });
+        return undefined;
+      }
+      const r = await pollOnce(cfg, session, data, dm, health);
+      if (r.ok) {
+        ctrl.reply({ ok: true, polled: r.polled });
+        return undefined;
+      }
+      ctrl.reply({ ok: false, error: "link error" });
+      await session.close().catch(() => undefined);
+      return { kind: "linkLost" };
     }
   }
+}
 
-  /**
-   * Read on the poll interval and publish, servicing the control channel, until the link breaks or
-   * a reconnect is requested.
-   */
-  private async runPolling(
-    cfg: DeviceConfig,
-    session: DeviceSession,
-    data: DataFacade,
-    events: EventsFacade,
-    dm: DeviceMetrics,
-    health: Health,
-    control: Mailbox<DeviceControl>,
-  ): Promise<PollExit> {
-    let nextPoll = Date.now() + cfg.pollIntervalMs;
-    let nextMetrics = Date.now() + METRICS_INTERVAL_MS;
+/**
+ * Service the control channel while the session is **down**, for up to `waitMs`. Pause/resume
+ * take effect (they only need the shared flag + event); the I/O verbs answer "disconnected" (the
+ * command layer maps that to `DEVICE_UNAVAILABLE` / `BROWSE_FAILED`); a `reconnect` returns its
+ * reply so the caller connects now.
+ *
+ * Like {@link handleControl}, this is a per-message decision, pure over its arguments and
+ * unit-tested directly; the connect/backoff supervisor that calls it lives in `src/runtime.ts`.
+ */
+export async function serveWhileDown(
+  control: Mailbox<DeviceControl>,
+  events: EventsFacade,
+  health: Health,
+  waitMs: number,
+): Promise<DownOutcome> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return { kind: "elapsed" };
+    const ctrl = await control.receive(remaining);
+    if (control.isClosed() && ctrl === undefined) return { kind: "closed" };
+    if (ctrl === undefined) return { kind: "elapsed" };
 
-    while (!this.stopped) {
-      const now = Date.now();
-      const deadlines = [nextMetrics];
-      if (!health.isPaused()) deadlines.push(nextPoll);
-      const wait = Math.max(0, Math.min(...deadlines) - now);
-
-      const ctrl = await control.receive(wait);
-      if (control.isClosed() && ctrl === undefined) return { kind: "closed" };
-
-      if (ctrl !== undefined) {
-        // Poll and control share this one loop, so a write can never race a read on the same
-        // connection — most device protocols are a single request/response channel.
-        const exit = await this.handleControl(ctrl, cfg, session, data, events, dm, health);
-        if (exit !== undefined) return exit;
-      } else {
-        if (!health.isPaused() && Date.now() >= nextPoll) {
-          const r = await pollOnce(cfg, session, data, dm, health);
-          if (!r.ok) {
-            await session.close().catch(() => undefined);
-            return { kind: "linkLost" };
-          }
-          nextPoll = Date.now() + cfg.pollIntervalMs;
-        }
-      }
-
-      if (Date.now() >= nextMetrics) {
-        await dm.emitPeriodic();
-        nextMetrics = Date.now() + METRICS_INTERVAL_MS;
-      }
-    }
-    await session.close().catch(() => undefined);
-    return { kind: "closed" };
-  }
-
-  /** Service one control message during polling. Returns a {@link PollExit} only for reconnect / link-lost. */
-  private async handleControl(
-    ctrl: DeviceControl,
-    cfg: DeviceConfig,
-    session: DeviceSession,
-    data: DataFacade,
-    events: EventsFacade,
-    dm: DeviceMetrics,
-    health: Health,
-  ): Promise<PollExit | undefined> {
     switch (ctrl.kind) {
-      case "write": {
-        try {
-          await session.writeSignal(ctrl.signalId, ctrl.value);
-          ctrl.ack({ ok: true });
-        } catch (e) {
-          logger.warn(`write failed instance=${cfg.id} signal=${ctrl.signalId}: ${String(e)}`);
-          ctrl.ack({ ok: false, error: String(e) });
-        }
-        return undefined;
-      }
-      case "readNow": {
-        try {
-          const readings = await session.readNamed(ctrl.ids);
-          ctrl.reply({ ok: true, readings });
-        } catch (e) {
-          ctrl.reply({ ok: false, error: String(e) });
-        }
-        return undefined;
-      }
-      case "browse": {
-        try {
-          const page = await session.browse(ctrl.cursor, ctrl.max);
-          ctrl.reply({ ok: true, page });
-        } catch (e) {
-          const error = BrowseError.isBrowseError(e) ? e : BrowseError.failed(String(e));
-          ctrl.reply({ ok: false, error });
-        }
-        return undefined;
-      }
+      case "reconnect":
+        return { kind: "reconnect", reply: ctrl.reply };
       case "pause": {
         const changed = setPaused(health, true);
-        if (changed) {
-          await events
-            .emit(Severity.Warning, "adapter-paused", "telemetry production paused", { instance: cfg.id })
-            .catch(() => undefined);
-        }
+        if (changed) await events.emit(Severity.Warning, "adapter-paused").catch(() => undefined);
         ctrl.reply(changed);
-        return undefined;
+        break;
       }
       case "resume": {
         const changed = setPaused(health, false);
-        if (changed) {
-          await events
-            .emit(Severity.Info, "adapter-resumed", "telemetry production resumed", { instance: cfg.id })
-            .catch(() => undefined);
-        }
+        if (changed) await events.emit(Severity.Info, "adapter-resumed").catch(() => undefined);
         ctrl.reply(changed);
-        return undefined;
+        break;
       }
-      case "reconnect": {
-        await session.close().catch(() => undefined);
-        return { kind: "reconnect", reply: ctrl.reply };
-      }
-      case "repoll": {
-        if (health.isPaused()) {
-          ctrl.reply({ ok: false, error: "instance is paused - resume first" });
-          return undefined;
-        }
-        const r = await pollOnce(cfg, session, data, dm, health);
-        if (r.ok) {
-          ctrl.reply({ ok: true, polled: r.polled });
-          return undefined;
-        }
-        ctrl.reply({ ok: false, error: "link error" });
-        await session.close().catch(() => undefined);
-        return { kind: "linkLost" };
-      }
+      case "write":
+        ctrl.ack({ ok: false, error: "device is disconnected" });
+        break;
+      case "readNow":
+        ctrl.reply({ ok: false, error: "device is disconnected" });
+        break;
+      case "repoll":
+        ctrl.reply({ ok: false, error: "device is disconnected" });
+        break;
+      case "browse":
+        ctrl.reply({ ok: false, error: BrowseError.failed("device is disconnected") });
+        break;
     }
-  }
-
-  /**
-   * Service the control channel while the session is **down**, for up to `waitMs`. Pause/resume
-   * take effect (they only need the shared flag + event); the I/O verbs answer "disconnected" (the
-   * command layer maps that to `DEVICE_UNAVAILABLE` / `BROWSE_FAILED`); a `reconnect` returns its
-   * reply so the caller connects now.
-   */
-  private async serveWhileDown(
-    control: Mailbox<DeviceControl>,
-    events: EventsFacade,
-    health: Health,
-    waitMs: number,
-  ): Promise<DownOutcome> {
-    const deadline = Date.now() + waitMs;
-    for (;;) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) return { kind: "elapsed" };
-      const ctrl = await control.receive(remaining);
-      if (control.isClosed() && ctrl === undefined) return { kind: "closed" };
-      if (ctrl === undefined) return { kind: "elapsed" };
-
-      switch (ctrl.kind) {
-        case "reconnect":
-          return { kind: "reconnect", reply: ctrl.reply };
-        case "pause": {
-          const changed = setPaused(health, true);
-          if (changed) await events.emit(Severity.Warning, "adapter-paused").catch(() => undefined);
-          ctrl.reply(changed);
-          break;
-        }
-        case "resume": {
-          const changed = setPaused(health, false);
-          if (changed) await events.emit(Severity.Info, "adapter-resumed").catch(() => undefined);
-          ctrl.reply(changed);
-          break;
-        }
-        case "write":
-          ctrl.ack({ ok: false, error: "device is disconnected" });
-          break;
-        case "readNow":
-          ctrl.reply({ ok: false, error: "device is disconnected" });
-          break;
-        case "repoll":
-          ctrl.reply({ ok: false, error: "device is disconnected" });
-          break;
-        case "browse":
-          ctrl.reply({ ok: false, error: BrowseError.failed("device is disconnected") });
-          break;
-      }
-    }
-  }
-
-  /** Stop the device loops and clean up before the runtime is closed. */
-  async stop(): Promise<void> {
-    this.stopped = true;
-    for (const control of this.control.values()) control.close();
-    await Promise.allSettled(this.loops);
-    await this.metrics.flushMetrics().catch(() => undefined);
   }
 }
 
 /** Read `component.global.healthThresholds.staleSignalSecs` (default 30). */
-function readStaleSignalSecs(config: Config): number {
+export function readStaleSignalSecs(config: Config): number {
   try {
     const global = config.global();
     if (global !== null && typeof global === "object") {

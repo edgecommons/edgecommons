@@ -17,7 +17,7 @@ family (SOUTHBOUND.md §2.2 equivalent) on the command inbox. Ships with a simul
 ## The seam
 
 `src/device.rs`'s `DeviceSession`/`DeviceBackend` trait pair is the one place protocol knowledge
-lives. Everything above it (`src/app.rs`'s connect/poll/backoff supervisor, `src/commands.rs`'s
+lives. Everything above it (`src/supervisor.rs`'s connect/poll/backoff supervisor, `src/commands.rs`'s
 `sb/*` verbs, `src/metrics.rs`'s families) is written against the trait and does not change when a
 new protocol is added. **The boundary rule:** a backend knows protocols; it does not know
 EdgeCommons topics, the UNS, envelopes, or metrics.
@@ -35,9 +35,14 @@ carries a runnable example.
 - `cargo test` covers every module against the simulator and a mocked device-control channel — no
   network, no broker, no device required.
 - `cargo llvm-cov --fail-under-lines 90` is the coverage gate (`.github/workflows/ci.yml`'s
-  `coverage` job) — the org rule is 90% line coverage per language; live-infra-only paths (a real
-  protocol talking to real hardware) are validated through lab/HOST smoke instead of being forced
-  into unit coverage. Do not lower the gate or exclude testable code to pass it.
+  `coverage` job) — the org rule is 90% line coverage per language. The `ethernet-ip-adapter`
+  discipline is followed: the untestable live drivers are isolated in a thin `src/supervisor.rs`
+  seam (the connect/poll/reconnect loop that `.await`s a live session), and the coverage job passes
+  `--ignore-filename-regex '(supervisor\.rs|main\.rs|tests[/\\]live_.*\.rs)'` so ONLY that seam plus
+  the binary shim and the self-skipping live suite are excluded — each pinned to a reason in the
+  workflow. Every pure decision they compose (backoff, the write allow-list, connectivity, the
+  metric-family math) stays in `app.rs`/`commands.rs`/`device.rs`/`metrics.rs`, in the denominator,
+  and is unit-tested. Do not lower the gate or exclude testable code to pass it — add tests.
 - `tests/live_sim.rs` is a **self-skipping** live suite, gated on `EC_LIVE_SIM` — it must show as
   skipped in a normal `cargo test` and pass when pointed at a real simulator/device.
 - `edgecommons component validate` checks this repo's config against `config.schema.json` and warns

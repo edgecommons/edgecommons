@@ -18,7 +18,7 @@ mirror the `D-<PREFIX>-<n>` convention used across the EdgeCommons repos (e.g. `
 
 - **D-<<COMPONENTNAME>>-1.** *(example — replace)* Which protocol(s) this adapter speaks, and why.
 - **D-<<COMPONENTNAME>>-2.** *(example — replace)* What a transient vs. permanent connect failure
-  means for this protocol (drives the supervisor's backoff-vs-ceiling choice in `src/app.rs`).
+  means for this protocol (drives the supervisor's backoff-vs-ceiling choice in `src/supervisor.rs`).
 
 ## Config
 

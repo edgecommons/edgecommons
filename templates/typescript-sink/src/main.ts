@@ -17,7 +17,7 @@
  */
 import { EdgeCommonsBuilder, logger } from "@edgecommons/edgecommons";
 
-import { App } from "./app";
+import { App } from "./runtime";
 
 /** The component's full name (matches `recipe.yaml` / `gdk-config.json`). */
 const COMPONENT_NAME = "<<COMPONENTFULLNAME>>";

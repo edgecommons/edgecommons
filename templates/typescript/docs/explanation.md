@@ -14,7 +14,7 @@ not replace or duplicate it.
 
 ## Why a demo surface at all
 
-A bare scaffold works with none of `src/app.ts`'s content — the library alone is a runnable
+A bare scaffold works with none of the scaffold's demo content — the library alone is a runnable
 component. The demo metric/signal/event/command exist so a freshly generated component has
 something to show on an edge-console's Signals/Events/Metrics tabs and something to command,
 instead of an empty dashboard. Delete all four once you have real business logic to show instead;

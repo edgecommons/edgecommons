@@ -43,7 +43,10 @@ deliberately not redeclared here. See `docs/reference/configuration.md`.
 - `mvn test` must pass with no live infrastructure.
 - This component inherits the org's 90% line-coverage gate (JaCoCo `check`, wired into `pom.xml`,
   enforced by `mvn verify` in CI). Don't lower the gate or exclude testable code to pass it — add
-  tests.
+  tests. The gate's `<excludes>` scope out only the thin live-runtime seam — the component's `main()`
+  bootstrap and its infinite demo run loop, which need a broker and are validated on real
+  infrastructure — so every class with unit-testable logic (here, the `Greeting` command handler)
+  stays in the gate. Keep it that way: extract logic out of the run loop rather than excluding it.
 
 ## Org conventions this scaffold inherits
 

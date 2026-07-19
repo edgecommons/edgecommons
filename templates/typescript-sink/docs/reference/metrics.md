@@ -11,8 +11,8 @@ ecv1/{device}/{component}/metric/{metricName}
 
 ## `sinkDeliveries`
 
-Component-wide (not per-sink) counters, defined through `MetricBuilder` (`src/app.ts`) and emitted
-every 60 seconds.
+Component-wide (not per-sink) counters, defined through `MetricBuilder` (`src/runtime.ts`) and
+emitted every 60 seconds.
 
 Dimensions: none beyond the library-injected component dimensions.
 
@@ -30,5 +30,5 @@ This scaffold's counters are intentionally coarse (component-wide, not per-sink)
 with several sinks of very different reliability profiles will likely want to dimension by `sink`
 (the sink `id`), the same low-cardinality-dimension discipline the reference adapters use
 (instance/verb/result, never a message body field or a destination key). Add a `sink` dimension to
-`MetricBuilder` in `src/app.ts` and thread the sink id through `Stats` if you need per-sink
-visibility.
+`MetricBuilder` in `src/runtime.ts` and thread the sink id through `Stats` (`src/app.ts`) if you
+need per-sink visibility.

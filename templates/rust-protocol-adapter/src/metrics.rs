@@ -455,6 +455,165 @@ impl DeviceMetrics {
 mod tests {
     use super::*;
 
+    use edgecommons::prelude::{Config, Metric, MetricService};
+    use serde_json::json;
+
+    use crate::app::{Health, LinkState};
+
+    // --- a no-op MetricService + Config so DeviceMetrics can be built and emitted without a live
+    // runtime. `define_metric`/`emit_metric*` are the only seam a live target adds; everything the
+    // emitter COMPUTES (the counter recording, drain, and the §5 value assembly below) is exercised
+    // here for real. ---------------------------------------------------------------------------------
+    #[derive(Default)]
+    struct NoopMetrics;
+
+    #[async_trait::async_trait]
+    impl MetricService for NoopMetrics {
+        fn define_metric(&self, _metric: Metric) {}
+        fn is_metric_defined(&self, _name: &str) -> bool {
+            true
+        }
+        async fn emit_metric(&self, _name: &str, _values: HashMap<String, f64>) -> edgecommons::Result<()> {
+            Ok(())
+        }
+        async fn emit_metric_now(&self, _name: &str, _values: HashMap<String, f64>) -> edgecommons::Result<()> {
+            Ok(())
+        }
+        async fn flush_metrics(&self) -> edgecommons::Result<()> {
+            Ok(())
+        }
+        async fn shutdown(&self) {}
+    }
+
+    fn config() -> Arc<Config> {
+        Arc::new(
+            Config::from_value(
+                "com.example.MyAdapter",
+                "thing-1",
+                json!({ "metricEmission": { "target": "log", "namespace": "test" } }),
+            )
+            .unwrap(),
+        )
+    }
+
+    fn dm(health: Arc<Health>, stale_secs: u64) -> DeviceMetrics {
+        DeviceMetrics::new(Arc::new(NoopMetrics), config(), "plc-1".to_string(), health, stale_secs)
+    }
+
+    #[test]
+    fn the_command_matrix_is_prepopulated_so_the_dimension_set_is_fixed_at_startup() {
+        let dm = dm(Arc::new(Health::default()), 30);
+        let inner = dm.inner.lock().unwrap();
+        // Every (verb, result) combo exists before a single command is recorded.
+        assert_eq!(inner.command.len(), COMMAND_VERBS.len() * RESULTS.len());
+        for verb in COMMAND_VERBS {
+            for result in RESULTS {
+                assert!(inner.command.contains_key(&(verb, result)), "{verb}/{result} pre-defined");
+            }
+        }
+    }
+
+    #[test]
+    fn the_connection_lifecycle_records_reconnects_only_after_the_first_connect() {
+        let dm = dm(Arc::new(Health::default()), 30);
+        let t0 = Instant::now();
+        dm.on_connect_attempt();
+        dm.on_connected(t0); // first connect: NOT a reconnect
+        dm.on_connection_dropped(t0 + Duration::from_millis(100));
+        dm.on_connect_attempt();
+        dm.on_connected(t0 + Duration::from_millis(200)); // re-establishment: IS a reconnect
+
+        let inner = dm.inner.lock().unwrap();
+        assert_eq!(inner.conn.connect_attempts.total, 2.0);
+        assert_eq!(inner.conn.reconnect_attempts.total, 1.0, "only the second connect is a reconnect");
+        assert_eq!(inner.conn.connection_drops.total, 1.0);
+        assert!(inner.conn.connected_accrued_ms >= 100.0, "the first session's uptime accrued");
+    }
+
+    #[test]
+    fn a_connect_failure_bumps_only_its_own_counter() {
+        let dm = dm(Arc::new(Health::default()), 30);
+        dm.on_connect_attempt();
+        dm.on_connect_failure();
+        let inner = dm.inner.lock().unwrap();
+        assert_eq!(inner.conn.connect_failures.total, 1.0);
+        assert_eq!(inner.conn.connect_attempts.total, 1.0);
+    }
+
+    #[test]
+    fn a_command_outcome_lands_in_its_verb_result_cell_and_errors_double_count() {
+        let dm = dm(Arc::new(Health::default()), 30);
+        dm.record_command("sb/read", true, 4);
+        dm.record_command("sb/read", false, 6);
+        let inner = dm.inner.lock().unwrap();
+        let ok = &inner.command[&("sb/read", RESULT_SUCCESS)];
+        let err = &inner.command[&("sb/read", RESULT_ERROR)];
+        assert_eq!(ok.command_requests.total, 1.0);
+        assert_eq!(ok.command_errors.total, 0.0, "a success is not an error");
+        assert_eq!(err.command_requests.total, 1.0);
+        assert_eq!(err.command_errors.total, 1.0, "a failure counts a request AND an error");
+        assert_eq!(err.command_latency_ms, 6.0);
+    }
+
+    #[test]
+    fn counters_view_reports_each_connection_counter_as_interval_and_total() {
+        let dm = dm(Arc::new(Health::default()), 30);
+        dm.on_connect_attempt();
+        dm.on_connect_attempt();
+        let view = dm.counters_view();
+        assert_eq!(view["connectAttempts"]["total"], 2.0);
+        assert_eq!(view["connectAttempts"]["interval"], 2.0);
+        assert_eq!(view["connectFailures"]["total"], 0.0);
+    }
+
+    #[test]
+    fn stale_count_counts_only_signals_past_the_threshold() {
+        let dm = dm(Arc::new(Health::default()), 30);
+        let now = Instant::now();
+        dm.on_signal_update("fresh", now);
+        dm.on_signal_update("stale", now - Duration::from_secs(120));
+        assert_eq!(dm.stale_count(now), 1.0, "only the signal older than staleSignalSecs is stale");
+    }
+
+    #[test]
+    fn conn_counters_drain_resets_intervals_and_the_duration_but_not_totals() {
+        let mut c = ConnCounters::default();
+        let t0 = Instant::now();
+        c.connect_attempts.add(1.0);
+        c.connected_since = Some(t0);
+        let first = c.drain(t0 + Duration::from_millis(50), 1.0);
+        assert_eq!(first["connectAttemptsTotal"], 1.0);
+        assert_eq!(first["connectAttemptsInterval"], 1.0);
+        assert!(first["connectedDurationMs"] >= 50.0);
+        assert_eq!(first["connectionState"], 1.0);
+        // Second drain: interval counters and the duration sum have reset; the total has not.
+        let second = c.drain(t0 + Duration::from_millis(100), 1.0);
+        assert_eq!(second["connectAttemptsTotal"], 1.0);
+        assert_eq!(second["connectAttemptsInterval"], 0.0);
+    }
+
+    #[tokio::test]
+    async fn define_all_then_periodic_and_now_emits_drive_every_family_through_the_service() {
+        let health = Arc::new(Health::default());
+        health.set_link(LinkState::Online);
+        let dm = dm(Arc::clone(&health), 30);
+        // Record something in each family so the emit paths carry non-trivial values.
+        dm.on_connect_attempt();
+        dm.on_connected(Instant::now());
+        dm.record_command("sb/status", true, 2);
+        dm.on_signal_update("temperature-1", Instant::now());
+
+        dm.define_all(); // define + family_def for every combo
+        dm.emit_periodic().await; // emit_health(false) + emit_connection(false) + emit_command
+        dm.emit_now().await; // emit_health(true) + emit_connection(true)
+
+        // After a periodic emit the command intervals have drained to zero (totals persist).
+        let inner = dm.inner.lock().unwrap();
+        let ok = &inner.command[&("sb/status", RESULT_SUCCESS)];
+        assert_eq!(ok.command_requests.total, 1.0);
+        assert_eq!(ok.command_requests.interval, 0.0, "the periodic emit drained the interval");
+    }
+
     /// `southbound_health` emits EXACTLY the SOUTHBOUND.md §5 set — asserted against an independent
     /// literal transcription so a drift from the canonical doc fails the build.
     #[test]

@@ -15,6 +15,7 @@
 //! ```
 
 mod app;
+mod commands;
 
 use edgecommons::prelude::*;
 use std::sync::Arc;

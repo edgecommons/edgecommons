@@ -112,6 +112,9 @@
       "COMPONENTNAME",
       "PACKAGE"
     ],
+    "src/test/java/com/mbreissi/testcomponent/DeviceMetricsTest.java": [
+      "PACKAGE"
+    ],
     "src/test/java/com/mbreissi/testcomponent/DeviceTest.java": [
       "PACKAGE"
     ],

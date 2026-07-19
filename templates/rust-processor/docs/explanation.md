@@ -74,4 +74,4 @@ server) — see the comment in `App::new` for the shape.
 [`Processor::on_tick`]: ../src/proc.rs
 [`Pipeline`]: ../src/proc.rs
 [`is_self_echo`]: ../src/app.rs
-[`dispatch`]: ../src/app.rs
+[`dispatch`]: ../src/supervisor.rs

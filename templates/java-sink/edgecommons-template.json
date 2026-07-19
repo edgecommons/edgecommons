@@ -112,6 +112,9 @@
       "COMPONENTNAME",
       "PACKAGE"
     ],
+    "src/test/java/com/mbreissi/testcomponent/DeliveryTest.java": [
+      "PACKAGE"
+    ],
     "src/test/java/com/mbreissi/testcomponent/LocalDestinationTest.java": [
       "PACKAGE"
     ],

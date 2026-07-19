@@ -80,6 +80,9 @@
     "src/app.ts": [
       "COMPONENTNAME"
     ],
+    "src/runtime.ts": [
+      "COMPONENTNAME"
+    ],
     "src/main.ts": [
       "COMPONENTFULLNAME",
       "COMPONENTNAME"

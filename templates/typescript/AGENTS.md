@@ -10,8 +10,10 @@ ecosystem does (see the org umbrella `AGENTS.md` for the doc-sync rule).
 
 A general-purpose component: the library's standard CLI contract, configuration, logging,
 messaging, metrics, and heartbeat, plus a small demonstrated monitoring and command surface (a
-metric, a data signal, an event, and a custom command verb — all in `src/app.ts`) so a freshly
-generated component has something to show on an edge-console before real business logic exists.
+metric, a data signal, an event, and a custom command verb) so a freshly generated component has
+something to show on an edge-console before real business logic exists. The demo loop and the
+service wiring live in `src/runtime.ts` (the thin live-runtime seam); the unit-tested decisions it
+drives — the connectivity provider and the command verb — live in `src/app.ts`.
 Runs on `HOST` / `GREENGRASS` / `KUBERNETES` via the standard edgecommons platform/transport model
 — no platform branching in this component's own code.
 

@@ -37,6 +37,17 @@ class SinkConfigTest {
     }
 
     @Test
+    void aMissingRequiredKeyIsRejectedRatherThanDefaulted() {
+        // Strict parsing: a sink with no id, or no destination, is a config error — not something to
+        // paper over, because a mis-keyed sink is how data quietly goes nowhere or to the wrong place.
+        assertThrows(IllegalArgumentException.class, () -> SinkConfig.parse(
+                json("{\"subscribe\":\"t\",\"destination\":{\"type\":\"local\",\"path\":\"/o\"}}"), null));
+        assertThrows(IllegalArgumentException.class, () -> SinkConfig.parse(
+                json("{\"id\":\"a\",\"subscribe\":\"t\"}"), null),
+                "a sink with no destination object is rejected");
+    }
+
+    @Test
     void componentGlobalDefaultsFillWhatTheSinkOmits() {
         JsonObject defaults = json("{\"retry\":{\"baseDelayMs\":250},\"maxQueue\":32}");
         SinkConfig sink = SinkConfig.parse(json("""

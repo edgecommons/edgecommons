@@ -136,6 +136,9 @@
     ".github/workflows/ci.yml": [
       "SNAKENAME"
     ],
+    ".coveragerc": [
+      "SNAKENAME"
+    ],
     "AGENTS.md": [
       "BINNAME",
       "COMPONENTFULLNAME",

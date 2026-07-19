@@ -17,9 +17,9 @@ this component's own code.
 
 `src/proc.rs`'s `Processor` trait is the one place transform logic lives: `process` handles an
 inbound message and returns zero or more; `on_tick` lets a stateful stage emit on a timer instead of
-on arrival. Everything above it (`src/app.rs`'s per-route task, subscribe/dispatch, the self-echo
-guard, the identity restamp) is written against the trait and does not change when a new stage is
-added.
+on arrival. Everything above it (`src/supervisor.rs`'s per-route task, subscribe/dispatch, and
+identity restamp; `src/app.rs`'s self-echo guard, route config, and stage construction) is written
+against the trait and does not change when a new stage is added.
 
 ## Config location
 
@@ -31,11 +31,17 @@ the standard `edgecommons` envelope, owned by the canonical schema and not redec
 
 ## Validation expectations
 
-- `cargo test` covers the pipeline mechanics (`src/proc.rs`) and route config/dispatch
-  (`src/app.rs`) directly — no broker required.
+- `cargo test` covers the pipeline mechanics (`src/proc.rs`) and the route config, self-echo guard,
+  stage construction, and config defaults (`src/app.rs`) directly — no broker required.
 - `cargo llvm-cov --fail-under-lines 90` is the coverage gate (`.github/workflows/ci.yml`'s
-  `coverage` job) — the org rule is 90% line coverage per language. Do not lower the gate or exclude
-  testable code to pass it.
+  `coverage` job) — the org rule is 90% line coverage per language. The `ethernet-ip-adapter`
+  discipline is followed: the untestable live drivers are isolated in a thin `src/supervisor.rs`
+  seam (subscribe → per-route select-loop → publish), and the coverage job passes
+  `--ignore-filename-regex '(supervisor\.rs|main\.rs)'` so ONLY that seam and the binary shim are
+  excluded — each pinned to a reason in the workflow. Every pure decision they compose (the
+  self-echo guard, config defaults, stage construction, the pipeline mechanic) stays in `app.rs` /
+  `proc.rs`, in the denominator, and is unit-tested. Do not lower the gate or exclude testable code
+  to pass it — add tests.
 - `edgecommons component validate` checks this repo's config against `config.schema.json` and warns
   if `Cargo.lock` is not committed.
 

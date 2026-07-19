@@ -20,7 +20,8 @@ state inside a stage needs no coordination.
 | Path | Purpose |
 |------|---------|
 | `src/main.ts` | Entry point: builds the `edgecommons` runtime from CLI args, runs the app. |
-| `src/app.ts` | The routes: subscribe, guard, queue, run the pipeline, restamp identity, publish. |
+| `src/app.ts` | The route logic (unit-tested): parse, the self-echo guard, the bounded queue, the stats window, the identity restamp. |
+| `src/runtime.ts` | The thin live-runtime seam: subscribe, run one loop per route, publish. Excluded from the coverage gate (needs a live runtime; validated by the deploy paths). |
 | `src/proc.ts` | **The seam you implement**: `Processor` stages and the `Pipeline` that chains them. |
 | `test/` | Vitest suites for the invariants below (`npm test`). |
 | `config.schema.json` | The component's own config (`component.global` + one route per instance). |

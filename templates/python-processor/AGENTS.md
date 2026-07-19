@@ -47,6 +47,10 @@ independent — one thread each — so a slow route cannot stall another.
 
 - `python -m pytest` must pass with no broker, no device, and no cloud credentials.
 - The org coverage gate is **90% line coverage** (`.github/workflows/ci.yml`'s `coverage` job).
+  `.coveragerc` scopes it: the only exclusions are the live-runtime worker loops (`run()` and
+  `_run_route()`, `# pragma: no cover` seams validated by the HOST/GREENGRASS smoke); the
+  payload-agnostic core and the wiring's testable parts stay covered by `tests/`. Add tests rather
+  than lowering the gate or excluding testable code.
 - A stage added to `app/pipeline.py`'s `_STAGES` table needs a matching `config.schema.json` variant
   in the same change — the two are one contract.
 

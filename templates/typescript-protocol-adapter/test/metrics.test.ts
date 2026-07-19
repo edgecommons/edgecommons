@@ -142,4 +142,27 @@ describe("DeviceMetrics emission", () => {
     expect(withOneRequest).toHaveLength(1);
     expect(withOneRequest[0].values.commandErrorsTotal).toBe(0);
   });
+
+  it("tracks the connect/drop/reconnect lifecycle and flushes it on a transition (emitNow)", async () => {
+    const rec = new RecordingMetrics();
+    const health = new Health();
+    const dm = new DeviceMetrics(rec, testConfig(), "plc-1", health, 30);
+
+    // First connection, held for 1s, then dropped; then a failed attempt, then a reconnect.
+    dm.onConnectAttempt();
+    dm.onConnected(1_000);
+    health.setLink("ONLINE");
+    dm.onConnectionDropped(2_000); // connected for ~1000ms
+    dm.onConnectAttempt();
+    dm.onConnectFailure();
+    dm.onConnected(5_000); // a re-establishment bumps reconnectAttempts
+    await dm.emitNow();
+
+    const conn = rec.last(CONNECTION);
+    expect(conn.connectAttemptsTotal).toBe(2);
+    expect(conn.connectFailuresTotal).toBe(1);
+    expect(conn.connectionDropsTotal).toBe(1);
+    expect(conn.reconnectAttemptsTotal).toBe(1); // the second connect was a reconnect
+    expect(conn.connectedDurationMs).toBeGreaterThanOrEqual(1_000);
+  });
 });

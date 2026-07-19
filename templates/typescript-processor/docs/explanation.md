@@ -28,8 +28,8 @@ Worth internalizing, because it's the mistake this archetype invites. `data()` i
 that *produces* readings: it mints its own topic from a signal id and imposes the
 `SouthboundSignalUpdate` body. A processor is **payload-agnostic** — it republishes whatever it was
 handed, on a topic its own route config names. Routing that through `data()` would rewrite both the
-topic and the body, which is exactly what a republisher must not do. So `src/app.ts` uses raw
-`gg.messaging()` and reads `publishTopic` straight from config.
+topic and the body, which is exactly what a republisher must not do. So the runtime (`src/runtime.ts`)
+uses raw `gg.messaging()` and reads `publishTopic` straight from config.
 
 ## The self-echo guard
 

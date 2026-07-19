@@ -75,7 +75,7 @@ for its input rate, or `maxQueue` is set too low for a legitimate burst.
 
 ## Add a metric for your own stage
 
-`src/app.rs`'s `emit_metrics` currently reports the four cross-cutting counters
+`src/supervisor.rs`'s `emit_metrics` currently reports the four cross-cutting counters
 (`received`/`published`/`dropped`/`errors`) under `processorThroughput`. If your stage needs its own
 measure (a per-window average, a distinct error class), add it to that same metric — keep the
 dimension set (`instance` only, from the metric's own definition today) low-cardinality, and record

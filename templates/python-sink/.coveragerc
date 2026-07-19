@@ -1,0 +1,24 @@
+# Coverage is scoped to the CI-testable surface, matching the org convention (edgecommons/AGENTS.md
+# validation matrix: "live-infra-only paths are validated on lab/HOST/GREENGRASS and excluded from
+# the unit gate; do not lower a gate or exclude testable code to pass — add tests"). The reference
+# component modbus-adapter scopes its 90% gate the same way.
+#
+# The pure destination/retry/health logic (app/dest.py) and the library-facing wiring's testable
+# parts (sink parsing in __init__, the inbound handler's key/queue/drop, the deliver-verify-retry
+# state machine and its event ladder, the exhaustion path, the metric flush, the connectivity
+# provider) are all unit-tested. Only the two live-runtime seams carry a `# pragma: no cover` at
+# their definition with an inline reason:
+#   - run():       subscribes over a real transport, spawns the worker threads, blocks until shutdown
+#   - _run_sink(): the per-sink worker's infinite queue-drain loop
+# Both are exercised by the HOST/GREENGRASS smoke. Nothing testable is excluded.
+#
+# The ci.yml `coverage` job runs `pytest --cov=app` from this directory, so coverage auto-discovers
+# this file; CI and a local `pytest` therefore apply the identical policy.
+[run]
+source = app
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError

@@ -89,6 +89,9 @@
     "src/app.ts": [
       "COMPONENTNAME"
     ],
+    "src/runtime.ts": [
+      "COMPONENTNAME"
+    ],
     "src/commands.ts": [
       "COMPONENTNAME"
     ],

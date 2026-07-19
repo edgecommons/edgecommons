@@ -11,7 +11,7 @@ see [reference/](reference/).
 ## Add your own metric
 
 Define it once (in the constructor, via `MetricBuilder`) and emit it wherever your logic produces a
-value — the shipped `loopTicks` metric (`src/app.ts`) is the pattern to copy:
+value — the shipped `loopTicks` metric (defined and emitted in `src/runtime.ts`) is the pattern to copy:
 
 ```ts
 this.metrics.defineMetric(

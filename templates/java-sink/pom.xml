@@ -133,6 +133,24 @@
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>
         <version>${jacocoPluginVersion}</version>
+        <configuration>
+          <!-- Coverage-gate scope. The ONLY things excluded are thin runtime / live-driver seams:
+               code that cannot execute without a broker and a live EdgeCommons runtime, validated on
+               real infrastructure (HOST/Greengrass smoke), not by the in-process unit suite. Every
+               class that holds real, broker-free logic stays IN the gate and is unit-tested — mirrors
+               how libs/java scopes its own JaCoCo gate. Do NOT widen this to pass; add a test instead
+               (AGENTS.md: "don't lower a gate or exclude testable code to pass — add tests"). -->
+          <excludes>
+            <!-- The component class itself: main() bootstrap, the EdgeCommonsBuilder wiring, per-sink
+                 subscribe/worker threads, the metric-flush loop and shutdown hook — none of which runs
+                 without a live broker. The archetype logic it delegates to (the stable key, the
+                 connectivity rendering, and the deliver → verify → retry ladder) is extracted to the
+                 Delivery class, which stays in the gate and is fully covered by DeliveryTest; the
+                 destination + config logic (LocalDestination, SinkConfig, Destination) is covered too. -->
+            <exclude>**/<<COMPONENTNAME>>.class</exclude>
+            <exclude>**/<<COMPONENTNAME>>$*.class</exclude>
+          </excludes>
+        </configuration>
         <executions>
           <execution>
             <goals>

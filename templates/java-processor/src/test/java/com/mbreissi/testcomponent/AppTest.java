@@ -41,20 +41,20 @@ class <<COMPONENTNAME>>Test {
     @Test
     void ourOwnOutputIsDroppedRatherThanReprocessedForever() {
         Message mine = from(identity("factory-1", "gw-01", MY_COMPONENT));
-        assertTrue(<<COMPONENTNAME>>.isSelfEcho(mine, MY_PATH, MY_COMPONENT));
+        assertTrue(Guards.isSelfEcho(mine, MY_PATH, MY_COMPONENT));
     }
 
     @Test
     void anotherComponentOnThisDeviceIsNotAnEcho() {
         Message theirs = from(identity("factory-1", "gw-01", "modbus-adapter"));
-        assertFalse(<<COMPONENTNAME>>.isSelfEcho(theirs, MY_PATH, MY_COMPONENT),
+        assertFalse(Guards.isSelfEcho(theirs, MY_PATH, MY_COMPONENT),
                 "same device, different component — this is exactly the traffic we exist to process");
     }
 
     @Test
     void thisSameComponentOnAnotherDeviceIsNotAnEcho() {
         Message elsewhere = from(identity("factory-1", "gw-02", MY_COMPONENT));
-        assertFalse(<<COMPONENTNAME>>.isSelfEcho(elsewhere, MY_PATH, MY_COMPONENT),
+        assertFalse(Guards.isSelfEcho(elsewhere, MY_PATH, MY_COMPONENT),
                 "our sibling on another device is a peer, not our own echo");
     }
 
@@ -62,7 +62,7 @@ class <<COMPONENTNAME>>Test {
     void anUnstampedMessageIsNotAnEcho() {
         // An identity-free envelope (a raw/bootstrap publish) cannot be ours.
         Message anonymous = MessageBuilder.create("T", "1.0").withPayload(new JsonObject()).build();
-        assertFalse(<<COMPONENTNAME>>.isSelfEcho(anonymous, MY_PATH, MY_COMPONENT));
+        assertFalse(Guards.isSelfEcho(anonymous, MY_PATH, MY_COMPONENT));
     }
 
     @Test

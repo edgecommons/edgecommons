@@ -59,6 +59,13 @@ hardware; a real deployment implements the device seam for its protocol.
 - `python -m pytest` must pass with no broker, no device, and no cloud credentials — `test_live_sim.py`
   self-skips without `EC_LIVE_SIM`.
 - The org coverage gate is **90% line coverage** (`.github/workflows/ci.yml`'s `coverage` job).
+  `.coveragerc` scopes it the way `modbus-adapter` does: the only exclusions are the live-runtime
+  seams (`Device.start`/`Device._run` — the connect-retry supervisor — and `App.run`, `# pragma: no
+  cover` with inline reasons, validated by `test_live_sim.py` and the HOST/GREENGRASS smoke). The
+  device seam + sim, the metrics, the command surface, and the adapter's own logic (config,
+  allow-list, Health, Backoff, connectivity, the control seam, and the connect/poll/publish step
+  methods driven against the sim) all stay covered by `tests/`. Add tests rather than lowering the
+  gate or excluding testable code.
 - A metric family or command verb you add needs a template test asserting its measure names / verb
   behavior, matching the pattern in `tests/test_metrics.py` / `tests/test_commands.py`.
 

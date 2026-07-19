@@ -1,0 +1,28 @@
+# Coverage is scoped to the CI-testable surface, matching the org convention (edgecommons/AGENTS.md
+# validation matrix: "live-infra-only paths are validated on lab/HOST/GREENGRASS and excluded from
+# the unit gate; do not lower a gate or exclude testable code to pass — add tests"). The reference
+# component modbus-adapter scopes its 90% gate the same way (its .coveragerc omits the live pymodbus
+# driver + the device orchestration).
+#
+# Here the protocol/normalization logic (device.py: the seam + in-process sim), the operational
+# metrics (metrics.py: counters, drain-on-emit, staleness), the sb/* command surface
+# (command_service.py: every verb + error code), and the adapter's own logic (config parse + the
+# write allow-list, Health, Backoff, connectivity, the control seam, and the connect/poll/publish
+# step methods driven against the sim backend) are all unit-tested. Only the true live-runtime seams
+# carry a `# pragma: no cover` at their definition with an inline reason:
+#   - Device.start():  spawns the connect/poll worker thread
+#   - Device._run():   the connect-retry supervisor's infinite connect/poll/reconnect loop
+#   - App.run():       starts the device threads and blocks until the library's signal hook exits
+# Device._run is exercised end to end by tests/test_live_sim.py (set EC_LIVE_SIM), App.run by the
+# HOST/GREENGRASS smoke. Nothing testable is excluded.
+#
+# The ci.yml `coverage` job runs `pytest --cov=<the package>` from this directory, so coverage
+# auto-discovers this file; CI and a local `pytest` therefore apply the identical policy.
+[run]
+source = <<SNAKENAME>>
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError

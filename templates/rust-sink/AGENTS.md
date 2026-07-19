@@ -17,8 +17,9 @@ own code.
 
 `src/dest.rs`'s `Destination` trait is the one place backend knowledge lives: `deliver` lands an item
 at a stable, deterministic key; `verify` confirms it landed correctly before the caller releases the
-source. Everything above it (`src/app.rs`'s per-sink task, the retry/backoff ladder, the event/metric
-surface) is written against the trait and does not change when a new backend is added.
+source. Everything above it (`src/supervisor.rs`'s per-sink task, the retry/backoff ladder, and the
+event/metric surface; `src/app.rs`'s retry policy, stable key, and connectivity reporting) is written
+against the trait and does not change when a new backend is added.
 
 ## Config location
 
@@ -33,9 +34,15 @@ redeclared here. `test-configs/` carries a runnable example.
 - `cargo test` covers the destination contract (`src/dest.rs`) and sink config/retry/connectivity
   (`src/app.rs`) directly — no broker or real backend required.
 - `cargo llvm-cov --fail-under-lines 90` is the coverage gate (`.github/workflows/ci.yml`'s
-  `coverage` job) — the org rule is 90% line coverage per language; a real destination's live-infra
-  paths (network calls to a real object store) are validated through lab/HOST smoke instead of being
-  forced into unit coverage. Do not lower the gate or exclude testable code to pass it.
+  `coverage` job) — the org rule is 90% line coverage per language. The `ethernet-ip-adapter`
+  discipline is followed: the untestable live drivers are isolated in a thin `src/supervisor.rs`
+  seam (consume → deliver/verify → retry), and the coverage job passes
+  `--ignore-filename-regex '(supervisor\.rs|main\.rs)'` so ONLY that seam and the binary shim are
+  excluded — each pinned to a reason in the workflow. Every pure decision they compose (retry
+  backoff, the give-up budget, the stable key, connectivity, config defaults, the destination
+  contract) stays in `app.rs` / `dest.rs`, in the denominator, and is unit-tested. A real
+  destination's live-infra paths (network calls to a real object store) are validated through
+  lab/HOST smoke. Do not lower the gate or exclude testable code to pass it — add tests.
 - `edgecommons component validate` checks this repo's config against `config.schema.json` and warns
   if `Cargo.lock` is not committed.
 

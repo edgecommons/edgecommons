@@ -45,7 +45,11 @@ redeclared here.
   `onTick`, the self-echo guard) are unit-tested against in-process fixtures.
 - This component inherits the org's 90% line-coverage gate (JaCoCo `check`, wired into `pom.xml`,
   enforced by `mvn verify` in CI). Don't lower the gate or exclude testable code to pass it — add
-  tests.
+  tests. The gate's `<excludes>` scope out only the thin live-runtime seam — the component's `main()`
+  bootstrap and per-route worker loop, which need a broker and are validated on real infrastructure —
+  so every class with unit-testable logic (the `Guards` self-echo check, the stages, the pipeline,
+  the route config) stays in the gate. Keep it that way: extract logic out of the run loop rather
+  than excluding it.
 
 ## Org conventions this scaffold inherits
 

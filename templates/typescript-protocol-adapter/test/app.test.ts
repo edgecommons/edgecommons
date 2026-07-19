@@ -1,4 +1,4 @@
-import { Config, DataFacade, IMessagingService, Message, Uns } from "@edgecommons/edgecommons";
+import { Config, DataFacade, IMessagingService, Message, Quality as LibQuality, Uns } from "@edgecommons/edgecommons";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -11,6 +11,7 @@ import {
   parseDevice,
   publishReadings,
   setPaused,
+  toLibQuality,
 } from "../src/app";
 import { Quality, SimBackend } from "../src/device";
 
@@ -72,6 +73,25 @@ describe("device config", () => {
     expect(() => parseDevice({ id: "plc-1", connection: { endpoint: "x" }, pollIntervalMS: 1000 })).toThrow(
       /unknown key/,
     );
+  });
+
+  it("rejects each malformed field with a specific message rather than a vague failure", () => {
+    expect(() => parseDevice({ id: "plc-1" })).toThrow(/`connection` is required/);
+    expect(() => parseDevice({ id: "plc-1", connection: { endpoint: "x" }, pollIntervalMs: 0 })).toThrow(
+      /`pollIntervalMs` must be a positive number/,
+    );
+    expect(() =>
+      parseDevice({ id: "plc-1", connection: { endpoint: "x" }, writes: { allow: [1, 2] } }),
+    ).toThrow(/`writes.allow` must be an array of signal ids/);
+  });
+});
+
+describe("quality mapping", () => {
+  it("maps every backend quality onto the library's wire enum", () => {
+    // A backend speaks protocol-free quality; the wire speaks the library enum. Every case must map.
+    expect(toLibQuality(Quality.Good)).toBe(LibQuality.Good);
+    expect(toLibQuality(Quality.Bad)).toBe(LibQuality.Bad);
+    expect(toLibQuality(Quality.Uncertain)).toBe(LibQuality.Uncertain);
   });
 });
 
@@ -189,6 +209,33 @@ describe("the southbound publish path", () => {
     expect(body.samples[0].qualityRaw).toBe("SENSOR_FAULT");
     // The envelope carries our identity — the facade stamped it; we never hand-built it.
     expect(published[0].msg.identity?.instance).toBe("device-1");
+  });
+
+  it("swallows a single failed publish and keeps going — one bad signal must not blind the rest", async () => {
+    // A publish that rejects (transport hiccup) is logged and skipped, not thrown: the next reading
+    // still gets its chance. The count returned is only the readings that actually went out.
+    const config = Config.fromValue("com.example.Adapter", "gw-01", {
+      hierarchy: { levels: ["site", "device"] },
+      identity: { site: "factory-1" },
+      component: { global: {}, instances: [{ id: "device-1" }] },
+    });
+    let calls = 0;
+    const messaging = {
+      publish: async (): Promise<void> => {
+        calls += 1;
+        if (calls === 1) throw new Error("transport hiccup");
+      },
+    } as unknown as IMessagingService;
+    const uns = new Uns(config.componentIdentity.withInstance("device-1"), config.topicIncludeRoot);
+    const data = new DataFacade(() => config, "device-1", uns, messaging, undefined);
+
+    const count = await publishReadings(data, "sim", { id: "device-1", connection: { endpoint: "sim://device-1" } }, [
+      { signalId: "s1", value: 1, quality: Quality.Good, qualityRaw: "OK" },
+      { signalId: "s2", value: 2, quality: Quality.Good, qualityRaw: "OK" },
+    ]);
+
+    expect(calls).toBe(2); // both attempted
+    expect(count).toBe(1); // only the second succeeded
   });
 });
 

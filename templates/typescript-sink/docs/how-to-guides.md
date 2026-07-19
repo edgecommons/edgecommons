@@ -79,8 +79,8 @@ retry policy:
 
 The shipped scaffold's source is a **subscription** — it consumes messages matching `subscribe` and
 delivers each one. If your source is a watched directory or a polled API instead, replace the
-`messaging.subscribe(...)` call in `App.run`; everything downstream of `deliverWithRetry` is
-unchanged, which is the point of the seam.
+`messaging.subscribe(...)` call in the runtime seam (`src/runtime.ts`); everything downstream of
+`deliverWithRetry` is unchanged, which is the point of the seam.
 
 ---
 

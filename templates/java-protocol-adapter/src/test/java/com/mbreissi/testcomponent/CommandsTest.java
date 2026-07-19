@@ -88,12 +88,12 @@ class CommandsTest {
 
         @Override
         public boolean pause() {
-            return <<COMPONENTNAME>>.setPaused(health, true);
+            return Wiring.setPaused(health, true);
         }
 
         @Override
         public boolean resume() {
-            return <<COMPONENTNAME>>.setPaused(health, false);
+            return Wiring.setPaused(health, false);
         }
 
         @Override

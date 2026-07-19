@@ -28,7 +28,25 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-llvm-cov
-      # Org rule: 90% line coverage in all four languages; live-infra-only paths (a real device,
-      # a real broker under load) are validated through lab/HOST smoke instead of being forced
-      # into unit coverage. Do not lower this gate or exclude testable code to pass it — add tests.
-      - run: cargo llvm-cov --fail-under-lines 90
+      # Org rule: 90% line coverage in all four languages; live-infra-only paths are validated
+      # through lab/HOST smoke instead of being forced into unit coverage. Do NOT lower this gate
+      # or exclude testable code to pass it — add tests.
+      #
+      # The `ethernet-ip-adapter` discipline (its ci.yml): the untestable live-driver code is kept in
+      # dedicated, as-thin-as-possible seam files so a file-level exclusion removes ONLY code that
+      # needs a live runtime and never launders out tested logic. Every pure decision the drivers
+      # compose — reconnect backoff, the write allow-list, pause gating, per-device connectivity, and
+      # the metric-family recording/drain/§5-assembly math — lives in `app.rs` / `commands.rs` /
+      # `device.rs` / `metrics.rs`, stays IN the denominator, and IS unit-tested. Excluded, each
+      # pinned to a reason:
+      #   - `src/supervisor.rs` — the connect→poll→publish→reconnect drivers (`App::new`/`run`,
+      #     `run_device`, `run_polling`, `poll_once`, `serve_while_down`): they `.await` a live
+      #     `DeviceBackend`/`DeviceSession`, the `data()`/`events()` facades, and the control channel.
+      #   - `src/main.rs` — the binary bootstrap shim (build the runtime, hand off to `supervisor::App`).
+      #   - `tests/live_sim.rs` — the self-skipping (`EC_LIVE_SIM`) live suite: it exercises a real
+      #     simulator/device, so its body is uncovered in a normal `cargo test` run.
+      # These are validated by `tests/live_sim.rs` against a real endpoint (the §-validation-matrix
+      # HOST/lab legs) and by the scaffold→build gate. NOTHING ELSE is excluded.
+      - run: >
+          cargo llvm-cov --fail-under-lines 90
+          --ignore-filename-regex '(supervisor\.rs|main\.rs|tests[/\\]live_.*\.rs)'

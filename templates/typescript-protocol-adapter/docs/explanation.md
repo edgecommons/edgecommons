@@ -18,7 +18,7 @@ what a fully protocol-specific implementation looks like.
 ## One loop per instance, one control channel
 
 Every configured device runs its **own** connect → poll → publish loop
-(`App.runDevice`/`runPolling` in `src/app.ts`). That loop also owns a `Mailbox<DeviceControl>` —
+(`App.runDevice`/`runPolling` in `src/runtime.ts`). That loop also owns a `Mailbox<DeviceControl>` —
 every `sb/*` verb that must touch the session or serialize with the poll (`write`, `readNow`,
 `browse`, `pause`, `resume`, `reconnect`, `repoll`) is *sent* to the loop as a `DeviceControl` and
 *confirmed* through the reply that rides it. This is why the command surface (`src/commands.ts`)

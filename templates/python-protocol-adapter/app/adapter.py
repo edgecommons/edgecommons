@@ -285,7 +285,7 @@ class Device:
 
     # ---- lifecycle -------------------------------------------------------------------------------
 
-    def start(self) -> None:
+    def start(self) -> None:  # pragma: no cover - live-runtime seam: spawns the connect/poll worker thread; the loop it runs is exercised by tests/test_live_sim.py on real infra, not offline.
         self._thread.start()
 
     def stop(self) -> None:
@@ -307,7 +307,7 @@ class Device:
 
     # ---- the connect/poll loop -------------------------------------------------------------------
 
-    def _run(self) -> None:
+    def _run(self) -> None:  # pragma: no cover - live-runtime seam: the connect-retry supervisor, an infinite connect/poll/reconnect loop driven by a real device session and wall-clock waits; exercised by tests/test_live_sim.py on real infra (edgecommons AGENTS.md validation matrix), not offline unit tests. The step methods it drives (_connect_once, _poll_tick, _poll_once, _publish_reading, _on_drop) are unit-tested directly against the in-process sim backend.
         if self._backend is None:
             logger.error("[%s] unknown adapter '%s' — worker not started", self._cfg.id,
                          self._cfg.adapter)
@@ -554,7 +554,7 @@ class App:
         if not self._devices:
             raise RuntimeError("no valid devices in component.instances[]")
 
-    def run(self) -> None:
+    def run(self) -> None:  # pragma: no cover - live-runtime seam: registers the connectivity provider + sb/* command surface, starts each device's worker thread, and blocks until the library's signal hook exits; exercised by the HOST/GREENGRASS smoke, not offline unit tests. App.__init__ (config -> devices) and the pieces this wires (connectivity, register_all, Device.start) are covered separately.
         gg = self._gg
 
         # ONE provider, TWO surfaces: the library pushes this sample into the `state` keepalive's

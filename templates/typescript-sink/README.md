@@ -19,7 +19,8 @@ outward, and only then lets go of the source.
 | Path | Purpose |
 |------|---------|
 | `src/main.ts` | Entry point: builds the `edgecommons` runtime from CLI args, runs the app. |
-| `src/app.ts` | The sinks: consume, key, deliver with retry, verify, confirm, report. |
+| `src/app.ts` | The sink logic (unit-tested): parse, the stable key, the retry backoff, the delivery ladder (deliver → verify → confirm → report), per-destination connectivity. |
+| `src/runtime.ts` | The thin live-runtime seam: consume off the bus and hand each message to the delivery ladder. Excluded from the coverage gate (needs a live runtime; validated by the deploy paths). |
 | `src/dest.ts` | **The seam you implement**: `Destination` (`kind` / `deliver` / `verify`), plus a local-filesystem destination. |
 | `test/` | Vitest suites for the invariants below (`npm test`). |
 | `config.schema.json` | The component's own config (`component.global` + one sink per instance). |
@@ -73,8 +74,8 @@ The counters behind them ride the `sinkDeliveries` metric: `received`, `delivere
 
 This scaffold's source is a **subscription**: it consumes messages off the bus and delivers each one.
 That is the common case. If your source is a watched directory or a polled API, replace the subscribe
-call in `App.run` — everything downstream of `deliverWithRetry` is unchanged, which is the point of
-the seam.
+call in the runtime seam (`src/runtime.ts`) — everything downstream of `deliverWithRetry` is
+unchanged, which is the point of the seam.
 
 ## Configuration
 

@@ -19,6 +19,7 @@ from <<SNAKENAME>>.device import (
     Reading,
     ReadFailed,
     ReconnectFailed,
+    RepollRefused,
     SignalInfo,
     WriteRejected,
 )
@@ -62,14 +63,16 @@ class MockControl:
     allow-list refused before any I/O."""
 
     def __init__(self, health, *, write_ok=True, read_ok=True, reconnect_ok=True, repoll_ok=True,
-                 browse="one", unavailable=False):
+                 repoll_refused=False, browse="one", unavailable=False, read_empty=False):
         self._health = health
         self.write_ok = write_ok
         self.read_ok = read_ok
         self.reconnect_ok = reconnect_ok
         self.repoll_ok = repoll_ok
+        self.repoll_refused = repoll_refused
         self.browse_kind = browse
         self.unavailable = unavailable
+        self.read_empty = read_empty
         self.writes = []
 
     def read_now(self, ids):
@@ -77,6 +80,8 @@ class MockControl:
             raise DeviceUnavailable()
         if not self.read_ok:
             raise ReadFailed("link error")
+        if self.read_empty:
+            return []  # the device returned nothing for the requested ids -> NO_DATA per ref
         return [Reading(signal_id=i, name=None, value=42.0, quality=Quality.GOOD, quality_raw="OK")
                 for i in ids]
 
@@ -94,13 +99,18 @@ class MockControl:
             raise BrowseUnsupported()
         if self.browse_kind == "failed":
             raise BrowseFailed("mid-browse error")
+        next_cursor = "page-2" if self.browse_kind == "paged" else None
         return BrowsePage(entries=[BrowsedSignal("temperature-1", "Ambient temperature", "REAL")],
-                          next_cursor=None)
+                          next_cursor=next_cursor)
 
     def pause(self):
+        if self.unavailable:
+            raise DeviceUnavailable()
         return set_paused(self._health, True)
 
     def resume(self):
+        if self.unavailable:
+            raise DeviceUnavailable()
         return set_paused(self._health, False)
 
     def reconnect(self):
@@ -112,6 +122,8 @@ class MockControl:
     def repoll(self):
         if self.unavailable:
             raise DeviceUnavailable()
+        if self.repoll_refused:
+            raise RepollRefused("device is disconnected")
         if not self.repoll_ok:
             raise DeviceUnavailable("link error")
         return 2
@@ -325,6 +337,83 @@ class _FakeCommands:
 
     def register_panel(self, panel):
         self.panels.append(panel)
+
+
+# --- signal-ref resolution + the remaining coded error branches --------------------------------
+
+
+def test_read_resolves_a_signal_by_id_and_flags_a_ref_with_no_recognizable_key():
+    c, _control, _health = commander()
+    out = c.read({"signals": [{"id": "temperature-1"}, {"nonsense": 1}]})
+    reads = out["reads"]
+    assert reads[0]["signal"]["id"] == "temperature-1", "{'id': ...} resolves directly"
+    assert reads[1]["quality"] == "BAD" and reads[1]["qualityRaw"] == "UNRESOLVED_REF"
+
+
+def test_a_resolved_ref_the_device_returns_no_value_for_is_marked_no_data():
+    c, _control, _health = commander(read_empty=True)
+    out = c.read({"signals": [{"signalId": "temperature-1"}]})
+    assert out["reads"][0]["qualityRaw"] == "NO_DATA", "resolved, requested, but nothing came back"
+
+
+def test_read_maps_a_missing_device_to_device_unavailable():
+    c, _control, _health = commander(unavailable=True)
+    assert err_code(lambda: c.read({"signals": [{"signalId": "temperature-1"}]})) == "DEVICE_UNAVAILABLE"
+
+
+def test_write_flags_an_unresolved_entry_and_an_allow_listed_entry_with_no_value():
+    c, control, _health = commander()
+    # An entry with no recognizable ref, and an allow-listed ref with no `value`: both are per-entry
+    # results, neither reaches the device, and (nothing attempted) the call still succeeds overall.
+    out = c.write({"writes": [{"value": 1}, {"signalId": "setpoint-1"}]})
+    errors = {r.get("error") for r in out["results"]}
+    assert "unresolved ref" in errors
+    assert "missing value" in errors
+    assert out["written"] == 0
+    assert control.writes == []
+
+
+def test_write_maps_a_missing_device_to_device_unavailable():
+    c, _control, _health = commander(unavailable=True)
+    assert err_code(lambda: c.write({"signalId": "setpoint-1", "value": 1})) == "DEVICE_UNAVAILABLE"
+
+
+def test_browse_carries_a_next_cursor_when_the_page_is_partial_and_maps_unavailable():
+    c, _control, _health = commander(browse="paged")
+    out = c.browse({})
+    assert out["cursor"] == "page-2", "a partial page advertises where to resume"
+
+    c2, _c2, _h2 = commander(unavailable=True)
+    assert err_code(lambda: c2.browse({})) == "DEVICE_UNAVAILABLE"
+
+
+def test_pause_and_resume_map_a_missing_device_to_device_unavailable():
+    c, _control, _health = commander(unavailable=True)
+    assert err_code(lambda: c.pause({})) == "DEVICE_UNAVAILABLE"
+    assert err_code(lambda: c.resume({})) == "DEVICE_UNAVAILABLE"
+
+
+def test_repoll_maps_a_refusal_to_bad_args_and_a_missing_device_to_device_unavailable():
+    c, _control, _health = commander(repoll_refused=True)
+    assert err_code(lambda: c.repoll({})) == "BAD_ARGS"
+
+    c2, _c2, _h2 = commander(unavailable=True)
+    assert err_code(lambda: c2.repoll({})) == "DEVICE_UNAVAILABLE"
+
+
+def test_a_request_whose_body_cannot_be_read_is_treated_as_an_empty_body():
+    # `_body` must never crash the handler: a malformed request degrades to an empty dict, which the
+    # single-device default then routes to the sole device.
+    handle, _control, _health = make_handle()
+    commands = _FakeCommands()
+    register_all(commands, [handle])
+
+    class _Broken:
+        def get_body(self):
+            raise RuntimeError("body decode failed")
+
+    out = commands.handlers["sb/status"](_Broken())
+    assert out["id"] == "plc-1"
 
 
 def test_register_all_registers_the_nine_verbs_and_three_panels_and_dispatches():

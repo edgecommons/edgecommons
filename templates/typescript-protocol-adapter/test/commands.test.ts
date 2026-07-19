@@ -4,7 +4,7 @@
  * device loop services the control channel and RECORDS every write that reaches it — no device, no
  * socket.
  */
-import { Config, MetricService } from "@edgecommons/edgecommons";
+import { CommandInbox, Config, MetricService } from "@edgecommons/edgecommons";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -15,7 +15,7 @@ import {
   Writes,
   setPaused,
 } from "../src/app";
-import { Commander, DeviceHandle, panels } from "../src/commands";
+import { Commander, DeviceHandle, panels, registerAll } from "../src/commands";
 import { BrowseError, Quality, SignalInfo } from "../src/device";
 import { DeviceMetrics } from "../src/metrics";
 
@@ -382,5 +382,43 @@ describe("panels", () => {
     // The signals panel binds the signal verbs; diagnostics binds browse.
     expect(ps[1].verbs).toEqual(["sb/signals", "sb/read", "sb/write", "repoll"]);
     expect(ps[2].verbs).toEqual(["sb/browse", "sb/status"]);
+  });
+});
+
+describe("registerAll", () => {
+  it("wires every sb/* verb and the three panels onto the command inbox", () => {
+    // The runtime calls this once at startup. It must register the whole `sb/*` family (nothing
+    // dropped, nothing renamed — those are wire contracts) plus the console panels.
+    const registered: string[] = [];
+    const registeredPanels: unknown[] = [];
+    const inbox = {
+      register: (name: string) => registered.push(name),
+      registerPanel: (p: unknown) => registeredPanels.push(p),
+    } as unknown as CommandInbox;
+
+    const cfg = aDevice();
+    const health = new Health();
+    const handle: DeviceHandle = {
+      cfg,
+      control: new Mailbox<DeviceControl>(),
+      health,
+      dm: makeDm(cfg, health),
+      signals: simSignals(),
+    };
+
+    registerAll(inbox, [handle]);
+
+    expect(registered).toEqual([
+      "sb/status",
+      "sb/read",
+      "sb/write",
+      "sb/signals",
+      "sb/browse",
+      "sb/pause",
+      "sb/resume",
+      "reconnect",
+      "repoll",
+    ]);
+    expect(registeredPanels).toHaveLength(3);
   });
 });

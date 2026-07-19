@@ -142,7 +142,7 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener):
         logger.info("configuration changed")
         return True
 
-    def run(self):
+    def run(self):  # pragma: no cover - live-runtime seam: subscribes over a real transport, spawns the per-sink worker threads, and blocks on the metric-flush loop until shutdown; exercised by the HOST/GREENGRASS smoke, not offline unit tests (edgecommons AGENTS.md validation matrix). The testable pieces it calls (_handler, _deliver_with_retry, _emit_metrics) have their own tests.
         """Subscribe every sink, start its worker, then flush metrics until shutdown."""
         for sink in self._sinks:
             destination = sink.build_destination()
@@ -199,7 +199,7 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener):
 
     # --- one sink's thread -----------------------------------------------------------------------
 
-    def _run_sink(self, sink, q: "queue.Queue", destination):
+    def _run_sink(self, sink, q: "queue.Queue", destination):  # pragma: no cover - live-runtime seam: the per-sink worker's infinite queue-drain loop, driven by real inbound traffic; exercised by the HOST/GREENGRASS smoke, not offline unit tests. The delivery/retry state machine it delegates to (_deliver_with_retry) is unit-tested directly.
         while not self._stop.is_set():
             try:
                 item = q.get(timeout=1.0)

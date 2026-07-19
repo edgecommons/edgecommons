@@ -16,7 +16,7 @@ because it has no wire format to decode.
 | `pressure-1` | `null` | `BAD` | `"SENSOR_FAULT"` |
 
 There is no register/byte/word-order decoding, no scale/offset transform, and no bit extraction —
-the simulator hands `App.publishReadings` a plain JavaScript number (or `null`) directly. A real
+the simulator hands `publishReadings` (`src/app.ts`) a plain JavaScript number (or `null`) directly. A real
 backend's `DeviceSession.readSignals()` is where that translation happens.
 
 ## What a real protocol adds here

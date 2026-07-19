@@ -65,8 +65,6 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
 
     /** How often the periodic metrics emit runs, in the poll loop (SOUTHBOUND.md §5). */
     private static final long METRICS_INTERVAL_MS = 30_000L;
-    /** The {@code component.global.healthThresholds.staleSignalSecs} default (SOUTHBOUND.md §4/§5). */
-    private static final long DEFAULT_STALE_SIGNAL_SECS = 30L;
 
     private final EdgeCommons edgeCommons;
     private final ConfigManager config;
@@ -92,7 +90,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
         metrics = edgeCommons.getMetrics();
         config.addConfigChangeListener(this);
 
-        this.staleSignalSecs = readStaleSignalSecs(config);
+        this.staleSignalSecs = Wiring.readStaleSignalSecs(config);
 
         for (String instanceId : config.getInstanceIds()) {
             try {
@@ -141,7 +139,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
         edgeCommons.setInstanceConnectivityProvider(() -> {
             List<InstanceConnectivity> out = new ArrayList<>();
             for (Reported r : reported) {
-                out.add(connectivityOf(r.cfg(), r.health()));
+                out.add(Wiring.connectivityOf(r.cfg(), r.health()));
             }
             return out;
         });
@@ -179,56 +177,6 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
     public boolean onConfigurationChanged() {
         LOGGER.info("Configuration changed");
         return true;
-    }
-
-    /**
-     * One device's connectivity sample, for the instance-connectivity provider.
-     *
-     * <ul>
-     *   <li>{@code connected} is the <b>normalized</b> flag — always present.</li>
-     *   <li>{@code state} is <i>this adapter's</i> vocabulary ({@link LinkState}) — {@code PAUSED} when
-     *       paused and up, else the raw link token (so a break while paused still reads {@code BACKOFF},
-     *       {@code connected} staying truthful).</li>
-     *   <li>{@code attributes} is the <b>open</b> bag: domain data only this adapter understands.</li>
-     * </ul>
-     */
-    static InstanceConnectivity connectivityOf(DeviceConfig cfg, Health health) {
-        LinkState link = health.link();
-        boolean connected = link == LinkState.ONLINE;
-        boolean paused = health.isPaused();
-        String state = paused && connected ? "PAUSED" : link.asString();
-
-        Map<String, JsonElement> attributes = new LinkedHashMap<>();
-        attributes.put("adapter", new JsonPrimitive(cfg.adapter()));
-        attributes.put("paused", new JsonPrimitive(paused));
-
-        return InstanceConnectivity.of(cfg.id(), connected, cfg.connection().endpoint())
-                .withState(state)
-                .withAttributes(attributes);
-    }
-
-    /**
-     * Flip the paused flag, returning whether the state actually changed (idempotent — pausing an
-     * already-paused device is not an error). The event is emitted by the caller.
-     */
-    static boolean setPaused(Health health, boolean paused) {
-        return health.pausedFlag().getAndSet(paused) != paused;
-    }
-
-    private static long readStaleSignalSecs(ConfigManager config) {
-        try {
-            JsonObject global = config.getGlobalConfig();
-            if (global != null && global.has("healthThresholds")
-                    && global.get("healthThresholds").isJsonObject()) {
-                JsonObject h = global.getAsJsonObject("healthThresholds");
-                if (h.has("staleSignalSecs") && h.get("staleSignalSecs").isJsonPrimitive()) {
-                    return h.get("staleSignalSecs").getAsLong();
-                }
-            }
-        } catch (RuntimeException e) {
-            LOGGER.debug("staleSignalSecs lookup failed, defaulting: {}", e.toString());
-        }
-        return DEFAULT_STALE_SIGNAL_SECS;
     }
 
     /** A configured device paired with its live health, for the connectivity provider. */
@@ -487,7 +435,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
 
         @Override
         public boolean pause() {
-            boolean changed = setPaused(health, true);
+            boolean changed = Wiring.setPaused(health, true);
             if (changed) {
                 JsonObject ctx = new JsonObject();
                 ctx.addProperty("instance", cfg.id());
@@ -498,7 +446,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
 
         @Override
         public boolean resume() {
-            boolean changed = setPaused(health, false);
+            boolean changed = Wiring.setPaused(health, false);
             if (changed) {
                 JsonObject ctx = new JsonObject();
                 ctx.addProperty("instance", cfg.id());
@@ -748,5 +696,75 @@ record Backoff(long baseMs, long maxMs) {
         long cap = Math.min(exp, maxMs);
         double r = Math.max(0.0, Math.min(1.0, rand01));
         return (long) (r * cap);
+    }
+}
+
+/**
+ * The pure, broker-free wiring functions the component delegates to — the connectivity rendering, the
+ * pause toggle, and the {@code staleSignalSecs} config read. The component class itself is a live
+ * bootstrap + per-device worker loop (it needs a broker and a running {@code EdgeCommons} to connect
+ * to anything) and is validated on real infrastructure, so it is excluded from the in-process
+ * coverage gate; these functions need none of that, so they live here where a plain JUnit test covers
+ * them directly.
+ */
+final class Wiring {
+
+    private static final Logger LOGGER = LogManager.getLogger(Wiring.class);
+
+    /** The {@code component.global.healthThresholds.staleSignalSecs} default (SOUTHBOUND.md §4/§5). */
+    static final long DEFAULT_STALE_SIGNAL_SECS = 30L;
+
+    private Wiring() {
+    }
+
+    /**
+     * One device's connectivity sample, for the instance-connectivity provider.
+     *
+     * <ul>
+     *   <li>{@code connected} is the <b>normalized</b> flag — always present.</li>
+     *   <li>{@code state} is <i>this adapter's</i> vocabulary ({@link LinkState}) — {@code PAUSED} when
+     *       paused and up, else the raw link token (so a break while paused still reads {@code BACKOFF},
+     *       {@code connected} staying truthful).</li>
+     *   <li>{@code attributes} is the <b>open</b> bag: domain data only this adapter understands.</li>
+     * </ul>
+     */
+    static InstanceConnectivity connectivityOf(DeviceConfig cfg, Health health) {
+        LinkState link = health.link();
+        boolean connected = link == LinkState.ONLINE;
+        boolean paused = health.isPaused();
+        String state = paused && connected ? "PAUSED" : link.asString();
+
+        Map<String, JsonElement> attributes = new LinkedHashMap<>();
+        attributes.put("adapter", new JsonPrimitive(cfg.adapter()));
+        attributes.put("paused", new JsonPrimitive(paused));
+
+        return InstanceConnectivity.of(cfg.id(), connected, cfg.connection().endpoint())
+                .withState(state)
+                .withAttributes(attributes);
+    }
+
+    /**
+     * Flip the paused flag, returning whether the state actually changed (idempotent — pausing an
+     * already-paused device is not an error). The event is emitted by the caller.
+     */
+    static boolean setPaused(Health health, boolean paused) {
+        return health.pausedFlag().getAndSet(paused) != paused;
+    }
+
+    /** Reads {@code component.global.healthThresholds.staleSignalSecs}, defaulting when unset/malformed. */
+    static long readStaleSignalSecs(ConfigManager config) {
+        try {
+            JsonObject global = config.getGlobalConfig();
+            if (global != null && global.has("healthThresholds")
+                    && global.get("healthThresholds").isJsonObject()) {
+                JsonObject h = global.getAsJsonObject("healthThresholds");
+                if (h.has("staleSignalSecs") && h.get("staleSignalSecs").isJsonPrimitive()) {
+                    return h.get("staleSignalSecs").getAsLong();
+                }
+            }
+        } catch (RuntimeException e) {
+            LOGGER.debug("staleSignalSecs lookup failed, defaulting: {}", e.toString());
+        }
+        return DEFAULT_STALE_SIGNAL_SECS;
     }
 }

@@ -136,6 +136,28 @@
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>
         <version>${jacocoPluginVersion}</version>
+        <configuration>
+          <!-- Coverage-gate scope. The ONLY things excluded are thin runtime / live-driver seams:
+               code that cannot execute without a live device session and a running EdgeCommons —
+               validated on real infrastructure (the EC_LIVE_SIM integration test, HOST/Greengrass
+               smoke), not by the in-process unit suite. Every class that holds real, broker-free logic
+               stays IN the gate and is unit-tested — mirrors how libs/java scopes its own JaCoCo gate.
+               Do NOT widen this to pass; add a test instead (AGENTS.md: "don't lower a gate or exclude
+               testable code to pass — add tests"). -->
+          <excludes>
+            <!-- The component class itself: main() bootstrap, the EdgeCommonsBuilder wiring, run()'s
+                 per-device fan-out, and the DeviceWorker inner class — the connect-with-backoff
+                 supervisor + poll loop + the session-touching DeviceControl seam — none of which runs
+                 without a live device session (LiveSimIT exercises it on real infra). Its pure logic
+                 (connectivity rendering, the pause toggle, the staleSignalSecs config read) is
+                 extracted to the Wiring class; the command surface (Commands/Commander), the metric
+                 families + emitter (Metrics/DeviceMetrics), the device seam (Device), the config model
+                 (DeviceConfig/Writes), Health, LinkState, and Backoff all stay in the gate and are
+                 unit-tested. -->
+            <exclude>**/<<COMPONENTNAME>>.class</exclude>
+            <exclude>**/<<COMPONENTNAME>>$*.class</exclude>
+          </excludes>
+        </configuration>
         <executions>
           <execution>
             <goals>

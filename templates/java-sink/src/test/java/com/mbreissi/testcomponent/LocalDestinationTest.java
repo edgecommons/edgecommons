@@ -104,4 +104,35 @@ class LocalDestinationTest {
         assertThrows(IllegalArgumentException.class, () -> Destination.build(
                 JsonParser.parseString("{\"type\":\"s3\",\"path\":\"x\"}").getAsJsonObject()));
     }
+
+    @Test
+    void aLocalDestinationRequiresAPath() {
+        assertThrows(IllegalArgumentException.class, () -> Destination.build(
+                JsonParser.parseString("{\"type\":\"local\"}").getAsJsonObject()));
+    }
+
+    @Test
+    void theRootIsWhatItWasBuiltWith(@TempDir Path dir) {
+        assertEquals(dir, new LocalDestination(dir).root());
+    }
+
+    @Test
+    void aDirectoryThatCannotBeCreatedIsATransientFailure(@TempDir Path dir) throws Exception {
+        // A regular file sits exactly where a delivery needs a directory: createDirectories cannot
+        // proceed, and the failure is classified transient — a wrongly-permanent one would lose data.
+        Files.writeString(dir.resolve("blocked"), "i am a file, not a directory");
+        LocalDestination dest = new LocalDestination(dir);
+
+        DeliverException e = assertThrows(DeliverException.class,
+                () -> dest.deliver(item("blocked/inner/thing.json", "x")));
+        assertTrue(e.isTransient(), "a path problem is worth another attempt, not a silent loss");
+    }
+
+    @Test
+    void aPermanentFailureCanCarryItsUnderlyingCause() {
+        // The cause-carrying factory (used when a backend hands back a typed exception) classifies
+        // permanent just like the message-only one.
+        DeliverException e = DeliverException.permanentFailure("bad bucket", new RuntimeException("nope"));
+        assertFalse(e.isTransient());
+    }
 }

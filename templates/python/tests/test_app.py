@@ -99,6 +99,16 @@ def test_a_component_that_owns_no_connections_reports_no_instances(app):
     assert app.instance_connectivity() == []
 
 
+# --- the config-change listener ------------------------------------------------------------------
+
+
+def test_a_config_change_is_accepted_by_the_listener(app):
+    # The scaffold registers itself as a ConfigurationChangeListener; the default handler accepts a
+    # change (returns True) without needing a live config manager. Replace the body when your
+    # component must react to a change, and assert the reaction here.
+    assert app.on_configuration_change({"component": {"global": {}}}) is True
+
+
 # --- the custom command verb ---------------------------------------------------------------------
 
 

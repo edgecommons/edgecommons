@@ -77,7 +77,7 @@ destination reports `Idle` (reachable, connected), not a broken one — nothing 
 nothing has been attempted yet.
 
 [`Destination`]: ../src/dest.rs
-[`deliver_with_retry`]: ../src/app.rs
+[`deliver_with_retry`]: ../src/supervisor.rs
 [`DeliverError::Transient`]: ../src/dest.rs
 [`DeliverError::Permanent`]: ../src/dest.rs
 [`RetryConfig::delay`]: ../src/app.rs

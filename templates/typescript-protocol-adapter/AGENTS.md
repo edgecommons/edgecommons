@@ -19,9 +19,13 @@ platform/transport model — no platform branching in this component's own code.
 
 `src/device.ts`'s `DeviceSession`/`DeviceBackend` is the one interface a real protocol
 implementation targets. It imports nothing from `@edgecommons/edgecommons` — a backend knows
-protocols, not topics, envelopes, or metrics. Everything above the seam (`src/app.ts`'s connect/
-poll/reconnect loop, `src/commands.ts`'s command surface, `src/metrics.ts`'s emitters) is written
-against the interface and does not change when the backend does.
+protocols, not topics, envelopes, or metrics. Everything above the seam is written against the
+interface and does not change when the backend does: the unit-tested logic (config parsing, the
+reconnect backoff, the control mailbox, health/connectivity, the publish path, and the per-message
+control decisions `handleControl`/`serveWhileDown`) lives in `src/app.ts`, the connect/poll/reconnect
+supervisor that drives it lives in `src/runtime.ts` (the thin live-runtime seam, excluded from the
+coverage gate and validated by the deploy paths + `test/live-sim.test.ts`), `src/commands.ts` is the
+command surface, and `src/metrics.ts` the emitters.
 
 ## Config location
 

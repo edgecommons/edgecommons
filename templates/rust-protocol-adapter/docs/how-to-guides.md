@@ -34,7 +34,7 @@ pub trait DeviceBackend: Send + Sync {
 
 1. Implement `DeviceBackend`/`DeviceSession` for your protocol (a new `mod` next to `device.rs`, or
    inline — the scaffold keeps `SimBackend`/`SimSession` there as the worked example).
-2. Register it in `src/app.rs`'s `make_backend()`, matching on `cfg.adapter` (the config `adapter`
+2. Register it in `src/supervisor.rs`'s `make_backend()`, matching on `cfg.adapter` (the config `adapter`
    field, e.g. `"modbus"`, `"opcua"` — whatever string you choose).
 3. Decide what a **transient** vs **permanent** [`DeviceError`] is for your protocol —
    `connect` returning `Permanent` (a bad endpoint, a rejected credential) makes the supervisor back
@@ -47,7 +47,7 @@ pub trait DeviceBackend: Send + Sync {
 
 **The boundary rule, worth enforcing in review:** a backend knows protocols. It does **not** know
 EdgeCommons topics, the UNS, message envelopes, or metrics. If your `impl DeviceSession` imports
-`edgecommons::uns`, the seam has leaked — everything above `src/device.rs` (`src/app.rs`,
+`edgecommons::uns`, the seam has leaked — everything above `src/device.rs` (`src/app.rs`, `src/supervisor.rs`,
 `src/commands.rs`, `src/metrics.rs`) is written against the trait and never changes for a new
 protocol.
 

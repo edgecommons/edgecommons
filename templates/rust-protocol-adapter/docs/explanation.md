@@ -20,7 +20,7 @@ families differ.
 [`crate::device::DeviceBackend`] opens sessions. Implement the pair once per protocol and everything
 above it — the connection lifecycle, backoff, publishing, health, the command surface — is written
 against the trait and never learns your protocol. This is the boundary that keeps
-`src/commands.rs`/`src/metrics.rs`/`src/app.rs` from having to change when the *next* protocol is
+`src/commands.rs`/`src/metrics.rs`/`src/app.rs`/`src/supervisor.rs` from having to change when the *next* protocol is
 added: they call `read_signals`/`write_signal`/`browse`, never a protocol-specific API.
 
 Two consequences worth internalizing:
@@ -34,7 +34,7 @@ Two consequences worth internalizing:
 
 ## One task per device, with a control channel
 
-Each configured device runs in its own `tokio` task (`run_device` in `src/app.rs`): its own connect
+Each configured device runs in its own `tokio` task (`run_device` in `src/supervisor.rs`): its own connect
 loop, its own poll loop, its own backoff state. A device going down only takes its own instance's
 signals to `BAD` — the others keep streaming. That task also owns a **control channel**
 ([`DeviceControl`]): every command that must touch the (non-`Sync`) session or serialize with the

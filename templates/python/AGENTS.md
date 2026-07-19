@@ -35,7 +35,9 @@ Replace the demo code with real business logic; none of it is required by the li
 
 - `python -m pytest` must pass with no broker, no device, and no cloud credentials.
 - The org coverage gate is **90% line coverage** (`.github/workflows/ci.yml`'s `coverage` job). Add
-  tests rather than lowering the gate or excluding testable code.
+  tests rather than lowering the gate or excluding testable code. `.coveragerc` scopes the gate: the
+  only exclusion is the live-runtime worker loop (`run()`, a `# pragma: no cover` seam validated by
+  the HOST/GREENGRASS smoke); everything testable stays covered by `tests/`.
 - Config changes go in `config.schema.json` **and** in the code that reads them — the two are one
   contract; an unknown config key should be rejected, not silently ignored.
 

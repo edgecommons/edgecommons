@@ -30,19 +30,12 @@
 //! * **Identity restamp.** What we publish is *ours*. Without the restamp the fleet cannot tell
 //!   who emitted a message — and the self-echo guard downstream cannot work either.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 
-use edgecommons::messaging::{Message, MessageBuilder};
-use edgecommons::prelude::*;
+use edgecommons::messaging::Message;
 use serde::Deserialize;
-use serde_json::json;
 
-use crate::proc::{CountPerTick, FieldEquals, Out, Pipeline, ProcMsg, Processor};
-
-/// The metric this component emits each interval.
-const METRIC_NAME: &str = "processorThroughput";
+use crate::proc::{CountPerTick, FieldEquals, Processor};
 
 /// Where a route's output goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -102,7 +95,7 @@ pub enum StageConfig {
 }
 
 impl StageConfig {
-    fn build(&self) -> Box<dyn Processor> {
+    pub(crate) fn build(&self) -> Box<dyn Processor> {
         match self {
             Self::FieldEquals { path, value } => {
                 Box::new(FieldEquals { path: path.clone(), value: value.clone() })
@@ -123,236 +116,6 @@ pub struct Stats {
     pub errors: AtomicU64,
 }
 
-pub struct App {
-    config: Arc<Config>,
-    metrics: Arc<dyn MetricService>,
-    routes: Vec<RouteConfig>,
-    stats: Arc<Stats>,
-}
-
-struct ConfigListener;
-
-#[async_trait::async_trait]
-impl ConfigurationChangeListener for ConfigListener {
-    async fn on_configuration_change(&self, config: Arc<Config>) -> bool {
-        tracing::info!(identity = %config.identity().path(), "configuration changed");
-        true
-    }
-}
-
-impl App {
-    pub fn new(gg: &EdgeCommons) -> anyhow::Result<Self> {
-        gg.add_config_change_listener(Arc::new(ConfigListener));
-
-        let config = gg.config();
-        let metrics = gg.metrics();
-
-        // `component.global.defaults` applies to every instance that does not override it.
-        // A knob the schema promises and the code ignores is worse than no knob at all.
-        let defaults = config.global().get("defaults").cloned().unwrap_or_default();
-
-        metrics.define_metric(
-            MetricBuilder::create(METRIC_NAME)
-                .with_config(&config)
-                .add_measure("received", "Count", 60)
-                .add_measure("published", "Count", 60)
-                .add_measure("dropped", "Count", 60)
-                .add_measure("errors", "Count", 60)
-                .build(),
-        );
-
-        // One route per instance. A malformed route is skipped with a warning rather than killing
-        // the component — but if *every* route is malformed there is nothing to run, and failing
-        // loudly beats idling silently.
-        let mut routes = Vec::new();
-        for id in config.instance_ids() {
-            match config
-                .instance(&id)
-                .ok_or_else(|| anyhow::anyhow!("no config"))
-                .and_then(|v| Ok(serde_json::from_value::<RouteConfig>(v.clone())?))
-            {
-                Ok(mut route) => {
-                    apply_defaults(&mut route, &defaults);
-                    routes.push(route);
-                }
-                Err(e) => tracing::warn!("skipping malformed route `{id}`: {e}"),
-            }
-        }
-        anyhow::ensure!(!routes.is_empty(), "no valid routes in component.instances[]");
-
-        // ONE provider, TWO surfaces: whatever it returns is pushed into the `state` keepalive's
-        // `instances[]` on every tick AND returned by the built-in `status` command verb when a
-        // console asks. Whoever watches and whoever asks cannot get different answers.
-        //
-        // A processor owns no southbound links — its routes are message flows, not connections —
-        // so it reports NO instances. That is a real answer, not a missing one: with an empty vec
-        // the `instances[]` section is omitted and `status` says exactly what `ping` says. Register
-        // it anyway, so the seam is visible the day this component grows a connection of its own.
-        //
-        // When it does (an enrichment database, a model server), return one entry per connection:
-        //
-        //     InstanceConnectivity::of(&id, db.is_connected())      // the NORMALIZED flag: always
-        //         .with_state("ONLINE")                             // present, so any console can
-        //         .with_attributes(attributes)                      // render a health dot without
-        //                                                           // knowing this component
-        //
-        // `state` is your own vocabulary (ONLINE / CONNECTING / BACKOFF / DISABLED — a boolean
-        // cannot tell "reconnecting" from "administratively off"); `attributes` is the open bag for
-        // domain data, deliberately unconstrained so it never destabilizes the fields above.
-        let no_instances: Arc<InstanceConnectivityProvider> = Arc::new(Vec::new);
-        gg.set_instance_connectivity_provider(Some(no_instances));
-
-        Ok(Self { config, metrics, routes, stats: Arc::new(Stats::default()) })
-    }
-
-    pub async fn run(&self, gg: &EdgeCommons) -> anyhow::Result<()> {
-        let Ok(messaging) = gg.messaging() else {
-            anyhow::bail!("a processor needs a messaging transport, and none was wired");
-        };
-
-        // Our own identity, captured once: the self-echo guard compares against it per message.
-        let me = (
-            self.config.identity().path().to_string(),
-            self.config.identity().component().to_string(),
-        );
-
-        for route in &self.routes {
-            let (tx, rx) = tokio::sync::mpsc::channel::<ProcMsg>(route.max_queue);
-
-            for filter in &route.subscribe {
-                let tx = tx.clone();
-                let stats = Arc::clone(&self.stats);
-                let me = me.clone();
-                messaging
-                    .subscribe(
-                        filter,
-                        message_handler(move |topic: String, msg: Message| {
-                            let tx = tx.clone();
-                            let stats = Arc::clone(&stats);
-                            let me = me.clone();
-                            async move {
-                                if is_self_echo(&msg, &me.0, &me.1) {
-                                    return; // our own output; consuming it would loop forever
-                                }
-                                stats.received.fetch_add(1, Ordering::Relaxed);
-                                // try_send, never send: a full queue must DROP and be COUNTED,
-                                // not block the transport's dispatch task.
-                                if tx.try_send(ProcMsg::new(topic, msg)).is_err() {
-                                    stats.dropped.fetch_add(1, Ordering::Relaxed);
-                                }
-                            }
-                        }),
-                        route.max_queue,
-                        1,
-                    )
-                    .await?;
-                tracing::info!(route = %route.id, filter = %filter, "subscribed");
-            }
-
-            tokio::spawn(run_route(
-                route.clone(),
-                rx,
-                Arc::clone(&messaging),
-                Arc::clone(&self.config),
-                Arc::clone(&self.stats),
-                gg.events(),
-            ));
-        }
-
-        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
-        loop {
-            tokio::select! {
-                _ = ticker.tick() => self.emit_metrics().await,
-                _ = gg.shutdown_signal() => {
-                    tracing::info!("shutdown signal received");
-                    break;
-                }
-            }
-        }
-        self.metrics.flush_metrics().await.ok();
-        Ok(())
-    }
-
-    async fn emit_metrics(&self) {
-        let mut values = HashMap::new();
-        values.insert("received".to_string(), self.stats.received.swap(0, Ordering::Relaxed) as f64);
-        values.insert("published".to_string(), self.stats.published.swap(0, Ordering::Relaxed) as f64);
-        values.insert("dropped".to_string(), self.stats.dropped.swap(0, Ordering::Relaxed) as f64);
-        values.insert("errors".to_string(), self.stats.errors.swap(0, Ordering::Relaxed) as f64);
-        if let Err(e) = self.metrics.emit_metric(METRIC_NAME, values).await {
-            tracing::warn!(error = %e, "metric emit failed");
-        }
-    }
-}
-
-/// One route's task. Three arms, and they are the archetype:
-/// a message arrived → run the pipeline; the tick fired → let stateful stages emit;
-/// the queue closed → drain once more and stop.
-async fn run_route(
-    route: RouteConfig,
-    mut rx: tokio::sync::mpsc::Receiver<ProcMsg>,
-    messaging: Arc<dyn MessagingService>,
-    config: Arc<Config>,
-    stats: Arc<Stats>,
-    events: EventsFacade,
-) {
-    let mut pipeline = Pipeline::new(route.pipeline.iter().map(StageConfig::build).collect());
-    let mut ticker = tokio::time::interval(std::time::Duration::from_millis(route.tick_ms));
-
-    loop {
-        let out = tokio::select! {
-            got = rx.recv() => match got {
-                Some(m) => pipeline.run(smallvec::smallvec![m], None),
-                None => break, // channel closed: shutting down
-            },
-            _ = ticker.tick() => pipeline.run(Out::new(), Some(now_ms())),
-        };
-        dispatch(&route, out, &messaging, &config, &stats, &events).await;
-    }
-
-    // A final tick on the way out, so a half-full window is emitted rather than silently lost.
-    let out = pipeline.run(Out::new(), Some(u64::MAX));
-    dispatch(&route, out, &messaging, &config, &stats, &events).await;
-    tracing::info!(route = %route.id, "route stopped");
-}
-
-async fn dispatch(
-    route: &RouteConfig,
-    out: Out,
-    messaging: &Arc<dyn MessagingService>,
-    config: &Arc<Config>,
-    stats: &Arc<Stats>,
-    events: &EventsFacade,
-) {
-    for m in out {
-        // Restamp identity: what we publish is OURS, not the producer's.
-        let msg = MessageBuilder::new(&m.msg.header.name, &m.msg.header.version)
-            .from_config(config)
-            .payload(m.msg.body.clone())
-            .build();
-
-        let result = match route.target {
-            Target::Local => messaging.publish(&route.publish_topic, &msg).await,
-            Target::Northbound => messaging.publish_northbound(&route.publish_topic, &msg, Qos::AtLeastOnce).await,
-        };
-
-        if let Err(e) = result {
-            stats.errors.fetch_add(1, Ordering::Relaxed);
-            tracing::warn!(route = %route.id, error = %e, "publish failed");
-            let _ = events
-                .emit(
-                    Severity::Warning,
-                    "publish-failed",
-                    Some(format!("route {} could not publish", route.id)),
-                    Some(json!({ "route": route.id, "topic": route.publish_topic })),
-                )
-                .await;
-        } else {
-            stats.published.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-}
-
 /// Would consuming this message mean consuming our own output?
 #[must_use]
 pub fn is_self_echo(msg: &Message, my_path: &str, my_component: &str) -> bool {
@@ -361,15 +124,28 @@ pub fn is_self_echo(msg: &Message, my_path: &str, my_component: &str) -> bool {
         .is_some_and(|id| id.path() == my_path && id.component() == my_component)
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+/// Apply `component.global.defaults` to a route that did not set the key itself.
+///
+/// The schema promises this knob; a knob the code ignores is worse than no knob at all.
+pub(crate) fn apply_defaults(route: &mut RouteConfig, defaults: &serde_json::Value) {
+    if route.tick_ms == default_tick_ms() {
+        if let Some(v) = defaults.get("tickMs").and_then(serde_json::Value::as_u64) {
+            route.tick_ms = v;
+        }
+    }
+    if route.max_queue == default_max_queue() {
+        if let Some(v) = defaults.get("maxQueue").and_then(serde_json::Value::as_u64) {
+            route.max_queue = usize::try_from(v).unwrap_or_else(|_| default_max_queue());
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    use crate::proc::{Out, Pipeline};
 
     #[test]
     fn a_route_parses_from_its_instance_config() {
@@ -409,20 +185,62 @@ mod tests {
         }));
         assert!(bad.is_err());
     }
-}
 
-/// Apply `component.global.defaults` to a route that did not set the key itself.
-///
-/// The schema promises this knob; a knob the code ignores is worse than no knob at all.
-fn apply_defaults(route: &mut RouteConfig, defaults: &serde_json::Value) {
-    if route.tick_ms == default_tick_ms() {
-        if let Some(v) = defaults.get("tickMs").and_then(serde_json::Value::as_u64) {
-            route.tick_ms = v;
-        }
+    #[test]
+    fn each_stage_variant_builds_its_processor() {
+        // Building both variants covers the construction seam the run-loop composes; the built
+        // processors' behavior is tested against the pipeline in `src/proc.rs`.
+        let filter = StageConfig::FieldEquals { path: "signal.id".into(), value: json!("temp-1") };
+        let rollup = StageConfig::CountPerTick {};
+        // A pass-through pipeline built from both must accept a message without panicking.
+        let mut pipeline = Pipeline::new(vec![filter.build(), rollup.build()]);
+        let out = pipeline.run(Out::new(), Some(1));
+        // No arrivals + a tick: nothing to emit yet, but the stages were constructed and ticked.
+        assert!(out.is_empty());
     }
-    if route.max_queue == default_max_queue() {
-        if let Some(v) = defaults.get("maxQueue").and_then(serde_json::Value::as_u64) {
-            route.max_queue = usize::try_from(v).unwrap_or_else(|_| default_max_queue());
-        }
+
+    #[test]
+    fn defaults_fill_only_the_keys_a_route_left_at_their_default() {
+        // A route that set neither key inherits both from component.global.defaults.
+        let mut inherit: RouteConfig =
+            serde_json::from_value(json!({ "id": "r", "publishTopic": "t" })).unwrap();
+        apply_defaults(&mut inherit, &json!({ "tickMs": 2500, "maxQueue": 64 }));
+        assert_eq!(inherit.tick_ms, 2_500);
+        assert_eq!(inherit.max_queue, 64);
+
+        // A route that set its own values keeps them — a default never overrides an explicit choice.
+        let mut explicit: RouteConfig = serde_json::from_value(
+            json!({ "id": "r", "publishTopic": "t", "tickMs": 7000, "maxQueue": 512 }),
+        )
+        .unwrap();
+        apply_defaults(&mut explicit, &json!({ "tickMs": 2500, "maxQueue": 64 }));
+        assert_eq!(explicit.tick_ms, 7_000, "an explicit tickMs is not overridden by a default");
+        assert_eq!(explicit.max_queue, 512, "an explicit maxQueue is not overridden by a default");
+    }
+
+    #[test]
+    fn self_echo_is_detected_by_our_own_identity_and_nothing_else() {
+        use edgecommons::messaging::MessageBuilder;
+        use edgecommons::prelude::Config;
+
+        let config = Config::from_value(
+            "com.example.MyProcessor",
+            "thing-1",
+            json!({ "metricEmission": { "target": "log", "namespace": "test" } }),
+        )
+        .unwrap();
+        let (me_path, me_component) =
+            (config.identity().path().to_string(), config.identity().component().to_string());
+
+        // Stamped with OUR identity → an echo we must drop.
+        let ours = MessageBuilder::new("T", "1.0").from_config(&config).payload(json!({})).build();
+        assert!(is_self_echo(&ours, &me_path, &me_component));
+
+        // Stamped, but by someone else → not an echo.
+        assert!(!is_self_echo(&ours, "ecv1/other/thing", &me_component));
+
+        // No identity at all → not an echo (a producer that never stamped identity).
+        let anon = MessageBuilder::new("T", "1.0").payload(json!({})).build();
+        assert!(!is_self_echo(&anon, &me_path, &me_component));
     }
 }

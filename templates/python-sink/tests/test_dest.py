@@ -100,6 +100,40 @@ def test_a_destination_is_built_from_config(tmp_path):
         build_destination({"type": "s3", "bucket": "b"})  # not implemented in this scaffold
     with pytest.raises(ValueError):
         build_destination({"type": "local"})  # `path` is required
+    with pytest.raises(ValueError, match="unknown destination key"):
+        build_destination({"type": "local", "path": "/out", "bogus": 1})  # a typo is a mistake
+    with pytest.raises(ValueError, match="must be an object"):
+        build_destination("not-an-object")
+
+
+def test_delivered_equality_compares_only_matching_proofs():
+    # verify() compares the proof of what landed; equality must be exact and type-safe.
+    assert Delivered(5) == Delivered(5)
+    assert Delivered(5) != Delivered(6)
+    assert Delivered(5) != "5", "a non-Delivered is never equal"
+
+
+def test_a_directory_that_cannot_be_created_is_a_transient_delivery_failure(tmp_path):
+    # A file where a directory should be: makedirs fails. Transient is the safer default — a wrongly
+    # permanent failure loses data a retry would have saved.
+    blocker = tmp_path / "blocker"
+    blocker.write_text("i am a file, not a directory")
+    dest = LocalDestination(str(blocker))  # root traverses through a file
+    with pytest.raises(DeliverError) as e:
+        dest.deliver(item("sub/thing.json", "hi"))
+    assert e.value.transient is True
+
+
+def test_a_failed_rename_is_transient_and_leaves_no_partial(tmp_path):
+    # A directory already sitting at the final key makes the atomic os.replace fail; the temp file is
+    # cleaned up and the failure is transient.
+    dest = LocalDestination(str(tmp_path))
+    (tmp_path / "thing.json").mkdir()  # a directory occupies the final key
+    with pytest.raises(DeliverError) as e:
+        dest.deliver(item("thing.json", "hi"))
+    assert e.value.transient is True
+    leftovers = [n for n in os.listdir(tmp_path) if "partial" in n]
+    assert leftovers == [], f"a failed delivery must leave no temp file: {leftovers}"
 
 
 def test_the_key_is_deterministic():
@@ -211,6 +245,8 @@ def test_a_retry_policy_parses_and_inherits_the_global_defaults():
 
     with pytest.raises(ValueError, match="unknown retry key"):
         parse_retry({"baseDelayMS": 500})  # a typo is a mistake, not a no-op
+    with pytest.raises(ValueError, match="must be an object"):
+        parse_retry("not-an-object")
 
 
 # --- sink config ---------------------------------------------------------------------------------
@@ -255,3 +291,7 @@ def test_a_bad_sink_is_rejected_at_config_time_not_on_the_first_message():
         parse_sink({**good, "destination": {"type": "nowhere"}})
     with pytest.raises(ValueError):
         parse_sink({**good, "maxQueue": 0})
+    with pytest.raises(ValueError, match="must be an object"):
+        parse_sink("not-an-object")
+    with pytest.raises(ValueError, match="`id` is required"):
+        parse_sink({"subscribe": "t", "destination": {"type": "local", "path": "/out"}})

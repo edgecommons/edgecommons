@@ -29,6 +29,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-llvm-cov
       # Org rule: 90% line coverage in all four languages; live-infra-only paths are validated
-      # through lab/HOST smoke instead of being forced into unit coverage. Do not lower this gate
+      # through lab/HOST smoke instead of being forced into unit coverage. Do NOT lower this gate
       # or exclude testable code to pass it — add tests.
-      - run: cargo llvm-cov --fail-under-lines 90
+      #
+      # This is the minimal service scaffold: it is almost entirely runtime wiring (build the
+      # runtime, tick a demo loop that publishes status/metric/data/evt, handle shutdown), which
+      # needs a live `EdgeCommons` runtime + broker and is exercised by the scaffold→build gate and
+      # HOST smoke, not unit tests. Following the `ethernet-ip-adapter` discipline, the one piece of
+      # PURE logic — the `set-greeting` verb's argument validation + state swap — is factored into
+      # `src/commands.rs`, where it is unit-tested and stays IN the denominator. Only the thin runtime
+      # seam is excluded, each pinned to a reason:
+      #   - `src/app.rs` — the demo tick-loop + the command/connectivity registration wiring: it
+      #     `.await`s the tick timer, `messaging.publish()`, the metric/data/event facades, and
+      #     `shutdown_signal()`. Its one decision (the `set-greeting` body) lives in `commands.rs`.
+      #   - `src/main.rs` — the binary bootstrap shim (build the runtime, hand off to `app::App`).
+      # As this scaffold grows real logic, move it into `commands.rs` (or a new tested module) rather
+      # than into the excluded seam.
+      - run: >
+          cargo llvm-cov --fail-under-lines 90
+          --ignore-filename-regex '(app\.rs|main\.rs)'

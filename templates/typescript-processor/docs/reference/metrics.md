@@ -11,8 +11,8 @@ ecv1/{device}/{component}/metric/{metricName}
 
 ## `processorThroughput`
 
-Component-wide (not per-route) counters, defined through `MetricBuilder` (`src/app.ts`) and emitted
-every 60 seconds.
+Component-wide (not per-route) counters, defined through `MetricBuilder` (`src/runtime.ts`) and
+emitted every 60 seconds.
 
 Dimensions: none beyond the library-injected component dimensions.
 
@@ -29,4 +29,5 @@ This scaffold's counters are intentionally coarse (component-wide, not per-route
 component with several routes of very different volumes will likely want to dimension by `route`
 (the route `id`), the same low-cardinality-dimension discipline the reference adapters use
 (instance/verb/result, never a message body field). Add a `route` dimension to `MetricBuilder` in
-`src/app.ts` and thread the route id through `Stats` if you need per-route visibility.
+`src/runtime.ts` and thread the route id through `Stats` (`src/app.ts`) if you need per-route
+visibility.

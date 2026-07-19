@@ -57,7 +57,12 @@ deliberately not redeclared here. See `docs/reference/configuration.md` and
   environment variable; it must self-skip (green, not run) in a normal `mvn test`.
 - This component inherits the org's 90% line-coverage gate (JaCoCo `check`, wired into `pom.xml`,
   enforced by `mvn verify` in CI). Don't lower the gate or exclude testable code to pass it — add
-  tests.
+  tests. The gate's `<excludes>` scope out only the thin live-runtime seam — the component's `main()`
+  bootstrap and the `DeviceWorker` connect-with-backoff supervisor + poll loop, which need a live
+  device session and are validated by `LiveSimIT` on real infrastructure — so every class with
+  unit-testable logic (the `Wiring` helpers, the command surface, the metric emitter, the device
+  seam, the config model) stays in the gate. Keep it that way: extract logic out of the run loop
+  rather than excluding it.
 - Public behavior changes to the command surface or metric families should stay consistent with the
   southbound contract described in `docs/reference/messaging-interface.md` and `docs/reference/metrics.md`.
 

@@ -200,3 +200,31 @@ def test_a_stage_is_a_single_key_object():
         build_stage({"fieldEquals": {"path": "a", "value": 1}, "countPerTick": {}})
     with pytest.raises(ValueError):
         build_stage({"fieldEquals": {"path": "a"}})  # `value` is required
+
+
+def test_a_stage_with_no_args_is_the_empty_object_but_a_non_object_arg_is_rejected():
+    # `{"countPerTick": null}` is the natural JSON for an argument-less stage -- accept it as `{}`.
+    assert isinstance(build_stage({"countPerTick": None}), CountPerTick)
+    # But an argument block that is present and not an object is a config mistake, not a no-op.
+    with pytest.raises(ValueError, match="takes an object of arguments"):
+        build_stage({"fieldEquals": 5})
+
+
+def test_build_pipeline_materializes_the_route_stages():
+    route = parse_route({
+        "id": "r", "publishTopic": "t",
+        "pipeline": [{"fieldEquals": {"path": "a", "value": 1}}, {"countPerTick": {}}],
+    })
+    pipeline = route.build_pipeline()
+    # An empty pipeline is a pass-through; this one has two real stages.
+    assert pipeline.run([]) == []
+    assert len(pipeline._stages) == 2
+
+
+def test_an_instance_that_is_not_an_object_or_has_a_malformed_field_is_rejected():
+    with pytest.raises(ValueError, match="must be an object"):
+        parse_route("not-an-object")
+    with pytest.raises(ValueError, match="subscribe"):
+        parse_route({"id": "r", "publishTopic": "t", "subscribe": ["ok", ""]})
+    with pytest.raises(ValueError, match="pipeline"):
+        parse_route({"id": "r", "publishTopic": "t", "pipeline": "not-a-list"})

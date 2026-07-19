@@ -22,7 +22,8 @@ protocol; nothing above the seam changes.
 | Path | Purpose |
 |------|---------|
 | `src/main.ts` | Entry point: builds the `edgecommons` runtime from CLI args, runs the app. |
-| `src/app.ts` | The adapter: one loop per device — connect, poll, publish, reconnect, report health, serve writes. |
+| `src/app.ts` | The adapter logic (unit-tested): config parsing, reconnect backoff, control mailbox, health/connectivity, the publish path, and the per-message control decisions. |
+| `src/runtime.ts` | The thin live-runtime seam: one connect/poll/reconnect supervisor per device. Excluded from the coverage gate (needs a live runtime; validated by the deploy paths + `test/live-sim.test.ts`). |
 | `src/device.ts` | **The seam you implement**: `DeviceBackend` / `DeviceSession`, plus the `sim` backend. |
 | `test/` | Vitest suites for the invariants below (`npm test`). |
 | `config.schema.json` | The component's own config (`component.global` + one device per instance). |

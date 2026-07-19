@@ -16,7 +16,7 @@ to switch it.
 
 ## `loopTicks`
 
-Defined through `MetricBuilder` (`src/app.ts`) and emitted every tick (`TICK_INTERVAL_MS`, 10 s).
+Defined through `MetricBuilder` (`src/runtime.ts`) and emitted every tick (`TICK_INTERVAL_MS`, 10 s).
 
 Dimensions: `demo` (constant `"scaffold"`) plus the library-injected component dimensions.
 

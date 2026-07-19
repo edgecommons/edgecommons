@@ -1,5 +1,6 @@
 package <<PACKAGE>>;
 
+import com.mbreissi.edgecommons.config.ConfigManager;
 import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -68,7 +69,7 @@ class <<COMPONENTNAME>>Test {
         Health health = new Health();
 
         // Before the first connect: not reachable, and the token says why — CONNECTING, not BACKOFF.
-        InstanceConnectivity c = <<COMPONENTNAME>>.connectivityOf(cfg, health);
+        InstanceConnectivity c = Wiring.connectivityOf(cfg, health);
         assertEquals("plc-1", c.getInstance());
         assertFalse(c.isConnected());
         assertEquals("CONNECTING", c.getState());
@@ -78,12 +79,12 @@ class <<COMPONENTNAME>>Test {
         assertFalse(c.getAttributes().get("paused").getAsBoolean());
 
         health.setLink(LinkState.ONLINE);
-        c = <<COMPONENTNAME>>.connectivityOf(cfg, health);
+        c = Wiring.connectivityOf(cfg, health);
         assertTrue(c.isConnected(), "the normalized flag every console reads");
         assertEquals("ONLINE", c.getState());
 
         health.setLink(LinkState.BACKOFF);
-        assertFalse(<<COMPONENTNAME>>.connectivityOf(cfg, health).isConnected());
+        assertFalse(Wiring.connectivityOf(cfg, health).isConnected());
     }
 
     @Test
@@ -93,16 +94,16 @@ class <<COMPONENTNAME>>Test {
         Health health = new Health();
         health.setLink(LinkState.ONLINE);
 
-        assertTrue(<<COMPONENTNAME>>.setPaused(health, true), "pausing changed the state");
-        assertFalse(<<COMPONENTNAME>>.setPaused(health, true), "pausing again is idempotent");
-        InstanceConnectivity c = <<COMPONENTNAME>>.connectivityOf(cfg, health);
+        assertTrue(Wiring.setPaused(health, true), "pausing changed the state");
+        assertFalse(Wiring.setPaused(health, true), "pausing again is idempotent");
+        InstanceConnectivity c = Wiring.connectivityOf(cfg, health);
         assertEquals("PAUSED", c.getState(), "paused + online = PAUSED");
         assertTrue(c.isConnected(), "connected stays truthful while paused");
         assertTrue(c.getAttributes().get("paused").getAsBoolean());
 
         // A break while paused reports BACKOFF (not PAUSED), connected false.
         health.setLink(LinkState.BACKOFF);
-        c = <<COMPONENTNAME>>.connectivityOf(cfg, health);
+        c = Wiring.connectivityOf(cfg, health);
         assertEquals("BACKOFF", c.getState());
         assertFalse(c.isConnected());
     }
@@ -114,5 +115,41 @@ class <<COMPONENTNAME>>Test {
         assertEquals(1, health.connectionState());
         health.setLink(LinkState.BACKOFF);
         assertEquals(0, health.connectionState());
+    }
+
+    // --- staleSignalSecs config read (Wiring) ------------------------------------------------------
+
+    /** A minimal {@link ConfigManager} that returns a fixed {@code global} config (the only method
+        {@link Wiring#readStaleSignalSecs} touches). Null/throwing global exercise the fallback. */
+    private static ConfigManager configWithGlobal(JsonObject global, boolean throwOnRead) {
+        return new ConfigManager() {
+            @Override
+            public JsonObject getGlobalConfig() {
+                if (throwOnRead) {
+                    throw new IllegalStateException("config unavailable");
+                }
+                return global;
+            }
+        };
+    }
+
+    @Test
+    void staleSignalSecsIsReadFromConfigAndDefaultsWhenAbsentOrMalformed() {
+        // An explicit healthThresholds.staleSignalSecs wins.
+        assertEquals(45L, Wiring.readStaleSignalSecs(
+                configWithGlobal(json("{\"healthThresholds\":{\"staleSignalSecs\":45}}"), false)));
+
+        // No global config at all → the SOUTHBOUND.md §4/§5 default.
+        assertEquals(Wiring.DEFAULT_STALE_SIGNAL_SECS,
+                Wiring.readStaleSignalSecs(configWithGlobal(null, false)));
+
+        // Present but malformed (healthThresholds is not an object) → default, not a crash.
+        assertEquals(Wiring.DEFAULT_STALE_SIGNAL_SECS, Wiring.readStaleSignalSecs(
+                configWithGlobal(json("{\"healthThresholds\":\"nonsense\"}"), false)));
+
+        // A config read that throws is swallowed and defaulted — a threshold lookup must never take
+        // the adapter down.
+        assertEquals(Wiring.DEFAULT_STALE_SIGNAL_SECS,
+                Wiring.readStaleSignalSecs(configWithGlobal(null, true)));
     }
 }

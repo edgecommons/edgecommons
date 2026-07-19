@@ -3,7 +3,7 @@
 *This documents the generated scaffold; rewrite it as you build the component out.*
 
 `<<COMPONENTNAME>>` emits one metric, `processorThroughput`, through the EdgeCommons metric service
-(`src/app.rs`). With `metricEmission.target: messaging`, it publishes on the reserved UNS `metric`
+(`src/supervisor.rs`). With `metricEmission.target: messaging`, it publishes on the reserved UNS `metric`
 class:
 
 ```text
