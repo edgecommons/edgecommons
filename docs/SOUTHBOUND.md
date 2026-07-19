@@ -347,27 +347,36 @@ adapter author to add the protocol's own `Inventory` / `Poll` / `Publish` famili
 ## 6. The `protocol-adapter` scaffold template
 
 The **`protocol-adapter` kind** is a first-class scaffold axis: `-k/--kind` selects the archetype and
-`-l/--language` the language. A protocol-adapter scaffold ships a Builder + lifecycle skeleton, a
-`recipe.yaml` / `test-configs` seeding the §4 convention, and a `config.schema.json` modelling the
-adapter's own configuration (`connection`, `subscriptions`, per-signal rules):
+`-l/--language` the language. It exists in **all four languages** (`JAVA`, `PYTHON`, `RUST`,
+`TYPESCRIPT`):
 
 ```bash
-edgecommons component new -l JAVA -k protocol-adapter \
-  -n com.example.MyAdapter --platforms GREENGRASS,HOST
-```
-
-A Python mirror ships too — a Builder + per-instance worker-thread skeleton with `recipe.yaml`,
-`Dockerfile`, and `k8s/`:
-
-```bash
-edgecommons component new -l PYTHON -k protocol-adapter \
+edgecommons component new -l RUST -k protocol-adapter \
   -n com.example.MyAdapter --platforms GREENGRASS,HOST,KUBERNETES
 ```
 
-Both scaffolds ship a `config.schema.json` modelling the southbound adapter's own configuration
-(`connection`, `subscriptions`, per-signal rules), so `edgecommons component validate` checks an
-adapter's config against the contract in §4 rather than merely against the library envelope.
-Run `edgecommons template list` for the full language × kind matrix.
+The scaffold is a runnable, sim-backed archetype that teaches the whole contract:
+
+- The **`DeviceBackend`/`DeviceSession` seam** (a backend knows the protocol; it never imports the
+  UNS, topics, envelopes, or metrics) with an in-process **sim** backend, so `run`/`test` need no PLC.
+- A one-task-per-instance supervisor: connect → poll → publish `SouthboundSignalUpdate` via the
+  `data()` facade (quality on every sample) → reconnect with jittered, capped backoff.
+- The full `sb/*` command family (§2.2) — `sb/status`, `sb/read`, `sb/write` (batch, confirmed,
+  allow-listed before any device I/O), `sb/signals`, `sb/browse`, and the lifecycle-control verbs
+  `sb/pause`/`sb/resume`/`reconnect`/`repoll` — plus the three edge-console panels
+  (`overview`/`signals`/`diagnostics`).
+- `southbound_health` (§5) and the operational-metric family pattern (§5).
+- A `config.schema.json` modelling the adapter's own configuration (`connection`, poll groups /
+  subscriptions, per-signal rules, `writes.allow[]`, `healthThresholds`), so
+  `edgecommons component validate` checks an adapter's config against the §4 contract, not merely the
+  library envelope.
+- The platform packs selected by `--platforms` (`recipe.yaml`/`gdk-config.json`/`build.sh` for
+  Greengrass, `compose.yaml`/`supervisor/`/`Dockerfile` for HOST, `Dockerfile`/`k8s/` for
+  Kubernetes), a Diátaxis `docs/` set, an org-CI caller workflow with a 90%-line coverage gate,
+  governance files, and a simulator-gated integration-test layout.
+
+The `service`, `processor`, and `sink` kinds ship the same repo hygiene around their own archetype
+seams. Run `edgecommons template list` for the full language × kind matrix.
 
 ## 7. Reference adapter
 
