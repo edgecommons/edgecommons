@@ -6,8 +6,10 @@
  * `src/content/docs/components/<name>/`, so the one EdgeCommons docs site carries both the
  * `edgecommons` library docs and every component's user/deployer guide.
  *
- * - Component list comes from the registry (`ecosystem/staging/registry/components.json`,
- *   committed in this repo; override with REGISTRY_JSON).
+ * - Component list comes from the LIVE registry (single source of truth, also read by the org
+ *   profile): a shallow `git clone` of edgecommons/registry at build time. Override the source
+ *   with REGISTRY_JSON (a local path) or REGISTRY_REPO (a different repo); if the clone fails it
+ *   falls back to the in-repo staged copy so the site still builds offline.
  * - Each component's docs come from either:
  *     dev: a local path map in $COMPONENT_DOCS_MAP (JSON: {"opcua-adapter":"/abs/path", ...})
  *     CI:  a shallow, sparse `git clone` of the component repo using $EDGECOMMONS_READ_TOKEN.
@@ -26,11 +28,32 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB = join(__dirname, "..");
 const REPO = join(WEB, "..");
-const REGISTRY = process.env.REGISTRY_JSON || join(REPO, "ecosystem/staging/registry/components.json");
 const OUT = join(WEB, "src/content/docs/components");
 const TMP = join(WEB, ".component-src");
 const TOKEN = process.env.EDGECOMMONS_READ_TOKEN || "";
 const LOCAL_MAP = JSON.parse(process.env.COMPONENT_DOCS_MAP || "{}");
+const REGISTRY_REPO = process.env.REGISTRY_REPO || "edgecommons/registry";
+
+// The component list is the LIVE registry — the same repo the org profile reads, so registering a
+// component in edgecommons/registry updates both surfaces with no staged-copy sync. REGISTRY_JSON
+// overrides with a local path (dev/CI); a clone failure falls back to the in-repo staged copy.
+function resolveRegistry() {
+  if (process.env.REGISTRY_JSON) return process.env.REGISTRY_JSON;
+  const dst = join(TMP, "_registry");
+  rmSync(dst, { recursive: true, force: true });
+  mkdirSync(dst, { recursive: true });
+  const url = TOKEN
+    ? `https://x-access-token:${TOKEN}@github.com/${REGISTRY_REPO}.git`
+    : `https://github.com/${REGISTRY_REPO}.git`;
+  try {
+    execFileSync("git", ["clone", "--depth", "1", url, dst], { stdio: "pipe" });
+    return join(dst, "components.json");
+  } catch (e) {
+    console.warn(`! could not clone ${REGISTRY_REPO}; using the staged copy: ${String(e.message).split("\n")[0]}`);
+    return join(REPO, "ecosystem/staging/registry/components.json");
+  }
+}
+const REGISTRY = resolveRegistry();
 
 // Sidebar order by source filename (Diátaxis). reference/* and deployment/* are flattened to
 // reference-<x> (30+) and deployment-<x> (45+).
