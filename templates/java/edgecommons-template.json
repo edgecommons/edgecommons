@@ -84,10 +84,10 @@
       "MAINCLASSNAME"
     ],
     "k8s/configmap.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "src/main/java/com/mbreissi/testcomponent/App.java": [
       "COMPONENTFULLNAME",

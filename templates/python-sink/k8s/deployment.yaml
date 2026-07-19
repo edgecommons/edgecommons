@@ -1,23 +1,23 @@
 # Minimal Kubernetes Deployment for a edgecommons component. With --platform auto the library detects
 # KUBERNETES from the ServiceAccount token; config source defaults to CONFIGMAP, transport to MQTT
 # (broker config from the mounted ConfigMap), identity from the Downward API — so NO args are needed.
-# Build the image from ./Dockerfile and push to your registry (e.g. ghcr.io/<owner>/<<COMPONENTNAME>>)
+# Build the image from ./Dockerfile and push to your registry (e.g. ghcr.io/<owner>/<<BINNAME>>)
 # or `kind load` it for a local cluster, then set `image:` below.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: <<COMPONENTNAME>>
+  name: <<BINNAME>>
   labels:
-    app.kubernetes.io/name: <<COMPONENTNAME>>
+    app.kubernetes.io/name: <<BINNAME>>
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: <<COMPONENTNAME>>
+      app.kubernetes.io/name: <<BINNAME>>
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: <<COMPONENTNAME>>
+        app.kubernetes.io/name: <<BINNAME>>
     spec:
       automountServiceAccountToken: true   # the projected SA token is the platform=KUBERNETES auto-detect signal
       terminationGracePeriodSeconds: 30
@@ -25,7 +25,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: component
-          image: REPLACE_ME   # e.g. ghcr.io/<owner>/<<COMPONENTNAME>>:latest (build ./Dockerfile)
+          image: REPLACE_ME   # e.g. ghcr.io/<owner>/<<BINNAME>>:latest (build ./Dockerfile)
           imagePullPolicy: IfNotPresent
           env:
             - name: POD_NAME
@@ -59,7 +59,7 @@ spec:
             - { name: out, mountPath: /data }
       volumes:
         - name: config
-          configMap: { name: <<COMPONENTNAME>>-config }
+          configMap: { name: <<BINNAME>>-config }
         - name: tmp
           emptyDir: {}
         # An emptyDir dies with the pod: fine for a scaffold, WRONG for a sink you rely on. Point

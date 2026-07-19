@@ -58,11 +58,10 @@
       "COMPONENTNAME"
     ],
     "k8s/configmap.yaml": [
-      "BINNAME",
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "test-configs/config.json": [
       "BINNAME"

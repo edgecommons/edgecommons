@@ -57,10 +57,10 @@
       "COMPONENTNAME"
     ],
     "k8s/configmap.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "test-configs/standalone-messaging.json": [
       "BINNAME"

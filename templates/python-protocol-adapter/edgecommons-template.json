@@ -54,7 +54,6 @@
       "SNAKENAME"
     ],
     "README.md": [
-      "BINNAME",
       "COMPONENTFULLNAME",
       "COMPONENTNAME",
       "SNAKENAME"
@@ -69,10 +68,10 @@
       "EDGECOMMONS_DEP"
     ],
     "k8s/configmap.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "supervisor/component.conf": [
       "BINNAME",

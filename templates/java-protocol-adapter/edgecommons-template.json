@@ -87,10 +87,10 @@
       "MAINCLASSNAME"
     ],
     "k8s/configmap.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "src/main/java/com/mbreissi/testcomponent/App.java": [
       "COMPONENTFULLNAME",
@@ -122,7 +122,6 @@
       "PACKAGE"
     ],
     "src/test/java/com/mbreissi/testcomponent/CommandsTest.java": [
-      "COMPONENTNAME",
       "PACKAGE"
     ],
     "src/test/java/com/mbreissi/testcomponent/LiveSimIT.java": [

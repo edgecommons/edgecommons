@@ -53,11 +53,10 @@
       "DESCRIPTION"
     ],
     "k8s/configmap.yaml": [
-      "BINNAME",
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "src/app.rs": [
       "BINNAME",

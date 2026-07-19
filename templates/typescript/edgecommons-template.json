@@ -25,8 +25,8 @@
       "COMPONENTNAME"
     ],
     "build.sh": [
-      "COMPONENTFULLNAME",
-      "COMPONENTNAME"
+      "BINNAME",
+      "COMPONENTFULLNAME"
     ],
     "compose.yaml": [
       "BINNAME",
@@ -59,7 +59,7 @@
       "REGION"
     ],
     "package.json": [
-      "COMPONENTNAME",
+      "BINNAME",
       "DESCRIPTION",
       "EDGECOMMONS_DEP",
       "LICENSE"
@@ -75,10 +75,10 @@
       "DESCRIPTION"
     ],
     "k8s/configmap.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "src/app.ts": [
       "COMPONENTNAME"
