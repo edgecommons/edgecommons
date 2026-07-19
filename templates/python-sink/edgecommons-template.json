@@ -18,8 +18,8 @@
     ],
     "recipe.yaml": [
       "AUTHOR",
+      "BINNAME",
       "COMPONENTFULLNAME",
-      "COMPONENTNAME",
       "DESCRIPTION"
     ],
     "gdk-config.json": [

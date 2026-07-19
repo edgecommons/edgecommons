@@ -82,8 +82,8 @@
     ],
     "recipe.yaml": [
       "AUTHOR",
+      "BINNAME",
       "COMPONENTFULLNAME",
-      "COMPONENTNAME",
       "DESCRIPTION"
     ],
     "src/app.ts": [

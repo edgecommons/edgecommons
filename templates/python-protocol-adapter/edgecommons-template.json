@@ -61,8 +61,8 @@
     ],
     "recipe.yaml": [
       "AUTHOR",
+      "BINNAME",
       "COMPONENTFULLNAME",
-      "COMPONENTNAME",
       "DESCRIPTION"
     ],
     "requirements.txt": [

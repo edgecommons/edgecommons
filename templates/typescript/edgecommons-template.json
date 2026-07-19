@@ -70,8 +70,8 @@
     ],
     "recipe.yaml": [
       "AUTHOR",
+      "BINNAME",
       "COMPONENTFULLNAME",
-      "COMPONENTNAME",
       "DESCRIPTION"
     ],
     "k8s/configmap.yaml": [

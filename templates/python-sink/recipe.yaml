@@ -75,7 +75,7 @@ Manifests:
 - Platform:
     os: all
   Artifacts:
-  - URI: s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<COMPONENTNAME>>.zip
+  - URI: s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<BINNAME>>.zip
     Unarchive: ZIP
   Lifecycle:
     install:
@@ -89,7 +89,7 @@ Manifests:
 
         pip3 install --upgrade pip
 
-        pip3 install -r {artifacts:decompressedPath}/<<COMPONENTNAME>>/requirements.txt
+        pip3 install -r {artifacts:decompressedPath}/<<BINNAME>>/requirements.txt
 
         deactivate'
     Run:
@@ -99,4 +99,4 @@ Manifests:
 
         . $COMPONENT_DIR/venv/bin/activate
 
-        python3 -u {artifacts:decompressedPath}/<<COMPONENTNAME>>/main.py --platform GREENGRASS'
+        python3 -u {artifacts:decompressedPath}/<<BINNAME>>/main.py --platform GREENGRASS'
