@@ -132,11 +132,17 @@ each, and **exits non-zero when a required tool is missing**. Narrow it with `--
 ## Add the library to a project
 
 When you scaffold with `edgecommons component new`, the dependency is written for you. The
-`--dep-source` flag chooses between two forms:
+`--dep-source` flag chooses between three forms:
 
 - **`local`** (the default) — a path/file dependency on a monorepo checkout of the library. Best for
   developing against the SDK in this repo, and it needs no registry access.
 - **`registry`** — the published artifact, resolved from GitHub Packages or a git tag.
+- **`pinned-rev`** (Rust and Python only) — a git dependency pinned to the exact library commit the
+  CLI was built from (`--library-rev` overrides it), plus a gitignored `.cargo/config.toml` local-dev
+  override for Rust. This is the recommended choice once a component leaves the monorepo as its own
+  repository: the pin cannot lag the facades the embedded templates call the way a `registry` tag can.
+  Maven and npm cannot express a git dependency on a subdirectory of the monorepo, so Java and
+  TypeScript reject it.
 
 <Aside type="note">
 `--dep-source` and `--library-path` shape the **Python**, **Rust**, and **TypeScript** dependency —
@@ -145,7 +151,7 @@ monorepo the CLI was built from, so the common case needs no flag.
 
 **Java** always declares the Maven coordinate `com.mbreissi.edgecommons:edgecommons` at the library
 version, so you pick local-vs-registry by where that artifact resolves from (your `~/.m2` cache vs
-GitHub Packages), not by a flag.
+GitHub Packages), not by a flag. `pinned-rev` is not available for Java (or TypeScript).
 </Aside>
 
 The declarations below show what each form looks like if you are adding EdgeCommons to an existing
@@ -196,6 +202,9 @@ against.
 
   # registry: the published artifact via a git tag
   edgecommons @ git+https://github.com/edgecommons/edgecommons@python-lib/v0.2.0#subdirectory=libs/python
+
+  # pinned-rev: the exact commit the CLI was built from (or --library-rev)
+  edgecommons @ git+https://github.com/edgecommons/edgecommons@<rev>#subdirectory=libs/python
   ```
 
   Install with:
@@ -216,11 +225,27 @@ against.
 
   # registry: the published artifact via a git tag
   # edgecommons = { git = "https://github.com/edgecommons/edgecommons", tag = "rust-lib/v0.2.0", default-features = false }
+
+  # pinned-rev: the exact commit the CLI was built from (or --library-rev)
+  # edgecommons = { git = "https://github.com/edgecommons/edgecommons", rev = "<rev>", default-features = false }
   ```
 
   For the `local` form, the CLI fills the path from `--library-path` (defaulting to the in-repo
   `libs/rust`). Off-by-default cargo features (`greengrass`, `cloudwatch`, `streaming`,
   `credentials`, `parameters`, …) are composed on top as your component needs them.
+
+  The `pinned-rev` form also gets a gitignored `.cargo/config.toml` next to `Cargo.toml`, patching the
+  pinned dependency to a local sibling checkout so `cargo build` still resolves locally on your machine
+  while `Cargo.toml` keeps the committed pin for CI:
+
+  ```toml
+  # .cargo/config.toml — LOCAL DEV ONLY, gitignored
+  [patch."https://github.com/edgecommons/edgecommons"]
+  edgecommons = { path = "/abs/path/to/libs/rust" }
+
+  [net]
+  git-fetch-with-cli = true
+  ```
 
 </TabItem>
 <TabItem label="TypeScript">

@@ -58,9 +58,13 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 2. ### Scaffold a component
 
    `edgecommons component new` generates a component from a template carried inside the binary, so
-   scaffolding works offline. The output directory is `<path>/<ComponentName>`, where `ComponentName`
-   is the last dot-segment of the name you pass (`com.example.MyComponent` produces a `MyComponent/`
-   directory).
+   scaffolding works offline. The output directory is `<path>/<kebab-name>`, where `kebab-name` is
+   derived from the last dot-segment of the name you pass by a case-boundary- and acronym-aware kebab
+   conversion (`com.example.MyComponent` produces a `my-component/` directory; `--bin-name` and `--dir`
+   override the derived name and the directory outright — see the
+   [Scaffolding CLI guide](/start/scaffolding-cli/#flags) for the full flag set). The Greengrass component name
+   itself stays the PascalCase reverse-DNS form you passed — only the crate/bin/artifact tokens and the
+   directory move to kebab.
 
    Run it with no flags on a terminal and it asks for the language and the name:
 
@@ -114,8 +118,11 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
    `--dep-source local` (the default) writes a path/file dependency on the monorepo checkout the CLI
    was built from, so a scaffolded component builds offline inside the monorepo in every language.
    `--dep-source registry` writes the published artifact instead, which has to resolve from GitHub
-   Packages or a git tag. Point `local` somewhere else with `--library-path`. See the
-   [Installation guide](/start/installation/).
+   Packages or a git tag. A third form, `--dep-source pinned-rev` (Rust/Python only), pins the exact
+   library commit this CLI was built from and is the recommended choice once the component leaves the
+   monorepo as its own repository. Point `local` somewhere else with `--library-path`. See the
+   [Installation guide](/start/installation/) and the
+   [Scaffolding CLI guide](/start/scaffolding-cli/#dependency-source---dep-source).
    </Aside>
 
    Every scaffold also ships a `config.schema.json` describing the component's own configuration — the
@@ -132,9 +139,9 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="Java">
 
      ```text
-     MyComponent/
-     ├─ src/main/java/.../MyComponent.java   # your business logic
-     ├─ pom.xml                              # Maven build (shaded JAR)
+     my-component/
+     ├─ src/main/java/.../MyComponent.java   # your business logic — class stays PascalCase
+     ├─ pom.xml                              # Maven build (shaded JAR), artifactId = my-component
      ├─ recipe.yaml  gdk-config.json         # Greengrass recipe + GDK config
      └─ test-configs/MyComponent.json        # sample component config
      ```
@@ -143,7 +150,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="Python">
 
      ```text
-     MyComponent/
+     my-component/
      ├─ main.py                # entry point — builds EdgeCommons, starts the app
      ├─ app/MyComponent.py     # your business logic
      ├─ requirements.txt       # depends on edgecommons
@@ -155,9 +162,9 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="Rust">
 
      ```text
-     MyComponent/
+     my-component/
      ├─ src/main.rs  src/app.rs        # entry point + your business logic
-     ├─ Cargo.toml  build.sh
+     ├─ Cargo.toml  build.sh           # [package] name = "my-component"
      ├─ recipe.yaml  gdk-config.json
      └─ test-configs/config.json  standalone-messaging.json
      ```
@@ -166,7 +173,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="TypeScript">
 
      ```text
-     MyComponent/
+     my-component/
      ├─ src/main.ts  src/app.ts        # entry point + your business logic
      ├─ package.json  tsconfig.json  build.sh
      ├─ recipe.yaml  gdk-config.json
@@ -175,6 +182,11 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 
 </TabItem>
 </Tabs>
+
+   Every layout above also carries `AGENTS.md`, `CLAUDE.md`, `DESIGN.md`, a Diátaxis `docs/` set, and
+   `.github/workflows/` — trimmed from these listings for brevity. The top-level directory is always
+   the kebab name; only the Java class file and the Greengrass component identity keep the PascalCase
+   form.
 
    The sample config under `test-configs/` already declares the component's
    [UNS identity](/guides/unified-namespace/#identity-and-the-hierarchy) — a `hierarchy`
@@ -322,7 +334,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="Java">
 
      ```bash
-     mvn clean package        # produces target/MyComponent-1.0.0.jar (shaded, self-contained)
+     mvn clean package        # produces target/my-component-1.0.0.jar (shaded, self-contained)
      ```
 
 </TabItem>
@@ -409,7 +421,7 @@ Pick your language with the tabs in each code block — the tabs stay in sync ac
 <TabItem label="Java">
 
      ```bash
-     java -jar target/MyComponent-1.0.0.jar \
+     java -jar target/my-component-1.0.0.jar \
        --platform HOST --transport MQTT ./standalone-messaging.json \
        -c FILE test-configs/MyComponent.json -t my-thing
      ```
