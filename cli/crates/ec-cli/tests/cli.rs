@@ -228,13 +228,20 @@ fn the_protocol_adapter_kind_is_reachable() {
         &["-k", "protocol-adapter"],
     );
     assert_eq!(code(&o), 0, "{}", stderr(&o));
-    // The output dir is kebab (`my-adapter`); the Python module file keeps the PascalCase class.
+    // The output dir is kebab (`my-adapter`); the Python package dir is the snake_case module
+    // name (`my_adapter/`, from SNAKENAME) — the modbus_adapter convention, not the old `app/`.
     let p = d.path().join("my-adapter");
-    // The adapter skeleton, renamed to the component.
     assert!(
-        p.join("app/MyAdapter.py").exists(),
-        "the adapter module must be renamed"
+        p.join("my_adapter/adapter.py").exists(),
+        "the adapter package must be renamed to the snake_case module name"
     );
+    assert!(
+        !p.join("app").exists(),
+        "the template's `app/` package must not survive the rename"
+    );
+    // The adapter archetype ships the device seam + command surface + metrics.
+    assert!(p.join("my_adapter/command_service.py").exists());
+    assert!(p.join("my_adapter/device.py").exists());
     assert!(p.join("config.schema.json").exists());
 }
 
