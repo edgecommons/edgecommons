@@ -39,6 +39,18 @@
       "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "camera", "onvif", "edgecommons-adapter"]
     },
     {
+      "name": "ethernet-ip-adapter",
+      "repo": "edgecommons/ethernet-ip-adapter",
+      "language": "RUST",
+      "category": "adapter",
+      "protocol": "EtherNet/IP (Allen-Bradley CIP; explicit polling + class-1 implicit I/O)",
+      "description": "Rust reference southbound EtherNet/IP adapter on an owned, memory-safe pure-Rust EtherNet/IP + CIP stack. Polls Allen-Bradley Logix tags (CIP explicit messaging) and consumes class-1 implicit I/O assemblies, republishing as SouthboundSignalUpdate; serves read/write/status/pause/resume/browse commands and emits southbound_health plus the EtherNetIp* operational metrics.",
+      "status": "experimental",
+      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "library": "edgecommons",
+      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "ethernet-ip", "cip", "edgecommons-adapter"]
+    },
+    {
       "name": "telemetry-processor",
       "repo": "edgecommons/telemetry-processor",
       "language": "RUST",
