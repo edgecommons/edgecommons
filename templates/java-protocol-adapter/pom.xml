@@ -147,13 +147,17 @@
           <excludes>
             <!-- The component class itself: main() bootstrap, the EdgeCommonsBuilder wiring, run()'s
                  per-device fan-out, and the DeviceWorker inner class — the connect-with-backoff
-                 supervisor + poll loop + the session-touching DeviceControl seam — none of which runs
-                 without a live device session (LiveSimIT exercises it on real infra). Its pure logic
-                 (connectivity rendering, the pause toggle, the staleSignalSecs config read) is
-                 extracted to the Wiring class; the command surface (Commands/Commander), the metric
+                 supervisor + poll loop, the session I/O, and the two verbs that publish or emit
+                 (reconnect = a live connect + alarm-clear, repoll = a live poll + data() publish) —
+                 none of which runs without a live device session and a running EdgeCommons (LiveSimIT
+                 exercises it on real infra). Every decision that does NOT need that is extracted to a
+                 covered top-level class and unit-tested: the read/write/browse session-null guard +
+                 exception->code remap to the Control class, the connectivity rendering + pause toggle +
+                 staleSignalSecs read to Wiring. The command surface (Commands/Commander), the metric
                  families + emitter (Metrics/DeviceMetrics), the device seam (Device), the config model
-                 (DeviceConfig/Writes), Health, LinkState, and Backoff all stay in the gate and are
-                 unit-tested. -->
+                 (DeviceConfig/Writes), Health, LinkState, Backoff, Control, and Wiring all stay in the
+                 gate and are unit-tested. The DeviceWorker overrides that remain here only take the
+                 lock and delegate to Control — no branching left to test. -->
             <exclude>**/<<COMPONENTNAME>>.class</exclude>
             <exclude>**/<<COMPONENTNAME>>$*.class</exclude>
           </excludes>

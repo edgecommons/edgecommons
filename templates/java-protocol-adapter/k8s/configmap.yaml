@@ -14,9 +14,12 @@ data:
       "component": {
         "global": {
           "defaults": {
-            "publishIntervalMs": 1000,
-            "samplingRateMs": 500,
-            "queueSize": 100
+            "pollIntervalMs": 5000
+          },
+          "timeouts": {
+            "connectMs": 5000,
+            "reconnectBackoffMinMs": 1000,
+            "reconnectBackoffMaxMs": 60000
           },
           "healthThresholds": {
             "staleSignalSecs": 30
@@ -25,39 +28,14 @@ data:
         "instances": [
           {
             "id": "device-1",
-            "adapter": "example",
+            "adapter": "sim",
             "connection": {
-              "endpoint": "example://localhost:0/"
+              "endpoint": "sim://device-1"
             },
-            "defaults": {
-              "publishIntervalMs": 1000,
-              "samplingRateMs": 500,
-              "queueSize": 100
-            },
-            "publish": {
-              "batchMs": 1000
-            },
-            "write": {
-              "enabled": false
-            },
-            "subscriptions": [
-              {
-                "id": "all",
-                "include": [
-                  {
-                    "namespace": 0,
-                    "match": ".*",
-                    "samplingRateMs": 500,
-                    "queueSize": 100,
-                    "deadband": {
-                      "type": "Absolute",
-                      "value": 0.0
-                    }
-                  }
-                ],
-                "exclude": []
-              }
-            ]
+            "pollIntervalMs": 5000,
+            "writes": {
+              "allow": []
+            }
           }
         ]
       },

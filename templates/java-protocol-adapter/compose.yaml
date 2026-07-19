@@ -60,7 +60,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      # The adapter config source (-c FILE ...) — instances, connections, subscriptions.
+      # The adapter config source (-c FILE ...) — instances, connections, poll cadence, write allow-lists.
       - ./test-configs:/etc/edgecommons/test-configs:ro
     configs:
       - source: messaging

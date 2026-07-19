@@ -124,6 +124,9 @@
     "src/test/java/com/mbreissi/testcomponent/CommandsTest.java": [
       "PACKAGE"
     ],
+    "src/test/java/com/mbreissi/testcomponent/ControlTest.java": [
+      "PACKAGE"
+    ],
     "src/test/java/com/mbreissi/testcomponent/LiveSimIT.java": [
       "PACKAGE"
     ],

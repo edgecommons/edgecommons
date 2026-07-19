@@ -387,17 +387,16 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
 
         // ---- Commands.DeviceControl (session-touching verbs, serialized under the lock) -----------
 
+        // The three session-only verbs are pure decision logic (a session-null guard + an
+        // exception->error-code remap) over the Device.DeviceSession seam — no facade, no broker — so
+        // that logic lives in the covered top-level Control class and is unit-tested there. Here the
+        // worker only holds the lock (serializing with the poll loop) and hands the live session over.
         @Override
         public List<Device.Reading> readNow(List<String> ids)
                 throws Commands.ReadFailedException, Commands.DeviceUnavailableException {
             lock.lock();
             try {
-                if (session == null) {
-                    throw Commands.DeviceUnavailableException.gone();
-                }
-                return session.readNamed(ids);
-            } catch (Device.DeviceException e) {
-                throw new Commands.ReadFailedException(e.getMessage());
+                return Control.readNow(session, ids);
             } finally {
                 lock.unlock();
             }
@@ -408,12 +407,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
                 throws Commands.WriteFailedException, Commands.DeviceUnavailableException {
             lock.lock();
             try {
-                if (session == null) {
-                    throw Commands.DeviceUnavailableException.gone();
-                }
-                session.writeSignal(signalId, value);
-            } catch (Device.DeviceException e) {
-                throw new Commands.WriteFailedException(e.getMessage());
+                Control.write(session, signalId, value);
             } finally {
                 lock.unlock();
             }
@@ -424,10 +418,7 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
                 throws Device.BrowseException, Commands.DeviceUnavailableException {
             lock.lock();
             try {
-                if (session == null) {
-                    throw Device.BrowseException.failed("device is disconnected");
-                }
-                return session.browse(cursor, max);
+                return Control.browse(session, cursor, max);
             } finally {
                 lock.unlock();
             }
@@ -766,5 +757,74 @@ final class Wiring {
             LOGGER.debug("staleSignalSecs lookup failed, defaulting: {}", e.toString());
         }
         return DEFAULT_STALE_SIGNAL_SECS;
+    }
+}
+
+/**
+ * The device-seam decision logic behind the session-only {@code sb/*} verbs — the session-null guard
+ * and the per-verb exception-to-error-code remap for {@code sb/read}, {@code sb/write}, and
+ * {@code sb/browse}. These verbs touch <b>only</b> the {@link Device.DeviceSession} seam (an interface
+ * with no EdgeCommons imports), so their branching runs with no broker, no facade, and no live device
+ * — which is why it is extracted here and unit-tested directly rather than hidden inside the excluded
+ * worker.
+ *
+ * <p>The device worker's overrides do nothing but take the per-device lock (serializing the call with
+ * the poll loop) and delegate here. The verbs that additionally <i>publish</i> or <i>emit</i> —
+ * {@code reconnect} (a live {@code connect} + alarm-clear) and {@code repoll} (a live poll +
+ * {@code data()} publish), plus {@code pause}/{@code resume} (a live event) — cannot run without a
+ * live {@code EdgeCommons}, so their bodies stay in the worker and are validated by {@code LiveSimIT}
+ * on real infrastructure. The pure part of pause/resume (the idempotent toggle) already lives in
+ * {@link Wiring#setPaused}.
+ */
+final class Control {
+
+    private Control() {
+    }
+
+    /**
+     * {@code sb/read} — read the named ids now. A null session means the worker has no live link
+     * ({@code DEVICE_UNAVAILABLE}); a link error mid-read is {@code READ_FAILED}.
+     */
+    static List<Device.Reading> readNow(Device.DeviceSession session, List<String> ids)
+            throws Commands.ReadFailedException, Commands.DeviceUnavailableException {
+        if (session == null) {
+            throw Commands.DeviceUnavailableException.gone();
+        }
+        try {
+            return session.readNamed(ids);
+        } catch (Device.DeviceException e) {
+            throw new Commands.ReadFailedException(e.getMessage());
+        }
+    }
+
+    /**
+     * {@code sb/write} — a confirmed, already-allow-listed write (the allow-list is enforced one layer
+     * up, in {@link Commands}, before this is reached). A null session is {@code DEVICE_UNAVAILABLE}; a
+     * device rejection is {@code WRITE_FAILED}.
+     */
+    static void write(Device.DeviceSession session, String signalId, JsonElement value)
+            throws Commands.WriteFailedException, Commands.DeviceUnavailableException {
+        if (session == null) {
+            throw Commands.DeviceUnavailableException.gone();
+        }
+        try {
+            session.writeSignal(signalId, value);
+        } catch (Device.DeviceException e) {
+            throw new Commands.WriteFailedException(e.getMessage());
+        }
+    }
+
+    /**
+     * {@code sb/browse} — one page of address-space discovery. A null session is reported as a browse
+     * <i>failure</i> ({@code BROWSE_FAILED} — the link is down, which is not the same as the protocol
+     * lacking discovery); a {@link Device.BrowseException} from the session passes straight through so
+     * the command layer can still tell {@code BROWSE_UNSUPPORTED} from {@code BROWSE_FAILED}.
+     */
+    static Device.BrowsePage browse(Device.DeviceSession session, String cursor, int max)
+            throws Device.BrowseException {
+        if (session == null) {
+            throw Device.BrowseException.failed("device is disconnected");
+        }
+        return session.browse(cursor, max);
     }
 }

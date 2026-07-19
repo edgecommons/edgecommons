@@ -58,11 +58,17 @@ deliberately not redeclared here. See `docs/reference/configuration.md` and
 - This component inherits the org's 90% line-coverage gate (JaCoCo `check`, wired into `pom.xml`,
   enforced by `mvn verify` in CI). Don't lower the gate or exclude testable code to pass it — add
   tests. The gate's `<excludes>` scope out only the thin live-runtime seam — the component's `main()`
-  bootstrap and the `DeviceWorker` connect-with-backoff supervisor + poll loop, which need a live
-  device session and are validated by `LiveSimIT` on real infrastructure — so every class with
-  unit-testable logic (the `Wiring` helpers, the command surface, the metric emitter, the device
-  seam, the config model) stays in the gate. Keep it that way: extract logic out of the run loop
-  rather than excluding it.
+  bootstrap and the `DeviceWorker` connect-with-backoff supervisor + poll loop + session I/O, plus the
+  two verbs whose bodies publish or emit (`reconnect` does a live connect + alarm-clear, `repoll` a
+  live poll + `data()` publish) — all of which need a live device session and a running EdgeCommons
+  and are validated by `LiveSimIT` on real infrastructure. Every decision that does **not** need a
+  live runtime is extracted to a covered top-level class and unit-tested: the read/write/browse
+  session-null guard + exception→error-code remap lives in `Control`, and the connectivity rendering,
+  pause toggle, and `staleSignalSecs` read live in `Wiring`. So the classes carrying unit-testable
+  logic (`Control`, `Wiring`, the command surface, the metric emitter, the device seam, the config
+  model) all stay in the gate; the `DeviceWorker` overrides that remain excluded only take the lock and
+  delegate to `Control`. Keep it that way: extract a decision out of the run loop rather than excluding
+  it.
 - Public behavior changes to the command surface or metric families should stay consistent with the
   southbound contract described in `docs/reference/messaging-interface.md` and `docs/reference/metrics.md`.
 
