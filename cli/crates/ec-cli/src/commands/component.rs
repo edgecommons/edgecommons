@@ -355,7 +355,9 @@ fn json_license_is_empty(line: &str) -> bool {
 /// pom). Returns the new text if a block was removed, else `None`.
 fn strip_empty_pom_licenses(text: &str) -> Option<String> {
     let start = text.find("<licenses>")?;
-    let end = text[start..].find("</licenses>").map(|e| start + e + "</licenses>".len())?;
+    let end = text[start..]
+        .find("</licenses>")
+        .map(|e| start + e + "</licenses>".len())?;
     let block = &text[start..end];
     // Only strip when the license name is empty (an unset `--license none`), never a real license.
     if !(block.contains("<name></name>") || block.contains("<name/>")) {

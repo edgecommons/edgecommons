@@ -254,7 +254,10 @@ fn license_none_makes_no_claim_and_a_named_license_writes_a_file_and_field() {
     let none = scaffold(d.path(), "com.example.NoLic", "RUST", &["-k", "service"]);
     assert_eq!(code(&none), 0, "{}", stderr(&none));
     let p = d.path().join("no-lic");
-    assert!(!p.join("LICENSE").exists(), "--license none writes no LICENSE");
+    assert!(
+        !p.join("LICENSE").exists(),
+        "--license none writes no LICENSE"
+    );
     let cargo = std::fs::read_to_string(p.join("Cargo.toml")).unwrap();
     assert!(
         !cargo.lines().any(|l| l.trim().starts_with("license")),
