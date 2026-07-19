@@ -1,71 +1,118 @@
 package <<PACKAGE>>;
 
 import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Per-device connectivity — the report this adapter exists to produce.
+ * The adapter's config model, backoff, and the per-device connectivity report it exists to produce.
  *
- * <p>Every entry the adapter builds here is served on <b>two</b> surfaces from a single provider:
- * the library pushes it in each {@code state} keepalive's {@code instances[]}, and returns the same
- * sample from the built-in {@code status} verb when an operator pulls. So these assertions are the
- * contract for both.
+ * <p>Every connectivity entry is served on <b>two</b> surfaces from a single provider: the library
+ * pushes it in each {@code state} keepalive's {@code instances[]}, and returns the same sample from the
+ * built-in {@code status} verb. So these assertions are the contract for both.
  */
 class <<COMPONENTNAME>>Test {
 
-    private static final String ENDPOINT = "opc.tcp://plc-1:4840";
-
-    @Test
-    void aConfiguredDeviceThatIsNotUpYetIsStillReported() {
-        // The one that matters. A device that is configured but not connected must APPEAR, as
-        // down — otherwise it is indistinguishable from a device nobody ever configured, and the
-        // adapter silently under-reports exactly when an operator needs it most.
-        InstanceConnectivity connecting =
-                <<COMPONENTNAME>>.connectivity("plc-1", ENDPOINT, false, "CONNECTING", null);
-
-        assertEquals("plc-1", connecting.getInstance());
-        assertFalse(connecting.isConnected());
-        assertEquals("CONNECTING", connecting.getState());
+    private static JsonObject json(String s) {
+        return JsonParser.parseString(s).getAsJsonObject();
     }
 
     @Test
-    void aConnectedDeviceReportsItsEndpoint() {
-        InstanceConnectivity online =
-                <<COMPONENTNAME>>.connectivity("plc-1", ENDPOINT, true, "ONLINE", null);
+    void aDeviceParsesFromItsInstanceConfig() {
+        DeviceConfig d = DeviceConfig.from(json(
+                "{\"id\":\"plc-1\",\"adapter\":\"sim\",\"connection\":{\"endpoint\":\"sim://plc-1\","
+                        + "\"unitId\":3},\"pollIntervalMs\":1000,\"writes\":{\"allow\":[\"setpoint-1\"]}}"));
 
-        assertTrue(online.isConnected(), "connected is the NORMALIZED flag every console reads");
-        assertEquals("ONLINE", online.getState());
-        assertEquals(ENDPOINT, online.getDetail(), "when up, the detail is where it is connected");
-        assertEquals("example", online.getAttributes().get("adapter").getAsString(),
-                "protocol-specific facts belong in the open attributes bag, never in the "
-                        + "normalized fields every consumer relies on");
+        assertEquals("plc-1", d.id());
+        assertEquals(1000L, d.pollIntervalMs());
+        assertEquals("sim://plc-1", d.connection().endpoint());
+        // `connection` is deliberately open: every protocol needs different keys.
+        assertEquals(3, d.connection().extra().get("unitId").getAsInt());
+        assertTrue(d.writes().permits("setpoint-1"));
     }
 
     @Test
-    void aFailedDeviceReportsWhyRatherThanWhere() {
-        InstanceConnectivity down =
-                <<COMPONENTNAME>>.connectivity("plc-1", ENDPOINT, false, "BACKOFF", "connect timed out");
+    void anAdapterIsReadOnlyUntilAWriteIsAllowListed() {
+        // The default must be read-only. An adapter that writes any address it is asked to is a
+        // control-system vulnerability, not a convenience.
+        DeviceConfig d = DeviceConfig.from(json(
+                "{\"id\":\"plc-1\",\"connection\":{\"endpoint\":\"sim://plc-1\"}}"));
+        assertFalse(d.writes().permits("setpoint-1"), "nothing is writable by default");
+        assertEquals("sim", d.adapter(), "adapter defaults to the simulator");
 
-        assertFalse(down.isConnected());
-        assertEquals("connect timed out", down.getDetail(), "when down, the detail is the reason");
+        Writes w = new Writes(java.util.List.of("setpoint-1"));
+        assertTrue(w.permits("setpoint-1"));
+        assertFalse(w.permits("setpoint-2"), "only the listed signal, not its neighbours");
     }
 
     @Test
-    void connectedIsNormalizedWhileStateCarriesTheRicherCondition() {
-        // This is why `state` exists at all: a boolean cannot tell "has never reached the device
-        // yet" from "was connected and is now retrying". Both are connected=false, and an operator
-        // must be able to tell them apart.
-        InstanceConnectivity connecting =
-                <<COMPONENTNAME>>.connectivity("plc-1", ENDPOINT, false, "CONNECTING", null);
-        InstanceConnectivity retrying =
-                <<COMPONENTNAME>>.connectivity("plc-1", ENDPOINT, false, "BACKOFF", "connect timed out");
+    void reconnectBackoffIsExponentialCappedAndJittered() {
+        Backoff b = new Backoff(1_000, 10_000);
+        assertEquals(1_000, b.delayMs(0, 1.0));
+        assertEquals(4_000, b.delayMs(2, 1.0));
+        assertEquals(10_000, b.delayMs(20, 1.0), "capped");
+        // Jitter: the delay is a point in the window, not its edge.
+        assertEquals(2_000, b.delayMs(2, 0.5));
+        assertEquals(0, b.delayMs(2, 0.0));
+    }
 
-        assertEquals(connecting.isConnected(), retrying.isConnected());
-        assertNotEquals(connecting.getState(), retrying.getState());
+    @Test
+    void everyDeviceReportsItsOwnConnectivity() {
+        DeviceConfig cfg = DeviceConfig.from(json(
+                "{\"id\":\"plc-1\",\"adapter\":\"sim\",\"connection\":{\"endpoint\":\"sim://plc-1\"}}"));
+        Health health = new Health();
+
+        // Before the first connect: not reachable, and the token says why — CONNECTING, not BACKOFF.
+        InstanceConnectivity c = <<COMPONENTNAME>>.connectivityOf(cfg, health);
+        assertEquals("plc-1", c.getInstance());
+        assertFalse(c.isConnected());
+        assertEquals("CONNECTING", c.getState());
+        assertEquals("sim://plc-1", c.getDetail(), "the endpoint, for a human");
+        assertEquals("sim", c.getAttributes().get("adapter").getAsString(),
+                "the open bag carries domain data");
+        assertFalse(c.getAttributes().get("paused").getAsBoolean());
+
+        health.setLink(LinkState.ONLINE);
+        c = <<COMPONENTNAME>>.connectivityOf(cfg, health);
+        assertTrue(c.isConnected(), "the normalized flag every console reads");
+        assertEquals("ONLINE", c.getState());
+
+        health.setLink(LinkState.BACKOFF);
+        assertFalse(<<COMPONENTNAME>>.connectivityOf(cfg, health).isConnected());
+    }
+
+    @Test
+    void aPausedOnlineDeviceReportsPausedButStaysConnected() {
+        DeviceConfig cfg = DeviceConfig.from(json(
+                "{\"id\":\"plc-1\",\"connection\":{\"endpoint\":\"sim://plc-1\"}}"));
+        Health health = new Health();
+        health.setLink(LinkState.ONLINE);
+
+        assertTrue(<<COMPONENTNAME>>.setPaused(health, true), "pausing changed the state");
+        assertFalse(<<COMPONENTNAME>>.setPaused(health, true), "pausing again is idempotent");
+        InstanceConnectivity c = <<COMPONENTNAME>>.connectivityOf(cfg, health);
+        assertEquals("PAUSED", c.getState(), "paused + online = PAUSED");
+        assertTrue(c.isConnected(), "connected stays truthful while paused");
+        assertTrue(c.getAttributes().get("paused").getAsBoolean());
+
+        // A break while paused reports BACKOFF (not PAUSED), connected false.
+        health.setLink(LinkState.BACKOFF);
+        c = <<COMPONENTNAME>>.connectivityOf(cfg, health);
+        assertEquals("BACKOFF", c.getState());
+        assertFalse(c.isConnected());
+    }
+
+    @Test
+    void theNormalizedFlagAndTheHealthMetricCannotDisagree() {
+        Health health = new Health();
+        health.setLink(LinkState.ONLINE);
+        assertEquals(1, health.connectionState());
+        health.setLink(LinkState.BACKOFF);
+        assertEquals(0, health.connectionState());
     }
 }

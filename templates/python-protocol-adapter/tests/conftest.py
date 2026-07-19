@@ -1,4 +1,6 @@
-"""Put the component root on `sys.path` so `import app.<<COMPONENTNAME>>` resolves from anywhere."""
+"""Put the component root on `sys.path` so the adapter package imports resolve from anywhere
+(`pyproject.toml`'s `pythonpath = ["."]` does the same under pytest; this keeps a bare
+`python -m pytest` working even without it)."""
 import sys
 from pathlib import Path
 

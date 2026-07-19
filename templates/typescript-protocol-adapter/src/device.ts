@@ -23,6 +23,16 @@
  * protocol — and it is why a read failure must be published as a `BAD` sample rather than
  * swallowed. A signal that silently stops updating is indistinguishable from one that is simply
  * not changing.
+ *
+ * ## The command seam
+ *
+ * On top of `readSignals`/`writeSignal`, a session also serves the `sb/*` command surface
+ * (`src/commands.ts`): {@link DeviceSession.readNamed} (an on-demand read of named signals) and
+ * {@link DeviceSession.browse} (paged address-space discovery). Both have sensible defaults on
+ * {@link BaseDeviceSession} — `readNamed` reads everything and filters, `browse` reports
+ * {@link BrowseError.unsupported} — so a protocol with a fixed register map and no discovery stays
+ * honest without extra code. The backend's {@link DeviceBackend.inventory} answers `sb/signals`
+ * from config, with **no** device round-trip.
  */
 
 /**
@@ -50,6 +60,74 @@ export interface Reading {
   readonly quality: Quality;
   /** The protocol-native status code, kept verbatim for diagnosis. */
   readonly qualityRaw?: string;
+}
+
+/**
+ * One signal in the adapter's inventory — its stable id and human label, known from
+ * config/backend **without a device round-trip**. Backs the `sb/signals` command.
+ */
+export interface SignalInfo {
+  /** The canonical, stable id (the `sb/read`/`sb/write` `signalId`). */
+  readonly id: string;
+  /** A human label, when the backend has one. */
+  readonly name?: string;
+}
+
+/**
+ * One entry discovered by {@link DeviceSession.browse} — a signal the device *offers*, whether or
+ * not it is configured. Backs the `sb/browse` diagnostics surface.
+ */
+export interface BrowsedSignal {
+  /** The stable id a consumer would configure or read. */
+  readonly id: string;
+  /** A human label, when the device provides one. */
+  readonly name?: string;
+  /** The device-native type, kept verbatim for diagnosis (`"REAL"`, `"holding/uint16"`, …). */
+  readonly typeName: string;
+}
+
+/**
+ * One page of a {@link DeviceSession.browse} enumeration. Browsing is **paged** because a device's
+ * address space can be large; `nextCursor` is set while more pages remain.
+ */
+export interface BrowsePage {
+  readonly entries: readonly BrowsedSignal[];
+  /** Opaque continuation token; pass it back as the next `cursor`. Absent on the last page. */
+  readonly nextCursor?: string;
+}
+
+/**
+ * Why a `sb/browse` could not answer. Kept distinct from {@link DeviceError} because "this protocol
+ * has no discovery" is a permanent, honest capability limit — not a link failure. A session rejects
+ * its {@link DeviceSession.browse} with one of these; the command layer maps `UNSUPPORTED` to
+ * `BROWSE_UNSUPPORTED` and `FAILED` to `BROWSE_FAILED`.
+ */
+export class BrowseError extends Error {
+  private constructor(
+    /** `UNSUPPORTED` (no discovery service) or `FAILED` (a mid-browse link/protocol error). */
+    readonly reason: "UNSUPPORTED" | "FAILED",
+    message: string,
+  ) {
+    super(message);
+    this.name = "BrowseError";
+  }
+
+  /**
+   * The protocol has no discovery service. The default seam impl rejects with this, so an adapter
+   * that cannot browse stays honest (the command maps it to `BROWSE_UNSUPPORTED`).
+   */
+  static unsupported(): BrowseError {
+    return new BrowseError("UNSUPPORTED", "this adapter has no discovery service");
+  }
+
+  /** A mid-browse failure (a link error, a malformed reply). Maps to `BROWSE_FAILED`. */
+  static failed(message: string): BrowseError {
+    return new BrowseError("FAILED", message);
+  }
+
+  static isBrowseError(e: unknown): e is BrowseError {
+    return e instanceof BrowseError;
+  }
 }
 
 /**
@@ -106,17 +184,63 @@ export interface DeviceSession {
    */
   readSignals(): Promise<Reading[]>;
 
+  /**
+   * Read a named subset **now** (backs `sb/read`). The {@link BaseDeviceSession} default reads
+   * everything and filters, which is correct for any backend; override it when your protocol can
+   * read a subset more cheaply. Reject only when the *connection* is broken.
+   */
+  readNamed(ids: readonly string[]): Promise<Reading[]>;
+
   /** Write a value back to the device. Rejects if the write is refused or the link is down. */
   writeSignal(signalId: string, value: unknown): Promise<void>;
 
+  /**
+   * Enumerate the device's address space, one page at a time (backs `sb/browse`). The
+   * {@link BaseDeviceSession} default rejects with {@link BrowseError.unsupported} — a protocol
+   * with no discovery (Modbus, a fixed register map) is honest to leave it unimplemented. Override
+   * it when your protocol can enumerate (OPC UA browse, an EtherNet/IP tag list). Rejects with a
+   * {@link BrowseError} (`UNSUPPORTED` / `FAILED`).
+   */
+  browse(cursor: string | undefined, max: number): Promise<BrowsePage>;
+
   /** Close the connection. Must be safe to call twice. */
   close(): Promise<void>;
+}
+
+/**
+ * A base session supplying the default seam behavior — `readNamed` reads-all-and-filters, `browse`
+ * reports {@link BrowseError.unsupported}, `close` is a no-op. Extend it and implement only the two
+ * required methods; TypeScript interfaces cannot carry default methods, so this abstract class is
+ * how the "default trait impl" of the Rust/Java/Python seams is expressed here.
+ */
+export abstract class BaseDeviceSession implements DeviceSession {
+  abstract readSignals(): Promise<Reading[]>;
+  abstract writeSignal(signalId: string, value: unknown): Promise<void>;
+
+  async readNamed(ids: readonly string[]): Promise<Reading[]> {
+    const all = await this.readSignals();
+    return all.filter((r) => ids.includes(r.signalId));
+  }
+
+  async browse(_cursor: string | undefined, _max: number): Promise<BrowsePage> {
+    throw BrowseError.unsupported();
+  }
+
+  async close(): Promise<void> {}
 }
 
 /** Opens sessions. One factory per protocol. */
 export interface DeviceBackend {
   /** The protocol's name, as it appears in config and in the published `device.adapter` field. */
   readonly kind: string;
+
+  /**
+   * The signal inventory this backend exposes for a device, **without connecting** — read from
+   * config in a real adapter. Backs `sb/signals` (a config view, no device round-trip). The
+   * simulator returns a fixed pair so the command has something to show. Optional: a backend that
+   * cannot list its inventory offline reports an empty list.
+   */
+  inventory?(cfg: ConnectionConfig): SignalInfo[];
 
   /**
    * Connect to one device. Rejects with a transient {@link DeviceError} when the device is
@@ -131,8 +255,21 @@ export interface DeviceBackend {
 // and so the tests have something to talk to — and a backend you can run on a laptop is worth more
 // than one you can only run next to a PLC.
 
+/**
+ * The signals the simulator exposes — the ids it reads and the one it fails. A real backend derives
+ * this from config; the simulator hard-codes it so `sb/signals` and `sb/browse` have content.
+ */
+const SIM_SIGNALS: ReadonlyArray<{ id: string; name: string; type: string }> = [
+  { id: "temperature-1", name: "Ambient temperature", type: "REAL" },
+  { id: "pressure-1", name: "Line pressure", type: "REAL" },
+];
+
 export class SimBackend implements DeviceBackend {
   readonly kind = "sim";
+
+  inventory(_cfg: ConnectionConfig): SignalInfo[] {
+    return SIM_SIGNALS.map((s) => ({ id: s.id, name: s.name }));
+  }
 
   async connect(cfg: ConnectionConfig): Promise<DeviceSession> {
     if (!cfg.endpoint) {
@@ -144,7 +281,7 @@ export class SimBackend implements DeviceBackend {
   }
 }
 
-export class SimSession implements DeviceSession {
+export class SimSession extends BaseDeviceSession {
   private tick = 0;
   private closed = false;
 
@@ -174,6 +311,18 @@ export class SimSession implements DeviceSession {
   async writeSignal(signalId: string, value: unknown): Promise<void> {
     // eslint-disable-next-line no-console
     console.log(`sim: write accepted signal=${signalId} value=${JSON.stringify(value)}`);
+  }
+
+  /**
+   * A one-page browse of the simulator's inventory. A real backend pages a large address space and
+   * returns a `nextCursor`; the simulator has two signals, so the first page is the last page.
+   */
+  async browse(cursor: string | undefined, _max: number): Promise<BrowsePage> {
+    // A cursor means "the page after the last one" — the sim has nothing more.
+    if (cursor !== undefined) return { entries: [] };
+    return {
+      entries: SIM_SIGNALS.map((s) => ({ id: s.id, name: s.name, typeName: s.type })),
+    };
   }
 
   async close(): Promise<void> {

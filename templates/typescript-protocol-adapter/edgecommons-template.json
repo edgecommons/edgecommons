@@ -54,6 +54,12 @@
     "src/app.ts": [
       "COMPONENTNAME"
     ],
+    "src/commands.ts": [
+      "COMPONENTNAME"
+    ],
+    "src/metrics.ts": [
+      "COMPONENTNAME"
+    ],
     "src/main.ts": [
       "COMPONENTFULLNAME",
       "COMPONENTNAME"

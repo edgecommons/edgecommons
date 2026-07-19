@@ -3,7 +3,7 @@
   "id": "java/protocol-adapter",
   "language": "JAVA",
   "kind": "protocol-adapter",
-  "description": "Java protocol-adapter component (southbound device bridge) built on the edgecommons Java library and the southbound contract (docs/SOUTHBOUND.md).",
+  "description": "Java southbound protocol adapter: a DeviceSession/DeviceBackend seam with an in-process sim, connect to devices, publish SouthboundSignalUpdate, serve the sb/* command family + edge-console panels, and emit southbound_health.",
   "platforms": [
     "GREENGRASS",
     "HOST",
@@ -57,7 +57,28 @@
       "COMPONENTNAME",
       "PACKAGE"
     ],
+    "src/main/java/com/mbreissi/testcomponent/Device.java": [
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/Metrics.java": [
+      "COMPONENTNAME",
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/Commands.java": [
+      "COMPONENTNAME",
+      "PACKAGE"
+    ],
     "src/test/java/com/mbreissi/testcomponent/AppTest.java": [
+      "COMPONENTNAME",
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/DeviceTest.java": [
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/MetricsTest.java": [
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/CommandsTest.java": [
       "COMPONENTNAME",
       "PACKAGE"
     ],

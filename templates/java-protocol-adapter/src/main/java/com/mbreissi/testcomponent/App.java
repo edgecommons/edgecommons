@@ -3,83 +3,76 @@ package <<PACKAGE>>;
 import com.mbreissi.edgecommons.EdgeCommons;
 import com.mbreissi.edgecommons.EdgeCommonsBuilder;
 import com.mbreissi.edgecommons.EdgeCommonsInstance;
+import com.mbreissi.edgecommons.commands.CommandInbox;
 import com.mbreissi.edgecommons.config.ConfigManager;
 import com.mbreissi.edgecommons.config.ConfigurationChangeListener;
+import com.mbreissi.edgecommons.facades.DataFacade;
+import com.mbreissi.edgecommons.facades.EventsFacade;
+import com.mbreissi.edgecommons.facades.Severity;
+import com.mbreissi.edgecommons.facades.SignalUpdate;
 import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
-import com.mbreissi.edgecommons.messaging.Message;
-import com.mbreissi.edgecommons.messaging.MessagingClient;
-import com.mbreissi.edgecommons.metrics.Metric;
-import com.mbreissi.edgecommons.metrics.MetricBuilder;
 import com.mbreissi.edgecommons.metrics.MetricEmitter;
-import com.mbreissi.edgecommons.uns.UnsClass;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.time.Instant;
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Protocol-adapter scaffold built on the EdgeCommons Java library.
+ * {@code <<COMPONENTNAME>>} — a southbound protocol adapter.
  *
- * <p>This is a <b>southbound adapter</b>: it talks to field devices/servers over some protocol
- * (OPC UA, Modbus, EtherNet/IP, …) and republishes their values northbound on the EdgeCommons
- * messaging bus using the standard <b>southbound contract</b> (see {@code docs/SOUTHBOUND.md}):
- * the {@code SouthboundSignalUpdate} envelope and the {@code southbound_health} metric.
+ * <p>An <b>adapter</b> connects to devices, reads signals, and publishes them onto the UNS in the
+ * shape the rest of the fleet expects — so that a consumer can chart a Modbus register and an OPC UA
+ * node without knowing either protocol.
  *
- * <p><b>UNS data plane</b>: each signal update is published on a UNS {@code data} topic minted
- * per device instance — {@code ecv1/{device}/{component}/{instanceId}/data/{signalPath}} via
- * {@code gg.instance(instanceId).uns().topic(UnsClass.DATA, signalPath)} — and its envelope is
- * identity-stamped via {@code gg.instance(instanceId).newMessage(...)}. Identity is config-driven
- * (top-level {@code hierarchy} + {@code identity} blocks; the last hierarchy level is always the
- * resolved thing name). Never hand-write topic strings. Consumers subscribe to
- * {@code ecv1/+/+/+/data/#}.
+ * <pre>
+ *   connect -&gt; poll -&gt; publish SouthboundSignalUpdate -&gt; report health
+ *      ^                                                        |
+ *      +------------- reconnect with backoff &lt;-------------------+
+ * </pre>
  *
- * <p>The {@code state} heartbeat keepalive is <b>automatic</b> (library-owned, on / 5 s / local
- * by default) on {@code ecv1/{device}/{component}/main/state} — no heartbeat code here. What the
- * adapter <i>does</i> supply is the payload only it knows: <b>one connectivity entry per configured
- * device</b> ({@link #reportConnectivity}), which the library both pushes on that keepalive and
- * returns from the built-in {@code status} verb.
+ * <p>One worker per instance: an instance is one device, and its connection lifecycle is its own. That
+ * worker owns the (single-threaded) device session; every command that must touch it or serialize with
+ * the poll loop is routed through the worker's {@link Commands.DeviceControl} seam under a lock, and
+ * <i>confirmed</i>. The command surface itself lives in {@link Commands}.
  *
- * <p><b>Phase 5 (M9) note</b>: the southbound <i>command</i> family — write/read/control toward
- * the device — is not part of this scaffold yet. When you add such handlers, expect them to be
- * reworked onto UNS {@code cmd/sb/*} verbs on the component inbox
- * ({@code ecv1/{device}/{component}/{instance}/cmd/sb/write} etc.) when the library's Phase-5
- * command facade lands; keep them isolated so the retarget stays mechanical.
- *
- * <p>The framework gives you config, messaging, metrics, credentials, and lifecycle for free —
- * you write only the protocol code where the {@code TODO(adapter)} markers are.
+ * <h2>The contract you are implementing (docs/SOUTHBOUND.md)</h2>
+ * <ul>
+ *   <li>Publish {@code SouthboundSignalUpdate} on the {@code data} class, <b>via the {@code data()}
+ *       facade</b> — never hand-build the body and never hand-write the topic.</li>
+ *   <li><b>Quality on every sample</b>, normalized to {@code GOOD | BAD | UNCERTAIN}, with the native
+ *       code in {@code qualityRaw}.</li>
+ *   <li>Emit <b>{@code southbound_health}</b> (the exact §5 set — see {@link Metrics}), dimensioned by
+ *       instance, so an operator can see a link go down without reading logs.</li>
+ *   <li>Report <b>per-instance connectivity</b> ({@link #connectivityOf}).</li>
+ *   <li>Serve <b>read/write/browse/reconnect/pause commands</b> — and allow-list the writes.</li>
+ * </ul>
  */
 public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
 
     private static final Logger LOGGER = LogManager.getLogger(<<COMPONENTNAME>>.class);
 
-    /** Standard southbound message name + version (the contract; do not rename). */
-    private static final String SOUTHBOUND_MSG = "SouthboundSignalUpdate";
-    private static final String SOUTHBOUND_VER = "1.0";
-    /** Standard adapter health metric (the contract). */
-    private static final String HEALTH_METRIC = "southbound_health";
-    /** Protocol identifier emitted in body.device.adapter — set to your protocol. */
-    private static final String ADAPTER_KIND = "example";
+    /** How often the periodic metrics emit runs, in the poll loop (SOUTHBOUND.md §5). */
+    private static final long METRICS_INTERVAL_MS = 30_000L;
+    /** The {@code component.global.healthThresholds.staleSignalSecs} default (SOUTHBOUND.md §4/§5). */
+    private static final long DEFAULT_STALE_SIGNAL_SECS = 30L;
 
     private final EdgeCommons edgeCommons;
     private final ConfigManager config;
-    private final MessagingClient messaging;
     private final MetricEmitter metrics;
-
-    /**
-     * The live reachability of every configured device, keyed by instance id — the adapter's answer
-     * to "which of my devices are actually up?". Written by the instance workers, read on the
-     * heartbeat thread; hence concurrent, and hence a cached value rather than a live probe (see
-     * {@link #reportConnectivity}).
-     */
-    private final Map<String, InstanceConnectivity> deviceHealth = new ConcurrentHashMap<>();
+    private final List<DeviceConfig> devices = new ArrayList<>();
+    private final long staleSignalSecs;
 
     /** Blocks main() until the JVM is signalled; the library's SIGTERM/SIGINT hook drives shutdown. */
     private final CountDownLatch shutdownLatch = new CountDownLatch(1);
@@ -96,33 +89,72 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
                 .initialReady(false)
                 .build();
         config = edgeCommons.getConfigManager();
-        messaging = edgeCommons.getMessaging();
         metrics = edgeCommons.getMetrics();
         config.addConfigChangeListener(this);
-        defineHealthMetric();
 
-        // ONE provider, TWO surfaces: the library pushes this sample into the `state` keepalive's
-        // instances[] every tick AND returns it from the built-in `status` verb when pulled — so an
-        // operator asking "which devices are up?" and a console subscribed to state can never
-        // disagree. Sampled on the heartbeat thread: it must not block, so it reads the cached map
-        // the workers maintain and never touches the protocol.
-        edgeCommons.setInstanceConnectivityProvider(() -> List.copyOf(deviceHealth.values()));
+        this.staleSignalSecs = readStaleSignalSecs(config);
+
+        for (String instanceId : config.getInstanceIds()) {
+            try {
+                devices.add(DeviceConfig.from(config.getInstanceConfig(instanceId)));
+            } catch (RuntimeException e) {
+                LOGGER.warn("skipping malformed device `{}`: {}", instanceId, e.toString());
+            }
+        }
+        if (devices.isEmpty()) {
+            throw new IllegalStateException("no valid devices in component.instances[]");
+        }
     }
 
     public void run() {
-        LOGGER.info("Starting adapter '{}' (thing={}, UNS identity path={})",
-                "<<COMPONENTFULLNAME>>", config.getThingName(),
-                edgeCommons.getUns().identity().getPath());
+        LOGGER.info("Starting adapter '{}' (thing={})", "<<COMPONENTFULLNAME>>", config.getThingName());
 
-        // One worker per configured instance (component.instances[].id). Each instance is one
-        // device/endpoint with its own connection + subscriptions (see the southbound config convention).
-        for (String instanceId : config.getInstanceIds()) {
-            // Report the device BEFORE its worker connects: a configured device that is not yet up
-            // must still appear (connected=false), or an operator cannot tell "still connecting"
-            // from "not configured at all".
-            reportConnectivity(instanceId, "", false, "CONNECTING", null);
-            Thread worker = new Thread(() -> runInstance(instanceId), "adapter-" + instanceId);
-            worker.setDaemon(true);
+        // Each device's health, shared with its worker and read by the connectivity provider.
+        List<Reported> reported = new ArrayList<>();
+        // The per-device handles the command surface routes on.
+        List<Commands.DeviceHandle> handles = new ArrayList<>();
+        List<DeviceWorker> workers = new ArrayList<>();
+
+        for (DeviceConfig device : devices) {
+            // Per-instance facades: `data()` mints this device's topics and stamps its identity.
+            EdgeCommonsInstance instance = edgeCommons.instance(device.id());
+
+            Health health = new Health();
+            DeviceMetrics dm = new DeviceMetrics(metrics, config, device.id(), health, staleSignalSecs);
+            // Pre-define the metric set so it is fixed and discoverable at startup.
+            dm.defineAll();
+
+            Device.DeviceBackend backend = Device.backendFor(device.adapter());
+            // The signal inventory `sb/signals` shows — a config/backend view, no device round-trip.
+            List<Device.SignalInfo> signals =
+                    backend != null ? backend.inventory(device.connection()) : List.of();
+
+            DeviceWorker worker = new DeviceWorker(device, instance.data(), instance.events(), dm, health);
+            reported.add(new Reported(device, health));
+            handles.add(new Commands.DeviceHandle(device, worker, health, dm, signals));
+            workers.add(worker);
+        }
+
+        // ONE provider, TWO surfaces: the library pushes this sample into the `state` keepalive's
+        // instances[] every tick, and returns the very same sample from the built-in `status` verb.
+        // Whoever watches and whoever asks cannot get different answers.
+        edgeCommons.setInstanceConnectivityProvider(() -> {
+            List<InstanceConnectivity> out = new ArrayList<>();
+            for (Reported r : reported) {
+                out.add(connectivityOf(r.cfg(), r.health()));
+            }
+            return out;
+        });
+
+        // The southbound command surface (`Commands`). `ping` / `reload-config` / `get-configuration` /
+        // `status` are already live — the library registered them before we ran.
+        CommandInbox commands = edgeCommons.getCommands();
+        if (commands != null) {
+            Commands.registerAll(commands, handles);
+        }
+
+        // Start each device's worker (connect / poll / publish / reconnect).
+        for (DeviceWorker worker : workers) {
             worker.start();
         }
 
@@ -136,157 +168,585 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        LOGGER.info("Adapter stopped");
-    }
-
-    /** Drives a single device instance: connect, subscribe/poll, publish updates. */
-    private void runInstance(String instanceId) {
-        JsonObject instance = config.getInstanceConfig(instanceId);
-        JsonObject connection = instance.has("connection") ? instance.getAsJsonObject("connection") : new JsonObject();
-        String endpoint = connection.has("endpoint") ? connection.get("endpoint").getAsString() : "";
-        LOGGER.info("[{}] connecting to {}", instanceId, endpoint);
-
-        try {
-            // TODO(adapter): open the protocol connection to `endpoint` (with retry/backoff), then
-            // establish subscriptions / start polling per instance.subscriptions[]. On each value
-            // received, call publishUpdate(...). Emit connectionState=1 once connected.
-            emitHealth(instanceId, /*connected*/ true, /*pollLatencyMs*/ 0, /*readErrors*/ 0, /*staleSignals*/ 0);
-            reportConnectivity(instanceId, endpoint, true, "ONLINE", null);
-
-            // --- placeholder so the scaffold runs end-to-end; replace with real device events ---
-            while (true) {
-                JsonObject address = new JsonObject();          // protocol-native identity (opaque to consumers)
-                address.addProperty("example", "sensor-1");
-                publishUpdate(instanceId, endpoint, "example/sensor-1", "Sensor 1", address,
-                              42.0, "GOOD", "Good", Instant.now().toString());
-                Thread.sleep(1000);
-            }
-            // --- end placeholder ---
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } catch (Exception e) {
-            LOGGER.error("[{}] adapter error", instanceId, e);
-            emitHealth(instanceId, false, 0, 1, 0);
-            // The device stays in the report — as DOWN. Removing it would make a broken device
-            // indistinguishable from one nobody configured.
-            reportConnectivity(instanceId, endpoint, false, "BACKOFF", e.toString());
+        for (DeviceWorker worker : workers) {
+            worker.stop();
         }
-    }
-
-    /**
-     * Records one device's live reachability for both connectivity surfaces (the {@code state}
-     * keepalive's {@code instances[]} and the {@code status} verb). Call it wherever this adapter
-     * already <i>knows</i> — connected, connection lost, retrying, administratively disabled.
-     *
-     * <p>{@code connected} is the one <b>normalized</b> field and is always present, so any console
-     * can render a health dot for any adapter without knowing this protocol. {@code state} is this
-     * adapter's <i>own</i> vocabulary for what a boolean cannot say — {@code CONNECTING} and
-     * {@code BACKOFF} are both "not connected", but only one of them means an operator should look
-     * at the device. {@code attributes} is an open bag for protocol-specific facts (a session id,
-     * a firmware revision, the last error code): it is deliberately unconstrained, so what only this
-     * adapter understands can never destabilize the fields every consumer relies on.
-     *
-     * @param instanceId the device's {@code component.instances[].id}
-     * @param endpoint   the device endpoint — the human {@code detail} when up
-     * @param connected  the normalized reachability flag
-     * @param state      this adapter's own condition token ({@code CONNECTING}/{@code ONLINE}/…)
-     * @param detail     why it is down, or {@code null} to use the endpoint
-     */
-    private void reportConnectivity(String instanceId, String endpoint, boolean connected,
-                                    String state, String detail) {
-        deviceHealth.put(instanceId, connectivity(instanceId, endpoint, connected, state, detail));
-    }
-
-    /**
-     * One device's connectivity entry — the pure half of {@link #reportConnectivity}, so the
-     * adapter's report can be asserted without a device or a live runtime.
-     *
-     * @param instanceId the device's {@code component.instances[].id}
-     * @param endpoint   the device endpoint — the human {@code detail} when up
-     * @param connected  the normalized reachability flag
-     * @param state      this adapter's own condition token ({@code CONNECTING}/{@code ONLINE}/…)
-     * @param detail     why it is down, or {@code null} to use the endpoint
-     * @return the entry the {@code state} keepalive and the {@code status} verb both report
-     */
-    static InstanceConnectivity connectivity(String instanceId, String endpoint, boolean connected,
-                                             String state, String detail) {
-        return InstanceConnectivity.of(instanceId, connected, detail != null ? detail : endpoint)
-                .withState(state)
-                .withAttributes(Map.of("adapter", new JsonPrimitive(ADAPTER_KIND)));
-    }
-
-    /**
-     * Publish one signal update using the standard SouthboundSignalUpdate envelope (docs/SOUTHBOUND.md §2).
-     * Quality is normalized to GOOD|BAD|UNCERTAIN with the native code retained in qualityRaw.
-     */
-    private void publishUpdate(String instanceId, String endpoint, String signalId, String signalName,
-                               JsonObject address, Object value, String quality, String qualityRaw, String sourceTs) {
-        JsonObject device = new JsonObject();
-        device.addProperty("adapter", ADAPTER_KIND);
-        device.addProperty("instance", instanceId);
-        device.addProperty("endpoint", endpoint);
-
-        JsonObject signal = new JsonObject();
-        signal.addProperty("id", signalId);
-        signal.addProperty("name", signalName);
-        signal.add("address", address);
-
-        JsonObject sample = new JsonObject();
-        sample.addProperty("value", String.valueOf(value));   // TODO(adapter): preserve native JSON type
-        sample.addProperty("quality", quality);
-        sample.addProperty("qualityRaw", qualityRaw);
-        sample.addProperty("sourceTs", sourceTs);
-        JsonArray samples = new JsonArray();
-        samples.add(sample);
-
-        JsonObject body = new JsonObject();
-        body.add("device", device);
-        body.add("signal", signal);
-        body.add("samples", samples);
-
-        // The instance handle pre-binds the component.instances[].id token into both the topic
-        // builder and the message builder, so topic and envelope carry the same identity.
-        EdgeCommonsInstance instance = edgeCommons.instance(instanceId);
-
-        // newMessage(...) stamps the envelope's `identity` block (hierarchy + device + component
-        // + this instance) automatically from config — no manual thing/tag wiring.
-        Message msg = instance.newMessage(SOUTHBOUND_MSG, SOUTHBOUND_VER)
-                .withPayload(body)
-                .build();
-
-        // UNS data topic: ecv1/{device}/{component}/{instanceId}/data/{signalPath}. The signal id
-        // is used directly as the channel path here; its tokens must satisfy the UNS token rule
-        // (no '/'-traversal, '+', '#', '\', control chars — the config sanitizer's blacklist).
-        // Phase 5 (D-U15) will formalize sanitized data/{channel} with the raw id in the body.
-        String topic = instance.uns().topic(UnsClass.DATA, signalId);
-        messaging.publish(topic, msg);
-    }
-
-    private void defineHealthMetric() {
-        Metric health = MetricBuilder.create(HEALTH_METRIC)
-                .withConfig(config)
-                .addMeasure("connectionState", "Count", 1)
-                .addMeasure("publishLatencyMs", "Milliseconds", 1)
-                .addMeasure("pollLatencyMs", "Milliseconds", 1)
-                .addMeasure("readErrors", "Count", 60)
-                .addMeasure("staleSignals", "Count", 60)
-                .build();
-        metrics.defineMetric(health);
-    }
-
-    private void emitHealth(String instanceId, boolean connected, long pollLatencyMs, int readErrors, int staleSignals) {
-        Map<String, Float> m = new HashMap<>();
-        m.put("connectionState", connected ? 1.0f : 0.0f);
-        m.put("pollLatencyMs", (float) pollLatencyMs);
-        m.put("readErrors", (float) readErrors);
-        m.put("staleSignals", (float) staleSignals);
-        metrics.emitMetric(HEALTH_METRIC, m);
+        metrics.flushMetrics();
+        LOGGER.info("Adapter stopped");
     }
 
     @Override
     public boolean onConfigurationChanged() {
-        // TODO(adapter): re-read instance/subscription config and apply (e.g. add/remove subscriptions).
         LOGGER.info("Configuration changed");
         return true;
+    }
+
+    /**
+     * One device's connectivity sample, for the instance-connectivity provider.
+     *
+     * <ul>
+     *   <li>{@code connected} is the <b>normalized</b> flag — always present.</li>
+     *   <li>{@code state} is <i>this adapter's</i> vocabulary ({@link LinkState}) — {@code PAUSED} when
+     *       paused and up, else the raw link token (so a break while paused still reads {@code BACKOFF},
+     *       {@code connected} staying truthful).</li>
+     *   <li>{@code attributes} is the <b>open</b> bag: domain data only this adapter understands.</li>
+     * </ul>
+     */
+    static InstanceConnectivity connectivityOf(DeviceConfig cfg, Health health) {
+        LinkState link = health.link();
+        boolean connected = link == LinkState.ONLINE;
+        boolean paused = health.isPaused();
+        String state = paused && connected ? "PAUSED" : link.asString();
+
+        Map<String, JsonElement> attributes = new LinkedHashMap<>();
+        attributes.put("adapter", new JsonPrimitive(cfg.adapter()));
+        attributes.put("paused", new JsonPrimitive(paused));
+
+        return InstanceConnectivity.of(cfg.id(), connected, cfg.connection().endpoint())
+                .withState(state)
+                .withAttributes(attributes);
+    }
+
+    /**
+     * Flip the paused flag, returning whether the state actually changed (idempotent — pausing an
+     * already-paused device is not an error). The event is emitted by the caller.
+     */
+    static boolean setPaused(Health health, boolean paused) {
+        return health.pausedFlag().getAndSet(paused) != paused;
+    }
+
+    private static long readStaleSignalSecs(ConfigManager config) {
+        try {
+            JsonObject global = config.getGlobalConfig();
+            if (global != null && global.has("healthThresholds")
+                    && global.get("healthThresholds").isJsonObject()) {
+                JsonObject h = global.getAsJsonObject("healthThresholds");
+                if (h.has("staleSignalSecs") && h.get("staleSignalSecs").isJsonPrimitive()) {
+                    return h.get("staleSignalSecs").getAsLong();
+                }
+            }
+        } catch (RuntimeException e) {
+            LOGGER.debug("staleSignalSecs lookup failed, defaulting: {}", e.toString());
+        }
+        return DEFAULT_STALE_SIGNAL_SECS;
+    }
+
+    /** A configured device paired with its live health, for the connectivity provider. */
+    private record Reported(DeviceConfig cfg, Health health) {
+    }
+
+    // =============================================================================================
+    // The device worker: one device's lifecycle, and the control seam behind the sb/* verbs
+    // =============================================================================================
+
+    /**
+     * One device's lifecycle: connect, poll, publish, reconnect — and the {@link Commands.DeviceControl}
+     * seam the command surface routes on. The worker owns the (single-threaded) session; a
+     * {@link ReentrantLock} serializes the poll loop with every session-touching command, so a write can
+     * never race a read on the same connection — most device protocols are one request/response channel.
+     *
+     * <p><b>Java-idiom note:</b> the Rust reference gives each device a task plus a {@code mpsc} control
+     * channel because its session is not {@code Sync}. Java threads + a per-device lock are the
+     * idiomatic equivalent: the observable command contract (confirmed reads/writes, reconnect
+     * drop+reestablish, repoll, pause gating) is identical.
+     */
+    final class DeviceWorker implements Commands.DeviceControl {
+
+        private final DeviceConfig cfg;
+        private final DataFacade data;
+        private final EventsFacade events;
+        private final DeviceMetrics dm;
+        private final Health health;
+        private final Device.DeviceBackend backend;
+        private final Backoff backoff = new Backoff(1_000, 60_000);
+
+        /** Guards {@link #session} and every session I/O — poll and commands never overlap. */
+        private final ReentrantLock lock = new ReentrantLock();
+        /** The live session, or null while down. Guarded by {@link #lock} for I/O. */
+        private Device.DeviceSession session;
+
+        private volatile boolean running = true;
+        private Thread thread;
+        private long lastMetricsEmit = System.nanoTime();
+
+        DeviceWorker(DeviceConfig cfg, DataFacade data, EventsFacade events, DeviceMetrics dm,
+                     Health health) {
+            this.cfg = cfg;
+            this.data = data;
+            this.events = events;
+            this.dm = dm;
+            this.health = health;
+            this.backend = Device.backendFor(cfg.adapter());
+        }
+
+        void start() {
+            if (backend == null) {
+                LOGGER.error("[{}] unknown adapter '{}' - worker not started", cfg.id(), cfg.adapter());
+                return;
+            }
+            thread = new Thread(this::loop, "adapter-" + cfg.id());
+            thread.setDaemon(true);
+            thread.start();
+        }
+
+        void stop() {
+            running = false;
+            if (thread != null) {
+                thread.interrupt();
+            }
+        }
+
+        /** The supervisor loop: (re)connect with backoff, then poll until the link breaks. */
+        private void loop() {
+            int attempt = 0;
+            while (running) {
+                lock.lock();
+                try {
+                    if (session == null) {
+                        session = tryConnect(attempt);
+                    }
+                } finally {
+                    lock.unlock();
+                }
+                if (session == null) {
+                    attempt++;
+                    sleepMs(backoff.delayMs(attempt, rand01()));
+                    continue;
+                }
+                attempt = 0;
+
+                // Poll on the interval until the link breaks (or shutdown / a reconnect drops it).
+                while (running && session != null) {
+                    if (!health.isPaused()) {
+                        lock.lock();
+                        try {
+                            if (session != null) {
+                                pollOnce(session);
+                            }
+                        } catch (Device.DeviceException e) {
+                            LOGGER.warn("[{}] read failed; reconnecting: {}", cfg.id(), e.toString());
+                            health.incrementReadErrors();
+                            dropSession();
+                        } finally {
+                            lock.unlock();
+                        }
+                    }
+                    maybeEmitPeriodic();
+                    if (session == null) {
+                        break;
+                    }
+                    sleepMs(cfg.pollIntervalMs());
+                }
+
+                if (session == null && running) {
+                    // The link dropped underneath us.
+                    health.setLink(LinkState.BACKOFF);
+                    health.incrementReconnects();
+                    dm.onConnectionDropped(System.nanoTime());
+                    dm.emitNow();
+                    JsonObject ctx = new JsonObject();
+                    ctx.addProperty("instance", cfg.id());
+                    events.raiseAlarm("device-unreachable",
+                            "lost the link to " + cfg.connection().endpoint(), ctx);
+                }
+            }
+            closeSession();
+        }
+
+        /** One connect attempt, updating health/metrics/events. Returns the session, or null on failure. */
+        private Device.DeviceSession tryConnect(int attempt) {
+            dm.onConnectAttempt();
+            health.setLink(attempt == 0 ? LinkState.CONNECTING : LinkState.BACKOFF);
+            long now = System.nanoTime();
+            try {
+                Device.DeviceSession s = backend.connect(cfg.connection());
+                dm.onConnected(now);
+                health.setLink(LinkState.ONLINE);
+                dm.emitNow();
+                JsonObject ctx = new JsonObject();
+                ctx.addProperty("instance", cfg.id());
+                ctx.addProperty("adapter", backend.kind());
+                events.emit(Severity.INFO, "device-connected",
+                        "connected to " + cfg.connection().endpoint(), ctx);
+                events.clearAlarm("device-unreachable", null);
+                return s;
+            } catch (Device.DeviceException e) {
+                dm.onConnectFailure();
+                health.setLink(LinkState.BACKOFF);
+                LOGGER.warn("[{}] connect failed (permanent={}): {}", cfg.id(), !e.isTransient(),
+                        e.toString());
+                return null;
+            }
+        }
+
+        /** One poll: read, publish each reading, record latencies + staleness. */
+        private long pollOnce(Device.DeviceSession s) throws Device.DeviceException {
+            long started = System.nanoTime();
+            List<Device.Reading> readings = s.readSignals();
+            health.setPollLatencyMs(msSince(started));
+
+            long publishStarted = System.nanoTime();
+            long published = 0;
+            for (Device.Reading r : readings) {
+                com.mbreissi.edgecommons.facades.Quality quality = switch (r.quality()) {
+                    case GOOD -> com.mbreissi.edgecommons.facades.Quality.GOOD;
+                    case BAD -> com.mbreissi.edgecommons.facades.Quality.BAD;
+                    case UNCERTAIN -> com.mbreissi.edgecommons.facades.Quality.UNCERTAIN;
+                };
+                SignalUpdate.Sample sample =
+                        new SignalUpdate.Sample(r.value(), quality, r.qualityRaw(), null, null);
+                SignalUpdate.Builder b = data.signal(r.signalId());
+                if (r.name() != null) {
+                    b = b.name(r.name());
+                }
+                b.device(cfg.adapter(), cfg.id(), cfg.connection().endpoint()).addSample(sample);
+                try {
+                    b.publish();
+                    published++;
+                    // Feed the staleness tracker — a signal that keeps updating is not stale.
+                    dm.onSignalUpdate(r.signalId(), System.nanoTime());
+                } catch (RuntimeException e) {
+                    LOGGER.warn("[{}] publish failed for {}: {}", cfg.id(), r.signalId(), e.toString());
+                }
+            }
+            health.setPublishLatencyMs(msSince(publishStarted));
+            return published;
+        }
+
+        private void maybeEmitPeriodic() {
+            if (msSince(lastMetricsEmit) >= METRICS_INTERVAL_MS) {
+                dm.emitPeriodic();
+                lastMetricsEmit = System.nanoTime();
+            }
+        }
+
+        /** Close and forget the current session (caller holds the lock). */
+        private void dropSession() {
+            if (session != null) {
+                session.close();
+                session = null;
+            }
+        }
+
+        private void closeSession() {
+            lock.lock();
+            try {
+                dropSession();
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        // ---- Commands.DeviceControl (session-touching verbs, serialized under the lock) -----------
+
+        @Override
+        public List<Device.Reading> readNow(List<String> ids)
+                throws Commands.ReadFailedException, Commands.DeviceUnavailableException {
+            lock.lock();
+            try {
+                if (session == null) {
+                    throw Commands.DeviceUnavailableException.gone();
+                }
+                return session.readNamed(ids);
+            } catch (Device.DeviceException e) {
+                throw new Commands.ReadFailedException(e.getMessage());
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        @Override
+        public void write(String signalId, JsonElement value)
+                throws Commands.WriteFailedException, Commands.DeviceUnavailableException {
+            lock.lock();
+            try {
+                if (session == null) {
+                    throw Commands.DeviceUnavailableException.gone();
+                }
+                session.writeSignal(signalId, value);
+            } catch (Device.DeviceException e) {
+                throw new Commands.WriteFailedException(e.getMessage());
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        @Override
+        public Device.BrowsePage browse(String cursor, int max)
+                throws Device.BrowseException, Commands.DeviceUnavailableException {
+            lock.lock();
+            try {
+                if (session == null) {
+                    throw Device.BrowseException.failed("device is disconnected");
+                }
+                return session.browse(cursor, max);
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        @Override
+        public boolean pause() {
+            boolean changed = setPaused(health, true);
+            if (changed) {
+                JsonObject ctx = new JsonObject();
+                ctx.addProperty("instance", cfg.id());
+                events.emit(Severity.WARNING, "adapter-paused", "telemetry production paused", ctx);
+            }
+            return changed;
+        }
+
+        @Override
+        public boolean resume() {
+            boolean changed = setPaused(health, false);
+            if (changed) {
+                JsonObject ctx = new JsonObject();
+                ctx.addProperty("instance", cfg.id());
+                events.emit(Severity.INFO, "adapter-resumed", "telemetry production resumed", ctx);
+            }
+            return changed;
+        }
+
+        @Override
+        public void reconnect() throws Commands.ReconnectFailedException,
+                Commands.DeviceUnavailableException {
+            lock.lock();
+            try {
+                dropSession();
+                // One immediate, confirmed attempt. On failure the supervisor loop keeps retrying.
+                dm.onConnectAttempt();
+                long now = System.nanoTime();
+                try {
+                    Device.DeviceSession s = backend.connect(cfg.connection());
+                    session = s;
+                    dm.onConnected(now);
+                    health.setLink(LinkState.ONLINE);
+                    dm.emitNow();
+                    events.clearAlarm("device-unreachable", null);
+                } catch (Device.DeviceException e) {
+                    dm.onConnectFailure();
+                    health.setLink(LinkState.BACKOFF);
+                    throw new Commands.ReconnectFailedException(e.getMessage());
+                }
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        @Override
+        public long repoll() throws Commands.DeviceUnavailableException {
+            lock.lock();
+            try {
+                if (session == null) {
+                    throw new Commands.DeviceUnavailableException("device is disconnected");
+                }
+                try {
+                    return pollOnce(session);
+                } catch (Device.DeviceException e) {
+                    health.incrementReadErrors();
+                    dropSession();
+                    throw new Commands.DeviceUnavailableException("link error");
+                }
+            } finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    private static long msSince(long startedNanos) {
+        return Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
+    }
+
+    private static void sleepMs(long ms) {
+        try {
+            Thread.sleep(Math.max(0L, ms));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static double rand01() {
+        return Math.random();
+    }
+}
+
+// =================================================================================================
+// Shared per-device state (top-level package-private — used by Commands and Metrics too)
+// =================================================================================================
+
+/**
+ * One device == one entry of {@code component.instances[]}.
+ *
+ * @param id             the instance id — the {@code {instance}} token of this device's UNS topics
+ * @param adapter        which backend to use (matches {@link Device.DeviceBackend#kind()})
+ * @param connection     how to reach the device
+ * @param pollIntervalMs how often to read, in milliseconds
+ * @param writes         the write allow-list (empty means read-only, the correct default)
+ */
+record DeviceConfig(String id, String adapter, Device.ConnectionConfig connection, long pollIntervalMs,
+                    Writes writes) {
+
+    static DeviceConfig from(JsonObject instance) {
+        String id = instance.get("id").getAsString();
+        String adapter = instance.has("adapter") && instance.get("adapter").isJsonPrimitive()
+                ? instance.get("adapter").getAsString() : "sim";
+        Device.ConnectionConfig connection = Device.ConnectionConfig.from(
+                instance.has("connection") ? instance.getAsJsonObject("connection") : null);
+        long pollIntervalMs = instance.has("pollIntervalMs") && instance.get("pollIntervalMs").isJsonPrimitive()
+                ? instance.get("pollIntervalMs").getAsLong() : 5_000L;
+        Writes writes = Writes.from(
+                instance.has("writes") ? instance.getAsJsonObject("writes") : null);
+        return new DeviceConfig(id, adapter, connection, pollIntervalMs, writes);
+    }
+}
+
+/**
+ * The write allow-list. Writes are permitted <b>only</b> by stable {@code signal.id}; an empty list
+ * means the adapter is read-only, which is the correct default for anything touching a control system.
+ */
+record Writes(List<String> allow) {
+
+    static Writes from(JsonObject writes) {
+        List<String> allow = new ArrayList<>();
+        if (writes != null && writes.has("allow") && writes.get("allow").isJsonArray()) {
+            JsonArray a = writes.getAsJsonArray("allow");
+            for (JsonElement e : a) {
+                if (e.isJsonPrimitive()) {
+                    allow.add(e.getAsString());
+                }
+            }
+        }
+        return new Writes(allow);
+    }
+
+    boolean permits(String signalId) {
+        return allow.contains(signalId);
+    }
+}
+
+/**
+ * This adapter's <b>own vocabulary</b> for a link's condition — what it reports as
+ * {@code InstanceConnectivity.state}. A boolean cannot tell "still trying" from "backing off after a
+ * failure"; an operator needs to, so the richer token exists alongside the normalized flag.
+ */
+enum LinkState {
+    /** Connecting for the first time; nothing has failed yet. */
+    CONNECTING(0),
+    /** The session is up and being polled. */
+    ONLINE(1),
+    /** The link failed; reconnecting with backoff. */
+    BACKOFF(2);
+
+    private final int code;
+
+    LinkState(int code) {
+        this.code = code;
+    }
+
+    int code() {
+        return code;
+    }
+
+    String asString() {
+        return name();
+    }
+
+    static LinkState fromCode(int code) {
+        return switch (code) {
+            case 1 -> ONLINE;
+            case 2 -> BACKOFF;
+            default -> CONNECTING;
+        };
+    }
+}
+
+/**
+ * The shared per-device state the metrics emitter reads and the connectivity provider renders. The
+ * gauges ({@code connectionState}, latencies) and the interval counters ({@code readErrors},
+ * {@code reconnects}) feed {@code southbound_health} ({@link Metrics}); {@code paused} and {@code link}
+ * feed the connectivity token and {@code sb/status}. One source, several surfaces — so a health dot, a
+ * metric, and a status reply can never disagree.
+ */
+final class Health {
+
+    private final AtomicLong connectionState = new AtomicLong();
+    private final AtomicInteger link = new AtomicInteger(LinkState.CONNECTING.code());
+    private final AtomicBoolean paused = new AtomicBoolean();
+    private final AtomicLong pollLatencyMs = new AtomicLong();
+    private final AtomicLong publishLatencyMs = new AtomicLong();
+    private final AtomicLong readErrors = new AtomicLong();
+    private final AtomicLong reconnects = new AtomicLong();
+
+    /**
+     * Record the link's condition. The metric's boolean and the reported state token move
+     * <b>together</b>, so the health dot and the label a console shows can never disagree.
+     */
+    void setLink(LinkState state) {
+        link.set(state.code());
+        connectionState.set(state == LinkState.ONLINE ? 1 : 0);
+    }
+
+    LinkState link() {
+        return LinkState.fromCode(link.get());
+    }
+
+    boolean isPaused() {
+        return paused.get();
+    }
+
+    AtomicBoolean pausedFlag() {
+        return paused;
+    }
+
+    long connectionState() {
+        return connectionState.get();
+    }
+
+    long pollLatencyMs() {
+        return pollLatencyMs.get();
+    }
+
+    long publishLatencyMs() {
+        return publishLatencyMs.get();
+    }
+
+    void setPollLatencyMs(long v) {
+        pollLatencyMs.set(v);
+    }
+
+    void setPublishLatencyMs(long v) {
+        publishLatencyMs.set(v);
+    }
+
+    void incrementReadErrors() {
+        readErrors.incrementAndGet();
+    }
+
+    void incrementReconnects() {
+        reconnects.incrementAndGet();
+    }
+
+    /** Read-and-reset the read-error interval counter (the {@code southbound_health} emit convention). */
+    long takeReadErrors() {
+        return readErrors.getAndSet(0);
+    }
+
+    /** Read-and-reset the reconnect interval counter. */
+    long takeReconnects() {
+        return reconnects.getAndSet(0);
+    }
+}
+
+/**
+ * Reconnect backoff. Exponential with full jitter and a cap — so a site whose PLC reboots does not get
+ * every adapter in the plant reconnecting in lockstep on the same second.
+ */
+record Backoff(long baseMs, long maxMs) {
+
+    long delayMs(int attempt, double rand01) {
+        long exp = baseMs << Math.min(attempt, 20);
+        long cap = Math.min(exp, maxMs);
+        double r = Math.max(0.0, Math.min(1.0, rand01));
+        return (long) (r * cap);
     }
 }
