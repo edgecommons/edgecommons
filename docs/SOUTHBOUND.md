@@ -192,9 +192,12 @@ against a browsed address space). For the command surface (§2.2), a Modbus `<si
 > `ecv1/{device}/{component}/{instance}/cmd/sb/{verb}` and a component/fleet-scoped command to
 > `ecv1/{device}/{component}/cmd/sb/{verb}` (no instance token). Of the verbs below, only **`sb/status`**
 > is universal — every southbound adapter implements it; `sb/browse` / `sb/read` / `sb/write` /
-> `sb/subscribe-preview` are **signal-adapter conventions**, and `writes.allow[]` (D‑U16) stays a
-> convention for adapters that implement `sb/write`. Component authors may add domain verbs (e.g. the
-> camera adapter's `sb/capture`). The shipping adapters still expose their **legacy per-instance control
+> `sb/signals` / `sb/subscribe-preview` are **signal-adapter conventions**, and `writes.allow[]`
+> (D‑U16) stays a convention for adapters that implement `sb/write`. The **lifecycle-control verbs**
+> `sb/pause` / `sb/resume` / `reconnect` / `repoll` are the standard instance-control family the
+> `protocol-adapter` scaffold ships (§6): confirmed, idempotent where they toggle state, and refused
+> when nonsensical (`repoll` while paused is `BAD_ARGS`). Component authors may add domain verbs (e.g.
+> the camera adapter's `sb/capture`). The shipping adapters still expose their **legacy per-instance control
 > topics** — `write.topic` / `read.topic` and
 > `southbound/{ComponentName}/{InstanceId}/control/{status|subscriptions|nodes}` — pending migration to
 > the UNS command inbox; `opcua-adapter` has landed the **capabilities** (paged address-space browse,
@@ -222,6 +225,11 @@ present, else the component; the verbs are registered through the `commands()` f
 | `sb/read` | request/reply | on-demand read of arbitrary signals (ref-accepting) |
 | `sb/write` | request/reply, **confirmed** | write signals; the reply reports per-write success/failure, with an **optional read-back** |
 | `sb/subscribe-preview` | request/reply | evaluate a subscription spec without subscribing |
+| `sb/signals` | request/reply | the configured signal inventory (writable flag per entry), no device round-trip |
+| `sb/pause` | request/reply, **confirmed** | suspend polling/publishing for the instance; idempotent, reply `{ paused, changed }` |
+| `sb/resume` | request/reply, **confirmed** | resume a paused instance; idempotent, reply `{ paused, changed }` |
+| `reconnect` | request/reply, **confirmed** | drop and re-establish the device session; reply `{ connected }` |
+| `repoll` | request/reply, **confirmed** | trigger an immediate poll cycle (refused while paused); reply `{ polled }` |
 
 - **`<signal-ref>`** addresses a signal by its **stable** identity where possible — for OPC UA,
   `"namespaceUri": "<uri>"` (preferred, resolved to the current index) or a literal `"ns": <int>`,
@@ -327,6 +335,14 @@ code change is needed to route it.
 
 Optional: `reconnects`, `writeErrors`, `signalsSubscribed`. Emit on connect/disconnect transitions
 (`emitMetricNow`) and on a periodic sampler.
+
+Beyond `southbound_health`, the `protocol-adapter` scaffold ships the **operational-metric family
+pattern**: per-family `(total, interval)` counter pairs (the interval measure resets each emit),
+dimensioned by low-cardinality labels only (`instance`, `verb`, `result`). Two families are seeded —
+`{Component}Connection` (connect attempts/failures, reconnects, drops, connected duration) and
+`{Component}Command` (command requests/latency/errors) — and a signposted extension point invites the
+adapter author to add the protocol's own `Inventory` / `Poll` / `Publish` families (as the
+`modbus-adapter` and `ethernet-ip-adapter` reference adapters do).
 
 ## 6. The `protocol-adapter` scaffold template
 
