@@ -13,6 +13,9 @@
     "EDGECOMMONS_DEP"
   ],
   "substitutions": {
+    ".cargo/config.toml": [
+      "LIBRARY_LOCAL_PATH"
+    ],
     "build.sh": [
       "BINNAME",
       "COMPONENTFULLNAME"
@@ -85,5 +88,12 @@
       "k8s"
     ]
   },
-  "conditional": []
+  "conditional": [
+    {
+      "when": "dep:pinned-rev",
+      "paths": [
+        ".cargo"
+      ]
+    }
+  ]
 }

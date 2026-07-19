@@ -23,6 +23,15 @@ use crate::manifest::{Language, Platform};
 /// eventually be forgotten; this one cannot drift.
 pub const EDGECOMMONS_VERSION: &str = env!("EC_LIBRARY_VERSION");
 
+/// The edgecommons workspace commit this CLI was built from.
+///
+/// Resolved **at CLI build time** by `build.rs` (`git rev-parse HEAD`), so a `--dep-source
+/// pinned-rev` scaffold pins the library to the exact commit its embedded templates were
+/// authored against — the pinned rev by construction contains every facade the template calls.
+/// Empty on a non-git build (a source tarball); a `pinned-rev` scaffold without `--library-rev`
+/// is then an environment error rather than an emitted `rev = ""`.
+pub const EDGECOMMONS_REV: &str = env!("EC_LIBRARY_REV");
+
 const GIT_URL: &str = "https://github.com/edgecommons/edgecommons";
 
 /// Everything `component new` needs.
@@ -32,9 +41,22 @@ pub struct Inputs {
     pub description: String,
     pub author: String,
     pub platforms: Vec<Platform>,
+    /// An explicit crate/binary name override (`--bin-name`/`--crate-name`), pre-validated by
+    /// the caller. `None` derives the kebab name from the component's short name.
+    pub bin_name: Option<String>,
     pub dep_source: DepSource,
-    /// Path to a local edgecommons checkout, for `DepSource::Local`.
+    /// Path to a local edgecommons checkout. The **local sibling path** for both
+    /// `DepSource::Local` (the path dependency itself) and `DepSource::PinnedRev` (the
+    /// `.cargo/config.toml` `[patch]` override that points a pinned-rev build at your working
+    /// copy).
     pub library_path: Option<PathBuf>,
+    /// The git revision to pin to, for `DepSource::PinnedRev`. Resolved by the caller to
+    /// `--library-rev` else [`EDGECOMMONS_REV`]; `None`/empty falls back to `EDGECOMMONS_REV`.
+    pub library_rev: Option<String>,
+    /// The chosen SPDX license id (e.g. `"BUSL-1.1"`), or `None` for no license
+    /// (`--license none`, the default). Sets the `<<LICENSE>>` token and drives the LICENSE-file
+    /// writer.
+    pub license: Option<&'static str>,
     /// Greengrass-only; prompted and substituted only when the GREENGRASS pack is selected.
     pub bucket: String,
     pub region: String,
@@ -44,6 +66,9 @@ pub struct Inputs {
 pub enum DepSource {
     Local,
     Registry,
+    /// A git dependency pinned to an exact revision, plus a gitignored local-dev `[patch]`
+    /// override. What every shipping sibling component actually uses (Rust/Python only).
+    PinnedRev,
 }
 
 impl DepSource {
@@ -52,6 +77,7 @@ impl DepSource {
         match self {
             Self::Local => "local",
             Self::Registry => "registry",
+            Self::PinnedRev => "pinned-rev",
         }
     }
 }
@@ -62,25 +88,83 @@ pub fn short_name(full: &str) -> String {
     full.rsplit('.').next().unwrap_or(full).to_string()
 }
 
-/// A Cargo/binary-safe name: lowercased, non-alphanumerics collapsed to hyphens.
+/// The kebab-case crate/binary/artifact name derived from the component's short name
+/// (DESIGN-cli-scaffold-parity A.1). The **single source** of the `BINNAME` token, so every
+/// artifact that names the binary (Cargo.toml, `[[bin]]`, Dockerfile, recipe, supervisor conf,
+/// compose service) moves together.
+///
+/// The algorithm is case-boundary aware and acronym-aware, so `EthernetIpAdapter` becomes
+/// `ethernet-ip-adapter` and `OPCUAAdapter` becomes `opcua-adapter` — the ecosystem naming
+/// convention (repos and UNS tokens are kebab), which the previous collapse-non-alphanumerics
+/// rule violated (`ethernetipadapter`).
+///
+/// Classify each char as U(pper), L(ower), D(igit), or S(eparator, dropped). A word boundary
+/// sits between adjacent kept chars `c1,c2` when either:
+///   (a) `class(c1) ∈ {L,D}` and `class(c2) = U` — a lower/digit → Upper transition; or
+///   (b) `class(c1) = U`, `class(c2) = U`, and the char **after** `c2` is `L` — the end of an
+///       uppercase acronym run (`HTTPServer` → `http`|`server`).
+/// Separators are boundaries in their own right and are dropped. Words are lowercased and joined
+/// with `-`; an empty result becomes `"component"`.
 #[must_use]
 pub fn bin_name(short: &str) -> String {
-    let mut out = String::new();
-    let mut last_dash = true; // leading dashes are dropped
-    for ch in short.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            last_dash = false;
-        } else if !last_dash {
-            out.push('-');
-            last_dash = true;
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Class {
+        U,
+        L,
+        D,
+        S,
+    }
+    fn classify(c: char) -> Class {
+        if c.is_ascii_uppercase() {
+            Class::U
+        } else if c.is_ascii_lowercase() {
+            Class::L
+        } else if c.is_ascii_digit() {
+            Class::D
+        } else {
+            Class::S
         }
     }
-    let trimmed = out.trim_matches('-').to_string();
-    if trimmed.is_empty() {
+
+    let chars: Vec<char> = short.chars().collect();
+    let mut words: Vec<String> = Vec::new();
+    let mut word = String::new();
+    let mut prev: Option<Class> = None;
+
+    for (i, &c) in chars.iter().enumerate() {
+        let cls = classify(c);
+        if cls == Class::S {
+            // A separator ends the current word and is itself dropped.
+            if !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
+            prev = None;
+            continue;
+        }
+        // A boundary can only exist *between* two kept chars, so only when a word is in progress.
+        if let Some(p) = prev {
+            let next = chars.get(i + 1).map(|&n| classify(n));
+            let boundary = match (p, cls) {
+                (Class::L | Class::D, Class::U) => true,
+                (Class::U, Class::U) => next == Some(Class::L),
+                _ => false,
+            };
+            if boundary {
+                words.push(std::mem::take(&mut word));
+            }
+        }
+        word.push(c.to_ascii_lowercase());
+        prev = Some(cls);
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+
+    let joined = words.join("-");
+    if joined.is_empty() {
         "component".into()
     } else {
-        trimmed
+        joined
     }
 }
 
@@ -91,7 +175,12 @@ pub fn bin_name(short: &str) -> String {
 /// Python CLI ended up emitting a Cargo git-tag dependency that its own `upgrade` could not
 /// parse (DEF-5).
 #[must_use]
-pub fn library_dep(language: Language, source: DepSource, library_path: Option<&Path>) -> String {
+pub fn library_dep(
+    language: Language,
+    source: DepSource,
+    library_path: Option<&Path>,
+    rev: Option<&str>,
+) -> String {
     match (language, source) {
         (Language::Rust, DepSource::Registry) => {
             format!("git = \"{GIT_URL}\", tag = \"rust-lib/v{EDGECOMMONS_VERSION}\"")
@@ -103,12 +192,35 @@ pub fn library_dep(language: Language, source: DepSource, library_path: Option<&
         (Language::Python, DepSource::Registry) => format!(
             "edgecommons @ git+{GIT_URL}@python-lib/v{EDGECOMMONS_VERSION}#subdirectory=libs/python"
         ),
+        // pinned-rev: the exact workspace commit this CLI was built from (or `--library-rev`).
+        // Rust/Python only — Maven and npm cannot express a git dep on a monorepo subdirectory,
+        // so those are rejected in `component.rs` before generation ever calls this.
+        (Language::Rust, DepSource::PinnedRev) => {
+            format!("git = \"{GIT_URL}\", rev = \"{}\"", resolve_rev(rev))
+        }
+        (Language::Python, DepSource::PinnedRev) => {
+            format!(
+                "edgecommons @ git+{GIT_URL}@{}#subdirectory=libs/python",
+                resolve_rev(rev)
+            )
+        }
         (Language::Rust, DepSource::Local) => format!("path = \"{}\"", posix(library_path)),
         (Language::Typescript, DepSource::Local) => format!("file:{}", posix(library_path)),
         (Language::Python, DepSource::Local) => format!("-e {}", posix(library_path)),
         // Java resolves by version from the published Maven artifact, so its pom substitutes
-        // <<EDGECOMMONS_VERSION>> rather than a dependency *fragment*.
-        (Language::Java, _) => String::new(),
+        // <<EDGECOMMONS_VERSION>> rather than a dependency *fragment*. Java/TypeScript pinned-rev
+        // is rejected upstream, so this arm is never reached for it in practice.
+        (Language::Java | Language::Typescript, DepSource::PinnedRev) | (Language::Java, _) => {
+            String::new()
+        }
+    }
+}
+
+/// The rev to pin to: the explicit `--library-rev` when non-empty, else the CLI's build rev.
+fn resolve_rev(rev: Option<&str>) -> &str {
+    match rev {
+        Some(r) if !r.is_empty() => r,
+        _ => EDGECOMMONS_REV,
     }
 }
 
@@ -135,22 +247,43 @@ fn posix(p: Option<&Path>) -> String {
 pub fn tokens(language: Language, inputs: &Inputs) -> BTreeMap<String, String> {
     let short = short_name(&inputs.full_name);
     let package = inputs.full_name.to_lowercase();
+    // BINNAME is the single kebab crate/bin/artifact name; `--bin-name` overrides the derivation.
+    let binname = inputs.bin_name.clone().unwrap_or_else(|| bin_name(&short));
     let mut t = BTreeMap::new();
     t.insert("COMPONENTFULLNAME".into(), inputs.full_name.clone());
     t.insert("COMPONENTNAME".into(), short.clone());
     t.insert("PACKAGE".into(), package.clone());
     t.insert("PACKAGEPATH".into(), package.replace('.', "/"));
     t.insert("MAINCLASSNAME".into(), format!("{package}.{short}"));
-    t.insert("JARNAME".into(), short.clone());
-    t.insert("BINNAME".into(), bin_name(&short));
+    // JARNAME follows the Maven artifactId/finalName convention (lower-kebab) — it is BINNAME,
+    // not the PascalCase short name. The Java *class* stays PascalCase (MAINCLASSNAME) and the
+    // Greengrass component name stays reverse-DNS (COMPONENTFULLNAME).
+    t.insert("JARNAME".into(), binname.clone());
+    t.insert("BINNAME".into(), binname.clone());
+    // The Python module-dir name: BINNAME with `-` → `_` (`ethernet-ip-adapter` →
+    // `ethernet_ip_adapter`), the `modbus_adapter`-style importable package name.
+    t.insert("SNAKENAME".into(), binname.replace('-', "_"));
     t.insert("DESCRIPTION".into(), inputs.description.clone());
     t.insert("AUTHOR".into(), inputs.author.clone());
     t.insert("BUCKET".into(), inputs.bucket.clone());
     t.insert("REGION".into(), inputs.region.clone());
+    // The local sibling path the pinned-rev `.cargo/config.toml` `[patch]` override points at.
+    t.insert(
+        "LIBRARY_LOCAL_PATH".into(),
+        posix(inputs.library_path.as_deref()),
+    );
+    // The chosen SPDX id (or empty for `--license none`). Consumed by manifest license fields in
+    // a later template phase; the LICENSE *file* is written by `component.rs`.
+    t.insert("LICENSE".into(), inputs.license.unwrap_or("").into());
     t.insert("EDGECOMMONS_VERSION".into(), EDGECOMMONS_VERSION.into());
     t.insert(
         "EDGECOMMONS_DEP".into(),
-        library_dep(language, inputs.dep_source, inputs.library_path.as_deref()),
+        library_dep(
+            language,
+            inputs.dep_source,
+            inputs.library_path.as_deref(),
+            inputs.library_rev.as_deref(),
+        ),
     );
     t
 }
@@ -398,8 +531,11 @@ mod tests {
             description: "A test component".into(),
             author: "Test Author".into(),
             platforms,
+            bin_name: None,
             dep_source: dep,
             library_path: Some(PathBuf::from("/repo/libs/rust")),
+            library_rev: None,
+            license: None,
             bucket: "my-bucket".into(),
             region: "us-east-1".into(),
         }
@@ -425,7 +561,7 @@ mod tests {
 
     #[test]
     fn registry_dep_pins_the_real_current_version() {
-        let dep = library_dep(Language::Rust, DepSource::Registry, None);
+        let dep = library_dep(Language::Rust, DepSource::Registry, None, None);
         assert!(
             dep.contains(&format!("rust-lib/v{EDGECOMMONS_VERSION}")),
             "{dep}"
@@ -442,21 +578,67 @@ mod tests {
             Language::Rust,
             DepSource::Local,
             Some(Path::new("C:\\repo\\libs\\rust")),
+            None,
         );
         assert_eq!(dep, "path = \"C:/repo/libs/rust\"");
         let ts = library_dep(
             Language::Typescript,
             DepSource::Local,
             Some(Path::new("C:\\repo\\libs\\ts")),
+            None,
         );
         assert_eq!(ts, "file:C:/repo/libs/ts");
     }
 
     #[test]
+    fn pinned_rev_dep_pins_the_build_rev() {
+        // With no explicit rev, the Rust and Python pins carry the CLI's build rev.
+        let rust = library_dep(Language::Rust, DepSource::PinnedRev, None, None);
+        assert_eq!(
+            rust,
+            format!("git = \"{GIT_URL}\", rev = \"{EDGECOMMONS_REV}\"")
+        );
+        let py = library_dep(Language::Python, DepSource::PinnedRev, None, None);
+        assert_eq!(
+            py,
+            format!("edgecommons @ git+{GIT_URL}@{EDGECOMMONS_REV}#subdirectory=libs/python")
+        );
+        // An explicit rev wins over the build rev.
+        let pinned = library_dep(Language::Rust, DepSource::PinnedRev, None, Some("deadbeef"));
+        assert_eq!(pinned, format!("git = \"{GIT_URL}\", rev = \"deadbeef\""));
+    }
+
+    #[test]
     fn bin_names_are_cargo_safe() {
-        assert_eq!(bin_name("MyComponent"), "mycomponent");
+        // The A.1 example table — case-boundary and acronym aware.
+        assert_eq!(bin_name("MyComponent"), "my-component");
+        assert_eq!(bin_name("EthernetIpAdapter"), "ethernet-ip-adapter");
+        assert_eq!(bin_name("OPCUAAdapter"), "opcua-adapter");
+        assert_eq!(bin_name("ModbusTCPAdapter"), "modbus-tcp-adapter");
+        assert_eq!(bin_name("Modbus2Tcp"), "modbus2-tcp");
         assert_eq!(bin_name("My_Cool.Component"), "my-cool-component");
+        assert_eq!(bin_name("mycomponent"), "mycomponent");
         assert_eq!(bin_name("___"), "component");
+        assert_eq!(bin_name("HTTPServer"), "http-server");
+    }
+
+    #[test]
+    fn snakename_is_binname_with_underscores() {
+        let mut i = inputs(DepSource::Local, vec![Platform::Host]);
+        i.full_name = "com.example.EthernetIpAdapter".into();
+        let t = tokens(Language::Python, &i);
+        assert_eq!(t["BINNAME"], "ethernet-ip-adapter");
+        assert_eq!(t["SNAKENAME"], "ethernet_ip_adapter");
+    }
+
+    #[test]
+    fn a_bin_name_override_drives_binname_snakename_and_jarname() {
+        let mut i = inputs(DepSource::Local, vec![Platform::Host]);
+        i.bin_name = Some("my-override".into());
+        let t = tokens(Language::Rust, &i);
+        assert_eq!(t["BINNAME"], "my-override");
+        assert_eq!(t["JARNAME"], "my-override");
+        assert_eq!(t["SNAKENAME"], "my_override");
     }
 
     #[test]
@@ -490,6 +672,43 @@ mod tests {
         // ...and it must carry its own Cargo project.
         assert!(target.join("Cargo.toml").exists());
         assert!(target.join("src/main.rs").exists());
+    }
+
+    #[test]
+    fn the_cargo_override_is_emitted_only_under_pinned_rev() {
+        let t = catalog::find(Language::Rust, Kind::ProtocolAdapter).unwrap();
+
+        // pinned-rev: the .cargo/config.toml patch override is emitted, tokens substituted.
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("out");
+        let mut i = inputs(DepSource::PinnedRev, vec![Platform::Host]);
+        i.library_rev = Some("abc1234".into());
+        let report = generate_embedded(&t, &i, &target, false).unwrap();
+        assert_eq!(report.error_count(), 0, "{}", report.render_human());
+        let cargo_cfg = target.join(".cargo/config.toml");
+        assert!(
+            cargo_cfg.exists(),
+            "pinned-rev must emit .cargo/config.toml"
+        );
+        let text = std::fs::read_to_string(&cargo_cfg).unwrap();
+        assert!(text.contains("[patch."), "{text}");
+        assert!(
+            text.contains("https://github.com/edgecommons/edgecommons"),
+            "the patch must target the git source: {text}"
+        );
+        assert!(!text.contains("<<"), "tokens must be substituted: {text}");
+
+        // local and registry: no .cargo dir (the conditional prunes it).
+        for dep in [DepSource::Local, DepSource::Registry] {
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("out");
+            generate_embedded(&t, &inputs(dep, vec![Platform::Host]), &target, false).unwrap();
+            assert!(
+                !target.join(".cargo").exists(),
+                "{:?} must not emit the .cargo override",
+                dep.as_str()
+            );
+        }
     }
 
     #[test]

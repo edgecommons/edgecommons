@@ -7,6 +7,7 @@
 
 pub mod catalog;
 pub mod generate;
+pub mod licenses;
 pub mod manifest;
 pub mod upgrade;
 

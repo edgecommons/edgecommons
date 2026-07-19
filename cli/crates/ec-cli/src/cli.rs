@@ -78,6 +78,10 @@ pub enum Command {
 }
 
 #[derive(Debug, Subcommand)]
+// `New` carries the most flags of any verb, so this enum's variants differ in size. Boxing it
+// would cost an allocation on every dispatch to save stack in a value that exists once, briefly,
+// in main — the same trade the parent `Command` enum declines.
+#[allow(clippy::large_enum_variant)]
 pub enum ComponentCmd {
     /// Scaffold a new component (language × kind × platforms).
     New(NewArgs),
@@ -114,9 +118,18 @@ pub struct NewArgs {
     #[arg(short, long)]
     pub description: Option<String>,
 
-    /// Where to create the component.
+    /// Parent directory the derived (kebab) output dir is created under.
     #[arg(short, long, default_value = ".")]
     pub path: PathBuf,
+
+    /// Exact output directory. Overrides the derived `<path>/<kebab-name>` default outright.
+    #[arg(long)]
+    pub dir: Option<PathBuf>,
+
+    /// Override the derived crate/binary name (kebab, `^[a-z0-9][a-z0-9-]*$`). Also names the
+    /// default output directory when `--dir` is not given.
+    #[arg(long, visible_alias = "crate-name")]
+    pub bin_name: Option<String>,
 
     /// Target platforms; controls which artifact packs are emitted.
     #[arg(long, value_delimiter = ',', value_enum)]
@@ -126,9 +139,20 @@ pub struct NewArgs {
     #[arg(long, value_enum, default_value_t = DepSource::Local)]
     pub dep_source: DepSource,
 
-    /// Path to a local edgecommons library checkout (for `--dep-source local`).
+    /// Path to a local edgecommons library checkout (for `--dep-source local`, and the
+    /// `.cargo` local-dev override under `--dep-source pinned-rev`).
     #[arg(long)]
     pub library_path: Option<PathBuf>,
+
+    /// Git revision to pin the edgecommons library to (for `--dep-source pinned-rev`). Defaults
+    /// to the commit this CLI was built from.
+    #[arg(long)]
+    pub library_rev: Option<String>,
+
+    /// License to stamp into the component. Writes a LICENSE file with the chosen SPDX text;
+    /// `none` (the default) writes none.
+    #[arg(long, value_enum, default_value_t = License::None)]
+    pub license: License,
 
     /// Component author.
     #[arg(short, long)]
@@ -179,9 +203,15 @@ pub struct UpgradeArgs {
     #[arg(short, long, default_value = ".")]
     pub path: PathBuf,
 
-    /// Target edgecommons library version.
-    #[arg(short, long)]
-    pub to: String,
+    /// Target edgecommons library **version** (rewrites a git-rev pin to the release tag form).
+    /// Mutually exclusive with `--to-rev`.
+    #[arg(short, long, conflicts_with = "to_rev")]
+    pub to: Option<String>,
+
+    /// Move the edgecommons git-**rev** pin to this revision (Rust/Python only). Mutually
+    /// exclusive with `--to`.
+    #[arg(long)]
+    pub to_rev: Option<String>,
 
     /// Show what would change without writing.
     #[arg(long)]
@@ -374,10 +404,40 @@ impl Platform {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "lowercase")]
+#[value(rename_all = "kebab-case")]
 pub enum DepSource {
     Local,
     Registry,
+    /// A git dependency pinned to an exact revision plus a gitignored local-dev override
+    /// (Rust/Python only).
+    PinnedRev,
+}
+
+/// The license `--license` can stamp. `none` (default) writes no LICENSE and claims no license
+/// in the manifests; the others write their canonical SPDX text and set the manifest fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum License {
+    #[value(name = "none")]
+    None,
+    #[value(name = "busl-1-1")]
+    Busl11,
+    #[value(name = "apache-2-0")]
+    Apache20,
+    #[value(name = "mit")]
+    Mit,
+}
+
+impl License {
+    /// The SPDX id, or `None` for `--license none`.
+    #[must_use]
+    pub fn spdx(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Busl11 => Some("BUSL-1.1"),
+            Self::Apache20 => Some("Apache-2.0"),
+            Self::Mit => Some("MIT"),
+        }
+    }
 }
 
 /// The registry's full category enum. The Python CLI advertised three of these six.
@@ -510,5 +570,96 @@ mod tests {
     fn json_is_global() {
         let cli = Cli::try_parse_from(["edgecommons", "--json", "template", "list"]).unwrap();
         assert!(cli.json);
+    }
+
+    #[test]
+    fn the_new_naming_and_dep_flags_parse() {
+        let cli = Cli::try_parse_from([
+            "edgecommons",
+            "component",
+            "new",
+            "-n",
+            "com.example.Foo",
+            "-l",
+            "RUST",
+            "--bin-name",
+            "my-bin",
+            "--dir",
+            "out/here",
+            "--dep-source",
+            "pinned-rev",
+            "--library-rev",
+            "abc123",
+            "--license",
+            "busl-1-1",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Component(ComponentCmd::New(a)) => {
+                assert_eq!(a.bin_name.as_deref(), Some("my-bin"));
+                assert_eq!(a.dir.as_deref(), Some(std::path::Path::new("out/here")));
+                assert_eq!(a.dep_source, DepSource::PinnedRev);
+                assert_eq!(a.library_rev.as_deref(), Some("abc123"));
+                assert_eq!(a.license, License::Busl11);
+                assert_eq!(a.license.spdx(), Some("BUSL-1.1"));
+            }
+            other => panic!("wrong command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn crate_name_is_a_visible_alias_for_bin_name() {
+        let cli = Cli::try_parse_from([
+            "edgecommons",
+            "component",
+            "new",
+            "-n",
+            "com.example.Foo",
+            "-l",
+            "RUST",
+            "--crate-name",
+            "aliased",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Component(ComponentCmd::New(a)) => {
+                assert_eq!(a.bin_name.as_deref(), Some("aliased"));
+            }
+            other => panic!("wrong command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn upgrade_to_rev_parses_and_conflicts_with_to() {
+        let cli = Cli::try_parse_from([
+            "edgecommons",
+            "component",
+            "upgrade",
+            "-p",
+            "x",
+            "--to-rev",
+            "deadbeef",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Component(ComponentCmd::Upgrade(a)) => {
+                assert_eq!(a.to_rev.as_deref(), Some("deadbeef"));
+                assert!(a.to.is_none());
+            }
+            other => panic!("wrong command: {other:?}"),
+        }
+        // --to and --to-rev are mutually exclusive.
+        assert!(
+            Cli::try_parse_from([
+                "edgecommons",
+                "component",
+                "upgrade",
+                "--to",
+                "1.2.3",
+                "--to-rev",
+                "deadbeef",
+            ])
+            .is_err()
+        );
     }
 }

@@ -187,7 +187,8 @@ fn a_host_only_scaffold_carries_no_greengrass_artifacts() {
     );
     assert_eq!(code(&o), 0, "{}", stderr(&o));
 
-    let p = d.path().join("HostOnly");
+    // The output directory is the kebab crate name: `com.example.HostOnly` -> `host-only`.
+    let p = d.path().join("host-only");
     assert!(
         !p.join("recipe.yaml").exists(),
         "a HOST-only scaffold must carry no Greengrass recipe"
@@ -212,7 +213,7 @@ fn a_greengrass_scaffold_carries_the_recipe() {
         &["--platforms", "GREENGRASS"],
     );
     assert_eq!(code(&o), 0, "{}", stderr(&o));
-    let p = d.path().join("GgOnly");
+    let p = d.path().join("gg-only");
     assert!(p.join("recipe.yaml").exists());
     assert!(p.join("gdk-config.json").exists());
 }
@@ -227,7 +228,8 @@ fn the_protocol_adapter_kind_is_reachable() {
         &["-k", "protocol-adapter"],
     );
     assert_eq!(code(&o), 0, "{}", stderr(&o));
-    let p = d.path().join("MyAdapter");
+    // The output dir is kebab (`my-adapter`); the Python module file keeps the PascalCase class.
+    let p = d.path().join("my-adapter");
     // The adapter skeleton, renamed to the component.
     assert!(
         p.join("app/MyAdapter.py").exists(),
@@ -303,13 +305,142 @@ fn registry_dep_source_pins_a_version_that_exists() {
     );
     assert_eq!(code(&o), 0, "{}", stderr(&o));
 
-    let cargo = std::fs::read_to_string(d.path().join("Pinned/Cargo.toml")).unwrap();
+    let cargo = std::fs::read_to_string(d.path().join("pinned/Cargo.toml")).unwrap();
     let want = format!("rust-lib/v{}", ec_scaffold::generate::EDGECOMMONS_VERSION);
     assert!(cargo.contains(&want), "expected {want} in:\n{cargo}");
     assert!(
         !cargo.contains("rust-lib/v0.1.0"),
         "the nonexistent tag must never be emitted"
     );
+}
+
+#[test]
+fn the_derived_output_dir_is_the_kebab_name() {
+    // `com.example.EthernetIpAdapter` -> crate/dir `ethernet-ip-adapter` (case-boundary kebab).
+    let d = tempfile::tempdir().unwrap();
+    let o = scaffold(
+        d.path(),
+        "com.example.EthernetIpAdapter",
+        "RUST",
+        &["-k", "protocol-adapter"],
+    );
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let p = d.path().join("ethernet-ip-adapter");
+    assert!(p.is_dir(), "the output dir must be kebab: {:?}", d.path());
+    let cargo = std::fs::read_to_string(p.join("Cargo.toml")).unwrap();
+    assert!(cargo.contains("name = \"ethernet-ip-adapter\""), "{cargo}");
+}
+
+#[test]
+fn the_dir_flag_wins_over_the_derived_default() {
+    let d = tempfile::tempdir().unwrap();
+    let out = d.path().join("exactly/here");
+    let o = scaffold(
+        d.path(),
+        "com.example.MyThing",
+        "RUST",
+        &["--dir", out.to_str().unwrap()],
+    );
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    assert!(
+        out.join("Cargo.toml").exists(),
+        "--dir sets the exact output dir"
+    );
+    // The derived default must not have been created alongside it.
+    assert!(!d.path().join("my-thing").exists());
+}
+
+#[test]
+fn the_bin_name_flag_overrides_the_crate_and_dir() {
+    let d = tempfile::tempdir().unwrap();
+    let o = scaffold(
+        d.path(),
+        "com.example.MyThing",
+        "RUST",
+        &["--bin-name", "custom-bin"],
+    );
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let p = d.path().join("custom-bin");
+    assert!(p.is_dir(), "--bin-name also names the default dir");
+    let cargo = std::fs::read_to_string(p.join("Cargo.toml")).unwrap();
+    assert!(cargo.contains("name = \"custom-bin\""), "{cargo}");
+}
+
+#[test]
+fn an_invalid_bin_name_is_a_usage_error() {
+    let d = tempfile::tempdir().unwrap();
+    let o = scaffold(
+        d.path(),
+        "com.example.MyThing",
+        "RUST",
+        &["--bin-name", "Not_Valid"],
+    );
+    assert_eq!(code(&o), 2, "an invalid crate name is a usage error");
+    assert!(stderr(&o).contains("bin-name"), "{}", stderr(&o));
+}
+
+#[test]
+fn a_pinned_rev_rust_scaffold_emits_the_override_and_a_rev_pin() {
+    let d = tempfile::tempdir().unwrap();
+    let o = scaffold(
+        d.path(),
+        "com.example.EthernetIpAdapter",
+        "RUST",
+        &["-k", "protocol-adapter", "--dep-source", "pinned-rev"],
+    );
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let p = d.path().join("ethernet-ip-adapter");
+    let cfg = std::fs::read_to_string(p.join(".cargo/config.toml")).unwrap();
+    assert!(
+        cfg.contains(r#"[patch."https://github.com/edgecommons/edgecommons"]"#),
+        "{cfg}"
+    );
+    let cargo = std::fs::read_to_string(p.join("Cargo.toml")).unwrap();
+    assert!(
+        cargo.contains("rev = \""),
+        "the dep must be rev-pinned: {cargo}"
+    );
+}
+
+#[test]
+fn pinned_rev_on_java_is_a_usage_error() {
+    let d = tempfile::tempdir().unwrap();
+    let o = scaffold(
+        d.path(),
+        "com.example.JavaThing",
+        "JAVA",
+        &["--dep-source", "pinned-rev"],
+    );
+    assert_eq!(code(&o), 2, "Maven cannot express a git-rev pin");
+    assert!(stderr(&o).contains("pinned-rev"), "{}", stderr(&o));
+}
+
+#[test]
+fn a_bucketless_greengrass_scaffold_uses_the_sentinel_and_validate_errors() {
+    let d = tempfile::tempdir().unwrap();
+    // A GREENGRASS scaffold with no bucket writes the sentinel and warns (EC4005), exit 0.
+    let o = scaffold(
+        d.path(),
+        "com.example.NoBucket",
+        "RUST",
+        &["--platforms", "GREENGRASS"],
+    );
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let gdk = std::fs::read_to_string(d.path().join("no-bucket/gdk-config.json")).unwrap();
+    assert!(
+        gdk.contains("edgecommons-set-artifact-bucket"),
+        "the sentinel must be written: {gdk}"
+    );
+
+    // And `component validate` rejects the sentinel as EC3007 (exit 1).
+    let o = run(&["component", "validate", "-p", "no-bucket"], d.path());
+    assert_eq!(
+        code(&o),
+        1,
+        "the sentinel must be a validate error:\n{}",
+        stdout(&o)
+    );
+    assert!(stdout(&o).contains("EC3007"), "{}", stdout(&o));
 }
 
 /// A minimal but real template on disk: manifest v2 plus one substituted file.
@@ -362,13 +493,13 @@ fn a_template_directory_can_be_used_instead_of_the_embedded_one() {
     );
     assert_eq!(code(&o), 0, "{}", stderr(&o));
 
-    let readme = std::fs::read_to_string(d.path().join("Custom/README.md")).unwrap();
+    let readme = std::fs::read_to_string(d.path().join("custom/README.md")).unwrap();
     assert!(readme.contains("# Custom"), "{readme}");
     assert!(
         !readme.contains("<<"),
         "tokens must be substituted: {readme}"
     );
-    assert!(!d.path().join("Custom/edgecommons-template.json").exists());
+    assert!(!d.path().join("custom/edgecommons-template.json").exists());
 }
 
 #[test]
@@ -435,10 +566,10 @@ fn a_template_can_be_cloned_from_git() {
         d.path(),
     );
     assert_eq!(code(&o), 0, "{}", stderr(&o));
-    let readme = std::fs::read_to_string(d.path().join("Cloned/README.md")).unwrap();
+    let readme = std::fs::read_to_string(d.path().join("cloned/README.md")).unwrap();
     assert!(readme.contains("# Cloned"), "{readme}");
     // The template's git history is not part of the template.
-    assert!(!d.path().join("Cloned/.git").exists());
+    assert!(!d.path().join("cloned/.git").exists());
 }
 
 #[test]
@@ -462,23 +593,36 @@ fn a_clone_that_fails_is_an_environment_error() {
 // --- component validate ------------------------------------------------------------------
 
 #[test]
-fn a_freshly_scaffolded_component_validates_clean() {
+fn a_freshly_scaffolded_component_validates_without_errors() {
     let d = tempfile::tempdir().unwrap();
+    // A real bucket, so gdk-config.json carries no sentinel (which is now an EC3007 error).
     assert_eq!(
-        code(&scaffold(d.path(), "com.example.Clean", "RUST", &[])),
+        code(&scaffold(
+            d.path(),
+            "com.example.Clean",
+            "RUST",
+            &["-b", "my-real-bucket"]
+        )),
         0
     );
 
-    let o = run(&["component", "validate", "-p", "Clean"], d.path());
+    let o = run(&["component", "validate", "-p", "clean"], d.path());
     assert_eq!(
         code(&o),
         0,
-        "a scaffold this CLI produced must validate:\n{}",
+        "a scaffold this CLI produced must validate (warnings do not fail):\n{}",
         stdout(&o)
     );
     assert!(
-        stdout(&o).contains("OK"),
-        "a clean result must be confirmed, not silent"
+        !stdout(&o).contains("error["),
+        "a fresh scaffold must produce no errors:\n{}",
+        stdout(&o)
+    );
+    // The one finding on a fresh Rust scaffold is the missing-lockfile advisory (SD-6/R12).
+    assert!(
+        stdout(&o).contains("EC4008"),
+        "the missing-lockfile advisory must fire:\n{}",
+        stdout(&o)
     );
 }
 
@@ -490,13 +634,13 @@ fn validate_catches_a_typo_in_the_components_own_config() {
         0
     );
 
-    let cfg_path = d.path().join("Typo/test-configs/config.json");
+    let cfg_path = d.path().join("typo/test-configs/config.json");
     let mut cfg: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
     cfg["component"]["global"] = serde_json::json!({ "publish_intervall": 5 });
     std::fs::write(&cfg_path, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
 
-    let o = run(&["component", "validate", "-p", "Typo"], d.path());
+    let o = run(&["component", "validate", "-p", "typo"], d.path());
     assert_eq!(code(&o), 1, "findings exit 1");
     let s = stdout(&o);
     assert!(
@@ -517,13 +661,13 @@ fn validate_catches_a_literal_secret() {
         0
     );
 
-    let cfg_path = d.path().join("Leak/test-configs/config.json");
+    let cfg_path = d.path().join("leak/test-configs/config.json");
     let mut cfg: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
     cfg["component"]["global"] = serde_json::json!({ "apiToken": "hunter2" });
     std::fs::write(&cfg_path, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
 
-    let o = run(&["component", "validate", "-p", "Leak"], d.path());
+    let o = run(&["component", "validate", "-p", "leak"], d.path());
     assert_eq!(code(&o), 1);
     assert!(stdout(&o).contains("EC2005"), "{}", stdout(&o));
 }
@@ -532,11 +676,16 @@ fn validate_catches_a_literal_secret() {
 fn validate_json_output_is_machine_readable() {
     let d = tempfile::tempdir().unwrap();
     assert_eq!(
-        code(&scaffold(d.path(), "com.example.Json", "RUST", &[])),
+        code(&scaffold(
+            d.path(),
+            "com.example.Json",
+            "RUST",
+            &["-b", "my-real-bucket"]
+        )),
         0
     );
 
-    let o = run(&["--json", "component", "validate", "-p", "Json"], d.path());
+    let o = run(&["--json", "component", "validate", "-p", "json"], d.path());
     assert_eq!(code(&o), 0);
     let v: serde_json::Value = serde_json::from_str(&stdout(&o)).expect("valid JSON");
     assert_eq!(v["ok"], true);
@@ -567,11 +716,11 @@ fn upgrade_moves_the_library_and_version_moves_the_component() {
 
     // `upgrade` moves the LIBRARY dependency...
     let o = run(
-        &["component", "upgrade", "-p", "Both", "--to", "9.9.9"],
+        &["component", "upgrade", "-p", "both", "--to", "9.9.9"],
         d.path(),
     );
     assert_eq!(code(&o), 0, "{}", stderr(&o));
-    let cargo = std::fs::read_to_string(d.path().join("Both/Cargo.toml")).unwrap();
+    let cargo = std::fs::read_to_string(d.path().join("both/Cargo.toml")).unwrap();
     assert!(cargo.contains("rust-lib/v9.9.9"), "{cargo}");
     assert!(
         cargo.contains("version = \"1.0.0\""),
@@ -580,11 +729,11 @@ fn upgrade_moves_the_library_and_version_moves_the_component() {
 
     // ...and `version` moves the COMPONENT's own version, leaving the library alone.
     let o = run(
-        &["component", "version", "-p", "Both", "--to", "2.5.0"],
+        &["component", "version", "-p", "both", "--to", "2.5.0"],
         d.path(),
     );
     assert_eq!(code(&o), 0, "{}", stderr(&o));
-    let cargo = std::fs::read_to_string(d.path().join("Both/Cargo.toml")).unwrap();
+    let cargo = std::fs::read_to_string(d.path().join("both/Cargo.toml")).unwrap();
     assert!(cargo.contains("version = \"2.5.0\""), "{cargo}");
     assert!(
         cargo.contains("rust-lib/v9.9.9"),
@@ -604,14 +753,14 @@ fn upgrade_dry_run_writes_nothing() {
         )),
         0
     );
-    let before = std::fs::read_to_string(d.path().join("Dry/Cargo.toml")).unwrap();
+    let before = std::fs::read_to_string(d.path().join("dry/Cargo.toml")).unwrap();
 
     let o = run(
         &[
             "component",
             "upgrade",
             "-p",
-            "Dry",
+            "dry",
             "--to",
             "9.9.9",
             "--dry-run",
@@ -621,7 +770,7 @@ fn upgrade_dry_run_writes_nothing() {
     assert_eq!(code(&o), 0);
     assert!(stdout(&o).contains("dry-run"));
 
-    let after = std::fs::read_to_string(d.path().join("Dry/Cargo.toml")).unwrap();
+    let after = std::fs::read_to_string(d.path().join("dry/Cargo.toml")).unwrap();
     assert_eq!(before, after, "--dry-run must not write");
 }
 
@@ -636,9 +785,9 @@ fn a_release_refuses_an_unlocked_scaffold_and_version_unlocks_it() {
             "component",
             "release",
             "-p",
-            "Rel",
+            "rel",
             "-o",
-            "Rel/release.json",
+            "rel/release.json",
         ],
         d.path(),
     );
@@ -651,7 +800,7 @@ fn a_release_refuses_an_unlocked_scaffold_and_version_unlocks_it() {
     // And the fix it names actually works — the dead end the previous CLI left people in.
     assert_eq!(
         code(&run(
-            &["component", "version", "-p", "Rel", "--to", "1.4.2"],
+            &["component", "version", "-p", "rel", "--to", "1.4.2"],
             d.path()
         )),
         0
@@ -662,9 +811,9 @@ fn a_release_refuses_an_unlocked_scaffold_and_version_unlocks_it() {
             "component",
             "release",
             "-p",
-            "Rel",
+            "rel",
             "-o",
-            "Rel/release.json",
+            "rel/release.json",
         ],
         d.path(),
     );
@@ -675,7 +824,7 @@ fn a_release_refuses_an_unlocked_scaffold_and_version_unlocks_it() {
     );
 
     let desc: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(d.path().join("Rel/release.json")).unwrap())
+        serde_json::from_str(&std::fs::read_to_string(d.path().join("rel/release.json")).unwrap())
             .unwrap();
     assert_eq!(desc["version"], "1.4.2");
     // The config schema travels with the release — this is what makes compatibility derived.
@@ -853,7 +1002,7 @@ fn package_reports_that_container_images_belong_to_ci() {
             "component",
             "package",
             "-p",
-            "Pkg",
+            "pkg",
             "--platforms",
             "KUBERNETES",
         ],
@@ -907,7 +1056,7 @@ fn component_version_rejects_a_non_version() {
     let d = tempfile::tempdir().unwrap();
     assert_eq!(code(&scaffold(d.path(), "com.example.Bad", "RUST", &[])), 0);
     let o = run(
-        &["component", "version", "-p", "Bad", "--to", "latest"],
+        &["component", "version", "-p", "bad", "--to", "latest"],
         d.path(),
     );
     assert_eq!(code(&o), 2, "`latest` is not a version");
@@ -918,7 +1067,8 @@ fn a_java_scaffold_renames_its_package_and_class() {
     let d = tempfile::tempdir().unwrap();
     let o = scaffold(d.path(), "com.example.JavaThing", "JAVA", &[]);
     assert_eq!(code(&o), 0, "{}", stderr(&o));
-    let p = d.path().join("JavaThing");
+    // The output dir is kebab (`java-thing`); the Java package/class stay PascalCase reverse-DNS.
+    let p = d.path().join("java-thing");
     assert!(
         p.join("src/main/java/com/example/javathing/JavaThing.java")
             .exists(),
@@ -946,10 +1096,10 @@ fn a_typescript_scaffold_uses_the_scoped_package() {
         &["--dep-source", "registry"],
     );
     assert_eq!(code(&o), 0, "{}", stderr(&o));
-    let pkg = std::fs::read_to_string(d.path().join("TsThing/package.json")).unwrap();
+    let pkg = std::fs::read_to_string(d.path().join("ts-thing/package.json")).unwrap();
     assert!(pkg.contains("@edgecommons/edgecommons"), "{pkg}");
     // The registry dep-source ships the consumer registry config; the local one does not.
-    assert!(d.path().join("TsThing/.npmrc").exists());
+    assert!(d.path().join("ts-thing/.npmrc").exists());
 }
 
 // --- doctor and the unbuilt verbs ---------------------------------------------------------
@@ -1044,7 +1194,7 @@ fn a_greengrass_package_without_gdk_is_an_environment_error() {
     // gdk is an external tool. If it is present this build genuinely can package; if it is not,
     // the failure must name the tool rather than being obscure. Either outcome is correct --
     // what is not correct is a crash or a silent success.
-    let o = run(&["component", "package", "-p", "GgPkg"], d.path());
+    let o = run(&["component", "package", "-p", "gg-pkg"], d.path());
     match code(&o) {
         0 => {}
         3 => assert!(stderr(&o).contains("gdk"), "{}", stderr(&o)),
@@ -1071,14 +1221,22 @@ fn an_http_registry_source_is_reported_rather_than_silently_ignored() {
 #[test]
 fn validate_can_target_a_single_config_file() {
     let d = tempfile::tempdir().unwrap();
-    assert_eq!(code(&scaffold(d.path(), "com.example.One", "RUST", &[])), 0);
-    let cfg = d.path().join("One/test-configs/config.json");
+    assert_eq!(
+        code(&scaffold(
+            d.path(),
+            "com.example.One",
+            "RUST",
+            &["-b", "my-real-bucket"]
+        )),
+        0
+    );
+    let cfg = d.path().join("one/test-configs/config.json");
     let o = run(
         &[
             "component",
             "validate",
             "-p",
-            "One",
+            "one",
             "-c",
             cfg.to_str().unwrap(),
         ],

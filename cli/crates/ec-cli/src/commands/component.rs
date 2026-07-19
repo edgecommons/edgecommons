@@ -5,10 +5,18 @@ use std::path::{Path, PathBuf};
 
 use ec_diag::{Fatal, Outcome, Report};
 use ec_scaffold::generate::{
-    DepSource, Inputs, default_library_subdir, generate_embedded, short_name,
+    DepSource, EDGECOMMONS_REV, Inputs, bin_name, default_library_subdir, generate_embedded,
+    short_name,
 };
+use ec_scaffold::licenses;
 use ec_scaffold::manifest::{Kind, Language, Platform};
 use ec_scaffold::{catalog, discover};
+
+/// The sentinel written into `gdk-config.json`'s publish bucket when a Greengrass scaffold has
+/// none. A plain literal (so it does not trip the `<<TOKEN>>` drift gate) that is visible in the
+/// file and that `component validate` rejects, so the miss is caught at authoring/CI rather than
+/// at `gdk component publish` weeks later.
+pub const ARTIFACT_BUCKET_SENTINEL: &str = "edgecommons-set-artifact-bucket";
 
 use crate::cli::{self, NewArgs};
 
@@ -88,10 +96,66 @@ pub fn new(args: &NewArgs, quiet: bool, assume_yes: bool) -> Outcome {
     let dep_source = match args.dep_source {
         cli::DepSource::Local => DepSource::Local,
         cli::DepSource::Registry => DepSource::Registry,
+        cli::DepSource::PinnedRev => DepSource::PinnedRev,
     };
 
-    // A local path dependency needs a real library path. Resolve it relative to the monorepo
-    // this CLI was built from, so the common case needs no flag.
+    // pinned-rev is a Rust/Python capability: Maven and npm cannot express a git dependency on
+    // the libs/<lang> subdirectory of the edgecommons monorepo. Reject Java/TS *before*
+    // generation, naming the honest capability limit rather than silently falling back.
+    if dep_source == DepSource::PinnedRev
+        && matches!(language, Language::Java | Language::Typescript)
+    {
+        return Err(Fatal::Usage(format!(
+            "--dep-source pinned-rev is not available for {}: Maven and npm cannot express a git \
+             dependency on a subdirectory of the edgecommons monorepo. Use --dep-source registry \
+             (the published artifact) or local (a sibling checkout).",
+            language.as_str()
+        )));
+    }
+
+    // The git revision to pin to (pinned-rev only): --library-rev if given, else the commit this
+    // CLI was built from. If both are empty (a non-git build with no flag), a pinned-rev scaffold
+    // cannot emit a valid pin, so it is an environment error naming the fix rather than a
+    // `rev = ""` the author discovers at build time.
+    let library_rev = if dep_source == DepSource::PinnedRev {
+        let resolved = args
+            .library_rev
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| (!EDGECOMMONS_REV.is_empty()).then(|| EDGECOMMONS_REV.to_string()));
+        match resolved {
+            Some(r) => Some(r),
+            None => {
+                return Err(Fatal::Environment(
+                    "--dep-source pinned-rev needs a git revision, but this CLI was built outside \
+                     a git checkout so none is embedded. Pass --library-rev <sha>."
+                        .into(),
+                ));
+            }
+        }
+    } else {
+        None
+    };
+
+    // `--bin-name`/`--crate-name` overrides the derived kebab name (and must itself be a valid
+    // crate/binary token). One flag for all languages — a per-language pair would be parity drift.
+    let bin_override = match &args.bin_name {
+        Some(b) => {
+            if !is_valid_bin_name(b) {
+                return Err(Fatal::Usage(format!(
+                    "--bin-name `{b}` is not a valid crate/binary name: expected \
+                     ^[a-z0-9][a-z0-9-]*$ (lowercase letters, digits, and hyphens, starting with \
+                     a letter or digit)."
+                )));
+            }
+            Some(b.clone())
+        }
+        None => None,
+    };
+
+    // The local sibling path: for `local` it *is* the dependency and must exist; for `pinned-rev`
+    // it is the gitignored `.cargo` dev override, which is emitted even if the path is absent on
+    // this machine (it is dev tooling, and the file's comment says to fix the path).
     let library_path = match (dep_source, default_library_subdir(language)) {
         (DepSource::Local, Some(subdir)) => {
             let p = args
@@ -108,8 +172,15 @@ pub fn new(args: &NewArgs, quiet: bool, assume_yes: bool) -> Outcome {
             }
             Some(p)
         }
+        (DepSource::PinnedRev, Some(subdir)) => Some(
+            args.library_path
+                .clone()
+                .unwrap_or_else(|| repo_root().join(subdir)),
+        ),
         _ => None,
     };
+
+    let license = args.license.spdx();
 
     let default_description = format!("The {} component.", short_name(&full_name));
     let description = match &args.description {
@@ -134,19 +205,39 @@ pub fn new(args: &NewArgs, quiet: bool, assume_yes: bool) -> Outcome {
         (None, true, true) => prompt("S3 bucket for Greengrass artifacts", Some(""))?,
         _ => String::new(),
     };
+    // A Greengrass scaffold with no bucket gets the visible sentinel rather than an empty string:
+    // an empty publish bucket is an invisible landmine, whereas the sentinel is obvious in the
+    // file, prints in "Next steps", and is a hard error at `component validate`.
+    let bucket_missing = greengrass && bucket.trim().is_empty();
+    let effective_bucket = if bucket_missing {
+        ARTIFACT_BUCKET_SENTINEL.to_string()
+    } else {
+        bucket
+    };
 
     let inputs = Inputs {
         full_name: full_name.clone(),
         description,
         author,
         platforms: platforms.clone(),
+        bin_name: bin_override.clone(),
         dep_source,
         library_path,
-        bucket: bucket.clone(),
+        library_rev,
+        license,
+        bucket: effective_bucket,
         region: args.region.clone(),
     };
 
-    let target = args.path.join(short_name(&full_name));
+    // The output directory: `--dir` wins outright; otherwise the derived kebab name (honoring a
+    // `--bin-name` override) under `--path`.
+    let derived_dir = bin_override
+        .clone()
+        .unwrap_or_else(|| bin_name(&short_name(&full_name)));
+    let target = args
+        .dir
+        .clone()
+        .unwrap_or_else(|| args.path.join(&derived_dir));
 
     if !quiet {
         println!(
@@ -171,21 +262,73 @@ pub fn new(args: &NewArgs, quiet: bool, assume_yes: bool) -> Outcome {
         None => generate_embedded(&template, &inputs, &target, args.force)?,
     };
 
-    if greengrass && bucket.is_empty() {
+    // The license file (SD-4): the author's choice, not EdgeCommons'. Written after generation so
+    // it lands in the finished tree; `--license none` writes nothing.
+    if report.error_count() == 0
+        && let Some(spdx) = license
+    {
+        write_license(&target, spdx)?;
+    }
+
+    if bucket_missing {
         report.push(
             ec_diag::Diagnostic::warning(
                 ec_diag::EC4005_NO_ARTIFACT_BUCKET,
-                "no artifact bucket: gdk-config.json cannot publish as generated".to_string(),
+                format!(
+                    "no artifact bucket: gdk-config.json carries the sentinel \
+                     `{ARTIFACT_BUCKET_SENTINEL}` and cannot publish until it is set"
+                ),
             )
             .with_file(target.join("gdk-config.json"))
-            .with_help("set `publish.bucket` in gdk-config.json, or pass -b/--bucket"),
+            .with_help("set `publish.bucket` in gdk-config.json, or re-scaffold with -b/--bucket"),
         );
     }
 
     if report.error_count() == 0 && !quiet {
         println!("Done. Component generated at: {}", target.display());
+        print_next_steps(bucket_missing, language, &target);
     }
     Ok(report)
+}
+
+/// Whether a string is a valid crate/binary name: `^[a-z0-9][a-z0-9-]*$`.
+fn is_valid_bin_name(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Write the chosen license's canonical text into the generated component.
+fn write_license(target: &std::path::Path, spdx: &str) -> Result<(), Fatal> {
+    let text = licenses::text(spdx)
+        .ok_or_else(|| Fatal::Internal(format!("no embedded license text for `{spdx}`")))?;
+    std::fs::write(target.join("LICENSE"), text)
+        .map_err(|e| Fatal::Internal(format!("writing LICENSE: {e}")))
+}
+
+/// The "Next steps" epilogue printed after a successful scaffold (non-quiet). It names the
+/// per-repo work the dogfooding had to re-derive by hand: setting the bucket, committing the
+/// first lockfile, and wiring org CI secrets.
+fn print_next_steps(bucket_missing: bool, language: Language, target: &std::path::Path) {
+    println!("\nNext steps:");
+    if bucket_missing {
+        println!(
+            "  - set `publish.bucket` in {}/gdk-config.json (currently the sentinel \
+             `{ARTIFACT_BUCKET_SENTINEL}`).",
+            target.display()
+        );
+    }
+    match language {
+        Language::Rust => println!(
+            "  - build once and commit the generated Cargo.lock so CI builds are reproducible."
+        ),
+        Language::Typescript => println!(
+            "  - build once and commit the generated package-lock.json so CI builds are \
+             reproducible."
+        ),
+        _ => {}
+    }
+    println!("  - push the repo and wire it into the org CI secrets (EDGECOMMONS_READ_TOKEN).");
 }
 
 pub fn template_list(json: bool) -> Outcome {
@@ -428,6 +571,25 @@ mod tests {
 
     fn input(s: &str) -> std::io::Cursor<Vec<u8>> {
         std::io::Cursor::new(s.as_bytes().to_vec())
+    }
+
+    #[test]
+    fn bin_name_validation_matches_the_crate_name_grammar() {
+        for good in ["my-bin", "adapter2", "a", "ethernet-ip-adapter", "0x"] {
+            assert!(is_valid_bin_name(good), "`{good}` should be valid");
+        }
+        // The grammar (^[a-z0-9][a-z0-9-]*$) rejects uppercase, leading hyphens, underscores,
+        // spaces, empties, and non-ASCII. (A trailing hyphen is permitted by the grammar.)
+        for bad in [
+            "My-Bin",
+            "-leading",
+            "under_score",
+            "has space",
+            "",
+            "Ünïcode",
+        ] {
+            assert!(!is_valid_bin_name(bad), "`{bad}` should be rejected");
+        }
     }
 
     #[test]

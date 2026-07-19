@@ -43,6 +43,30 @@ fn main() {
         .unwrap_or_else(|| panic!("no [package] version found in {}", lib_manifest.display()));
 
     println!("cargo:rustc-env=EC_LIBRARY_VERSION={version}");
+
+    // The exact workspace commit this CLI is built from. `--dep-source pinned-rev` emits a git
+    // dependency pinned to *this* rev, so the pinned templates and the library they call come
+    // from the same commit by construction — the strongest correctness property available, and
+    // the one the `registry` tag cannot offer (a release tag can lag the facades a template
+    // calls, which is exactly what the ethernet-ip-adapter dogfooding hit). Resolved here rather
+    // than from a constant for the same reason as the version above: a remembered rev drifts, a
+    // build-time rev cannot. An empty value on a non-git build (a source tarball) is honest — a
+    // runtime `pinned-rev` scaffold without `--library-rev` then fails loudly rather than
+    // emitting `rev = ""`.
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo_root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    // Re-run when HEAD moves, so a rebuild after a commit re-embeds the current rev.
+    println!(
+        "cargo:rerun-if-changed={}",
+        repo_root.join(".git").join("HEAD").display()
+    );
+    println!("cargo:rustc-env=EC_LIBRARY_REV={head}");
 }
 
 /// Pull `version = "x.y.z"` from the `[package]` table — and only from it, so a dependency's
