@@ -242,16 +242,32 @@ out simply ships no schema, and every stage says so rather than implying coverag
 ### 5.7 Token set
 
 `COMPONENTFULLNAME`, `COMPONENTNAME`, `PACKAGE`, `PACKAGEPATH`, `MAINCLASSNAME`, `JARNAME`, `BINNAME`,
-`DESCRIPTION`, `AUTHOR`, `EDGECOMMONS_VERSION`, `EDGECOMMONS_DEP`, plus the Greengrass-only `BUCKET` and
+`SNAKENAME`, `LICENSE`, `LIBRARY_LOCAL_PATH`, `DESCRIPTION`, `AUTHOR`, `EDGECOMMONS_VERSION`,
+`EDGECOMMONS_DEP`, plus the Greengrass-only `BUCKET` and
 `REGION`, which are **prompted and substituted only when the GREENGRASS pack is selected** (`-b/--bucket`,
-`-r/--region`). The AWS-era defaults (`author = "Amazon Web Services"`,
+`-r/--region`).
+
+**`BINNAME` is kebab-case, derived by case-boundary + acronym-aware splitting** of the short name
+(`EthernetIpAdapter → ethernet-ip-adapter`, `OPCUAAdapter → opcua-adapter`), overridable with
+`--bin-name` (alias `--crate-name`); it is the single source every consumer flows through
+(crate/`[[bin]]` name, Maven artifactId/finalName = `JARNAME`, the Python module dir = `SNAKENAME`,
+the npm `name`, Dockerfile/recipe/supervisor/compose/k8s names, test-configs). The **Greengrass
+component name** (`COMPONENTFULLNAME`) stays PascalCase reverse-DNS — only the crate/bin/artifact/dir
+tokens are kebab (D-CLI-17). The default **output directory** is `path/<BINNAME>`; `--dir` overrides it
+outright. `LICENSE` is the SPDX id chosen by `--license` (default `none` — no LICENSE file, no manifest
+license claim; the scaffold is the author's component, D-CLI-21). `LIBRARY_LOCAL_PATH` is the local
+sibling checkout path emitted into the `dep:pinned-rev`-gated `.cargo/config.toml` override (D-CLI-18).
+
+The AWS-era defaults (`author = "Amazon Web Services"`,
 `bucket = "greengrass-component-artifacts-us-east-1"`, `description = "This is a Greengrass v2
 component"`) are deleted — the old CLI asked every author for an S3 bucket regardless of what they were
 building.
 
 A Greengrass scaffold generated **without** a bucket cannot publish as it stands, so its absence is
-reported (`EC4005`) rather than silently baked into a `gdk-config.json` that fails at `gdk component
-publish` much later.
+reported (`EC4005`) **and** the visible sentinel `edgecommons-set-artifact-bucket` is substituted for
+`BUCKET` (rather than an empty string that reads as intentional); `component validate` then **errors**
+(`EC3007`) on the sentinel, so the miss is caught at authoring/CI, not at `gdk component publish` weeks
+later (DEF-16, D-CLI-20).
 
 **`EDGECOMMONS_VERSION` has exactly one source of truth**: it is resolved at CLI build time from the
 workspace (`libs/rust/Cargo.toml`), never hand-maintained in a constant. That constant is how the
@@ -352,12 +368,19 @@ The rewrite manipulates each manifest with a **real parser** for its format, and
 the dependency forms the CLI actually generates — one table, shared by `component new` and
 `component upgrade`, so the two can never disagree again:
 
-| Language | `--dep-source local` | `--dep-source registry` | Upgrade acts on |
-|---|---|---|---|
-| Java | `pom.xml`, `<version>` from the workspace | same, published GitHub Packages coordinate | `pom.xml` (XML-parsed, property-aware) |
-| Python | `-e ../libs/python` | `edgecommons @ git+https://…@python-lib/vX.Y.Z#subdirectory=libs/python` | `requirements.txt` (form-preserving) |
-| Rust | `path = "../libs/rust"` | `git = "…", tag = "rust-lib/vX.Y.Z"` | `Cargo.toml` (TOML-parsed; **git-tag form supported**) |
-| TypeScript | `file:../libs/ts` | `^X.Y.Z` under `@edgecommons/edgecommons` | `package.json` (**scoped key**) |
+| Language | `--dep-source local` | `--dep-source registry` | `--dep-source pinned-rev` | Upgrade acts on |
+|---|---|---|---|---|
+| Java | `pom.xml`, `<version>` from the workspace | same, published GitHub Packages coordinate | **usage error** — Maven cannot express a monorepo-subdirectory git pin | `pom.xml` (XML-parsed, property-aware) |
+| Python | `-e ../libs/python` | `edgecommons @ git+https://…@python-lib/vX.Y.Z#subdirectory=libs/python` | `edgecommons @ git+https://…@<rev>#subdirectory=libs/python` | `requirements.txt` (form-preserving; `--to` and `--to-rev`) |
+| Rust | `path = "../libs/rust"` | `git = "…", tag = "rust-lib/vX.Y.Z"` | `git = "…", rev = "<rev>"` + a `dep:pinned-rev`-gated gitignored `.cargo/config.toml` sibling override | `Cargo.toml` (TOML-parsed; git-tag **and** git-rev forms; `--to` converts rev→tag, `--to-rev` moves the rev) |
+| TypeScript | `file:../libs/ts` | `^X.Y.Z` under `@edgecommons/edgecommons` | **usage error** — npm git deps cannot address the `libs/ts` subdirectory | `package.json` (**scoped key**) |
+
+**`pinned-rev`** (D-CLI-18) pins the **exact commit the CLI was built from** (`EDGECOMMONS_REV`, resolved
+at CLI build time like `EDGECOMMONS_VERSION`), overridable with `--library-rev`. Because the embedded
+templates and the rev come from the same commit, the pin is guaranteed to contain every library facade
+the template calls — the correctness property the `registry` release tag cannot promise, since the tag
+lags `main` (the failure that bit the dogfooding run). `local` stays the default (the monorepo-developer
+common case); `pinned-rev` is the documented choice for a real, shippable component repo (SD-5).
 
 `--dep-source registry` must produce a component that **resolves and builds** for all four languages —
 the acceptance gate in §10 enforces it. Path dependencies are reported as "nothing to bump", never
@@ -758,6 +781,15 @@ test. This register — not the current pytest suite — is the behavioral oracl
 | DEF-10 | `doctor` never exits non-zero, checks no versions, and omits `gh` (which `list-components` requires), `docker`, `kubectl`, `helm`. | `doctor.py:7-16` | §9 |
 | DEF-11 | `edgecommons add <name>` is documented twice as a command; it does not exist. | `docs/ECOSYSTEM.md:80,149` | Delete the promise |
 | DEF-12 | Greengrass artifacts are emitted for HOST-only scaffolds; HOST gets no artifacts at all. | `templates/*/edgecommons-template.json` | §5.5 |
+| DEF-13 | The crate/bin name is mangled with no override: `-n …EthernetIpAdapter` → `ethernetipadapter` (dots stripped, no separator), while the ecosystem uses kebab (`ethernet-ip-adapter`). | `ethernet-ip-adapter/CLI-DOGFOODING.md` #1 | §5.7 (kebab `BINNAME` + `--bin-name`/`--crate-name`), D-CLI-17 |
+| DEF-14 | The output directory is the PascalCase short name (`./EthernetIpAdapter`), not the kebab repo name; no `--dir`. | `CLI-DOGFOODING.md` #2 | §5.7 (default dir = `BINNAME`; `--dir`), D-CLI-17 |
+| DEF-15 | Neither `--dep-source` matches the sibling convention (rev-pin in `Cargo.toml` + gitignored `.cargo` override); `registry`'s release tag lags the facades the template calls. | `CLI-DOGFOODING.md` #3 | §7.1 (`pinned-rev`), D-CLI-18 |
+| DEF-16 | A bucketless `gdk-config.json` is left silently empty; the only signal is a warning, and the miss surfaces at `gdk component publish` weeks later. | `CLI-DOGFOODING.md` #4 | §5.7 (sentinel + `EC3007` validate error), D-CLI-20 |
+
+Findings #5–#12 of the dogfooding log are **template-parity** requirements (metric families, the `sb/*`
+command surface, Diátaxis docs, CI, integration tests, governance files, edge-console panels, lockfile
+policy) rather than CLI defects; they are specified in `DESIGN-cli-scaffold-parity.md` (R5–R12) and
+realized by D-CLI-19/-21/-22/-23.
 
 ---
 
@@ -781,6 +813,13 @@ test. This register — not the current pytest suite — is the behavioral oracl
 | D-CLI-14 | **Restart impact is a first-class field of the plan** — computed per component, per config change, **from that component's config source**. | A pure config update does not reliably restart a component; dynamic config/hot reload is what addresses that, and **whether it applies is a property of the config source, not the platform** (`FILE`/`CONFIGMAP` are watched, `ENV` is not, a GG `configurationUpdate` is not reliably one). The deck's `diff` already has a **restart** consequence group; this populates it. |
 | D-CLI-16 | **Config/artifact compatibility is *derived*, not declared.** Components publish a **per-version config schema** in the release descriptor; `lock` commits it; `validate` checks the effective config against the schema of the **exact version being deployed**. `requiresArtifact >= X` survives only as a fallback (§8.5.5). | A declared floor is an assertion a human must remember to bump, and it is coarse. A schema check is automatic and names the offending key. It also closes a hole that exists today: `component.global` is `additionalProperties: true` with no declared properties, so component config is validated by nothing at any stage. |
 | D-CLI-15 | **`config-component` is preferred, not required.** The config stream is **provider-agnostic**: one model, one `layered.rs` computation, and a **delivery adapter per config source** (§8.5.3) — catalog push, config-only deployment, ConfigMap, staged file, env, or shadow. | Customers may use the native Greengrass config source or any supported provider; the deployment system must not make one component mandatory. Also agrees with REVIEW #6, which already preferred rendering Git content into the existing file/ConfigMap sources over building `GitCatalogSource` first. |
+| D-CLI-17 | **Names are kebab by default; the Greengrass component name stays PascalCase.** The crate/`[[bin]]`, Maven artifact, npm name, Python module dir, output directory, and every deploy-artifact name derive from a single acronym-aware kebab of the short name (`--bin-name`/`--dir` override); `COMPONENTFULLNAME` stays PascalCase reverse-DNS. | Every sibling repo and UNS token is kebab (`modbus-adapter`); the old mangled default (`ethernetipadapter`) violated the convention and every dogfooded scaffold hand-fixed it (DEF-13/-14). The CLI is pre-1.0 with one user — change the default now. |
+| D-CLI-18 | **`--dep-source pinned-rev` pins the CLI's own build commit** and emits a gitignored `.cargo/config.toml` sibling override (Rust) / documents the editable install (Python); Java/TS reject it. `local` stays the default. | The embedded templates and the pinned rev come from the same commit, so the pin contains every facade the template calls — the correctness the `registry` tag cannot give (its tag lags `main`, DEF-15). Maven/npm cannot express the monorepo-subdirectory git pin, so it is an honest usage error there, not a silent fallback. |
+| D-CLI-19 | **The archetype-parity floor.** A template is: runnable against its in-process sim, canonical on the published contracts (SOUTHBOUND §5 metrics, §2.2 command shapes), complete on repo hygiene (docs/CI/governance/tests/panels), and deliberately generic on protocol specifics (no protocol families beyond two worked ones, no real backend, one-page sim browse). | Full literal parity with a reference adapter is impossible in a generic template (protocol-named families, protocol browse). This line is where "minimal archetype" ends and the reference adapter begins — stated so it is enforced in review, not re-litigated per template (SD-1 Option A). |
+| D-CLI-20 | **A bucketless Greengrass scaffold writes a visible sentinel** (`edgecommons-set-artifact-bucket`) and `component validate` **errors** on it (`EC3007`). | An empty field reads as intentional; a sentinel + a validate error catches the miss at authoring/CI rather than at `gdk component publish` (DEF-16). |
+| D-CLI-21 | **The license is the author's choice.** `--license <SPDX\|none>` (default `none`) writes the LICENSE file and the manifest license field; no default license is stamped. | A scaffold is the *author's* component; baking the EdgeCommons license (BUSL-1.1) into third-party code is wrong. The old templates silently stamped `Apache-2.0` — a small defect this removes. Internal scaffolds pass `--license BUSL-1.1`. |
+| D-CLI-22 | **Lockfiles are instruct-and-validate, never embedded.** No template ships a `Cargo.lock`/`package-lock.json`; `component new` prints a "commit the lockfile" next step and `component validate` **warns** (`EC4008`) when a Rust/TS component has none. | A template cannot ship a *valid* lockfile (the graph depends on dep-source and the resolution moment), and generating one needs a toolchain + network — violating the offline principle (P2). |
+| D-CLI-23 | **`sb/pause`/`sb/resume` are promoted into the SOUTHBOUND contract** (§2.2) and shipped by the `protocol-adapter` scaffold, alongside the `reconnect`/`repoll` lifecycle-control family. | They were a single-adapter extension (D-EIP-3); rather than back-door them into the template only, SD-2 promotes them into the shared contract so the scaffold and the doc agree. |
 
 ---
 
