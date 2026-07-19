@@ -243,8 +243,11 @@ present, else the component; the verbs are registered through the `commands()` f
   when the target matches its **`writes.allow[]`** config allow-list, matched against the stable
   `signal.id` (D‑U16).
 - **Reads** reuse the §2 value/quality encoding: request `{ "signals": [ { <signal-ref> }, ... ] }` →
-  reply body `{ "id": "<instance>", "reads": [ { "signal": {id, address}, "value", "quality",
-  "qualityRaw", "sourceTs", "serverTs" }, ... ] }`.
+  reply body `{ "id": "<instance>", "reads": [ { "signal": {id, address?}, "value", "quality",
+  "qualityRaw", "sourceTs"?, "serverTs"? }, ... ] }`. `signal.address`, `sourceTs`, and `serverTs`
+  are **optional** — present when the protocol supplies them (an adapter with no device/source clock,
+  such as the scaffold's in-process sim, omits the timestamps), consistent with the §2 envelope where
+  both timestamps are optional.
 
 ## 3. Quality normalization
 

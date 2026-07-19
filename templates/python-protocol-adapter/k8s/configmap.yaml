@@ -34,27 +34,21 @@ data:
         "global": {
           "defaults": {
             "pollIntervalMs": 1000
+          },
+          "healthThresholds": {
+            "staleSignalSecs": 30
           }
         },
         "instances": [
           {
             "id": "device1",
-            "adapter": "example",
+            "adapter": "sim",
             "connection": {
-              "_comment": "TODO: your protocol endpoint, e.g. host/port/unitId or an OPC UA endpoint"
+              "endpoint": "sim://device1"
             },
-            "publish": {
-              "_comment": "data topics are minted in code via gg.instance(id).uns() \u2014 ecv1/{device}/{component}/{instance}/data/{signalPath}",
-              "batchMs": 0
-            },
-            "write": {
-              "enabled": true,
-              "topic": "southbound/{ComponentName}/{InstanceId}/write",
-              "_comment": "moves to the UNS cmd/sb/* inbox in Phase 5 (M9)"
-            },
-            "read": {
-              "topic": "southbound/{ComponentName}/{InstanceId}/read",
-              "_comment": "moves to the UNS cmd/sb/* inbox in Phase 5 (M9)"
+            "pollIntervalMs": 1000,
+            "writes": {
+              "allow": []
             }
           }
         ]

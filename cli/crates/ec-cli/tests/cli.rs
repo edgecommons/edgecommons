@@ -246,6 +246,40 @@ fn the_protocol_adapter_kind_is_reachable() {
 }
 
 #[test]
+fn license_none_makes_no_claim_and_a_named_license_writes_a_file_and_field() {
+    // SD-4 / D-CLI-21: a scaffold is the author's component. The default (`none`) writes no LICENSE
+    // and makes NO manifest license claim (not an empty one); `--license <spdx>` writes the text and
+    // populates the manifest field. The old templates silently stamped Apache-2.0.
+    let d = tempfile::tempdir().unwrap();
+    let none = scaffold(d.path(), "com.example.NoLic", "RUST", &["-k", "service"]);
+    assert_eq!(code(&none), 0, "{}", stderr(&none));
+    let p = d.path().join("no-lic");
+    assert!(!p.join("LICENSE").exists(), "--license none writes no LICENSE");
+    let cargo = std::fs::read_to_string(p.join("Cargo.toml")).unwrap();
+    assert!(
+        !cargo.lines().any(|l| l.trim().starts_with("license")),
+        "--license none leaves no license field (not an empty one):\n{cargo}"
+    );
+
+    let d2 = tempfile::tempdir().unwrap();
+    let mit = scaffold(
+        d2.path(),
+        "com.example.MitLic",
+        "RUST",
+        &["-k", "service", "--license", "mit"],
+    );
+    assert_eq!(code(&mit), 0, "{}", stderr(&mit));
+    let p2 = d2.path().join("mit-lic");
+    let text = std::fs::read_to_string(p2.join("LICENSE")).unwrap();
+    assert!(text.contains("MIT License"), "the MIT text is written");
+    let cargo2 = std::fs::read_to_string(p2.join("Cargo.toml")).unwrap();
+    assert!(
+        cargo2.contains("license = \"MIT\""),
+        "the manifest field is populated:\n{cargo2}"
+    );
+}
+
+#[test]
 fn the_language_by_kind_matrix_is_complete() {
     // Every language x kind cell has a template. This is the invariant that replaced
     // "an unfilled cell is a usage error" -- there are no unfilled cells left to test with.

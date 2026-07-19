@@ -262,12 +262,16 @@ pub fn new(args: &NewArgs, quiet: bool, assume_yes: bool) -> Outcome {
         None => generate_embedded(&template, &inputs, &target, args.force)?,
     };
 
-    // The license file (SD-4): the author's choice, not EdgeCommons'. Written after generation so
-    // it lands in the finished tree; `--license none` writes nothing.
-    if report.error_count() == 0
-        && let Some(spdx) = license
-    {
-        write_license(&target, spdx)?;
+    // The license (SD-4, D-CLI-21): the author's choice, not EdgeCommons'. Applied after generation
+    // so it lands in the finished tree. `--license <spdx>` writes the LICENSE text and leaves the
+    // manifest's populated `license` field. `--license none` (the default) writes no LICENSE file
+    // AND removes the now-empty license field the template carries (`license = "<<LICENSE>>"` ->
+    // `license = ""`), so a scaffold makes **no** license claim rather than an empty one.
+    if report.error_count() == 0 {
+        match license {
+            Some(spdx) => write_license(&target, spdx)?,
+            None => strip_empty_license_fields(&target),
+        }
     }
 
     if bucket_missing {
@@ -296,6 +300,71 @@ fn is_valid_bin_name(s: &str) -> bool {
     let mut chars = s.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Remove an **empty** license claim from the generated manifests (the `--license none` case).
+///
+/// The templates carry a tokenized `license` field (`license = "<<LICENSE>>"`) so `--license <spdx>`
+/// can populate it; with `none` the token resolves to `""`, and an empty `license = ""` reads as a
+/// deliberate (empty) claim. SD-4/D-CLI-21 want **no** claim, so the field is stripped. Best-effort:
+/// a manifest the template does not ship is simply skipped.
+fn strip_empty_license_fields(target: &std::path::Path) {
+    // Single-line `key = ""` / `"key": ""` forms: Cargo.toml, pyproject.toml (TOML) + package.json.
+    for (name, is_empty_license_line) in [
+        ("Cargo.toml", toml_license_is_empty as fn(&str) -> bool),
+        ("pyproject.toml", toml_license_is_empty),
+        ("package.json", json_license_is_empty),
+    ] {
+        let path = target.join(name);
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            let kept: Vec<&str> = text.lines().filter(|l| !is_empty_license_line(l)).collect();
+            let mut out = kept.join("\n");
+            if text.ends_with('\n') {
+                out.push('\n');
+            }
+            if out != text {
+                let _ = std::fs::write(&path, out);
+            }
+        }
+    }
+    // Multi-line `<licenses><license><name></name></license></licenses>` block: pom.xml.
+    let pom = target.join("pom.xml");
+    if let Ok(text) = std::fs::read_to_string(&pom)
+        && let Some(stripped) = strip_empty_pom_licenses(&text)
+    {
+        let _ = std::fs::write(&pom, stripped);
+    }
+}
+
+/// A TOML `license = ""` line (any surrounding whitespace).
+fn toml_license_is_empty(line: &str) -> bool {
+    let t = line.trim();
+    t == "license = \"\"" || t == "license=\"\""
+}
+
+/// A JSON `"license": ""` line (with or without a trailing comma).
+fn json_license_is_empty(line: &str) -> bool {
+    let t = line.trim().trim_end_matches(',').trim();
+    t == "\"license\": \"\"" || t == "\"license\":\"\""
+}
+
+/// Remove a `<licenses>` block whose only `<license>` has an empty `<name>` (the `--license none`
+/// pom). Returns the new text if a block was removed, else `None`.
+fn strip_empty_pom_licenses(text: &str) -> Option<String> {
+    let start = text.find("<licenses>")?;
+    let end = text[start..].find("</licenses>").map(|e| start + e + "</licenses>".len())?;
+    let block = &text[start..end];
+    // Only strip when the license name is empty (an unset `--license none`), never a real license.
+    if !(block.contains("<name></name>") || block.contains("<name/>")) {
+        return None;
+    }
+    // Also swallow the line's leading indentation and the trailing newline, so no blank line is left.
+    let line_start = text[..start].rfind('\n').map_or(0, |n| n + 1);
+    let mut after = end;
+    if text[after..].starts_with('\n') {
+        after += 1;
+    }
+    Some(format!("{}{}", &text[..line_start], &text[after..]))
 }
 
 /// Write the chosen license's canonical text into the generated component.
