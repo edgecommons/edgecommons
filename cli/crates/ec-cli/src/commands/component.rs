@@ -295,11 +295,14 @@ pub fn new(args: &NewArgs, quiet: bool, assume_yes: bool) -> Outcome {
     Ok(report)
 }
 
-/// Whether a string is a valid crate/binary name: `^[a-z0-9][a-z0-9-]*$`.
+/// Whether a string is a valid crate/binary name: `^[a-z0-9][a-z0-9-]*[a-z0-9]$` (or a single
+/// `[a-z0-9]`). A trailing hyphen is rejected — it is an invalid crate name and never what the
+/// author meant.
 fn is_valid_bin_name(s: &str) -> bool {
     let mut chars = s.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !s.ends_with('-')
 }
 
 /// Remove an **empty** license claim from the generated manifests (the `--license none` case).
