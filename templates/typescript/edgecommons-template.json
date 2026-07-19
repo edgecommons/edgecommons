@@ -13,6 +13,17 @@
     "EDGECOMMONS_DEP"
   ],
   "substitutions": {
+    "AGENTS.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "CLAUDE.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "DESIGN.md": [
+      "COMPONENTNAME"
+    ],
     "build.sh": [
       "COMPONENTFULLNAME",
       "COMPONENTNAME"
@@ -24,6 +35,23 @@
     "config.schema.json": [
       "COMPONENTNAME"
     ],
+    "docs/README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/tutorial.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/sample-configurations.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "docs/reference/messaging-interface.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/reference/metrics.md": [
+      "COMPONENTNAME"
+    ],
     "gdk-config.json": [
       "AUTHOR",
       "BUCKET",
@@ -33,7 +61,8 @@
     "package.json": [
       "COMPONENTNAME",
       "DESCRIPTION",
-      "EDGECOMMONS_DEP"
+      "EDGECOMMONS_DEP",
+      "LICENSE"
     ],
     "README.md": [
       "COMPONENTFULLNAME",

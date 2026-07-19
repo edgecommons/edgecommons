@@ -90,6 +90,64 @@
     ],
     "tests/test_metrics.py": [
       "SNAKENAME"
+    ],
+    "tests/test_live_sim.py": [
+      "SNAKENAME"
+    ],
+    "docs/README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "docs/tutorial.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/how-to-guides.md": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "docs/explanation.md": [
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "docs/sample-configurations.md": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "docs/reference/configuration.md": [
+      "BINNAME",
+      "SNAKENAME"
+    ],
+    "docs/reference/messaging-interface.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/reference/metrics.md": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "docs/reference/data-types.md": [
+      "SNAKENAME"
+    ],
+    ".github/workflows/ci.yml": [
+      "SNAKENAME"
+    ],
+    "AGENTS.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "CLAUDE.md": [
+      "COMPONENTNAME"
+    ],
+    "DESIGN.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
     ]
   },
   "renames": [

@@ -14,11 +14,7 @@
 //!   -t my-thing
 //! ```
 
-mod app;
-mod commands;
-mod device;
-mod metrics;
-
+use <<SNAKENAME>>::app;
 use edgecommons::prelude::*;
 
 /// The component's full name (matches `recipe.yaml` / `gdk-config.json`).

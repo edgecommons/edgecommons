@@ -17,6 +17,17 @@
       "COMPONENTFULLNAME",
       "COMPONENTNAME"
     ],
+    "AGENTS.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "CLAUDE.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "DESIGN.md": [
+      "COMPONENTNAME"
+    ],
     "build.sh": [
       "COMPONENTFULLNAME",
       "COMPONENTNAME"
@@ -26,6 +37,29 @@
       "COMPONENTNAME"
     ],
     "config.schema.json": [
+      "COMPONENTNAME"
+    ],
+    "docs/README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/tutorial.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/how-to-guides.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/explanation.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/sample-configurations.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "docs/reference/messaging-interface.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/reference/metrics.md": [
       "COMPONENTNAME"
     ],
     "gdk-config.json": [
@@ -43,7 +77,8 @@
     "package.json": [
       "COMPONENTNAME",
       "DESCRIPTION",
-      "EDGECOMMONS_DEP"
+      "EDGECOMMONS_DEP",
+      "LICENSE"
     ],
     "recipe.yaml": [
       "AUTHOR",

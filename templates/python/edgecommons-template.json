@@ -66,6 +66,48 @@
     ],
     "tests/test_app.py": [
       "COMPONENTNAME"
+    ],
+    "docs/README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/tutorial.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/how-to-guides.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/explanation.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/sample-configurations.md": [
+      "BINNAME"
+    ],
+    "docs/reference/configuration.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/reference/messaging-interface.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/reference/metrics.md": [
+      "BINNAME"
+    ],
+    "AGENTS.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "CLAUDE.md": [
+      "COMPONENTNAME"
+    ],
+    "DESIGN.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
     ]
   },
   "renames": [

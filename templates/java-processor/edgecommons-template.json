@@ -31,6 +31,7 @@
       "COMPONENTNAME",
       "EDGECOMMONS_VERSION",
       "JARNAME",
+      "LICENSE",
       "MAINCLASSNAME",
       "PACKAGE"
     ],
@@ -38,6 +39,42 @@
       "COMPONENTFULLNAME",
       "COMPONENTNAME",
       "JARNAME"
+    ],
+    "AGENTS.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "CLAUDE.md": [
+      "COMPONENTNAME"
+    ],
+    "DESIGN.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/tutorial.md": [
+      "BINNAME",
+      "JARNAME"
+    ],
+    "docs/how-to-guides.md": [
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "docs/sample-configurations.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/reference/configuration.md": [
+      "BINNAME"
+    ],
+    "docs/reference/messaging-interface.md": [
+      "BINNAME"
+    ],
+    "docs/reference/metrics.md": [
+      "BINNAME",
+      "COMPONENTNAME"
     ],
     "recipe.yaml": [
       "AUTHOR",

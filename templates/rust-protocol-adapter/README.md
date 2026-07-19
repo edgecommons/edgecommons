@@ -10,6 +10,9 @@ an OPC UA node without knowing either protocol.
      └──────────── reconnect with backoff ◄────────────────────┘
 ```
 
+> Full docs: [`docs/README.md`](docs/README.md). This template ships without a `Cargo.lock` (the
+> scaffold generates offline, without a toolchain or network); commit it after your first build.
+
 ## Run it
 
 ```bash

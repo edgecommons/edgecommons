@@ -139,3 +139,17 @@ before `npm install` here, since a `file:` dependency on a TS package needs its 
 Regenerate with `--dep-source registry` once the library publishes a real npm version to switch
 to a registry dependency; that pin is a release-time item, not something this template can do
 today.
+
+## Docs and further reading
+
+See [`docs/`](docs/) for the full Diátaxis set — a tutorial, how-to guides, an explanation of the
+facades and identity model, sample configurations, and reference pages for configuration, the
+messaging interface, and metrics.
+
+## Lockfile
+
+This scaffold ships with no `package-lock.json` — a template cannot generate a *valid* lockfile
+(the resolved graph depends on the dep-source and the moment you build), and doing so at scaffold
+time would need network access, which the CLI deliberately avoids. Run `npm install` once, then
+**commit `package-lock.json`** — `.gitignore` does not exclude it — so `npm ci` is reproducible in
+CI and for every other contributor. `component validate` warns if it is missing.

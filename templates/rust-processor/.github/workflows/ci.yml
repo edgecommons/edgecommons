@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    paths-ignore: ['**.md', 'docs/**']
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+jobs:
+  ci:
+    # Reusable component CI from the org defaults repo. `secrets: inherit` passes the org-level
+    # EDGECOMMONS_READ_TOKEN so cargo can fetch the private edgecommons git dependency (only needed
+    # for a `registry`/`pinned-rev` --dep-source; harmless if unused). The repo must be added to
+    # that secret's repository allow-list (org Actions secrets, via the REST API).
+    permissions:
+      contents: read
+    uses: edgecommons/.github/.github/workflows/component-ci.yml@main
+    with:
+      language: RUST
+    secrets: inherit
+
+  coverage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      # Org rule: 90% line coverage in all four languages; live-infra-only paths are validated
+      # through lab/HOST smoke instead of being forced into unit coverage. Do not lower this gate
+      # or exclude testable code to pass it — add tests.
+      - run: cargo llvm-cov --fail-under-lines 90

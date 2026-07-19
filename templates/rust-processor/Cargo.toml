@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 # Matches the edgecommons library's MSRV (edition-2024 crate).
 rust-version = "1.85"
-license = "Apache-2.0"
+license = "<<LICENSE>>"
 description = "<<DESCRIPTION>>"
 publish = false
 

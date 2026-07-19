@@ -134,3 +134,17 @@ ConfigMap, and resolves identity from the Downward API — so the Deployment nee
 generation time, `--dep-source local`, the default). Build the sibling library first (`npm run build`
 in `core/libs/ts`), since a `file:` dependency on a TypeScript package needs its `dist/` present.
 Regenerate with `--dep-source registry` to depend on the published package instead.
+
+## Docs and further reading
+
+See [`docs/`](docs/) for the full Diátaxis set — a tutorial, how-to guides, an explanation of the
+pipeline archetype, sample configurations, and reference pages for configuration, the messaging
+interface, and metrics.
+
+## Lockfile
+
+This scaffold ships with no `package-lock.json` — a template cannot generate a *valid* lockfile
+(the resolved graph depends on the dep-source and the moment you build), and doing so at scaffold
+time would need network access, which the CLI deliberately avoids. Run `npm install` once, then
+**commit `package-lock.json`** — `.gitignore` does not exclude it — so `npm ci` is reproducible in
+CI and for every other contributor. `component validate` warns if it is missing.
