@@ -205,6 +205,36 @@ async fn builds_full_runtime_against_inprocess_broker() {
         .await
         .expect("publish");
 
+    // The raw device-bus provider affordance (relay/bridge guard bypass): with a
+    // transport wired, the runtime hands back its OWN live provider — the same
+    // connection `messaging()` reported connected — and a relay can publish raw bytes
+    // through it BELOW the reserved-class guard that the normal service enforces.
+    let raw = gg
+        .raw_device_provider()
+        .expect("raw device provider is available when a transport is wired");
+    assert!(
+        raw.connected(),
+        "the raw provider shares the runtime's live device-bus connection"
+    );
+    // The guarded MessagingService path refuses a reserved UNS class...
+    assert!(
+        matches!(
+            messaging.publish("ecv1/d/c/i/state", &msg).await,
+            Err(edgecommons::EdgeCommonsError::ReservedTopic(_))
+        ),
+        "the guarded service path still refuses reserved classes"
+    );
+    // ...but the raw provider forwards raw bytes to that same reserved class, below
+    // the guard (QoS0 to the in-process broker: enqueued, drained, no ack).
+    raw.publish(
+        "ecv1/d/c/i/state",
+        b"raw-relay-bytes".to_vec(),
+        edgecommons::messaging::Destination::Local,
+        edgecommons::messaging::Qos::AtMostOnce,
+    )
+    .await
+    .expect("raw provider publishes below the reserved-class guard");
+
     // Streaming wired from config with the {ThingName} buffer-path template resolved.
     let streams = gg.streams();
     assert_eq!(streams.stream_names(), vec!["telemetry"]);
