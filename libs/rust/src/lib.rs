@@ -80,6 +80,12 @@ pub struct EdgeCommons {
     /// Generation/error state shared by every provider-driven and command-driven activation.
     config_lifecycle: Arc<ConfigLifecycle>,
     messaging: Option<Arc<dyn messaging::MessagingService>>,
+    /// The CONCRETE messaging service, kept alongside the type-erased
+    /// [`Self::messaging`] handle solely so [`Self::raw_device_provider`] can reach the
+    /// runtime's raw [`messaging::MessagingProvider`] (the guard-bypassing relay/bridge
+    /// affordance). Same underlying `Arc` as `messaging` — no second service or connection.
+    /// `None` whenever `messaging` is `None` (no transport wired).
+    messaging_impl: Option<Arc<messaging::DefaultMessagingService>>,
     logs: Arc<dyn logs::LogService>,
     metrics: Arc<dyn metrics::MetricService>,
     /// Telemetry streams (the `streaming` feature). Always present when the feature is on;
@@ -289,6 +295,33 @@ impl EdgeCommons {
                     .to_string(),
             )
         })
+    }
+
+    /// The runtime's raw device-bus [`messaging::MessagingProvider`] — a
+    /// **guard-bypassing** affordance for relay/bridge components only.
+    ///
+    /// Hands back the `Arc<dyn MessagingProvider>` underneath this runtime's
+    /// [`messaging::MessagingService`] (via
+    /// [`messaging::DefaultMessagingService::provider`]): the SAME transport
+    /// connection the runtime already uses — IPC on GREENGRASS, dual-broker MQTT on
+    /// HOST. A relay can `publish`/`subscribe` raw bytes through it **below** the
+    /// reserved-class publish guard (forwarding protobuf `EdgeCommonsMessage` bytes
+    /// across ALL UNS classes, including the reserved `state`/`metric`/`cfg`/`log`),
+    /// **without opening a second device-bus connection** — the point being to spare
+    /// a client under the GREENGRASS shared-connection quota (the deferred enabler
+    /// for the uns-bridge IPC-primary relay).
+    ///
+    /// Returns `None` only when no transport was wired (the same condition under
+    /// which [`Self::messaging`] errors).
+    ///
+    /// # This bypasses a safety guard — relays/bridges only
+    /// Bytes published through the returned provider skip the reserved-class guard
+    /// and all [`messaging::MessagingService`] envelope handling. Ordinary components
+    /// must use [`Self::messaging`] and the class facades, which keep the guard;
+    /// reach for this ONLY when building an envelope-aware relay that intentionally
+    /// forwards raw bytes verbatim.
+    pub fn raw_device_provider(&self) -> Option<Arc<dyn messaging::MessagingProvider>> {
+        self.messaging_impl.as_ref().map(|svc| svc.provider())
     }
 
     /// The log bus publisher for this component.
@@ -1114,6 +1147,7 @@ impl EdgeCommonsBuilder {
             config,
             config_lifecycle,
             messaging,
+            messaging_impl,
             logs,
             metrics,
             #[cfg(feature = "streaming")]

@@ -430,6 +430,30 @@ impl DefaultMessagingService {
         }
     }
 
+    /// The runtime's raw device-bus [`MessagingProvider`] — a **guard-bypassing**
+    /// affordance for relay/bridge components only.
+    ///
+    /// Returns a clone of the `Arc<dyn MessagingProvider>` this service wraps: the
+    /// SAME transport connection the runtime uses (IPC on GREENGRASS, dual-broker
+    /// MQTT on HOST). Operating through it lets a relay `publish`/`subscribe` raw
+    /// bytes **below** the reserved-class publish guard (§4.1) — it can forward
+    /// protobuf `EdgeCommonsMessage` bytes across ALL UNS classes, including the
+    /// reserved `state`/`metric`/`cfg`/`log` classes that [`MessagingService`]
+    /// deliberately refuses — and, crucially, do so **without opening a second
+    /// device-bus connection**, which matters under the GREENGRASS shared-connection
+    /// quota (the deferred enabler for the uns-bridge IPC-primary relay).
+    ///
+    /// # This bypasses a safety guard — do not use it for ordinary components
+    /// The reserved-class guard exists so component code cannot forge library-owned
+    /// UNS classes. Anything published through this provider skips that guard and the
+    /// `MessagingService` envelope handling entirely. Use it ONLY to build an
+    /// envelope-aware relay/bridge that intentionally forwards raw bytes verbatim;
+    /// for all normal publishing use [`MessagingService`] (via
+    /// [`crate::EdgeCommons::messaging`]) and the class facades, which keep the guard.
+    pub fn provider(&self) -> Arc<dyn MessagingProvider> {
+        self.provider.clone()
+    }
+
     fn publish_qos(&self, dest: Destination) -> Qos {
         match dest {
             Destination::Local => self.local_publish_qos,
@@ -1192,6 +1216,63 @@ mod tests {
         let decoded = Message::from_slice(payload).expect("payload is EdgeCommons protobuf");
         assert_eq!(decoded.header.name, "T");
         assert_eq!(decoded.body, json!(7));
+    }
+
+    // ---------- raw provider accessor (the relay/bridge guard-bypass affordance) ----------
+
+    #[tokio::test]
+    async fn provider_exposes_raw_transport_below_the_reserved_guard() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        // The guarded MessagingService path still refuses a reserved-class topic...
+        let reserved_topic = "ecv1/dev/comp/inst/state";
+        let guarded = svc.publish(reserved_topic, &msg(1)).await;
+        assert!(
+            matches!(guarded, Err(EdgeCommonsError::ReservedTopic(_))),
+            "guarded publish must still reject reserved classes, got {guarded:?}"
+        );
+
+        // ...but the raw provider (the relay/bridge affordance) forwards the caller's
+        // bytes verbatim, below the guard, to that same reserved class.
+        let raw = svc.provider();
+        let bytes = b"raw-relay-bytes".to_vec();
+        raw.publish(
+            reserved_topic,
+            bytes.clone(),
+            Destination::Local,
+            Qos::AtLeastOnce,
+        )
+        .await
+        .unwrap();
+
+        let published = provider.published.lock().unwrap();
+        assert_eq!(
+            published.len(),
+            1,
+            "the guarded publish never reached the provider; only the raw one did"
+        );
+        assert_eq!(
+            published[0],
+            (reserved_topic.to_string(), bytes),
+            "raw provider forwards bytes verbatim (no envelope wrapping)"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_returns_the_same_underlying_connection() {
+        let provider = Arc::new(FakeProvider::new());
+        let svc = DefaultMessagingService::new(provider.clone());
+
+        // `provider()` hands back the SAME connection the service wraps, not a new
+        // one — the whole point of the affordance under the shared-connection quota.
+        let raw = svc.provider();
+        let via_service = Arc::as_ptr(&raw) as *const ();
+        let via_test = Arc::as_ptr(&provider) as *const ();
+        assert_eq!(
+            via_service, via_test,
+            "provider() must expose the runtime's own connection, not a fresh client"
+        );
     }
 
     #[tokio::test]
