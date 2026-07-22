@@ -10,6 +10,9 @@ an OPC UA node without knowing either protocol.
      └──────────── reconnect with backoff ◄────────────────────┘
 ```
 
+> Full docs: [`docs/README.md`](docs/README.md). This template ships without a `Cargo.lock` (the
+> scaffold generates offline, without a toolchain or network); commit it after your first build.
+
 ## Run it
 
 ```bash
@@ -62,8 +65,12 @@ knowing your protocol — and it is why **a failed read is published as `BAD`, n
 signal that silently stops updating is indistinguishable from one that is simply not changing. The
 simulator's `pressure-1` demonstrates exactly this.
 
-**`southbound_health`, dimensioned by instance** — `connectionState`, `pollLatencyMs`, `readErrors`,
-`reconnects` — so an operator sees a link go down without reading logs.
+**`southbound_health`, dimensioned by instance** — the canonical SOUTHBOUND.md §5 set:
+`connectionState`, `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, `reconnects` —
+so an operator sees a link go down without reading logs. On top of it, `src/metrics.rs` ships the
+**operational-family pattern** two families deep (`<<COMPONENTNAME>>Connection`,
+`<<COMPONENTNAME>>Command`) as worked examples, with a signposted place to add your protocol's own
+`Inventory` / `Poll` / `Publish` families.
 
 **Per-instance connectivity, from one provider.** `App::run` registers an instance-connectivity
 provider reporting one entry per configured device. The library reads it twice: it pushes the
@@ -73,7 +80,7 @@ answers.
 
 ```json
 { "instance": "device-1", "connected": true, "state": "ONLINE",
-  "detail": "sim://device-1", "attributes": { "adapter": "sim" } }
+  "detail": "sim://device-1", "attributes": { "adapter": "sim", "paused": false } }
 ```
 
 `connected` is the **normalized** flag — always present, so a console renders a health dot without
@@ -100,3 +107,13 @@ A write is **confirmed**: the command's reply is the device's answer, not "we se
 
 `connection` is deliberately **open** — every protocol needs different keys (a unit id, a security
 policy, a slave address). Everything else in `config.schema.json` is closed, so a typo is caught.
+
+## The command surface (`src/commands.rs`)
+
+The adapter serves the generic southbound `sb/*` family on its `commands()` inbox (SOUTHBOUND.md
+§2.2): `sb/status`, `sb/read`, `sb/write`, `sb/signals`, `sb/browse`, `sb/pause`, `sb/resume`,
+`reconnect`, `repoll`. Requests route by an optional `body.instance` — required only when more than
+one device is configured. Every session-touching verb is handed to the device's own task over a
+control channel and confirmed through the reply that rides it, so the inbox never touches a live
+connection. The same module registers three edge-console panels — `overview`, `signals`,
+`diagnostics` — bound to the verbs above.

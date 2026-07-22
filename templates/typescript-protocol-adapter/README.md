@@ -22,7 +22,8 @@ protocol; nothing above the seam changes.
 | Path | Purpose |
 |------|---------|
 | `src/main.ts` | Entry point: builds the `edgecommons` runtime from CLI args, runs the app. |
-| `src/app.ts` | The adapter: one loop per device — connect, poll, publish, reconnect, report health, serve writes. |
+| `src/app.ts` | The adapter logic (unit-tested): config parsing, reconnect backoff, control mailbox, health/connectivity, the publish path, and the per-message control decisions. |
+| `src/runtime.ts` | The thin live-runtime seam: one connect/poll/reconnect supervisor per device. Excluded from the coverage gate (needs a live runtime; validated by the deploy paths + `test/live-sim.test.ts`). |
 | `src/device.ts` | **The seam you implement**: `DeviceBackend` / `DeviceSession`, plus the `sim` backend. |
 | `test/` | Vitest suites for the invariants below (`npm test`). |
 | `config.schema.json` | The component's own config (`component.global` + one device per instance). |
@@ -67,7 +68,7 @@ A **signal** is one data point (OPC UA calls it a "tag"; Modbus calls it a "regi
 | **Quality on every sample** (`GOOD \| BAD \| UNCERTAIN` + the native code in `qualityRaw`) | It lets a consumer gate on quality without knowing your protocol. |
 | **A failed read is published as `BAD`, not swallowed** | A signal that silently stops updating is indistinguishable from one that is simply not changing. "I could not read this" is information; silence is not. |
 | **Reconnect with exponential backoff + full jitter** | So a plant full of adapters does not reconnect in lockstep when a PLC reboots. A *permanent* failure (a bad endpoint, a rejected credential) backs off to the ceiling at once rather than hammering a device that will never answer. |
-| **`southbound_health`, dimensioned by instance** | An operator sees a link go down without reading logs: `connectionState`, `pollLatencyMs`, `readErrors`, `reconnects`, `signalsPublished`. |
+| **`southbound_health`, dimensioned by instance** | An operator sees a link go down without reading logs: the exact SOUTHBOUND.md §5 set — `connectionState`, `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, `reconnects`. |
 | **Writes are ALLOW-LISTED by stable `signal.id`, and default to EMPTY** | An adapter that writes whatever it is asked to is a control-system vulnerability, not a convenience. "The caller was authorized" is not this component's judgement to make. |
 | **A write is CONFIRMED** | The command reply is the *device's* answer, not "we sent it". |
 | **One loop per instance** (one device) | Most device protocols are a single request/response channel; a write and a poll on two callers would interleave into nonsense. The loop serializes them. |
@@ -75,15 +76,23 @@ A **signal** is one data point (OPC UA calls it a "tag"; Modbus calls it a "regi
 ## The command surface
 
 `ping` / `reload-config` / `get-configuration` are live with zero code (the library's inbox). This
-adapter adds one verb:
+adapter registers the full generic southbound family (`src/commands.ts`):
 
 | Verb | Topic | Body |
 |---|---|---|
-| `sb/write` | `ecv1/{device}/{component}/cmd/sb/write` | `{"instance": "device-1", "signalId": "setpoint-1", "value": 42}` |
+| `sb/status` | `ecv1/{device}/{component}/cmd/sb/status` | `{"instance"?: "device-1"}` |
+| `sb/read` | `ecv1/{device}/{component}/cmd/sb/read` | `{"signals": [{"signalId": "temperature-1"}]}` |
+| `sb/write` | `ecv1/{device}/{component}/cmd/sb/write` | `{"writes": [{"signalId": "temperature-1", "value": 42}]}` |
+| `sb/signals` | `ecv1/{device}/{component}/cmd/sb/signals` | `{}` |
+| `sb/browse` | `ecv1/{device}/{component}/cmd/sb/browse` | `{"cursor"?: "...", "max"?: 200}` |
+| `sb/pause` / `sb/resume` | `ecv1/{device}/{component}/cmd/sb/{pause,resume}` | `{}` |
+| `reconnect` / `repoll` | `ecv1/{device}/{component}/cmd/{reconnect,repoll}` | `{}` |
 
-The scope rides an `instance` body field rather than a topic segment, so one inbox serves every
-device this adapter owns. The write is refused with `WRITE_NOT_ALLOWED` unless `signalId` is on that
-instance's `writes.allow` list — which is **empty by default**, making a fresh adapter read-only.
+The scope rides an `instance` body field rather than a topic segment (required once two or more
+devices are configured), so one inbox serves every device this adapter owns. A write is refused
+with `WRITE_NOT_ALLOWED` unless its `signalId` is on that instance's `writes.allow` list — which is
+**empty by default**, making a fresh adapter read-only. Full payload shapes and error codes:
+[docs/reference/messaging-interface.md](docs/reference/messaging-interface.md).
 
 ## Configuration
 
@@ -149,3 +158,17 @@ ConfigMap, and resolves identity from the Downward API — so the Deployment nee
 generation time, `--dep-source local`, the default). Build the sibling library first (`npm run build`
 in `core/libs/ts`), since a `file:` dependency on a TypeScript package needs its `dist/` present.
 Regenerate with `--dep-source registry` to depend on the published package instead.
+
+## Docs and further reading
+
+See [`docs/`](docs/) for the full Diátaxis set — a tutorial, how-to guides, an explanation of the
+seam and its guarantees, sample configurations, and reference pages for configuration, the
+messaging interface, metrics, and data types.
+
+## Lockfile
+
+This scaffold ships with no `package-lock.json` — a template cannot generate a *valid* lockfile
+(the resolved graph depends on the dep-source and the moment you build), and doing so at scaffold
+time would need network access, which the CLI deliberately avoids. Run `npm install` once, then
+**commit `package-lock.json`** — `.gitignore` does not exclude it — so `npm ci` is reproducible in
+CI and for every other contributor. `component validate` warns if it is missing.

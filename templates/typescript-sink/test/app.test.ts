@@ -7,6 +7,7 @@ import {
   RetryDeps,
   Stats,
   connectivityOf,
+  defaultRetryDeps,
   deliverWithRetry,
   keyFor,
   parseSink,
@@ -271,6 +272,54 @@ describe("deliverWithRetry", () => {
     // Gave up must be LOUD: a sink that fails quietly is indistinguishable from one that is idle.
     expect(emitted.at(-1)?.type).toBe("delivery-exhausted");
     expect(emitted.at(-1)?.severity).toBe(Severity.Critical);
+  });
+
+  it("treats the event surface as best-effort — a failing emit never fails a delivery", async () => {
+    // Every rung of the ladder emits an event and swallows an emit failure (`.catch(() =>
+    // undefined)`): reporting is best-effort, and a broken event sink must not turn a good delivery
+    // (or a clean give-up) into a thrown error. Exercise the swallow on the success, the transient
+    // retry, and the permanent-failure rungs.
+    const throwing = {
+      emit: async (): Promise<void> => {
+        throw new Error("event bus is down");
+      },
+    } as unknown as { emit: (...a: never[]) => Promise<void> };
+
+    // success rung (started + completed)
+    await expect(
+      deliverWithRetry(sink, item("ok.json", "hi"), new FlakyDestination(0), new Stats(), new DestHealth(), throwing, fakeDeps()),
+    ).resolves.toBeUndefined();
+
+    // transient-retry rung (delivery-failed) then success
+    const retryStats = new Stats();
+    await deliverWithRetry(sink, item("r.json", "hi"), new FlakyDestination(1), retryStats, new DestHealth(), throwing, fakeDeps());
+    expect(retryStats.delivered).toBe(1);
+    expect(retryStats.retried).toBe(1);
+
+    // permanent rung (delivery-exhausted)
+    const permStats = new Stats();
+    await deliverWithRetry(
+      sink,
+      item("p.json", "hi"),
+      new FlakyDestination(9, DeliverError.permanent("nope")),
+      permStats,
+      new DestHealth(),
+      throwing,
+      fakeDeps(),
+    );
+    expect(permStats.exhausted).toBe(1);
+  });
+});
+
+describe("the default retry deps", () => {
+  it("provide the real clock, jitter, and sleep the runtime uses when none are injected", async () => {
+    // The tests above inject a virtual clock; the runtime uses these. `rand01` stays in [0, 1),
+    // `now` is a real timestamp, and `sleep(0)` resolves — so a deployed sink actually waits.
+    const r = defaultRetryDeps.rand01();
+    expect(r).toBeGreaterThanOrEqual(0);
+    expect(r).toBeLessThan(1);
+    expect(defaultRetryDeps.now()).toBeGreaterThan(0);
+    await expect(defaultRetryDeps.sleep(0)).resolves.toBeUndefined();
   });
 });
 

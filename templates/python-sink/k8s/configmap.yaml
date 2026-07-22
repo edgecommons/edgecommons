@@ -9,9 +9,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: <<COMPONENTNAME>>-config
+  name: <<BINNAME>>-config
   labels:
-    app.kubernetes.io/name: <<COMPONENTNAME>>
+    app.kubernetes.io/name: <<BINNAME>>
 data:
   config.json: |-
     {
@@ -29,7 +29,7 @@ data:
           "type": "mqtt",
           "host": "emqx.default.svc.cluster.local",
           "port": 1883,
-          "clientId": "<<COMPONENTNAME>>"
+          "clientId": "<<BINNAME>>"
         }
       },
       "logging": {

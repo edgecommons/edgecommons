@@ -95,8 +95,18 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
         }
 
         Command::Component(ComponentCmd::Upgrade(args)) => {
-            let (changes, report) =
-                ec_scaffold::upgrade::upgrade(&args.path, &args.to, args.dry_run)?;
+            let (changes, report) = match (&args.to, &args.to_rev) {
+                (Some(to), None) => ec_scaffold::upgrade::upgrade(&args.path, to, args.dry_run)?,
+                (None, Some(rev)) => {
+                    ec_scaffold::upgrade::upgrade_to_rev(&args.path, rev, args.dry_run)?
+                }
+                (None, None) => {
+                    return Err(Fatal::Usage(
+                        "pass --to <version> (release pin) or --to-rev <sha> (git-rev pin)".into(),
+                    ));
+                }
+                (Some(_), Some(_)) => unreachable!("clap declares these mutually exclusive"),
+            };
             for c in &changes {
                 println!(
                     "{}{}",

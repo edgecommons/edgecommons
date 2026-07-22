@@ -7,6 +7,9 @@ A **processing component**: it subscribes to messages, transforms them, and forw
                                              (Pipeline)          local | northbound
 ```
 
+> Full docs: [`docs/README.md`](docs/README.md). This template ships without a `Cargo.lock` (the
+> scaffold generates offline, without a toolchain or network); commit it after your first build.
+
 ## Run it
 
 ```bash

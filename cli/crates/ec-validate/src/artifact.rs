@@ -14,6 +14,12 @@ use serde::Deserialize;
 use serde_json::Value as Json;
 use serde_yaml::Value as Yaml;
 
+/// The sentinel `component new` writes into a Greengrass `gdk-config.json` publish bucket when
+/// none was supplied. `component validate` errors on it, so the miss is caught at authoring/CI
+/// rather than at `gdk component publish`. Kept in sync with the CLI's own constant by this test
+/// suite's `the_bucket_sentinel_is_caught` case.
+pub const ARTIFACT_BUCKET_SENTINEL: &str = "edgecommons-set-artifact-bucket";
+
 /// Lint a Greengrass recipe.
 #[must_use]
 pub fn lint_recipe(path: &Path) -> Report {
@@ -272,6 +278,57 @@ pub fn lint_gdk_config(path: &Path) -> Report {
         );
     }
 
+    // The publish bucket is still the scaffold sentinel: an unresolved bucket that would fail at
+    // `gdk component publish`. Caught here as an error so it surfaces at authoring/CI instead.
+    for (_, body) in component {
+        if body
+            .get("publish")
+            .and_then(|p| p.get("bucket"))
+            .and_then(Json::as_str)
+            == Some(ARTIFACT_BUCKET_SENTINEL)
+        {
+            r.push(
+                Diagnostic::error(
+                    ec_diag::EC3007_ARTIFACT_BUCKET_SENTINEL,
+                    format!(
+                        "gdk-config.json publish bucket is the sentinel \
+                         `{ARTIFACT_BUCKET_SENTINEL}` and cannot publish"
+                    ),
+                )
+                .with_file(path)
+                .with_help("set `publish.bucket` to a real S3 bucket you own"),
+            );
+        }
+    }
+
+    r
+}
+
+/// Warn when a Rust or TypeScript component ships no committed lockfile (SD-6). A template
+/// cannot ship a valid lockfile (it depends on the dep-source and the resolution moment), so the
+/// policy is instruct-and-validate: `component new` prints a "commit the lockfile" next step, and
+/// this rule warns until the author has done so. A warning, not an error — the very first
+/// `component validate`, before any build, is expected to hit it.
+#[must_use]
+pub fn lint_lockfile(root: &Path) -> Report {
+    let mut r = Report::new();
+    for (manifest, lockfile) in [
+        ("Cargo.toml", "Cargo.lock"),
+        ("package.json", "package-lock.json"),
+    ] {
+        if root.join(manifest).exists() && !root.join(lockfile).exists() {
+            r.push(
+                Diagnostic::warning(
+                    ec_diag::EC4008_NO_LOCKFILE,
+                    format!("no committed {lockfile}: builds are not reproducible"),
+                )
+                .with_file(root.join(manifest))
+                .with_help(format!(
+                    "build once and commit {lockfile} so CI resolves the same dependency graph"
+                )),
+            );
+        }
+    }
     r
 }
 
@@ -524,6 +581,70 @@ spec:
             r#"{"component":{"com.example.Thing":{"version":"NEXT_PATCH"}},"gdk_version":"1.6.2"}"#,
         );
         assert_eq!(lint_gdk_config(&ok).error_count(), 0);
+    }
+
+    #[test]
+    fn the_bucket_sentinel_is_caught() {
+        let d = tempfile::tempdir().unwrap();
+        let p = write(
+            d.path(),
+            "gdk-config.json",
+            &format!(
+                r#"{{"component":{{"com.example.Thing":{{"version":"NEXT_PATCH","publish":{{"bucket":"{ARTIFACT_BUCKET_SENTINEL}","region":"us-east-1"}}}}}}}}"#
+            ),
+        );
+        let r = lint_gdk_config(&p);
+        assert_eq!(r.error_count(), 1, "{}", r.render_human());
+        assert_eq!(
+            r.diagnostics[0].code,
+            ec_diag::EC3007_ARTIFACT_BUCKET_SENTINEL
+        );
+
+        // A real bucket is clean.
+        let ok = write(
+            d.path(),
+            "ok/gdk-config.json",
+            r#"{"component":{"com.example.Thing":{"publish":{"bucket":"my-real-bucket"}}}}"#,
+        );
+        assert_eq!(lint_gdk_config(&ok).error_count(), 0);
+    }
+
+    #[test]
+    fn a_rust_project_without_a_committed_lockfile_warns() {
+        let d = tempfile::tempdir().unwrap();
+        write(d.path(), "Cargo.toml", "[package]\nname=\"x\"\n");
+        let r = lint_lockfile(d.path());
+        assert_eq!(r.warning_count(), 1, "{}", r.render_human());
+        assert_eq!(
+            r.error_count(),
+            0,
+            "a missing lockfile is a warning, not an error"
+        );
+        assert_eq!(r.diagnostics[0].code, ec_diag::EC4008_NO_LOCKFILE);
+
+        // Once the lockfile is committed, it is clean.
+        write(d.path(), "Cargo.lock", "# lock\n");
+        assert!(lint_lockfile(d.path()).is_empty());
+    }
+
+    #[test]
+    fn a_typescript_project_without_a_committed_lockfile_warns() {
+        let d = tempfile::tempdir().unwrap();
+        write(d.path(), "package.json", "{\"name\":\"x\"}\n");
+        let r = lint_lockfile(d.path());
+        assert_eq!(r.warning_count(), 1, "{}", r.render_human());
+        assert_eq!(r.diagnostics[0].code, ec_diag::EC4008_NO_LOCKFILE);
+        write(d.path(), "package-lock.json", "{}\n");
+        assert!(lint_lockfile(d.path()).is_empty());
+    }
+
+    #[test]
+    fn a_project_with_no_rust_or_ts_manifest_is_not_lockfile_linted() {
+        // A Java or Python component has no lockfile convention this rule covers.
+        let d = tempfile::tempdir().unwrap();
+        write(d.path(), "pom.xml", "<project/>\n");
+        write(d.path(), "requirements.txt", "edgecommons\n");
+        assert!(lint_lockfile(d.path()).is_empty());
     }
 
     #[test]

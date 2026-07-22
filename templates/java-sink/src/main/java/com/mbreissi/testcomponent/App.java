@@ -159,14 +159,14 @@ public final class <<COMPONENTNAME>> {
             // work yet must still appear, or an operator cannot tell "idle" from "not configured".
             // Nothing has failed, so it is reported reachable — replace this with a cheap probe
             // (a HEAD, a bucket stat) if your backend offers one.
-            reportConnectivity(sink, destination, true, "IDLE", null);
+            recordConnectivity(sink.id(), destination.kind(), true, "IDLE", null);
 
             messaging.subscribe(sink.subscribe(), (topic, msg) -> {
                 stats.received.incrementAndGet();
                 Item item = new Item(
                         // A stable, deterministic key: the same message always lands in the same
                         // place, so a redelivery overwrites.
-                        keyFor(sink.id(), topic, msg),
+                        Delivery.keyFor(sink.id(), topic, msg),
                         GSON.toJson(msg.getBody()).getBytes(StandardCharsets.UTF_8));
                 // offer, never put: a full queue must DROP and be COUNTED, not block the transport's
                 // dispatch thread.
@@ -201,11 +201,26 @@ public final class <<COMPONENTNAME>> {
     }
 
     private void runSink(SinkConfig sink, BlockingQueue<Item> queue, Destination destination) {
+        // The reporter is the seam that makes the retry ladder testable: Delivery.deliverWithRetry
+        // owns the transient/permanent/budget logic and the event ladder, and calls back here to emit
+        // on the live UNS event surface and to update the connectivity map the heartbeat reads. A test
+        // drives the same logic with a fake reporter and a failing destination — no broker.
+        Delivery.Reporter reporter = new Delivery.Reporter() {
+            @Override
+            public void event(Severity severity, String type, String message, JsonObject context) {
+                events.emit(severity, type, message, context);
+            }
+
+            @Override
+            public void connectivity(boolean reachable, String state, String detail) {
+                recordConnectivity(sink.id(), destination.kind(), reachable, state, detail);
+            }
+        };
         while (shutdown.getCount() > 0) {
             try {
                 Item item = queue.poll(1, TimeUnit.SECONDS);
                 if (item != null) {
-                    deliverWithRetry(sink, item, destination);
+                    Delivery.deliverWithRetry(sink, item, destination, stats, reporter);
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -215,103 +230,79 @@ public final class <<COMPONENTNAME>> {
         LOGGER.info("sink {} stopped", sink.id());
     }
 
-    /**
-     * Delivers one item, retrying transient failures until the time budget is spent.
-     *
-     * <p>The event ladder is the sink's contract with whoever is watching: <b>delivery-started</b>,
-     * then either <b>delivery-completed</b>, or <b>delivery-failed</b> (carrying {@code willRetry}),
-     * and finally <b>delivery-exhausted</b> if the budget runs out. An operator must be able to tell
-     * "still trying" from "gave up", and gave-up must be loud — it is Critical, because it is data
-     * that did not arrive.
-     *
-     * @param sink        the sink whose policy governs the retries
-     * @param item        the item to deliver
-     * @param destination where it goes
-     * @return {@code true} when the item was delivered <b>and verified</b>
-     */
-    boolean deliverWithRetry(SinkConfig sink, Item item, Destination destination) {
-        long started = System.nanoTime();
-        int attempt = 0;
-
-        events.emit(Severity.INFO, "delivery-started", null,
-                context(sink.id(), item.key(), c -> c.addProperty("kind", destination.kind())));
-
-        while (true) {
-            try {
-                // deliver, then VERIFY. Only a verified delivery is a delivery.
-                Delivered delivered = destination.deliver(item);
-                destination.verify(item, delivered);
-
-                stats.delivered.incrementAndGet();
-                // A verified delivery is the only proof a destination is reachable.
-                reportConnectivity(sink, destination, true, "ONLINE", null);
-                int attempts = attempt + 1;
-                events.emit(Severity.INFO, "delivery-completed", null,
-                        context(sink.id(), item.key(), c -> {
-                            c.addProperty("attempts", attempts);
-                            c.addProperty("elapsedMs", elapsedMs(started));
-                        }));
-                // The source is released HERE — after verification, never before.
-                return true;
-
-            } catch (DeliverException e) {
-                if (!e.isTransient()) {
-                    // Permanent: it will fail identically forever. Retrying is a waste of the budget
-                    // and of the log; give up now and say so.
-                    stats.exhausted.incrementAndGet();
-                    reportConnectivity(sink, destination, false, "FAILED", e.getMessage());
-                    LOGGER.error("sink {} permanently failed on {}: {}", sink.id(), item.key(), e.getMessage());
-                    events.emit(Severity.CRITICAL, "delivery-exhausted",
-                            sink.id() + " will never deliver " + item.key(),
-                            context(sink.id(), item.key(), c -> c.addProperty("reason", e.getMessage())));
-                    return false;
-                }
-
-                if (sink.retry().budgetSpent(elapsedMs(started))) {
-                    stats.exhausted.incrementAndGet();
-                    reportConnectivity(sink, destination, false, "FAILED", e.getMessage());
-                    int attempts = attempt + 1;
-                    LOGGER.error("sink {} spent its retry budget on {} after {} attempts",
-                            sink.id(), item.key(), attempts);
-                    events.emit(Severity.CRITICAL, "delivery-exhausted",
-                            sink.id() + " gave up on " + item.key(),
-                            context(sink.id(), item.key(), c -> {
-                                c.addProperty("attempts", attempts);
-                                c.addProperty("reason", e.getMessage());
-                            }));
-                    return false;
-                }
-
-                long backoff = sink.retry().delayMs(attempt, ThreadLocalRandom.current().nextDouble());
-                stats.retried.incrementAndGet();
-                // Transient: still trying. `connected=false` says "not delivering"; only OUR `state`
-                // can say whether that is a retry in flight or a destination that is gone for good.
-                reportConnectivity(sink, destination, false, "BACKOFF", e.getMessage());
-                int attempts = attempt + 1;
-                LOGGER.warn("sink {} transient failure on {} (attempt {}); retrying in {} ms: {}",
-                        sink.id(), item.key(), attempts, backoff, e.getMessage());
-                events.emit(Severity.WARNING, "delivery-failed", null,
-                        context(sink.id(), item.key(), c -> {
-                            c.addProperty("attempt", attempts);
-                            c.addProperty("willRetry", true);
-                            c.addProperty("nextAttemptInMs", backoff);
-                        }));
-
-                try {
-                    Thread.sleep(backoff);
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    return false;
-                }
-                attempt++;
-            }
-        }
+    /** Records one destination's reachability into the map both connectivity surfaces (state + status) read. */
+    private void recordConnectivity(String sinkId, String kind, boolean reachable, String state,
+                                    String detail) {
+        destinationHealth.put(sinkId, Delivery.connectivity(sinkId, kind, reachable, state, detail));
     }
 
-    /** Records one destination's reachability for both connectivity surfaces (state + status). */
-    private void reportConnectivity(SinkConfig sink, Destination destination, boolean reachable,
-                                    String state, String detail) {
-        destinationHealth.put(sink.id(), connectivity(sink.id(), destination.kind(), reachable, state, detail));
+    private void emitMetrics() {
+        Map<String, Float> values = new HashMap<>();
+        values.put("received", (float) stats.received.getAndSet(0));
+        values.put("delivered", (float) stats.delivered.getAndSet(0));
+        values.put("retried", (float) stats.retried.getAndSet(0));
+        values.put("exhausted", (float) stats.exhausted.getAndSet(0));
+        values.put("dropped", (float) stats.dropped.getAndSet(0));
+        metrics.emitMetric(METRIC_NAME, values);
+    }
+}
+
+/** Counters, reported as a metric each interval. */
+final class Stats {
+    final AtomicLong received = new AtomicLong();
+    final AtomicLong delivered = new AtomicLong();
+    final AtomicLong retried = new AtomicLong();
+    /** Gave up. This is the number that matters: it is data that did not arrive. */
+    final AtomicLong exhausted = new AtomicLong();
+    /** Dropped because a sink's queue was full — never let this be invisible. */
+    final AtomicLong dropped = new AtomicLong();
+}
+
+/**
+ * The sink's <b>archetype logic</b>, extracted from the live run loop so it is unit-tested directly:
+ * the stable-key derivation, the connectivity rendering, and — the load-bearing one — the
+ * deliver → verify → retry ladder. The component class itself is a live bootstrap + per-sink worker
+ * loop (it needs a broker and a running {@code EdgeCommons} to consume anything) and is validated on
+ * real infrastructure, so it is excluded from the in-process coverage gate; everything here needs no
+ * broker, so it stays in the gate and is covered by the unit suite against {@code LocalDestination}
+ * and a failing test double.
+ */
+final class Delivery {
+
+    private static final Logger LOGGER = LogManager.getLogger(Delivery.class);
+
+    private Delivery() {
+    }
+
+    /**
+     * What {@link #deliverWithRetry} reports outward — the {@code evt} ladder and the per-destination
+     * connectivity — abstracted behind an interface so the retry logic can be exercised without a live
+     * {@code EventsFacade} or heartbeat. The component wires the real event surface + connectivity map
+     * behind it; a test supplies a recording double.
+     */
+    interface Reporter {
+        /** Emit one event on the UNS {@code evt} surface (severity + type derive the channel). */
+        void event(Severity severity, String type, String message, JsonObject context);
+
+        /** Record one reachability transition for the {@code state}/{@code status} surfaces. */
+        void connectivity(boolean reachable, String state, String detail);
+    }
+
+    /**
+     * A stable, deterministic key for a message.
+     *
+     * <p>Deterministic is the whole point: the same message must always resolve to the same key, or a
+     * retry duplicates instead of overwriting.
+     *
+     * @param sinkId the sink id — it prefixes the key, so two sinks never collide
+     * @param topic  the topic the message arrived on; its last segment groups the objects
+     * @param msg    the message — its envelope uuid makes the key unique <i>and</i> reproducible
+     * @return the destination key
+     */
+    static String keyFor(String sinkId, String topic, Message msg) {
+        int slash = topic.lastIndexOf('/');
+        String leaf = slash >= 0 && slash + 1 < topic.length() ? topic.substring(slash + 1) : "message";
+        return sinkId + "/" + leaf + "/" + msg.getHeader().getUuid() + ".json";
     }
 
     /**
@@ -340,6 +331,102 @@ public final class <<COMPONENTNAME>> {
                 .withAttributes(Map.of("kind", new JsonPrimitive(kind)));
     }
 
+    /**
+     * Delivers one item, retrying transient failures until the time budget is spent.
+     *
+     * <p>The event ladder is the sink's contract with whoever is watching: <b>delivery-started</b>,
+     * then either <b>delivery-completed</b>, or <b>delivery-failed</b> (carrying {@code willRetry}),
+     * and finally <b>delivery-exhausted</b> if the budget runs out. An operator must be able to tell
+     * "still trying" from "gave up", and gave-up must be loud — it is Critical, because it is data
+     * that did not arrive.
+     *
+     * @param sink        the sink whose policy governs the retries
+     * @param item        the item to deliver
+     * @param destination where it goes
+     * @param stats       the counters this delivery bumps (delivered / retried / exhausted)
+     * @param reporter    the event + connectivity sink (the live surfaces, or a test double)
+     * @return {@code true} when the item was delivered <b>and verified</b>
+     */
+    static boolean deliverWithRetry(SinkConfig sink, Item item, Destination destination, Stats stats,
+                                    Reporter reporter) {
+        long started = System.nanoTime();
+        int attempt = 0;
+
+        reporter.event(Severity.INFO, "delivery-started", null,
+                context(sink.id(), item.key(), c -> c.addProperty("kind", destination.kind())));
+
+        while (true) {
+            try {
+                // deliver, then VERIFY. Only a verified delivery is a delivery.
+                Delivered delivered = destination.deliver(item);
+                destination.verify(item, delivered);
+
+                stats.delivered.incrementAndGet();
+                // A verified delivery is the only proof a destination is reachable.
+                reporter.connectivity(true, "ONLINE", null);
+                int attempts = attempt + 1;
+                reporter.event(Severity.INFO, "delivery-completed", null,
+                        context(sink.id(), item.key(), c -> {
+                            c.addProperty("attempts", attempts);
+                            c.addProperty("elapsedMs", elapsedMs(started));
+                        }));
+                // The source is released HERE — after verification, never before.
+                return true;
+
+            } catch (DeliverException e) {
+                if (!e.isTransient()) {
+                    // Permanent: it will fail identically forever. Retrying is a waste of the budget
+                    // and of the log; give up now and say so.
+                    stats.exhausted.incrementAndGet();
+                    reporter.connectivity(false, "FAILED", e.getMessage());
+                    LOGGER.error("sink {} permanently failed on {}: {}", sink.id(), item.key(), e.getMessage());
+                    reporter.event(Severity.CRITICAL, "delivery-exhausted",
+                            sink.id() + " will never deliver " + item.key(),
+                            context(sink.id(), item.key(), c -> c.addProperty("reason", e.getMessage())));
+                    return false;
+                }
+
+                if (sink.retry().budgetSpent(elapsedMs(started))) {
+                    stats.exhausted.incrementAndGet();
+                    reporter.connectivity(false, "FAILED", e.getMessage());
+                    int attempts = attempt + 1;
+                    LOGGER.error("sink {} spent its retry budget on {} after {} attempts",
+                            sink.id(), item.key(), attempts);
+                    reporter.event(Severity.CRITICAL, "delivery-exhausted",
+                            sink.id() + " gave up on " + item.key(),
+                            context(sink.id(), item.key(), c -> {
+                                c.addProperty("attempts", attempts);
+                                c.addProperty("reason", e.getMessage());
+                            }));
+                    return false;
+                }
+
+                long backoff = sink.retry().delayMs(attempt, ThreadLocalRandom.current().nextDouble());
+                stats.retried.incrementAndGet();
+                // Transient: still trying. `connected=false` says "not delivering"; only OUR `state`
+                // can say whether that is a retry in flight or a destination that is gone for good.
+                reporter.connectivity(false, "BACKOFF", e.getMessage());
+                int attempts = attempt + 1;
+                LOGGER.warn("sink {} transient failure on {} (attempt {}); retrying in {} ms: {}",
+                        sink.id(), item.key(), attempts, backoff, e.getMessage());
+                reporter.event(Severity.WARNING, "delivery-failed", null,
+                        context(sink.id(), item.key(), c -> {
+                            c.addProperty("attempt", attempts);
+                            c.addProperty("willRetry", true);
+                            c.addProperty("nextAttemptInMs", backoff);
+                        }));
+
+                try {
+                    Thread.sleep(backoff);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+                attempt++;
+            }
+        }
+    }
+
     private static long elapsedMs(long startedNanos) {
         return (System.nanoTime() - startedNanos) / 1_000_000;
     }
@@ -350,43 +437,5 @@ public final class <<COMPONENTNAME>> {
         c.addProperty("key", key);
         extra.accept(c);
         return c;
-    }
-
-    private void emitMetrics() {
-        Map<String, Float> values = new HashMap<>();
-        values.put("received", (float) stats.received.getAndSet(0));
-        values.put("delivered", (float) stats.delivered.getAndSet(0));
-        values.put("retried", (float) stats.retried.getAndSet(0));
-        values.put("exhausted", (float) stats.exhausted.getAndSet(0));
-        values.put("dropped", (float) stats.dropped.getAndSet(0));
-        metrics.emitMetric(METRIC_NAME, values);
-    }
-
-    /**
-     * A stable, deterministic key for a message.
-     *
-     * <p>Deterministic is the whole point: the same message must always resolve to the same key, or a
-     * retry duplicates instead of overwriting.
-     *
-     * @param sinkId the sink id — it prefixes the key, so two sinks never collide
-     * @param topic  the topic the message arrived on; its last segment groups the objects
-     * @param msg    the message — its envelope uuid makes the key unique <i>and</i> reproducible
-     * @return the destination key
-     */
-    static String keyFor(String sinkId, String topic, Message msg) {
-        int slash = topic.lastIndexOf('/');
-        String leaf = slash >= 0 && slash + 1 < topic.length() ? topic.substring(slash + 1) : "message";
-        return sinkId + "/" + leaf + "/" + msg.getHeader().getUuid() + ".json";
-    }
-
-    /** Counters, reported as a metric each interval. */
-    static final class Stats {
-        final AtomicLong received = new AtomicLong();
-        final AtomicLong delivered = new AtomicLong();
-        final AtomicLong retried = new AtomicLong();
-        /** Gave up. This is the number that matters: it is data that did not arrive. */
-        final AtomicLong exhausted = new AtomicLong();
-        /** Dropped because a sink's queue was full — never let this be invisible. */
-        final AtomicLong dropped = new AtomicLong();
     }
 }

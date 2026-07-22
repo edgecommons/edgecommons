@@ -11,56 +11,51 @@
  *      └──────────── reconnect with backoff ◄────────────────────┘
  * ```
  *
- * One loop per instance: an instance is one device, and its connection lifecycle is its own.
+ * One loop per instance: an instance is one device, and its connection lifecycle is its own. That
+ * loop also owns a **control channel** ({@link DeviceControl}) — every command that must touch the
+ * session or serialize with the poll loop is *sent* to the loop, and *confirmed* through the reply
+ * that rides it. The command surface itself lives in {@link module:commands} (`src/commands.ts`).
+ *
+ * This module holds the adapter's **pure, unit-tested logic**: config parsing, the reconnect
+ * backoff, the control mailbox, health/connectivity, the southbound publish path, and the
+ * per-message control decisions ({@link handleControl}/{@link serveWhileDown}). The loop that drives
+ * them — the connect/poll/reconnect supervisor per device — is the thin live-runtime seam in
+ * `src/runtime.ts`, excluded from the coverage gate (it needs a live runtime; see `vitest.config.ts`).
  *
  * ## The contract you are implementing (docs/SOUTHBOUND.md)
  *
  * * Publish `SouthboundSignalUpdate` on the `data` class, **via the `data()` facade** — never
- *   hand-build the body and never hand-write the topic. The facade constructs
- *   `{device, signal, samples}`, mints `ecv1/{device}/{component}/{instance}/data/{signal}`, and
- *   stamps identity. A hand-rolled topic is a topic that will disagree with the envelope.
+ *   hand-build the body and never hand-write the topic.
  * * **Quality on every sample**, normalized to `GOOD | BAD | UNCERTAIN`, with the native code in
  *   `qualityRaw`.
- * * Emit **`southbound_health`**, dimensioned by instance, so an operator can see a link go down
- *   without reading logs.
- * * Report **per-instance connectivity** ({@link connectivityOf}), so the fleet sees which devices
- *   this adapter is actually talking to — pushed on every `state` keepalive and returned by the
- *   built-in `status` verb, from one provider.
- * * Serve **read/write commands** — and allow-list the writes. An adapter that will write any
- *   address it is asked to is a control-system vulnerability, not a feature.
+ * * Emit **`southbound_health`** (the exact §5 set — see `src/metrics.ts`), dimensioned by
+ *   instance, so an operator can see a link go down without reading logs.
+ * * Report **per-instance connectivity** ({@link connectivityOf}).
+ * * Serve **read/write/browse/reconnect/pause commands** — and allow-list the writes.
  */
 import {
-  CommandException,
   Config,
-  ConfigurationChangeListener,
   DataFacade,
-  EdgeCommons,
   EventsFacade,
   InstanceConnectivity,
-  MetricBuilder,
-  MetricService,
   Quality as LibQuality,
   Severity,
   logger,
 } from "@edgecommons/edgecommons";
 
 import {
+  BrowseError,
+  BrowsePage,
   ConnectionConfig,
-  DeviceBackend,
-  DeviceError,
   DeviceSession,
   Quality,
   Reading,
-  backendFor,
 } from "./device";
+import { DeviceMetrics } from "./metrics";
 
-/** The metric every southbound adapter emits (SOUTHBOUND.md §5). */
-export const HEALTH_METRIC = "southbound_health";
-/** The write verb this adapter serves. `/`-namespaced verbs are allowed by the command inbox. */
-export const WRITE_VERB = "sb/write";
-
-/** How often the health metric is re-emitted while a device is polling, in ms. */
-const HEALTH_INTERVAL_MS = 60_000;
+/** The `component.global.healthThresholds.staleSignalSecs` default (SOUTHBOUND.md §4/§5). */
+const DEFAULT_STALE_SIGNAL_SECS = 30;
+const DEFAULT_POLL_MS = 5_000;
 
 // --- config ----------------------------------------------------------------------------------
 
@@ -92,7 +87,6 @@ export interface DeviceConfig {
 }
 
 const DEVICE_KEYS = new Set(["id", "adapter", "connection", "pollIntervalMs", "writes"]);
-const DEFAULT_POLL_MS = 5_000;
 
 /**
  * Parse one entry of `component.instances[]`.
@@ -171,38 +165,94 @@ export class Backoff {
   }
 }
 
-// --- the write mailbox -----------------------------------------------------------------------
+// --- the device control channel --------------------------------------------------------------
 
-/** A write, on its way from the command inbox to the device's own loop. */
-export interface WriteRequest {
-  readonly signalId: string;
-  readonly value: unknown;
-  /** The device's answer. A write is confirmed, not fire-and-forget. */
-  readonly settle: (error?: string) => void;
-}
+/** The device's answer to a `sb/write` — confirmed, not fire-and-forget. */
+export type WriteOutcome = { ok: true } | { ok: false; error: string };
+/** The device's answer to a `sb/read`. */
+export type ReadOutcome = { ok: true; readings: Reading[] } | { ok: false; error: string };
+/** The device's answer to a `sb/browse`. */
+export type BrowseOutcome = { ok: true; page: BrowsePage } | { ok: false; error: BrowseError };
+/** The device's answer to a `reconnect`. */
+export type ReconnectOutcome = { ok: true } | { ok: false; error: string };
+/** The device's answer to a `repoll` — the signal count, or a reason it was refused. */
+export type RepollOutcome = { ok: true; polled: number } | { ok: false; error: string };
 
 /**
- * A single-consumer mailbox with a deadline.
+ * One message on a device's **control channel**. Every `sb/*` verb that must touch the session or
+ * serialize with the poll loop is delivered as one of these, so the command inbox never touches the
+ * session directly — the device's own loop services them one at a time. The reply riding each
+ * variant is what makes reads/writes/reconnect *confirmed*.
+ */
+export type DeviceControl =
+  | {
+      /** A confirmed, allow-listed write (`sb/write`). The allow-list is checked in the command layer BEFORE this is ever sent. */
+      readonly kind: "write";
+      readonly signalId: string;
+      readonly value: unknown;
+      readonly ack: (outcome: WriteOutcome) => void;
+    }
+  | {
+      /** Live-read these ids now (`sb/read`). Serializes with the loop and works while paused. */
+      readonly kind: "readNow";
+      readonly ids: string[];
+      readonly reply: (outcome: ReadOutcome) => void;
+    }
+  | {
+      /** One page of address-space discovery (`sb/browse`). */
+      readonly kind: "browse";
+      readonly cursor?: string;
+      readonly max: number;
+      readonly reply: (outcome: BrowseOutcome) => void;
+    }
+  | {
+      /** Pause telemetry production (`sb/pause`). Reply = whether the state changed. */
+      readonly kind: "pause";
+      readonly reply: (changed: boolean) => void;
+    }
+  | {
+      /** Resume telemetry production (`sb/resume`). Reply = whether the state changed. */
+      readonly kind: "resume";
+      readonly reply: (changed: boolean) => void;
+    }
+  | {
+      /** Drop + re-establish, one immediate attempt (`reconnect`). */
+      readonly kind: "reconnect";
+      readonly reply: (outcome: ReconnectOutcome) => void;
+    }
+  | {
+      /** Force an immediate poll now (`repoll`). Refused when paused. */
+      readonly kind: "repoll";
+      readonly reply: (outcome: RepollOutcome) => void;
+    };
+
+/**
+ * A single-consumer control mailbox with a deadline.
  *
- * A write cannot touch the session directly: the session lives in the device's own loop, and most
- * device protocols are a single request/response channel that would interleave into nonsense if a
- * write and a poll talked at once. So a write is *sent* to that loop, which serializes it against
- * the reads. This is why an adapter is one loop per device rather than a shared connection pool.
+ * A command cannot touch the session directly: the session lives in the device's own loop, and most
+ * device protocols are a single request/response channel that would interleave into nonsense if two
+ * callers talked at once. So a command is *sent* to that loop, which serializes it against the
+ * reads. `send` returns `false` once the mailbox is {@link close}d (the device loop is gone) — the
+ * command layer maps that to `DEVICE_UNAVAILABLE`.
  */
 export class Mailbox<T> {
   private readonly queue: T[] = [];
   private waiter?: () => void;
+  private closedFlag = false;
 
-  send(item: T): void {
+  /** Enqueue an item. Returns `false` if the mailbox is closed (the loop is gone). */
+  send(item: T): boolean {
+    if (this.closedFlag) return false;
     this.queue.push(item);
     this.waiter?.();
+    return true;
   }
 
-  /** Take the next item, waiting at most `timeoutMs`. Resolves `undefined` on timeout. */
+  /** Take the next item, waiting at most `timeoutMs`. Resolves `undefined` on timeout or close. */
   async receive(timeoutMs: number): Promise<T | undefined> {
     const first = this.queue.shift();
     if (first !== undefined) return first;
-    if (timeoutMs <= 0) return undefined;
+    if (this.closedFlag || timeoutMs <= 0) return undefined;
 
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
@@ -217,71 +267,95 @@ export class Mailbox<T> {
     });
     return this.queue.shift();
   }
+
+  /** Close the mailbox: no further sends, and wake any pending receiver. */
+  close(): void {
+    this.closedFlag = true;
+    this.waiter?.();
+  }
+
+  isClosed(): boolean {
+    return this.closedFlag;
+  }
 }
 
 // --- health ----------------------------------------------------------------------------------
 
 /**
  * This adapter's **own vocabulary** for a link's condition — what it reports as
- * `InstanceConnectivity.state`. A boolean cannot tell "has not connected yet" from "backing off
- * after a failure" from "configured with an adapter that does not exist"; an operator needs to, so
- * the richer token rides alongside the normalized flag.
+ * `InstanceConnectivity.state`. A boolean cannot tell "still trying" from "backing off after a
+ * failure"; an operator needs to, so the richer token rides alongside the normalized flag.
  */
-export type LinkState = "CONNECTING" | "ONLINE" | "BACKOFF" | "DISABLED";
+export type LinkState = "CONNECTING" | "ONLINE" | "BACKOFF";
 
-/** The `southbound_health` measures, per instance (SOUTHBOUND.md §5), plus the link condition. */
+/**
+ * The shared per-device state the metrics emitter reads and the connectivity provider renders. The
+ * gauges (`connectionState`, latencies) and the interval counters (`readErrors`, `reconnects`) feed
+ * `southbound_health` (`src/metrics.ts`); `paused` and `link` feed the connectivity token and
+ * `sb/status`. One source, several surfaces — so a health dot, a metric, and a status reply can
+ * never disagree.
+ */
 export class Health {
   /** 1 = connected, 0 = down. */
   connectionState = 0;
+  private linkState: LinkState = "CONNECTING";
   /**
-   * The link's condition, in this adapter's vocabulary. A device starts CONNECTING: it is
-   * configured and not yet reachable, which is exactly what must NOT look like a device nobody
-   * configured at all.
+   * `true` = telemetry production is paused (`sb/pause`). Read by the connectivity provider and
+   * `sb/status`; NOT a `southbound_health` measure (§5 has no `paused`).
    */
-  link: LinkState = "CONNECTING";
+  paused = false;
   pollLatencyMs = 0;
+  publishLatencyMs = 0;
+  /** Reset on each `southbound_health` emit. */
   readErrors = 0;
+  /** Reset on each `southbound_health` emit. */
   reconnects = 0;
-  signalsPublished = 0;
 
   /**
    * Record the link's condition. The metric's boolean and the reported state token move
    * **together**, so the health dot and the label a console shows can never disagree.
    */
   setLink(state: LinkState): void {
-    this.link = state;
+    this.linkState = state;
     this.connectionState = state === "ONLINE" ? 1 : 0;
   }
 
-  /** Snapshot the interval counters and reset them (a gauge stays, a counter resets). */
-  takeInterval(): Record<string, number> {
-    const values = {
-      connectionState: this.connectionState,
-      pollLatencyMs: this.pollLatencyMs,
-      readErrors: this.readErrors,
-      reconnects: this.reconnects,
-      signalsPublished: this.signalsPublished,
-    };
-    this.readErrors = 0;
-    this.reconnects = 0;
-    this.signalsPublished = 0;
-    return values;
+  link(): LinkState {
+    return this.linkState;
+  }
+
+  isPaused(): boolean {
+    return this.paused;
   }
 }
 
 /**
- * One device's connectivity sample, for the provider registered in the {@link App} constructor.
+ * Flip the paused flag, returning whether the state actually changed (idempotent — pausing an
+ * already-paused device is not an error).
+ */
+export function setPaused(health: Health, paused: boolean): boolean {
+  const changed = health.paused !== paused;
+  health.paused = paused;
+  return changed;
+}
+
+/**
+ * One device's connectivity sample, for the instance-connectivity provider registered in the
+ * {@link App} constructor.
  *
- * * `connected` is the **normalized** flag — always present, so a console renders a health dot for
- *   this adapter without knowing anything about its protocol.
- * * `state` is *this adapter's* vocabulary ({@link LinkState}) for the richer condition.
- * * `attributes` is the **open** bag: domain data only this adapter understands (here, which backend
- *   the device speaks), carried without destabilizing the two fields above that everyone reads.
+ * * `connected` is the **normalized** flag — always present.
+ * * `state` is *this adapter's* vocabulary ({@link LinkState}) — `PAUSED` when paused and up, else
+ *   the raw link token (so a break while paused still reads `BACKOFF`, `connected` staying truthful).
+ * * `attributes` is the **open** bag: domain data only this adapter understands.
  */
 export function connectivityOf(cfg: DeviceConfig, health: Health): InstanceConnectivity {
-  return InstanceConnectivity.of(cfg.id, health.link === "ONLINE", cfg.connection.endpoint)
-    .withState(health.link)
-    .withAttributes({ adapter: cfg.adapter });
+  const link = health.link();
+  const connected = link === "ONLINE";
+  const paused = health.isPaused();
+  const state = paused && connected ? "PAUSED" : link;
+  return InstanceConnectivity.of(cfg.id, connected, cfg.connection.endpoint)
+    .withState(state)
+    .withAttributes({ adapter: cfg.adapter, paused });
 }
 
 // --- the southbound publish path ---------------------------------------------------------------
@@ -299,19 +373,21 @@ export function toLibQuality(q: Quality): LibQuality {
 }
 
 /**
- * Publish one poll's readings as `SouthboundSignalUpdate`s.
+ * Publish one poll's readings as `SouthboundSignalUpdate`s, returning the count published.
  *
  * The `data()` facade builds the body, mints the topic, and stamps identity. Do not hand-build any
  * of the three. **Every reading is published, including a failed one** — a `BAD` sample says "I
- * could not read this", and silence says nothing at all.
+ * could not read this", and silence says nothing at all. When a {@link DeviceMetrics} is passed,
+ * each successful publish feeds the staleness tracker.
  */
 export async function publishReadings(
   data: DataFacade,
   adapter: string,
   device: Pick<DeviceConfig, "id" | "connection">,
   readings: readonly Reading[],
-  health?: Health,
-): Promise<void> {
+  dm?: DeviceMetrics,
+): Promise<number> {
+  let published = 0;
   for (const r of readings) {
     try {
       const signal = data.signal(r.signalId);
@@ -320,306 +396,232 @@ export async function publishReadings(
         .device(adapter, device.id, device.connection.endpoint)
         .addSample(r.value, { quality: toLibQuality(r.quality), qualityRaw: r.qualityRaw })
         .publish();
-      if (health) health.signalsPublished += 1;
+      published += 1;
+      dm?.onSignalUpdate(r.signalId, Date.now());
     } catch (e) {
       logger.warn(`publish failed instance=${device.id} signal=${r.signalId}: ${String(e)}`);
     }
   }
-}
-
-// --- the write command -------------------------------------------------------------------------
-
-/**
- * The `sb/write` handler.
- *
- * Scope rides an `instance` body field rather than a topic segment, so one inbox serves every
- * device this adapter owns. The allow-list is checked HERE, before the write ever reaches the
- * device: an adapter that writes whatever it is asked to is a control-system vulnerability, and
- * "the caller was authorized" is not this component's judgement to make.
- */
-export async function handleWrite(
-  devices: ReadonlyMap<string, DeviceConfig>,
-  mailboxes: ReadonlyMap<string, Mailbox<WriteRequest>>,
-  body: unknown,
-): Promise<Record<string, unknown>> {
-  const o = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
-
-  const instance = o.instance;
-  if (typeof instance !== "string") throw new CommandException("BAD_ARGS", "expected `instance`");
-  const signalId = o.signalId;
-  if (typeof signalId !== "string") throw new CommandException("BAD_ARGS", "expected `signalId`");
-  if (!("value" in o)) throw new CommandException("BAD_ARGS", "expected `value`");
-
-  const cfg = devices.get(instance);
-  if (!cfg) throw new CommandException("NO_SUCH_INSTANCE", instance);
-
-  // THE ALLOW-LIST.
-  if (!cfg.writes.permits(signalId)) {
-    throw new CommandException(
-      "WRITE_NOT_ALLOWED",
-      `\`${signalId}\` is not in this instance's writes.allow list`,
-    );
-  }
-
-  const mailbox = mailboxes.get(instance);
-  if (!mailbox) throw new CommandException("DEVICE_UNAVAILABLE", "device loop is gone");
-
-  // A write is CONFIRMED: the reply is the device's answer, not "we sent it".
-  return new Promise<Record<string, unknown>>((resolve, reject) => {
-    mailbox.send({
-      signalId,
-      value: o.value,
-      settle: (error?: string) => {
-        if (error === undefined) resolve({ written: signalId });
-        else reject(new CommandException("WRITE_FAILED", error));
-      },
-    });
-  });
+  return published;
 }
 
 // --- the app ---------------------------------------------------------------------------------
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-const rand01 = (): number => Math.random();
-
-export class App {
-  private readonly config: Config;
-  private readonly metrics: MetricService;
-  private readonly devices: DeviceConfig[] = [];
-  private readonly mailboxes = new Map<string, Mailbox<WriteRequest>>();
-  /** Each device's health: written by its own loop, read by the connectivity provider. */
-  private readonly health = new Map<string, Health>();
-  private readonly loops: Promise<void>[] = [];
-  private stopped = false;
-
-  constructor(private readonly gg: EdgeCommons) {
-    this.config = gg.config();
-    this.metrics = gg.metrics();
-
-    const listener: ConfigurationChangeListener = {
-      onConfigurationChange: (config: Config): boolean => {
-        logger.info(`configuration changed (thing=${config.thingName})`);
-        return true;
-      },
-    };
-    gg.addConfigChangeListener(listener);
-
-    // One device per instance. A malformed device is skipped with a warning rather than killing the
-    // component — but if EVERY device is malformed there is nothing to run, and failing loudly
-    // beats idling silently.
-    for (const id of this.config.instanceIds()) {
-      try {
-        this.devices.push(parseDevice(this.config.instance(id)));
-      } catch (e) {
-        logger.warn(`skipping malformed device '${id}': ${String(e)}`);
-      }
-    }
-    if (this.devices.length === 0) {
-      throw new Error("no valid devices in component.instances[]");
-    }
-
-    // A device's health exists from the moment it is CONFIGURED, not from the moment its loop first
-    // connects: a configured device that is down must never be indistinguishable from a device
-    // nobody configured. Registered here, before run() starts a single worker, so the very first
-    // keepalive already reports every device — as CONNECTING, connected=false.
-    //
-    // ONE provider, TWO surfaces: the library pushes this sample into the `state` keepalive's
-    // `instances[]` every tick, and returns the very same sample from the built-in `status` verb
-    // when a console asks. Whoever watches and whoever asks cannot get different answers. Keep it
-    // cheap — it is sampled on the keepalive interval, and it reads only cached state.
-    //
-    // Reporting one entry per device is the whole point of the adapter archetype: the fleet sees
-    // which of THIS component's devices are reachable, without minting a UNS instance per device.
-    for (const device of this.devices) {
-      this.health.set(device.id, new Health());
-    }
-    gg.setInstanceConnectivityProvider(() =>
-      this.devices.map((d) => connectivityOf(d, this.health.get(d.id) as Health)),
-    );
+/** One poll: read, publish, record latencies + staleness. `polled` = signals published. */
+export async function pollOnce(
+  cfg: DeviceConfig,
+  session: DeviceSession,
+  data: DataFacade,
+  dm: DeviceMetrics,
+  health: Health,
+): Promise<{ ok: boolean; polled: number }> {
+  const started = Date.now();
+  let readings: Reading[];
+  try {
+    readings = await session.readSignals();
+  } catch (e) {
+    logger.warn(`read failed instance=${cfg.id}; reconnecting: ${String(e)}`);
+    health.readErrors += 1;
+    return { ok: false, polled: 0 };
   }
+  health.pollLatencyMs = Date.now() - started;
 
-  async run(): Promise<void> {
-    for (const device of this.devices) {
-      // Per-instance facades: data() mints THIS device's topics and stamps its identity.
-      const instance = this.gg.instance(device.id);
+  const publishStarted = Date.now();
+  const published = await publishReadings(data, cfg.adapter, cfg, readings, dm);
+  health.publishLatencyMs = Date.now() - publishStarted;
+  return { ok: true, polled: published };
+}
 
-      // The health metric is dimensioned BY INSTANCE, so a fleet view can show one device down
-      // without averaging it away against the others.
-      this.metrics.defineMetric(
-        MetricBuilder.create(HEALTH_METRIC)
-          .withConfig(this.config)
-          .addMeasure("connectionState", "Count", 1)
-          .addMeasure("pollLatencyMs", "Milliseconds", 1)
-          .addMeasure("readErrors", "Count", 60)
-          .addMeasure("reconnects", "Count", 60)
-          .addMeasure("signalsPublished", "Count", 60)
-          .addDimension("instance", device.id)
-          .build(),
-      );
+/** What ended the poll loop. */
+export type PollExit =
+  | { kind: "linkLost" }
+  | { kind: "closed" }
+  | { kind: "reconnect"; reply: (outcome: ReconnectOutcome) => void };
 
-      const mailbox = new Mailbox<WriteRequest>();
-      this.mailboxes.set(device.id, mailbox);
+/** What servicing the control channel while the session is down concluded. */
+export type DownOutcome =
+  | { kind: "elapsed" }
+  | { kind: "closed" }
+  | { kind: "reconnect"; reply: (outcome: ReconnectOutcome) => void };
 
-      this.loops.push(
-        this.runDevice(
-          device,
-          instance.data(),
-          instance.events(),
-          mailbox,
-          this.health.get(device.id) as Health,
-        ).catch((e: unknown) => logger.error(`device loop '${device.id}' stopped: ${String(e)}`)),
-      );
+/**
+ * Parse `component.instances[]` into device configs, skipping a malformed device with a warning.
+ *
+ * A malformed device is skipped rather than killing the component — but if EVERY device is malformed
+ * there is nothing to run, and failing loudly beats idling silently.
+ *
+ * @throws Error when no device is valid
+ */
+export function buildDevices(config: Config): DeviceConfig[] {
+  const devices: DeviceConfig[] = [];
+  for (const id of config.instanceIds()) {
+    try {
+      devices.push(parseDevice(config.instance(id)));
+    } catch (e) {
+      logger.warn(`skipping malformed device '${id}': ${String(e)}`);
     }
-
-    // The southbound command surface. `ping` / `reload-config` / `get-configuration` are already
-    // live — the library registered them before we ran. This one is the adapter's own.
-    const commands = this.gg.commands();
-    if (commands) {
-      const devices = new Map(this.devices.map((d) => [d.id, d]));
-      commands.register(WRITE_VERB, (request) => handleWrite(devices, this.mailboxes, request.body));
-    }
-
-    await Promise.all(this.loops);
   }
+  if (devices.length === 0) {
+    throw new Error("no valid devices in component.instances[]");
+  }
+  return devices;
+}
 
-  /**
-   * One device's lifecycle: connect, poll, publish, reconnect.
-   *
-   * The connect loop and the poll loop are nested on purpose. A read failure that breaks the link
-   * drops out of the poll loop and back into connect — which is the only place that knows how to
-   * back off. Retrying a read on a dead socket forever is the classic adapter bug.
-   */
-  private async runDevice(
-    cfg: DeviceConfig,
-    data: DataFacade,
-    events: EventsFacade,
-    mailbox: Mailbox<WriteRequest>,
-    health: Health,
-  ): Promise<void> {
-    const backend: DeviceBackend | undefined = backendFor(cfg.adapter);
-    if (!backend) {
-      logger.error(`unknown adapter '${cfg.adapter}' for instance '${cfg.id}'`);
-      // This device will never connect, and saying CONNECTING forever would be a lie no boolean
-      // could correct. DISABLED is what a console needs to show, and why `state` exists.
-      health.setLink("DISABLED");
-      return;
-    }
-
-    const backoff = new Backoff();
-    let attempt = 0;
-
-    while (!this.stopped) {
-      let session: DeviceSession;
+/**
+ * Service one control message during polling. Returns a {@link PollExit} only for reconnect /
+ * link-lost; every other verb replies in place and returns `undefined` (stay in the poll loop).
+ *
+ * This is the per-message decision the poll loop delegates to — pure over its arguments (no runtime
+ * state), so it is unit-tested directly against the sim session; the loop that feeds it lives in the
+ * runtime seam (`src/runtime.ts`).
+ */
+export async function handleControl(
+  ctrl: DeviceControl,
+  cfg: DeviceConfig,
+  session: DeviceSession,
+  data: DataFacade,
+  events: EventsFacade,
+  dm: DeviceMetrics,
+  health: Health,
+): Promise<PollExit | undefined> {
+  switch (ctrl.kind) {
+    case "write": {
       try {
-        session = await backend.connect(cfg.connection);
+        await session.writeSignal(ctrl.signalId, ctrl.value);
+        ctrl.ack({ ok: true });
       } catch (e) {
-        // A permanent failure will fail identically forever, so back off to the ceiling
-        // immediately rather than hammering a device that is never going to answer.
-        const permanent = !DeviceError.isTransient(e);
-        const wait = permanent ? backoff.maxMs : backoff.delayMs(attempt, rand01());
-        logger.warn(
-          `connect failed instance=${cfg.id} permanent=${permanent} waitMs=${wait}: ${String(e)}`,
-        );
-        health.setLink("BACKOFF");
-        attempt += 1;
-        await sleep(wait);
-        continue;
+        logger.warn(`write failed instance=${cfg.id} signal=${ctrl.signalId}: ${String(e)}`);
+        ctrl.ack({ ok: false, error: String(e) });
       }
-
-      attempt = 0;
-      health.setLink("ONLINE");
-      await this.emitHealth(health);
-      await events
-        .emit(Severity.Info, "device-connected", `connected to ${cfg.connection.endpoint}`, {
-          instance: cfg.id,
-          adapter: backend.kind,
-        })
-        .catch(() => undefined);
-      // A raised alarm is cleared by the SAME type, so the pair rides one channel and a consumer
-      // can match them.
-      await events.clearAlarm("device-unreachable", { instance: cfg.id }).catch(() => undefined);
-
-      await this.pollUntilDisconnected(cfg, session, data, backend.kind, mailbox, health);
-
-      health.setLink("BACKOFF");
-      health.reconnects += 1;
-      await this.emitHealth(health);
-      if (!this.stopped) {
+      return undefined;
+    }
+    case "readNow": {
+      try {
+        const readings = await session.readNamed(ctrl.ids);
+        ctrl.reply({ ok: true, readings });
+      } catch (e) {
+        ctrl.reply({ ok: false, error: String(e) });
+      }
+      return undefined;
+    }
+    case "browse": {
+      try {
+        const page = await session.browse(ctrl.cursor, ctrl.max);
+        ctrl.reply({ ok: true, page });
+      } catch (e) {
+        const error = BrowseError.isBrowseError(e) ? e : BrowseError.failed(String(e));
+        ctrl.reply({ ok: false, error });
+      }
+      return undefined;
+    }
+    case "pause": {
+      const changed = setPaused(health, true);
+      if (changed) {
         await events
-          .raiseAlarm("device-unreachable", `lost the link to ${cfg.connection.endpoint}`, {
-            instance: cfg.id,
-          })
+          .emit(Severity.Warning, "adapter-paused", "telemetry production paused", { instance: cfg.id })
           .catch(() => undefined);
       }
+      ctrl.reply(changed);
+      return undefined;
+    }
+    case "resume": {
+      const changed = setPaused(health, false);
+      if (changed) {
+        await events
+          .emit(Severity.Info, "adapter-resumed", "telemetry production resumed", { instance: cfg.id })
+          .catch(() => undefined);
+      }
+      ctrl.reply(changed);
+      return undefined;
+    }
+    case "reconnect": {
+      await session.close().catch(() => undefined);
+      return { kind: "reconnect", reply: ctrl.reply };
+    }
+    case "repoll": {
+      if (health.isPaused()) {
+        ctrl.reply({ ok: false, error: "instance is paused - resume first" });
+        return undefined;
+      }
+      const r = await pollOnce(cfg, session, data, dm, health);
+      if (r.ok) {
+        ctrl.reply({ ok: true, polled: r.polled });
+        return undefined;
+      }
+      ctrl.reply({ ok: false, error: "link error" });
+      await session.close().catch(() => undefined);
+      return { kind: "linkLost" };
     }
   }
+}
 
-  /** Read on the poll interval and publish, until the link breaks. */
-  private async pollUntilDisconnected(
-    cfg: DeviceConfig,
-    session: DeviceSession,
-    data: DataFacade,
-    adapter: string,
-    mailbox: Mailbox<WriteRequest>,
-    health: Health,
-  ): Promise<void> {
-    let lastHealth = Date.now();
+/**
+ * Service the control channel while the session is **down**, for up to `waitMs`. Pause/resume
+ * take effect (they only need the shared flag + event); the I/O verbs answer "disconnected" (the
+ * command layer maps that to `DEVICE_UNAVAILABLE` / `BROWSE_FAILED`); a `reconnect` returns its
+ * reply so the caller connects now.
+ *
+ * Like {@link handleControl}, this is a per-message decision, pure over its arguments and
+ * unit-tested directly; the connect/backoff supervisor that calls it lives in `src/runtime.ts`.
+ */
+export async function serveWhileDown(
+  control: Mailbox<DeviceControl>,
+  events: EventsFacade,
+  health: Health,
+  waitMs: number,
+): Promise<DownOutcome> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return { kind: "elapsed" };
+    const ctrl = await control.receive(remaining);
+    if (control.isClosed() && ctrl === undefined) return { kind: "closed" };
+    if (ctrl === undefined) return { kind: "elapsed" };
 
-    while (!this.stopped) {
-      // Writes and polls share this one loop, so a write can never race a read on the same
-      // connection — most device protocols are a single request/response channel and would
-      // interleave into nonsense if two callers talked at once.
-      const deadline = Date.now() + cfg.pollIntervalMs;
-      for (;;) {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) break;
-        const req = await mailbox.receive(remaining);
-        if (!req) break;
-        try {
-          await session.writeSignal(req.signalId, req.value);
-          req.settle();
-        } catch (e) {
-          logger.warn(`write failed instance=${cfg.id} signal=${req.signalId}: ${String(e)}`);
-          // The command handler is waiting on this: a write is confirmed, not assumed.
-          req.settle(String(e));
-        }
+    switch (ctrl.kind) {
+      case "reconnect":
+        return { kind: "reconnect", reply: ctrl.reply };
+      case "pause": {
+        const changed = setPaused(health, true);
+        if (changed) await events.emit(Severity.Warning, "adapter-paused").catch(() => undefined);
+        ctrl.reply(changed);
+        break;
       }
-      if (this.stopped) break;
-
-      const started = Date.now();
-      let readings: Reading[];
-      try {
-        readings = await session.readSignals();
-      } catch (e) {
-        // The link is gone. Leave the poll loop so the connect loop can back off.
-        health.readErrors += 1;
-        logger.warn(`read failed instance=${cfg.id}; reconnecting: ${String(e)}`);
-        await session.close().catch(() => undefined);
-        return;
+      case "resume": {
+        const changed = setPaused(health, false);
+        if (changed) await events.emit(Severity.Info, "adapter-resumed").catch(() => undefined);
+        ctrl.reply(changed);
+        break;
       }
-      health.pollLatencyMs = Date.now() - started;
+      case "write":
+        ctrl.ack({ ok: false, error: "device is disconnected" });
+        break;
+      case "readNow":
+        ctrl.reply({ ok: false, error: "device is disconnected" });
+        break;
+      case "repoll":
+        ctrl.reply({ ok: false, error: "device is disconnected" });
+        break;
+      case "browse":
+        ctrl.reply({ ok: false, error: BrowseError.failed("device is disconnected") });
+        break;
+    }
+  }
+}
 
-      await publishReadings(data, adapter, cfg, readings, health);
-
-      if (Date.now() - lastHealth >= HEALTH_INTERVAL_MS) {
-        await this.emitHealth(health);
-        lastHealth = Date.now();
+/** Read `component.global.healthThresholds.staleSignalSecs` (default 30). */
+export function readStaleSignalSecs(config: Config): number {
+  try {
+    const global = config.global();
+    if (global !== null && typeof global === "object") {
+      const thresholds = (global as Record<string, unknown>).healthThresholds;
+      if (thresholds !== null && typeof thresholds === "object") {
+        const secs = (thresholds as Record<string, unknown>).staleSignalSecs;
+        if (typeof secs === "number" && secs >= 1) return secs;
       }
     }
-
-    await session.close().catch(() => undefined);
+  } catch {
+    // fall through to the default
   }
-
-  private async emitHealth(health: Health): Promise<void> {
-    await this.metrics
-      .emitMetric(HEALTH_METRIC, health.takeInterval())
-      .catch((e: unknown) => logger.warn(`health metric emit failed: ${String(e)}`));
-  }
-
-  /** Stop the device loops and clean up before the runtime is closed. */
-  async stop(): Promise<void> {
-    this.stopped = true;
-    await Promise.allSettled(this.loops);
-    await this.metrics.flushMetrics().catch(() => undefined);
-  }
+  return DEFAULT_STALE_SIGNAL_SECS;
 }

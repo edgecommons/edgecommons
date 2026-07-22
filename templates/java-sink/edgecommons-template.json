@@ -31,6 +31,7 @@
       "COMPONENTNAME",
       "EDGECOMMONS_VERSION",
       "JARNAME",
+      "LICENSE",
       "MAINCLASSNAME",
       "PACKAGE"
     ],
@@ -38,6 +39,38 @@
       "COMPONENTFULLNAME",
       "COMPONENTNAME",
       "JARNAME"
+    ],
+    "AGENTS.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "CLAUDE.md": [
+      "COMPONENTNAME"
+    ],
+    "DESIGN.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/tutorial.md": [
+      "BINNAME",
+      "JARNAME"
+    ],
+    "docs/how-to-guides.md": [
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "docs/sample-configurations.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/reference/messaging-interface.md": [
+      "BINNAME"
+    ],
+    "docs/reference/metrics.md": [
+      "BINNAME",
+      "COMPONENTNAME"
     ],
     "recipe.yaml": [
       "AUTHOR",
@@ -47,10 +80,10 @@
       "MAINCLASSNAME"
     ],
     "k8s/configmap.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "src/main/java/com/mbreissi/testcomponent/App.java": [
       "COMPONENTFULLNAME",
@@ -77,6 +110,9 @@
     ],
     "src/test/java/com/mbreissi/testcomponent/AppTest.java": [
       "COMPONENTNAME",
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/DeliveryTest.java": [
       "PACKAGE"
     ],
     "src/test/java/com/mbreissi/testcomponent/LocalDestinationTest.java": [

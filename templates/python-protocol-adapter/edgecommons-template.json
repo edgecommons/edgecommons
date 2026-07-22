@@ -3,7 +3,7 @@
   "id": "python/protocol-adapter",
   "language": "PYTHON",
   "kind": "protocol-adapter",
-  "description": "Python protocol-adapter component (southbound device bridge) built on the edgecommons Python library and the southbound contract (docs/SOUTHBOUND.md).",
+  "description": "Python southbound protocol adapter: a device seam + in-process sim, the sb/* command surface, southbound_health + operational metrics, and the three edge-console panels, on the edgecommons Python library (docs/SOUTHBOUND.md).",
   "platforms": [
     "GREENGRASS",
     "HOST",
@@ -13,15 +13,29 @@
     "EDGECOMMONS_DEP"
   ],
   "substitutions": {
+    "app/__init__.py": [
+      "COMPONENTNAME"
+    ],
+    "app/adapter.py": [
+      "COMPONENTNAME"
+    ],
+    "app/command_service.py": [
+      "COMPONENTNAME"
+    ],
+    "app/metrics.py": [
+      "COMPONENTNAME"
+    ],
     "compose.yaml": [
       "BINNAME",
       "COMPONENTNAME"
     ],
     "config.schema.json": [
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "Dockerfile": [
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "gdk-config.json": [
       "AUTHOR",
@@ -31,48 +45,117 @@
     ],
     "main.py": [
       "COMPONENTFULLNAME",
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "pyproject.toml": [
+      "BINNAME",
+      "DESCRIPTION",
+      "SNAKENAME"
     ],
     "README.md": [
       "COMPONENTFULLNAME",
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "recipe.yaml": [
       "AUTHOR",
+      "BINNAME",
       "COMPONENTFULLNAME",
-      "COMPONENTNAME",
       "DESCRIPTION"
     ],
     "requirements.txt": [
       "EDGECOMMONS_DEP"
     ],
-    "app/adapter.py": [
-      "COMPONENTNAME"
-    ],
     "k8s/configmap.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "supervisor/component.conf": [
       "BINNAME",
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "test-configs/standalone-messaging.json": [
       "COMPONENTNAME"
     ],
-    "tests/conftest.py": [
+    "tests/test_commands.py": [
+      "SNAKENAME"
+    ],
+    "tests/test_device.py": [
+      "SNAKENAME"
+    ],
+    "tests/test_metrics.py": [
+      "SNAKENAME"
+    ],
+    "tests/test_live_sim.py": [
+      "SNAKENAME"
+    ],
+    "docs/README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "docs/tutorial.md": [
+      "BINNAME",
       "COMPONENTNAME"
     ],
-    "tests/test_adapter.py": [
+    "docs/how-to-guides.md": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "docs/explanation.md": [
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "docs/sample-configurations.md": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "docs/reference/configuration.md": [
+      "BINNAME",
+      "SNAKENAME"
+    ],
+    "docs/reference/messaging-interface.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/reference/metrics.md": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "docs/reference/data-types.md": [
+      "SNAKENAME"
+    ],
+    ".github/workflows/ci.yml": [
+      "SNAKENAME"
+    ],
+    ".coveragerc": [
+      "SNAKENAME"
+    ],
+    "AGENTS.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "CLAUDE.md": [
+      "COMPONENTNAME"
+    ],
+    "DESIGN.md": [
+      "COMPONENTFULLNAME",
       "COMPONENTNAME"
     ]
   },
   "renames": [
     {
-      "from": "app/adapter.py",
-      "to": "app/{COMPONENTNAME}.py"
+      "from": "app",
+      "to": "{SNAKENAME}"
     },
     {
       "from": "test-configs/TestComponent.json",

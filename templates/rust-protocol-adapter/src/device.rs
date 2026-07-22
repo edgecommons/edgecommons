@@ -72,6 +72,49 @@ impl DeviceError {
 
 pub type Result<T> = std::result::Result<T, DeviceError>;
 
+/// One signal in the adapter's inventory — its stable id and human label, known from config/backend
+/// **without a device round-trip**. Backs the `sb/signals` command.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignalInfo {
+    /// The canonical, stable id (the `sb/read`/`sb/write` `signalId`).
+    pub id: String,
+    /// A human label, when the backend has one.
+    pub name: Option<String>,
+}
+
+/// One entry discovered by [`DeviceSession::browse`] — a signal the device *offers*, whether or not
+/// it is configured. Backs the `sb/browse` diagnostics surface.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BrowsedSignal {
+    /// The stable id a consumer would configure or read.
+    pub id: String,
+    /// A human label, when the device provides one.
+    pub name: Option<String>,
+    /// The device-native type, kept verbatim for diagnosis (`"REAL"`, `"holding/uint16"`, …).
+    pub type_name: String,
+}
+
+/// One page of a [`DeviceSession::browse`] enumeration. Browsing is **paged** because a device's
+/// address space can be large; `next_cursor` is `Some` while more pages remain.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BrowsePage {
+    pub entries: Vec<BrowsedSignal>,
+    /// Opaque continuation token; pass it back as the next `cursor`. `None` on the last page.
+    pub next_cursor: Option<String>,
+}
+
+/// Why a `sb/browse` could not answer. Kept distinct from [`DeviceError`] because "this protocol has
+/// no discovery" is a permanent, honest capability limit — not a link failure.
+#[derive(Debug)]
+#[allow(dead_code)] // `Failed` is for a real backend whose discovery can fail mid-enumeration
+pub enum BrowseError {
+    /// The protocol has no discovery service. The default seam impl returns this, so an adapter that
+    /// cannot browse stays honest (the command maps it to `BROWSE_UNSUPPORTED`).
+    Unsupported,
+    /// A mid-browse failure (a link error, a malformed reply). Maps to `BROWSE_FAILED`.
+    Failed(String),
+}
+
 /// A live connection to one device. **This is the trait you implement.**
 #[async_trait]
 pub trait DeviceSession: Send + Sync {
@@ -82,12 +125,41 @@ pub trait DeviceSession: Send + Sync {
     /// Return `Err` only when the *connection* is broken.
     async fn read_signals(&mut self) -> Result<Vec<Reading>>;
 
+    /// Read a named subset **now** (backs `sb/read`). The default reads everything and filters, which
+    /// is correct for any backend; override it when your protocol can read a subset more cheaply.
+    ///
+    /// # Errors
+    ///
+    /// Only when the *connection* is broken (same contract as [`read_signals`](Self::read_signals)).
+    async fn read_named(&mut self, ids: &[String]) -> Result<Vec<Reading>> {
+        let all = self.read_signals().await?;
+        Ok(all.into_iter().filter(|r| ids.iter().any(|id| id == &r.signal_id)).collect())
+    }
+
     /// Write a value back to the device.
     ///
     /// # Errors
     ///
     /// If the write is rejected, or the link is down.
     async fn write_signal(&mut self, signal_id: &str, value: &serde_json::Value) -> Result<()>;
+
+    /// Enumerate the device's address space, one page at a time (backs `sb/browse`).
+    ///
+    /// The default returns [`BrowseError::Unsupported`] — a protocol with no discovery (Modbus, a
+    /// fixed register map) is honest to leave it unimplemented. Override it when your protocol can
+    /// enumerate (OPC UA browse, an EtherNet/IP tag list).
+    ///
+    /// # Errors
+    ///
+    /// [`BrowseError::Unsupported`] when the protocol has no discovery; [`BrowseError::Failed`] on a
+    /// mid-browse link/protocol error.
+    async fn browse(
+        &mut self,
+        _cursor: Option<String>,
+        _max: usize,
+    ) -> std::result::Result<BrowsePage, BrowseError> {
+        Err(BrowseError::Unsupported)
+    }
 
     /// Close the connection. Must be safe to call twice.
     async fn close(&mut self) {}
@@ -98,6 +170,13 @@ pub trait DeviceSession: Send + Sync {
 pub trait DeviceBackend: Send + Sync {
     /// The protocol's name, as it appears in config and in the published `device.adapter` field.
     fn kind(&self) -> &'static str;
+
+    /// The signal inventory this backend exposes for a device, **without connecting** — read from
+    /// config in a real adapter. Backs `sb/signals` (a config view, no device round-trip). The
+    /// simulator returns a fixed pair so the command has something to show.
+    fn inventory(&self, _cfg: &ConnectionConfig) -> Vec<SignalInfo> {
+        Vec::new()
+    }
 
     /// Connect to one device.
     ///
@@ -130,10 +209,24 @@ pub struct ConnectionConfig {
 
 pub struct SimBackend;
 
+/// The signals the simulator exposes — the ids it reads and the one it fails. A real backend derives
+/// this from config; the simulator hard-codes it so `sb/signals` and `sb/browse` have content.
+const SIM_SIGNALS: [(&str, &str, &str); 2] = [
+    ("temperature-1", "Ambient temperature", "REAL"),
+    ("pressure-1", "Line pressure", "REAL"),
+];
+
 #[async_trait]
 impl DeviceBackend for SimBackend {
     fn kind(&self) -> &'static str {
         "sim"
+    }
+
+    fn inventory(&self, _cfg: &ConnectionConfig) -> Vec<SignalInfo> {
+        SIM_SIGNALS
+            .iter()
+            .map(|(id, name, _)| SignalInfo { id: (*id).to_string(), name: Some((*name).to_string()) })
+            .collect()
     }
 
     async fn connect(&self, cfg: &ConnectionConfig) -> Result<Box<dyn DeviceSession>> {
@@ -178,6 +271,28 @@ impl DeviceSession for SimSession {
     async fn write_signal(&mut self, signal_id: &str, value: &serde_json::Value) -> Result<()> {
         tracing::info!(signal_id, ?value, "sim: write accepted");
         Ok(())
+    }
+
+    /// A one-page browse of the simulator's inventory. A real backend pages a large address space and
+    /// returns a `next_cursor`; the simulator has two signals, so the first page is the last page.
+    async fn browse(
+        &mut self,
+        cursor: Option<String>,
+        _max: usize,
+    ) -> std::result::Result<BrowsePage, BrowseError> {
+        // A cursor means "the page after the last one" — the sim has nothing more.
+        if cursor.is_some() {
+            return Ok(BrowsePage::default());
+        }
+        let entries = SIM_SIGNALS
+            .iter()
+            .map(|(id, name, ty)| BrowsedSignal {
+                id: (*id).to_string(),
+                name: Some((*name).to_string()),
+                type_name: (*ty).to_string(),
+            })
+            .collect();
+        Ok(BrowsePage { entries, next_cursor: None })
     }
 }
 
@@ -225,5 +340,55 @@ mod tests {
         let a = s.read_signals().await.unwrap()[0].value.clone();
         let b = s.read_signals().await.unwrap()[0].value.clone();
         assert_ne!(a, b);
+    }
+
+    #[tokio::test]
+    async fn read_named_returns_only_the_requested_signals() {
+        // The default `read_named` reads all and filters — override it only if your protocol reads a
+        // subset more cheaply.
+        let mut s = SimBackend.connect(&conn("sim://device")).await.unwrap();
+        let got = s.read_named(&["temperature-1".to_string()]).await.unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].signal_id, "temperature-1");
+        // An unknown id resolves to nothing (the command layer reports it as a BAD/no-data entry).
+        assert!(s.read_named(&["nope".to_string()]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_sim_browses_one_page_and_stops() {
+        let mut s = SimBackend.connect(&conn("sim://device")).await.unwrap();
+        let page = s.browse(None, 100).await.unwrap();
+        assert_eq!(page.entries.len(), 2);
+        assert_eq!(page.entries[0].id, "temperature-1");
+        assert!(page.next_cursor.is_none(), "the sim's first page is its last");
+        // A cursor asks for the page after the last — empty.
+        let page2 = s.browse(Some("x".into()), 100).await.unwrap();
+        assert!(page2.entries.is_empty());
+    }
+
+    #[test]
+    fn the_sim_advertises_its_inventory_without_connecting() {
+        // `sb/signals` reads this — a config view, no device round-trip.
+        let inv = SimBackend.inventory(&conn("sim://device"));
+        assert_eq!(inv.len(), 2);
+        assert_eq!(inv[0].id, "temperature-1");
+        assert_eq!(inv[0].name.as_deref(), Some("Ambient temperature"));
+    }
+
+    #[tokio::test]
+    async fn browse_is_unsupported_by_default() {
+        // A protocol with no discovery keeps the default — honest, not a fake empty page.
+        struct NoBrowse;
+        #[async_trait]
+        impl DeviceSession for NoBrowse {
+            async fn read_signals(&mut self) -> Result<Vec<Reading>> {
+                Ok(vec![])
+            }
+            async fn write_signal(&mut self, _: &str, _: &serde_json::Value) -> Result<()> {
+                Ok(())
+            }
+        }
+        let mut s = NoBrowse;
+        assert!(matches!(s.browse(None, 10).await, Err(BrowseError::Unsupported)));
     }
 }

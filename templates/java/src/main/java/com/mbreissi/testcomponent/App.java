@@ -86,12 +86,15 @@ public class <<COMPONENTNAME>>
     final EventsFacade events;
 
     /**
-     * In-memory demo state: mutated by the {@value #SET_GREETING} command, read back by the
-     * periodic {@code app} status publish — so a console "Send command" has a visible effect
-     * without needing a dedicated custom "get" verb (the built-in {@code get-configuration}
-     * already covers reading config back).
+     * In-memory demo state + its command handler: mutated by the {@value #SET_GREETING} command,
+     * read back by the periodic {@code app} status publish — so a console "Send command" has a
+     * visible effect without needing a dedicated custom "get" verb (the built-in
+     * {@code get-configuration} already covers reading config back). The parse/validate/swap logic
+     * lives in {@link Greeting} (a covered, broker-free unit) rather than inline here, so the one
+     * piece of real logic in this scaffold is unit-tested while this class stays pure bootstrap +
+     * run loop (see {@code Greeting} and the JaCoCo exclude note in {@code pom.xml}).
      */
-    private final AtomicReference<String> greeting = new AtomicReference<>("Hello from <<COMPONENTNAME>>");
+    private final Greeting greeting = new Greeting("Hello from <<COMPONENTNAME>>");
 
     public static void main(String[] args) {
         new <<COMPONENTNAME>>(args);
@@ -104,7 +107,7 @@ public class <<COMPONENTNAME>>
                 .initialReady(false)
                 // Install component verbs before the command-inbox subscription can become ACTIVE.
                 .configureCommands(inbox -> inbox.register(
-                        SET_GREETING, this::handleSetGreeting))
+                        SET_GREETING, greeting::apply))
                 .build();
         configManager = edgeCommons.getConfigManager();
         messaging = edgeCommons.getMessaging();
@@ -232,8 +235,32 @@ public class <<COMPONENTNAME>>
         return List.of();
     }
 
+}
+
+/**
+ * The mutable demo greeting <b>and</b> its {@code set-greeting} command handler — the one piece of
+ * real, unit-testable logic in this scaffold. It is a top-level, dependency-free class on purpose:
+ * the enclosing component is a live bootstrap + infinite run loop (it needs a broker and a running
+ * {@code EdgeCommons} to do anything), so that class is validated on real infrastructure and excluded
+ * from the in-process coverage gate — but the parse/validate/swap logic here needs none of that, so
+ * it lives where a plain JUnit test can cover it. Replace this with your own command state as you
+ * build the component out; keep it testable in the same way.
+ */
+final class Greeting {
+
+    private final AtomicReference<String> value;
+
+    Greeting(String initial) {
+        this.value = new AtomicReference<>(initial);
+    }
+
+    /** The current greeting — what the periodic {@code app} status publish reflects each tick. */
+    String get() {
+        return value.get();
+    }
+
     /**
-     * The {@value #SET_GREETING} custom command verb: {@code {"greeting": "<new text>"}} in,
+     * The {@code set-greeting} custom command verb: {@code {"greeting": "<new text>"}} in,
      * {@code {"previousGreeting": ..., "greeting": ...}} out. Throws a {@link CommandException}
      * (a coded error reply, {@code BAD_ARGS}) on a missing/malformed argument, exactly like the
      * library's own built-ins do for their failure modes.
@@ -242,14 +269,14 @@ public class <<COMPONENTNAME>>
      * handler): publish {@code {"header":{"name":"set-greeting","version":"1.0"},"body":
      * {"greeting":"Hi from mqttx"}}} to {@code ecv1/{device}/{component}/main/cmd/set-greeting}.
      */
-    private JsonObject handleSetGreeting(Message request) throws CommandException {
+    JsonObject apply(Message request) throws CommandException {
         // Pattern-matching instanceof (JEP 394, Java 16+) — fine on this template's Java 25 target.
         if (!(request.getBody() instanceof JsonObject body) || !body.has("greeting")
                 || !body.get("greeting").isJsonPrimitive()) {
             throw new CommandException("BAD_ARGS", "expected a JSON body {\"greeting\": \"<text>\"}");
         }
         String next = body.get("greeting").getAsString();
-        String previous = greeting.getAndSet(next);
+        String previous = value.getAndSet(next);
         JsonObject result = new JsonObject();
         result.addProperty("previousGreeting", previous);
         result.addProperty("greeting", next);

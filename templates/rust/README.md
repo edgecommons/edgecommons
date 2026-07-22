@@ -6,6 +6,9 @@ by the `edgecommons` CLI. It gives you the library's
 standard CLI contract, configuration, logging, messaging, metrics, and heartbeat —
 so you write only business logic in [`src/app.rs`](src/app.rs).
 
+> Full docs: [`docs/README.md`](docs/README.md). This template ships without a `Cargo.lock` (the
+> scaffold generates offline, without a toolchain or network); commit it after your first build.
+
 ## Project layout
 
 | Path | Purpose |

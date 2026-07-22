@@ -37,8 +37,8 @@ class <<COMPONENTNAME>>Test {
     @Test
     void theKeyIsDeterministic() {
         Message msg = message();
-        String a = <<COMPONENTNAME>>.keyFor("archive", "ecv1/gw/x/main/data/temp", msg);
-        String b = <<COMPONENTNAME>>.keyFor("archive", "ecv1/gw/x/main/data/temp", msg);
+        String a = Delivery.keyFor("archive", "ecv1/gw/x/main/data/temp", msg);
+        String b = Delivery.keyFor("archive", "ecv1/gw/x/main/data/temp", msg);
 
         assertEquals(a, b, "the same message must always resolve to the same key");
         assertTrue(a.startsWith("archive/temp/"), a);
@@ -48,16 +48,16 @@ class <<COMPONENTNAME>>Test {
     @Test
     void twoMessagesDoNotCollide() {
         assertNotEquals(
-                <<COMPONENTNAME>>.keyFor("archive", "ecv1/gw/x/main/data/temp", message()),
-                <<COMPONENTNAME>>.keyFor("archive", "ecv1/gw/x/main/data/temp", message()),
+                Delivery.keyFor("archive", "ecv1/gw/x/main/data/temp", message()),
+                Delivery.keyFor("archive", "ecv1/gw/x/main/data/temp", message()),
                 "distinct envelopes must not overwrite each other");
     }
 
     @Test
     void theSinkIdPrefixesTheKeySoTwoSinksNeverCollide() {
         Message msg = message();
-        assertTrue(<<COMPONENTNAME>>.keyFor("archive", "ecv1/gw/x/main/data/t", msg).startsWith("archive/"));
-        assertTrue(<<COMPONENTNAME>>.keyFor("cold-store", "ecv1/gw/x/main/data/t", msg).startsWith("cold-store/"));
+        assertTrue(Delivery.keyFor("archive", "ecv1/gw/x/main/data/t", msg).startsWith("archive/"));
+        assertTrue(Delivery.keyFor("cold-store", "ecv1/gw/x/main/data/t", msg).startsWith("cold-store/"));
     }
 
     @Test
@@ -66,7 +66,7 @@ class <<COMPONENTNAME>>Test {
         // and the destination must hold ONE object, not two.
         LocalDestination dest = new LocalDestination(dir);
         Message msg = message();
-        String key = <<COMPONENTNAME>>.keyFor("archive", "ecv1/gw/x/main/data/temp", msg);
+        String key = Delivery.keyFor("archive", "ecv1/gw/x/main/data/temp", msg);
 
         Item item = new Item(key, "{\"v\":1}".getBytes(StandardCharsets.UTF_8));
         dest.verify(item, dest.deliver(item));
@@ -85,7 +85,7 @@ class <<COMPONENTNAME>>Test {
     void aReachableDestinationIsReportedAsAnInstanceOfThisComponent() {
         // A sink's destinations ARE its instances: this is what the `state` keepalive pushes and
         // what the built-in `status` verb answers with.
-        InstanceConnectivity up = <<COMPONENTNAME>>.connectivity("archive", "local", true, "ONLINE", null);
+        InstanceConnectivity up = Delivery.connectivity("archive", "local", true, "ONLINE", null);
 
         assertEquals("archive", up.getInstance());
         assertTrue(up.isConnected(), "connected is the NORMALIZED flag every console reads");
@@ -98,8 +98,8 @@ class <<COMPONENTNAME>>Test {
     void retryingAndGivingUpAreBothDisconnectedButAnOperatorMustTellThemApart() {
         // The reason `state` exists: a boolean cannot distinguish "still trying, the data is in
         // hand" from "gave up, the data did not arrive". Both are connected=false.
-        InstanceConnectivity retrying = <<COMPONENTNAME>>.connectivity("archive", "local", false, "BACKOFF", "timeout");
-        InstanceConnectivity gaveUp = <<COMPONENTNAME>>.connectivity("archive", "local", false, "FAILED", "no such bucket");
+        InstanceConnectivity retrying = Delivery.connectivity("archive", "local", false, "BACKOFF", "timeout");
+        InstanceConnectivity gaveUp = Delivery.connectivity("archive", "local", false, "FAILED", "no such bucket");
 
         assertFalse(retrying.isConnected());
         assertFalse(gaveUp.isConnected());

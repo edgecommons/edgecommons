@@ -1,0 +1,8 @@
+# LOCAL DEV ONLY — not committed to your component repo (.gitignore excludes /.cargo/).
+# Points the pinned-rev edgecommons git dependency at your local sibling checkout so a plain
+# `cargo build` uses your working copy. CI keeps the pinned rev in Cargo.toml.
+[patch."https://github.com/edgecommons/edgecommons"]
+edgecommons = { path = "<<LIBRARY_LOCAL_PATH>>" }
+
+[net]
+git-fetch-with-cli = true

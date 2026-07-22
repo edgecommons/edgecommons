@@ -31,6 +31,7 @@
       "COMPONENTNAME",
       "EDGECOMMONS_VERSION",
       "JARNAME",
+      "LICENSE",
       "MAINCLASSNAME",
       "PACKAGE"
     ],
@@ -38,6 +39,42 @@
       "COMPONENTFULLNAME",
       "COMPONENTNAME",
       "JARNAME"
+    ],
+    "AGENTS.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "CLAUDE.md": [
+      "COMPONENTNAME"
+    ],
+    "DESIGN.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/tutorial.md": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "docs/how-to-guides.md": [
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "docs/sample-configurations.md": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "docs/reference/messaging-interface.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/reference/metrics.md": [
+      "BINNAME",
+      "COMPONENTNAME"
     ],
     "recipe.yaml": [
       "AUTHOR",
@@ -47,10 +84,10 @@
       "MAINCLASSNAME"
     ],
     "k8s/configmap.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "src/main/java/com/mbreissi/testcomponent/App.java": [
       "COMPONENTFULLNAME",

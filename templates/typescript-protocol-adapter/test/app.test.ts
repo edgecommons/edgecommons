@@ -1,16 +1,17 @@
-import { Config, DataFacade, IMessagingService, Message, Uns } from "@edgecommons/edgecommons";
+import { Config, DataFacade, IMessagingService, Message, Quality as LibQuality, Uns } from "@edgecommons/edgecommons";
 import { describe, expect, it } from "vitest";
 
 import {
   Backoff,
+  DeviceControl,
   Health,
   Mailbox,
-  WriteRequest,
   Writes,
   connectivityOf,
-  handleWrite,
   parseDevice,
   publishReadings,
+  setPaused,
+  toLibQuality,
 } from "../src/app";
 import { Quality, SimBackend } from "../src/device";
 
@@ -73,6 +74,25 @@ describe("device config", () => {
       /unknown key/,
     );
   });
+
+  it("rejects each malformed field with a specific message rather than a vague failure", () => {
+    expect(() => parseDevice({ id: "plc-1" })).toThrow(/`connection` is required/);
+    expect(() => parseDevice({ id: "plc-1", connection: { endpoint: "x" }, pollIntervalMs: 0 })).toThrow(
+      /`pollIntervalMs` must be a positive number/,
+    );
+    expect(() =>
+      parseDevice({ id: "plc-1", connection: { endpoint: "x" }, writes: { allow: [1, 2] } }),
+    ).toThrow(/`writes.allow` must be an array of signal ids/);
+  });
+});
+
+describe("quality mapping", () => {
+  it("maps every backend quality onto the library's wire enum", () => {
+    // A backend speaks protocol-free quality; the wire speaks the library enum. Every case must map.
+    expect(toLibQuality(Quality.Good)).toBe(LibQuality.Good);
+    expect(toLibQuality(Quality.Bad)).toBe(LibQuality.Bad);
+    expect(toLibQuality(Quality.Uncertain)).toBe(LibQuality.Uncertain);
+  });
 });
 
 describe("reconnect backoff", () => {
@@ -94,8 +114,7 @@ describe("per-instance connectivity", () => {
   it("reports a configured device that has not connected yet", () => {
     // The health exists from the moment the device is CONFIGURED. A configured device that is down
     // must never look like a device nobody configured — so it is reported, connected=false, and the
-    // adapter's own token says WHY it is not up: CONNECTING is not BACKOFF, and the boolean alone
-    // could not tell them apart.
+    // adapter's own token says WHY it is not up: CONNECTING is not BACKOFF.
     const c = connectivityOf(device, new Health());
 
     expect(c.instance).toBe("plc-1");
@@ -103,6 +122,7 @@ describe("per-instance connectivity", () => {
     expect(c.state).toBe("CONNECTING");
     expect(c.detail).toBe("sim://plc-1"); // the endpoint, for a human
     expect(c.attributes.adapter).toBe("sim"); // the open bag carries domain data
+    expect(c.attributes.paused).toBe(false);
   });
 
   it("goes ONLINE on connect and BACKOFF on failure", () => {
@@ -115,12 +135,24 @@ describe("per-instance connectivity", () => {
     health.setLink("BACKOFF");
     expect(connectivityOf(device, health).connected).toBe(false);
     expect(connectivityOf(device, health).state).toBe("BACKOFF");
+  });
 
-    // Down is down to the boolean — but "retrying" and "will never connect" are not the same fact,
-    // and only the state token can say which one an operator is looking at.
-    health.setLink("DISABLED");
-    expect(connectivityOf(device, health).connected).toBe(false);
-    expect(connectivityOf(device, health).state).toBe("DISABLED");
+  it("reports PAUSED while online-and-paused but stays connected", () => {
+    const health = new Health();
+    health.setLink("ONLINE");
+
+    expect(setPaused(health, true)).toBe(true); // pausing changed the state
+    expect(setPaused(health, true)).toBe(false); // pausing again is idempotent
+    let c = connectivityOf(device, health);
+    expect(c.state).toBe("PAUSED"); // paused + online = PAUSED
+    expect(c.connected).toBe(true); // connected stays truthful while paused
+    expect(c.attributes.paused).toBe(true);
+
+    // A break while paused reports BACKOFF (not PAUSED), connected false.
+    health.setLink("BACKOFF");
+    c = connectivityOf(device, health);
+    expect(c.state).toBe("BACKOFF");
+    expect(c.connected).toBe(false);
   });
 
   it("keeps the normalized flag and the health metric from disagreeing", () => {
@@ -128,9 +160,9 @@ describe("per-instance connectivity", () => {
     // renders are the same fact.
     const health = new Health();
     health.setLink("ONLINE");
-    expect(health.takeInterval().connectionState).toBe(1);
+    expect(health.connectionState).toBe(1);
     health.setLink("BACKOFF");
-    expect(health.takeInterval().connectionState).toBe(0);
+    expect(health.connectionState).toBe(0);
   });
 });
 
@@ -139,9 +171,14 @@ describe("the southbound publish path", () => {
     const { data, published } = dataFacadeFor("device-1");
     const session = await new SimBackend().connect({ endpoint: "sim://device-1" });
 
-    await publishReadings(data, "sim", { id: "device-1", connection: { endpoint: "sim://device-1" } },
-      await session.readSignals());
+    const count = await publishReadings(
+      data,
+      "sim",
+      { id: "device-1", connection: { endpoint: "sim://device-1" } },
+      await session.readSignals(),
+    );
 
+    expect(count).toBe(2);
     expect(published.map((p) => p.topic)).toEqual([
       "ecv1/gw-01/Adapter/device-1/data/temperature-1",
       "ecv1/gw-01/Adapter/device-1/data/pressure-1",
@@ -173,87 +210,49 @@ describe("the southbound publish path", () => {
     // The envelope carries our identity — the facade stamped it; we never hand-built it.
     expect(published[0].msg.identity?.instance).toBe("device-1");
   });
-});
 
-describe("the write allow-list", () => {
-  const devices = new Map([
-    [
-      "device-1",
-      parseDevice({ id: "device-1", connection: { endpoint: "sim://device-1" } }), // no writes block
-    ],
-    [
-      "device-2",
-      parseDevice({
-        id: "device-2",
-        connection: { endpoint: "sim://device-2" },
-        writes: { allow: ["setpoint-1"] },
-      }),
-    ],
-  ]);
-
-  it("refuses a write to an instance whose allow-list is empty (the default)", async () => {
-    const mailboxes = new Map([["device-1", new Mailbox<WriteRequest>()]]);
-    await expect(
-      handleWrite(devices, mailboxes, { instance: "device-1", signalId: "setpoint-1", value: 42 }),
-    ).rejects.toMatchObject({ code: "WRITE_NOT_ALLOWED" });
-  });
-
-  it("refuses a signal that is not on the list, even when other signals are", async () => {
-    const mailboxes = new Map([["device-2", new Mailbox<WriteRequest>()]]);
-    await expect(
-      handleWrite(devices, mailboxes, { instance: "device-2", signalId: "setpoint-2", value: 1 }),
-    ).rejects.toMatchObject({ code: "WRITE_NOT_ALLOWED" });
-  });
-
-  it("confirms an allow-listed write with the DEVICE's answer, not 'we sent it'", async () => {
-    const mailbox = new Mailbox<WriteRequest>();
-    const mailboxes = new Map([["device-2", mailbox]]);
-
-    const pending = handleWrite(devices, mailboxes, {
-      instance: "device-2",
-      signalId: "setpoint-1",
-      value: 42,
+  it("swallows a single failed publish and keeps going — one bad signal must not blind the rest", async () => {
+    // A publish that rejects (transport hiccup) is logged and skipped, not thrown: the next reading
+    // still gets its chance. The count returned is only the readings that actually went out.
+    const config = Config.fromValue("com.example.Adapter", "gw-01", {
+      hierarchy: { levels: ["site", "device"] },
+      identity: { site: "factory-1" },
+      component: { global: {}, instances: [{ id: "device-1" }] },
     });
+    let calls = 0;
+    const messaging = {
+      publish: async (): Promise<void> => {
+        calls += 1;
+        if (calls === 1) throw new Error("transport hiccup");
+      },
+    } as unknown as IMessagingService;
+    const uns = new Uns(config.componentIdentity.withInstance("device-1"), config.topicIncludeRoot);
+    const data = new DataFacade(() => config, "device-1", uns, messaging, undefined);
 
-    // Stand in for the device loop: take the request off the mailbox and settle it.
-    const req = await mailbox.receive(1_000);
-    expect(req?.signalId).toBe("setpoint-1");
-    expect(req?.value).toBe(42);
-    req?.settle();
+    const count = await publishReadings(data, "sim", { id: "device-1", connection: { endpoint: "sim://device-1" } }, [
+      { signalId: "s1", value: 1, quality: Quality.Good, qualityRaw: "OK" },
+      { signalId: "s2", value: 2, quality: Quality.Good, qualityRaw: "OK" },
+    ]);
 
-    await expect(pending).resolves.toEqual({ written: "setpoint-1" });
-  });
-
-  it("reports a device-rejected write as a failure, not a success", async () => {
-    const mailbox = new Mailbox<WriteRequest>();
-    const mailboxes = new Map([["device-2", mailbox]]);
-
-    const pending = handleWrite(devices, mailboxes, {
-      instance: "device-2",
-      signalId: "setpoint-1",
-      value: 42,
-    });
-    (await mailbox.receive(1_000))?.settle("register is read-only");
-
-    await expect(pending).rejects.toMatchObject({ code: "WRITE_FAILED" });
-  });
-
-  it("rejects a malformed or unrouted command", async () => {
-    const mailboxes = new Map([["device-2", new Mailbox<WriteRequest>()]]);
-    await expect(handleWrite(devices, mailboxes, { signalId: "x", value: 1 })).rejects.toMatchObject({
-      code: "BAD_ARGS",
-    });
-    await expect(
-      handleWrite(devices, mailboxes, { instance: "nope", signalId: "x", value: 1 }),
-    ).rejects.toMatchObject({ code: "NO_SUCH_INSTANCE" });
+    expect(calls).toBe(2); // both attempted
+    expect(count).toBe(1); // only the second succeeded
   });
 });
 
-describe("the write mailbox", () => {
-  it("hands a queued write to the single consumer, and times out when there is none", async () => {
+describe("the control mailbox", () => {
+  it("hands a queued control message to the single consumer, and times out when there is none", async () => {
     const mailbox = new Mailbox<string>();
     mailbox.send("first");
     expect(await mailbox.receive(50)).toBe("first");
     expect(await mailbox.receive(10)).toBeUndefined();
+  });
+
+  it("refuses sends once closed (the device loop is gone → DEVICE_UNAVAILABLE)", async () => {
+    const mailbox = new Mailbox<DeviceControl>();
+    mailbox.close();
+    expect(mailbox.send({ kind: "resume", reply: () => undefined })).toBe(false);
+    // A pending receiver wakes on close and drains nothing.
+    expect(await mailbox.receive(1_000)).toBeUndefined();
+    expect(mailbox.isClosed()).toBe(true);
   });
 });

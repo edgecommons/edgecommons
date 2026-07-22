@@ -1,0 +1,20 @@
+name: ci
+
+on:
+  push:
+    paths-ignore: ['**.md', 'docs/**']
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+jobs:
+  ci:
+    # Reusable component CI from the org defaults repo. Runs `mvn -B verify`, which exercises the
+    # JaCoCo 90% line-coverage check wired into this component's pom.xml (see the jacoco-maven-plugin
+    # `check` execution) — don't lower that gate or exclude testable code to make it pass; add tests.
+    permissions:
+      contents: read
+    uses: edgecommons/.github/.github/workflows/component-ci.yml@main
+    with:
+      language: JAVA
+    secrets: inherit

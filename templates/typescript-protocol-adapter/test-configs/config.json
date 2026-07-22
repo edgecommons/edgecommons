@@ -18,7 +18,7 @@
         "reconnectBackoffMinMs": 1000,
         "reconnectBackoffMaxMs": 60000
       },
-      "healthThresholds": { "staleSignalSecs": 60 }
+      "healthThresholds": { "staleSignalSecs": 30 }
     },
     "instances": [
       {

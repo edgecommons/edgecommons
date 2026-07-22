@@ -17,7 +17,7 @@ set -euo pipefail
 # Keep these in sync with gdk-config.json / recipe.yaml.
 COMPONENT_NAME="<<COMPONENTFULLNAME>>"
 COMPONENT_VERSION="1.0.0"
-ARTIFACT_BASE="<<COMPONENTNAME>>"
+ARTIFACT_BASE="<<BINNAME>>"
 
 echo "Installing dependencies (npm install)..."
 npm install

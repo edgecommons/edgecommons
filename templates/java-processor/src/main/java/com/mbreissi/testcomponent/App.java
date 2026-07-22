@@ -149,7 +149,7 @@ public final class <<COMPONENTNAME>> {
 
             for (String filter : route.subscribe()) {
                 messaging.subscribe(filter, (topic, msg) -> {
-                    if (isSelfEcho(msg, myPath, myComponent)) {
+                    if (Guards.isSelfEcho(msg, myPath, myComponent)) {
                         return; // our own output; consuming it would loop forever
                     }
                     stats.received.incrementAndGet();
@@ -290,8 +290,37 @@ public final class <<COMPONENTNAME>> {
         return List.of();
     }
 
+    /** Counters, reported as a metric each interval. */
+    static final class Stats {
+        final AtomicLong received = new AtomicLong();
+        final AtomicLong published = new AtomicLong();
+        /**
+         * Dropped because a route's queue was full. <b>Never let this be invisible</b> — a processor
+         * that silently discards messages is worse than one that crashes.
+         */
+        final AtomicLong dropped = new AtomicLong();
+        final AtomicLong errors = new AtomicLong();
+    }
+}
+
+/**
+ * The pure, broker-free guards the run loop delegates to — kept in a top-level class so they are
+ * unit-tested directly. The component class itself is a live bootstrap + per-route worker loop (it
+ * needs a broker and a running {@code EdgeCommons} to do anything) and is validated on real
+ * infrastructure, so it is excluded from the in-process coverage gate; the load-bearing decision it
+ * makes on every inbound message — <b>the self-echo guard</b> — is not, so it lives here.
+ */
+final class Guards {
+
+    private Guards() {
+    }
+
     /**
-     * Would consuming this message mean consuming our own output?
+     * Would consuming this message mean consuming our own output? A processor that publishes onto a
+     * class it also subscribes to would otherwise reprocess its own output forever and saturate the
+     * device — this is the check that stops it, and it is why the identity restamp in {@code dispatch}
+     * is load-bearing: the guard has nothing to compare against if a producer's identity is forwarded
+     * as if it were our own.
      *
      * @param msg         the inbound message
      * @param myPath      our own UNS hierarchy path
@@ -303,17 +332,5 @@ public final class <<COMPONENTNAME>> {
         return id != null
                 && myPath.equals(id.getPath())
                 && myComponent.equals(id.getComponent());
-    }
-
-    /** Counters, reported as a metric each interval. */
-    static final class Stats {
-        final AtomicLong received = new AtomicLong();
-        final AtomicLong published = new AtomicLong();
-        /**
-         * Dropped because a route's queue was full. <b>Never let this be invisible</b> — a processor
-         * that silently discards messages is worse than one that crashes.
-         */
-        final AtomicLong dropped = new AtomicLong();
-        final AtomicLong errors = new AtomicLong();
     }
 }

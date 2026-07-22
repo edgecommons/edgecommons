@@ -13,6 +13,9 @@
     "EDGECOMMONS_DEP"
   ],
   "substitutions": {
+    ".cargo/config.toml": [
+      "LIBRARY_LOCAL_PATH"
+    ],
     "build.sh": [
       "BINNAME",
       "COMPONENTFULLNAME"
@@ -20,7 +23,8 @@
     "Cargo.toml": [
       "BINNAME",
       "DESCRIPTION",
-      "EDGECOMMONS_DEP"
+      "EDGECOMMONS_DEP",
+      "LICENSE"
     ],
     "compose.yaml": [
       "BINNAME",
@@ -48,10 +52,10 @@
       "DESCRIPTION"
     ],
     "k8s/configmap.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "src/app.rs": [
       "COMPONENTNAME"
@@ -66,6 +70,40 @@
     ],
     "test-configs/standalone-messaging.json": [
       "BINNAME"
+    ],
+    "AGENTS.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "CLAUDE.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "DESIGN.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/tutorial.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "docs/sample-configurations.md": [
+      "BINNAME"
+    ],
+    "docs/reference/configuration.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/reference/messaging-interface.md": [
+      "BINNAME"
+    ],
+    "docs/reference/metrics.md": [
+      "BINNAME",
+      "COMPONENTNAME"
     ]
   },
   "renames": [],
@@ -85,5 +123,12 @@
       "k8s"
     ]
   },
-  "conditional": []
+  "conditional": [
+    {
+      "when": "dep:pinned-rev",
+      "paths": [
+        ".cargo"
+      ]
+    }
+  ]
 }

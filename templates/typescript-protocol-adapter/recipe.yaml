@@ -79,9 +79,9 @@ Manifests:
 - Platform:
     os: linux
   Artifacts:
-  - URI: s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<COMPONENTNAME>>.zip
+  - URI: s3://BUCKET_NAME/COMPONENT_NAME/COMPONENT_VERSION/<<BINNAME>>.zip
     Unarchive: ZIP
   Lifecycle:
     Run:
-      Script: node {artifacts:decompressedPath}/<<COMPONENTNAME>>/dist/main.js --platform GREENGRASS -c
+      Script: node {artifacts:decompressedPath}/<<BINNAME>>/dist/main.js --platform GREENGRASS -c
         GG_CONFIG

@@ -111,6 +111,143 @@ pub fn upgrade(root: &Path, to: &str, dry_run: bool) -> Result<(Vec<Change>, Rep
     Ok((changes, report))
 }
 
+/// Move a component's edgecommons git-**rev** pin to a new revision (`component upgrade
+/// --to-rev`). The counterpart to [`upgrade`] for `--dep-source pinned-rev` components: `--to`
+/// targets a release version, `--to-rev` targets a commit.
+///
+/// Rust (`Cargo.toml`) and Python (`requirements.txt`) can express a git-rev pin; Java and
+/// TypeScript cannot, so a project shipping `pom.xml`/`package.json` is a usage error naming why.
+///
+/// # Errors
+///
+/// [`Fatal::Usage`] if the directory does not exist or the project is Java/TypeScript;
+/// [`Fatal::Internal`] on I/O.
+pub fn upgrade_to_rev(
+    root: &Path,
+    rev: &str,
+    dry_run: bool,
+) -> Result<(Vec<Change>, Report), Fatal> {
+    if !root.is_dir() {
+        return Err(Fatal::Usage(format!(
+            "no such component directory: {}",
+            root.display()
+        )));
+    }
+    // Java/Maven and npm cannot express a git-rev pin on a monorepo subdirectory. A project that
+    // ships only those manifests cannot take `--to-rev`.
+    let rusty = root.join("Cargo.toml").exists() || root.join("requirements.txt").exists();
+    if !rusty && (root.join("pom.xml").exists() || root.join("package.json").exists()) {
+        return Err(Fatal::Usage(
+            "--to-rev pins a git revision, which only Rust and Python components express; this \
+             project is Java/TypeScript. Use --to <version>."
+                .into(),
+        ));
+    }
+
+    let mut changes = Vec::new();
+    let mut report = Report::new();
+
+    if let Some(c) = move_cargo_rev(&root.join("Cargo.toml"), rev, dry_run)? {
+        changes.push(c);
+    }
+    if let Some(c) = move_requirements_rev(&root.join("requirements.txt"), rev, dry_run)? {
+        changes.push(c);
+    }
+
+    if changes.is_empty() {
+        report.push(
+            Diagnostic::warning(
+                ec_diag::EC4004_NO_DEPENDENCY_MANIFEST,
+                "no git-rev dependency to move (expected a rev-pinned Cargo.toml or requirements.txt)"
+                    .to_string(),
+            )
+            .with_file(root),
+        );
+    }
+    Ok((changes, report))
+}
+
+/// Move the `rev = "…"` of the edgecommons git dependency in a `Cargo.toml`.
+fn move_cargo_rev(path: &Path, rev: &str, dry_run: bool) -> Result<Option<Change>, Fatal> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Ok(None);
+    };
+    let file = "Cargo.toml".to_string();
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|e| Fatal::Internal(format!("Cargo.toml is not valid TOML: {e}")))?;
+
+    let Some(dep) = doc
+        .get_mut("dependencies")
+        .and_then(|d| d.get_mut("edgecommons"))
+    else {
+        return Ok(Some(Change::NotFound { file }));
+    };
+    if let Some(t) = dep.as_inline_table_mut()
+        && t.contains_key("path")
+    {
+        return Ok(Some(Change::PathDependency { file }));
+    }
+    if let Some(t) = dep.as_inline_table_mut()
+        && let Some(v) = t.get_mut("rev")
+    {
+        let from = v.as_str().unwrap_or_default().to_string();
+        if !dry_run {
+            set_preserving_decor(v, rev);
+            write(path, &doc.to_string())?;
+        }
+        return Ok(Some(Change::Bumped {
+            file,
+            from: format!("rev = \"{from}\""),
+            to: format!("rev = \"{rev}\""),
+        }));
+    }
+    Ok(Some(Change::NotFound { file }))
+}
+
+/// Move the `@<rev>` of a git-pinned edgecommons requirement in a `requirements.txt`.
+///
+/// The pinned-rev form is `edgecommons @ git+https://…@<rev>#subdirectory=libs/python`. The
+/// segment between the last `@` and the `#subdirectory` fragment is replaced — so this moves a
+/// rev pin and also converts a `@python-lib/vX` release pin to a rev pin, symmetric with
+/// [`bump_cargo`] converting the other direction.
+fn move_requirements_rev(path: &Path, rev: &str, dry_run: bool) -> Result<Option<Change>, Fatal> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Ok(None);
+    };
+    let file = "requirements.txt".to_string();
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    for line in &mut lines {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed.starts_with("-e ") && trimmed.contains("libs/python") {
+            return Ok(Some(Change::PathDependency { file }));
+        }
+        if trimmed.starts_with("edgecommons @ git+") {
+            let Some(hash) = trimmed.find("#subdirectory") else {
+                continue;
+            };
+            let Some(at) = trimmed[..hash].rfind('@') else {
+                continue;
+            };
+            let from = trimmed.to_string();
+            let new = format!("{}@{}{}", &trimmed[..at], rev, &trimmed[hash..]);
+            if !dry_run {
+                *line = new.clone();
+                write(path, &lines_to_text(&lines))?;
+            }
+            return Ok(Some(Change::Bumped {
+                file,
+                from,
+                to: new,
+            }));
+        }
+    }
+    Ok(Some(Change::NotFound { file }))
+}
+
 /// Rust — TOML-parsed, and **the git-tag form is supported**, which is what the CLI emits for
 /// `--dep-source registry`.
 fn bump_cargo(path: &Path, to: &str, dry_run: bool) -> Result<Option<Change>, Fatal> {
@@ -165,6 +302,27 @@ fn bump_cargo(path: &Path, to: &str, dry_run: bool) -> Result<Option<Change>, Fa
                 file,
                 from,
                 to: new_tag,
+            }));
+        }
+        // The git-rev form (`--dep-source pinned-rev`): `upgrade --to X.Y.Z` targets a *version*,
+        // so a rev pin is converted to the release tag form (rev pin -> release pin), dropping
+        // the `rev` key. Other keys and their decor are preserved.
+        if t.contains_key("git") && t.get("tag").is_none() && t.contains_key("rev") {
+            let from_rev = t
+                .get("rev")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let new_tag = format!("rust-lib/v{to}");
+            if !dry_run {
+                t.insert("tag", toml_edit::Value::from(new_tag.clone()));
+                t.remove("rev");
+                write(path, &doc.to_string())?;
+            }
+            return Ok(Some(Change::Bumped {
+                file,
+                from: format!("rev = \"{from_rev}\""),
+                to: format!("tag = \"{new_tag}\""),
             }));
         }
         if let Some(v) = t.get_mut("version") {
@@ -661,6 +819,86 @@ mod tests {
         assert!(text.contains(r#"tag = "rust-lib/v0.3.0""#), "{text}");
         // The rest of the dependency must survive untouched.
         assert!(text.contains("default-features = false"), "{text}");
+    }
+
+    #[test]
+    fn rust_rev_dependency_is_bumped_to_tag_by_to() {
+        // A pinned-rev dep, upgraded with --to, becomes the release tag form (rev pin -> release
+        // pin), dropping the rev key and preserving the other keys.
+        let d = project(&[(
+            "Cargo.toml",
+            "[package]\nname=\"x\"\nversion=\"1.0.0\"\n\n[dependencies]\nedgecommons = { git = \"https://github.com/edgecommons/edgecommons\", rev = \"abc1234\", default-features = false }\n",
+        )]);
+        let (changes, _) = upgrade(d.path(), "0.3.0", false).unwrap();
+        assert!(matches!(&changes[0], Change::Bumped { .. }), "{changes:?}");
+        let text = std::fs::read_to_string(d.path().join("Cargo.toml")).unwrap();
+        assert!(text.contains(r#"tag = "rust-lib/v0.3.0""#), "{text}");
+        assert!(!text.contains("rev ="), "the rev key must be gone: {text}");
+        assert!(text.contains("default-features = false"), "{text}");
+    }
+
+    #[test]
+    fn rust_rev_is_moved_by_to_rev() {
+        let d = project(&[(
+            "Cargo.toml",
+            "[package]\nname=\"x\"\nversion=\"1.0.0\"\n\n[dependencies]\nedgecommons = { git = \"https://github.com/edgecommons/edgecommons\", rev = \"abc1234\", default-features = false }\n",
+        )]);
+        let (changes, _) = upgrade_to_rev(d.path(), "def5678", false).unwrap();
+        assert!(matches!(&changes[0], Change::Bumped { .. }), "{changes:?}");
+        let text = std::fs::read_to_string(d.path().join("Cargo.toml")).unwrap();
+        assert!(text.contains(r#"rev = "def5678""#), "{text}");
+        assert!(
+            !text.contains("abc1234"),
+            "the old rev must be gone: {text}"
+        );
+        assert!(
+            text.contains("default-features = false"),
+            "decor survives: {text}"
+        );
+    }
+
+    #[test]
+    fn python_git_rev_pin_is_moved_by_to_rev() {
+        let d = project(&[(
+            "requirements.txt",
+            "psutil>=5.9.6\nedgecommons @ git+https://github.com/edgecommons/edgecommons@abc1234#subdirectory=libs/python\n",
+        )]);
+        let (changes, _) = upgrade_to_rev(d.path(), "def5678", false).unwrap();
+        assert!(matches!(&changes[0], Change::Bumped { .. }), "{changes:?}");
+        let text = std::fs::read_to_string(d.path().join("requirements.txt")).unwrap();
+        assert!(text.contains("@def5678#subdirectory=libs/python"), "{text}");
+        assert!(!text.contains("abc1234"), "{text}");
+        assert!(
+            text.contains("psutil>=5.9.6"),
+            "other requirements survive: {text}"
+        );
+    }
+
+    #[test]
+    fn to_rev_on_java_is_a_usage_error() {
+        let d = project(&[("pom.xml", "<project></project>\n")]);
+        assert!(matches!(
+            upgrade_to_rev(d.path(), "def5678", false),
+            Err(Fatal::Usage(_))
+        ));
+        // ...and TypeScript likewise.
+        let d = project(&[("package.json", "{\"name\":\"x\"}\n")]);
+        assert!(matches!(
+            upgrade_to_rev(d.path(), "def5678", false),
+            Err(Fatal::Usage(_))
+        ));
+    }
+
+    #[test]
+    fn to_rev_dry_run_writes_nothing() {
+        let d = project(&[(
+            "Cargo.toml",
+            "[package]\nname=\"x\"\nversion=\"1.0.0\"\n\n[dependencies]\nedgecommons = { git = \"https://github.com/edgecommons/edgecommons\", rev = \"abc1234\" }\n",
+        )]);
+        let (changes, _) = upgrade_to_rev(d.path(), "def5678", true).unwrap();
+        assert!(matches!(&changes[0], Change::Bumped { .. }));
+        let text = std::fs::read_to_string(d.path().join("Cargo.toml")).unwrap();
+        assert!(text.contains("abc1234"), "--dry-run must not write: {text}");
     }
 
     #[test]

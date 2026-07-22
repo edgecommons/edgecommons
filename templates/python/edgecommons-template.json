@@ -38,8 +38,8 @@
     ],
     "recipe.yaml": [
       "AUTHOR",
+      "BINNAME",
       "COMPONENTFULLNAME",
-      "COMPONENTNAME",
       "DESCRIPTION"
     ],
     "requirements.txt": [
@@ -49,10 +49,10 @@
       "COMPONENTNAME"
     ],
     "k8s/configmap.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "supervisor/component.conf": [
       "BINNAME",
@@ -65,6 +65,48 @@
       "COMPONENTNAME"
     ],
     "tests/test_app.py": [
+      "COMPONENTNAME"
+    ],
+    "docs/README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/tutorial.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/how-to-guides.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/explanation.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/sample-configurations.md": [
+      "BINNAME"
+    ],
+    "docs/reference/configuration.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/reference/messaging-interface.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/reference/metrics.md": [
+      "BINNAME"
+    ],
+    "AGENTS.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "CLAUDE.md": [
+      "COMPONENTNAME"
+    ],
+    "DESIGN.md": [
+      "COMPONENTFULLNAME",
       "COMPONENTNAME"
     ]
   },

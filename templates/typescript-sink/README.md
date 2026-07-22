@@ -19,7 +19,8 @@ outward, and only then lets go of the source.
 | Path | Purpose |
 |------|---------|
 | `src/main.ts` | Entry point: builds the `edgecommons` runtime from CLI args, runs the app. |
-| `src/app.ts` | The sinks: consume, key, deliver with retry, verify, confirm, report. |
+| `src/app.ts` | The sink logic (unit-tested): parse, the stable key, the retry backoff, the delivery ladder (deliver → verify → confirm → report), per-destination connectivity. |
+| `src/runtime.ts` | The thin live-runtime seam: consume off the bus and hand each message to the delivery ladder. Excluded from the coverage gate (needs a live runtime; validated by the deploy paths). |
 | `src/dest.ts` | **The seam you implement**: `Destination` (`kind` / `deliver` / `verify`), plus a local-filesystem destination. |
 | `test/` | Vitest suites for the invariants below (`npm test`). |
 | `config.schema.json` | The component's own config (`component.global` + one sink per instance). |
@@ -73,8 +74,8 @@ The counters behind them ride the `sinkDeliveries` metric: `received`, `delivere
 
 This scaffold's source is a **subscription**: it consumes messages off the bus and delivers each one.
 That is the common case. If your source is a watched directory or a polled API, replace the subscribe
-call in `App.run` — everything downstream of `deliverWithRetry` is unchanged, which is the point of
-the seam.
+call in the runtime seam (`src/runtime.ts`) — everything downstream of `deliverWithRetry` is
+unchanged, which is the point of the seam.
 
 ## Configuration
 
@@ -138,3 +139,17 @@ ConfigMap, and resolves identity from the Downward API — so the Deployment nee
 generation time, `--dep-source local`, the default). Build the sibling library first (`npm run build`
 in `core/libs/ts`), since a `file:` dependency on a TypeScript package needs its `dist/` present.
 Regenerate with `--dep-source registry` to depend on the published package instead.
+
+## Docs and further reading
+
+See [`docs/`](docs/) for the full Diátaxis set — a tutorial, how-to guides, an explanation of the
+delivery ladder, sample configurations, and reference pages for configuration, the messaging
+interface, and metrics.
+
+## Lockfile
+
+This scaffold ships with no `package-lock.json` — a template cannot generate a *valid* lockfile
+(the resolved graph depends on the dep-source and the moment you build), and doing so at scaffold
+time would need network access, which the CLI deliberately avoids. Run `npm install` once, then
+**commit `package-lock.json`** — `.gitignore` does not exclude it — so `npm ci` is reproducible in
+CI and for every other contributor. `component validate` warns if it is missing.

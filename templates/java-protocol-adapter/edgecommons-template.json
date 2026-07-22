@@ -3,7 +3,7 @@
   "id": "java/protocol-adapter",
   "language": "JAVA",
   "kind": "protocol-adapter",
-  "description": "Java protocol-adapter component (southbound device bridge) built on the edgecommons Java library and the southbound contract (docs/SOUTHBOUND.md).",
+  "description": "Java southbound protocol adapter: a DeviceSession/DeviceBackend seam with an in-process sim, connect to devices, publish SouthboundSignalUpdate, serve the sb/* command family + edge-console panels, and emit southbound_health.",
   "platforms": [
     "GREENGRASS",
     "HOST",
@@ -31,6 +31,7 @@
       "COMPONENTNAME",
       "EDGECOMMONS_VERSION",
       "JARNAME",
+      "LICENSE",
       "MAINCLASSNAME",
       "PACKAGE"
     ],
@@ -38,6 +39,45 @@
       "COMPONENTFULLNAME",
       "COMPONENTNAME",
       "JARNAME"
+    ],
+    "AGENTS.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "CLAUDE.md": [
+      "COMPONENTNAME"
+    ],
+    "DESIGN.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/tutorial.md": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "docs/how-to-guides.md": [
+      "BINNAME",
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "docs/explanation.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/sample-configurations.md": [
+      "COMPONENTNAME",
+      "JARNAME"
+    ],
+    "docs/reference/messaging-interface.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/reference/metrics.md": [
+      "BINNAME",
+      "COMPONENTNAME"
     ],
     "recipe.yaml": [
       "AUTHOR",
@@ -47,18 +87,47 @@
       "MAINCLASSNAME"
     ],
     "k8s/configmap.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "src/main/java/com/mbreissi/testcomponent/App.java": [
       "COMPONENTFULLNAME",
       "COMPONENTNAME",
       "PACKAGE"
     ],
+    "src/main/java/com/mbreissi/testcomponent/Device.java": [
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/Metrics.java": [
+      "COMPONENTNAME",
+      "PACKAGE"
+    ],
+    "src/main/java/com/mbreissi/testcomponent/Commands.java": [
+      "COMPONENTNAME",
+      "PACKAGE"
+    ],
     "src/test/java/com/mbreissi/testcomponent/AppTest.java": [
       "COMPONENTNAME",
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/DeviceMetricsTest.java": [
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/DeviceTest.java": [
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/MetricsTest.java": [
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/CommandsTest.java": [
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/ControlTest.java": [
+      "PACKAGE"
+    ],
+    "src/test/java/com/mbreissi/testcomponent/LiveSimIT.java": [
       "PACKAGE"
     ],
     "supervisor/component.conf": [

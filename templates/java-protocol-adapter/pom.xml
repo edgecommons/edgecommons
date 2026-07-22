@@ -9,6 +9,15 @@
   <name><<COMPONENTNAME>></name>
   <url>http://maven.apache.org</url>
 
+  <!-- The author's license choice (the license flag passed to `component new`), not
+       EdgeCommons'. Empty (no <license> entries) when no license was chosen (the default, `none`);
+       the CLI writes a LICENSE file alongside this pom only when an id was actually chosen. -->
+  <licenses>
+    <license>
+      <name><<LICENSE>></name>
+    </license>
+  </licenses>
+
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.source>25</maven.compiler.source>
@@ -16,6 +25,10 @@
     <junitVersion>5.9.2</junitVersion>
     <mavenPluginVersion>3.5.1</mavenPluginVersion>
     <surefirePluginVersion>3.2.5</surefirePluginVersion>
+    <jacocoPluginVersion>0.8.15</jacocoPluginVersion>
+    <!-- The org gate (see AGENTS.md / core/CLAUDE.md): 90% line coverage, enforced by `mvn verify`
+         via the jacoco `check` goal below. Don't lower this or exclude testable code to pass it. -->
+    <jacoco.line.minimum>0.90</jacoco.line.minimum>
   </properties>
 
   <dependencies>
@@ -109,10 +122,81 @@
         <!-- Pinned rather than left to the default lifecycle binding: the per-device connectivity
              tests are this archetype's guard rail — an adapter that stops reporting a device it
              cannot reach is an adapter that lies — and a Maven whose default surefire predates the
-             JUnit Platform would silently run none of them. -->
+             JUnit Platform would silently run none of them. Default include patterns
+             (**/*Test.java etc.) do not match `LiveSimIT.java`, so the gated live-sim integration
+             test is not picked up by a normal `mvn test` at all; run it explicitly with
+             `-Dtest=LiveSimIT` (see docs/how-to-guides.md). -->
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>${surefirePluginVersion}</version>
+      </plugin>
+      <plugin>
+        <!-- The org 90% line-coverage gate (see AGENTS.md). `mvn verify` (what CI's reusable
+             workflow runs) fails the build if line coverage drops below jacoco.line.minimum. -->
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>${jacocoPluginVersion}</version>
+        <configuration>
+          <!-- Coverage-gate scope. The ONLY things excluded are thin runtime / live-driver seams:
+               code that cannot execute without a live device session and a running EdgeCommons —
+               validated on real infrastructure (the EC_LIVE_SIM integration test, HOST/Greengrass
+               smoke), not by the in-process unit suite. Every class that holds real, broker-free logic
+               stays IN the gate and is unit-tested — mirrors how libs/java scopes its own JaCoCo gate.
+               Do NOT widen this to pass; add a test instead (AGENTS.md: "don't lower a gate or exclude
+               testable code to pass — add tests"). -->
+          <excludes>
+            <!-- The component class itself: main() bootstrap, the EdgeCommonsBuilder wiring, run()'s
+                 per-device fan-out, and the DeviceWorker inner class — the connect-with-backoff
+                 supervisor + poll loop, the session I/O, and the two verbs that publish or emit
+                 (reconnect = a live connect + alarm-clear, repoll = a live poll + data() publish) —
+                 none of which runs without a live device session and a running EdgeCommons (LiveSimIT
+                 exercises it on real infra). Every decision that does NOT need that is extracted to a
+                 covered top-level class and unit-tested: the read/write/browse session-null guard +
+                 exception->code remap to the Control class, the connectivity rendering + pause toggle +
+                 staleSignalSecs read to Wiring. The command surface (Commands/Commander), the metric
+                 families + emitter (Metrics/DeviceMetrics), the device seam (Device), the config model
+                 (DeviceConfig/Writes), Health, LinkState, Backoff, Control, and Wiring all stay in the
+                 gate and are unit-tested. The DeviceWorker overrides that remain here only take the
+                 lock and delegate to Control — no branching left to test. -->
+            <exclude>**/<<COMPONENTNAME>>.class</exclude>
+            <exclude>**/<<COMPONENTNAME>>$*.class</exclude>
+          </excludes>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>report</id>
+            <phase>test</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>check</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>check</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <rule>
+                  <element>BUNDLE</element>
+                  <limits>
+                    <limit>
+                      <counter>LINE</counter>
+                      <value>COVEREDRATIO</value>
+                      <minimum>${jacoco.line.minimum}</minimum>
+                    </limit>
+                  </limits>
+                </rule>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>

@@ -2,7 +2,7 @@
 //!
 //! An AWS IoT Greengrass v2 component built on the `edgecommons` Rust library.
 //! Initializes the runtime from the standard CLI contract (`-c`/`--platform`/`--transport`/`-t`),
-//! then hands control to [`app::App`]. The component runs until a shutdown signal
+//! then hands control to [`supervisor::App`]. The component runs until a shutdown signal
 //! (Ctrl-C / SIGTERM); dropping the [`edgecommons::EdgeCommons`] runtime then releases
 //! all resources (RAII).
 //!
@@ -16,6 +16,7 @@
 
 mod app;
 mod proc;
+mod supervisor;
 
 use edgecommons::prelude::*;
 
@@ -35,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
         "<<COMPONENTNAME>> starting"
     );
 
-    let app = app::App::new(&gg)?;
+    let app = supervisor::App::new(&gg)?;
     app.run(&gg).await?;
 
     tracing::info!("<<COMPONENTNAME>> stopped");

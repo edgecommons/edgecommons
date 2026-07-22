@@ -150,7 +150,7 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener, ABC):
         logger.info("Configuration changed.  Ignoring.")
         return True
 
-    def run(self):
+    def run(self):  # pragma: no cover - live-runtime seam: the worker run loop is an infinite publish/sleep loop that needs a real messaging/metrics runtime over a live transport; it is exercised by the HOST/GREENGRASS smoke, not offline unit tests (edgecommons AGENTS.md validation matrix). Keep it thin: put testable per-tick logic in helpers with their own tests, not here.
         # Mint every topic you publish or subscribe through the UNS topic builder — never
         # hand-write one. Topics carry the component's config-resolved identity
         # (ecv1/{device}/{component}/{instance}/{class}/...). The data()/events() facades below

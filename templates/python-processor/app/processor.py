@@ -163,7 +163,7 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener):
         logger.info("configuration changed")
         return True
 
-    def run(self):
+    def run(self):  # pragma: no cover - live-runtime seam: subscribes over a real transport, spawns the per-route worker threads, and blocks on the metric-flush loop until shutdown; exercised by the HOST/GREENGRASS smoke, not offline unit tests (edgecommons AGENTS.md validation matrix). The testable pieces it calls (_handler, _dispatch, _emit_metrics) have their own tests.
         """Subscribe every route, start its worker, then flush metrics until shutdown."""
         for route in self._routes:
             q = queue.Queue(maxsize=route.max_queue)
@@ -218,7 +218,7 @@ class <<COMPONENTNAME>>(ConfigurationChangeListener):
 
     # --- one route's thread ----------------------------------------------------------------------
 
-    def _run_route(self, route, q: "queue.Queue"):
+    def _run_route(self, route, q: "queue.Queue"):  # pragma: no cover - live-runtime seam: the per-route worker's infinite queue-drain/tick loop, driven by real inbound traffic and wall-clock ticks; exercised by the HOST/GREENGRASS smoke, not offline unit tests. The per-message work it delegates to (_dispatch + the pure Pipeline) is unit-tested directly.
         """Two things happen here, and they are the archetype: a message arrived -> run the pipeline;
         the tick came due -> let stateful stages emit.
 

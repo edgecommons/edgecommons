@@ -13,15 +13,43 @@
     "EDGECOMMONS_DEP"
   ],
   "substitutions": {
-    "build.sh": [
+    "AGENTS.md": [
       "COMPONENTFULLNAME",
       "COMPONENTNAME"
+    ],
+    "CLAUDE.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "DESIGN.md": [
+      "COMPONENTNAME"
+    ],
+    "build.sh": [
+      "BINNAME",
+      "COMPONENTFULLNAME"
     ],
     "compose.yaml": [
       "BINNAME",
       "COMPONENTNAME"
     ],
     "config.schema.json": [
+      "COMPONENTNAME"
+    ],
+    "docs/README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/tutorial.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/sample-configurations.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME"
+    ],
+    "docs/reference/messaging-interface.md": [
+      "COMPONENTNAME"
+    ],
+    "docs/reference/metrics.md": [
       "COMPONENTNAME"
     ],
     "gdk-config.json": [
@@ -31,9 +59,10 @@
       "REGION"
     ],
     "package.json": [
-      "COMPONENTNAME",
+      "BINNAME",
       "DESCRIPTION",
-      "EDGECOMMONS_DEP"
+      "EDGECOMMONS_DEP",
+      "LICENSE"
     ],
     "README.md": [
       "COMPONENTFULLNAME",
@@ -41,17 +70,20 @@
     ],
     "recipe.yaml": [
       "AUTHOR",
+      "BINNAME",
       "COMPONENTFULLNAME",
-      "COMPONENTNAME",
       "DESCRIPTION"
     ],
     "k8s/configmap.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "src/app.ts": [
+      "COMPONENTNAME"
+    ],
+    "src/runtime.ts": [
       "COMPONENTNAME"
     ],
     "src/main.ts": [

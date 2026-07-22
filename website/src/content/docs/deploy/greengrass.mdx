@@ -29,8 +29,10 @@ a local MQTT broker. See the [Quickstart](/start/quickstart/) and
 - The **GDK CLI** (`gdk`) installed and on your `PATH`, plus AWS credentials with permission to
   upload artifacts to S3 and register component versions. Confirm with
   `edgecommons doctor --platforms GREENGRASS`, which exits non-zero when a required tool is missing.
-- An **S3 bucket** for published artifacts. A scaffold leaves `publish.bucket` empty in
-  `gdk-config.json` and `publish.region` at `us-east-1`; fill in your bucket before publishing.
+- An **S3 bucket** for published artifacts. Scaffold with `-b/--bucket` to set it up front; without
+  it, `gdk-config.json` carries the sentinel `edgecommons-set-artifact-bucket` in `publish.bucket`
+  (and `publish.region` defaults to `us-east-1`) — `edgecommons component validate` errors on the
+  sentinel until you replace it with a real bucket you own.
 - A **Greengrass v2 core device** running the Nucleus, plus the Greengrass CLI component
   (`greengrass-cli`) installed on it if you want to deploy locally.
 
@@ -56,9 +58,12 @@ line differs per language (and the artifact layout differs with it):
 
   ```bash
   # recipe.yaml -> Manifests[0].Lifecycle.Run (tokens resolved to example values)
-  java -cp {artifacts:path}/MyComponent-1.0.0.jar com.example.MyComponent --platform GREENGRASS
+  java -cp {artifacts:path}/my-component-1.0.0.jar com.example.MyComponent --platform GREENGRASS
   # with Setenv CONFIG: "{configuration:/ComponentConfig}"
   ```
+
+  The jar name is the kebab crate/artifact name (`JARNAME`, the Maven `artifactId`/finalName
+  convention); the class passed to `-cp` stays the full PascalCase reverse-DNS name.
 
 </TabItem>
 <TabItem label="Python">
@@ -79,8 +84,10 @@ line differs per language (and the artifact layout differs with it):
 
   ```bash
   # recipe.yaml -> Manifests[0].Lifecycle.Run (tokens resolved to example values)
-  {artifacts:path}/MyComponent --platform GREENGRASS -c GG_CONFIG
+  {artifacts:path}/my-component --platform GREENGRASS -c GG_CONFIG
   ```
+
+  The binary name is the kebab `BINNAME` — the same name as the Cargo crate/`[[bin]]`.
 
 </TabItem>
 <TabItem label="TypeScript">
@@ -113,7 +120,7 @@ them from the generated component directory:
 <TabItem label="Linux">
 
   ```bash
-  cd MyComponent
+  cd my-component
   edgecommons component package --platforms GREENGRASS
   edgecommons component package --platforms GREENGRASS --publish
   ```
@@ -122,7 +129,7 @@ them from the generated component directory:
 <TabItem label="Windows">
 
   ```powershell
-  cd MyComponent
+  cd my-component
   edgecommons component package --platforms GREENGRASS
   edgecommons component package --platforms GREENGRASS --publish
   ```
@@ -150,7 +157,8 @@ What `gdk component build` actually does — and the artifact it produces — is
 <TabItem label="Java">
 
   `build_system: "maven"` — the GDK runs Maven to produce a **shaded, self-contained JAR**
-  (`target/MyComponent-1.0.0.jar`). The recipe's `Manifests.Platform.os` is `all`. The recipe also
+  (`target/my-component-1.0.0.jar`, named from the kebab Maven `artifactId`). The recipe's
+  `Manifests.Platform.os` is `all`. The recipe also
   declares a **HARD dependency on the Token Exchange Service (TES)** so the component can obtain AWS
   credentials on-device.
 

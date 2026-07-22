@@ -45,6 +45,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `dep_source` defaults to local (the CLI default) when unset; the two pinned-rev legs
+        # prove the emitted git-rev pin actually builds (Rust via the .cargo patch override,
+        # Python via the git requirement).
         include:
           - language: RUST
             kind: service
@@ -54,6 +57,9 @@ jobs:
             kind: processor
           - language: RUST
             kind: sink
+          - language: RUST
+            kind: protocol-adapter
+            dep_source: pinned-rev
           - language: PYTHON
             kind: service
           - language: PYTHON
@@ -62,6 +68,9 @@ jobs:
             kind: processor
           - language: PYTHON
             kind: sink
+          - language: PYTHON
+            kind: protocol-adapter
+            dep_source: pinned-rev
           - language: JAVA
             kind: service
           - language: JAVA
@@ -88,14 +97,19 @@ jobs:
       - name: Build the CLI
         run: cargo build --release --manifest-path cli/Cargo.toml
 
+      # The derived output dir is the kebab crate name — `com.example.Gated` -> `gated`. A real
+      # `-b` bucket is passed so gdk-config.json carries no sentinel and `component validate`
+      # stays clean (an empty bucket is now the EC3007 sentinel error).
       - name: Scaffold
         run: |
           ./cli/target/release/edgecommons component new \
             -n com.example.Gated -l ${{ matrix.language }} -k ${{ matrix.kind }} \
+            --dep-source ${{ matrix.dep_source || 'local' }} \
+            -b edgecommons-ci-artifacts \
             -p /tmp/scaffold --yes
 
       - name: Validate the scaffold
-        run: ./cli/target/release/edgecommons component validate -p /tmp/scaffold/Gated
+        run: ./cli/target/release/edgecommons component validate -p /tmp/scaffold/gated
 
       # --- Build it, for real, in its own language -------------------------------------
       - uses: actions/setup-java@v4
@@ -112,7 +126,7 @@ jobs:
         run: |
           mvn -q -B -DskipTests compile
           mvn -B test
-        working-directory: /tmp/scaffold/Gated
+        working-directory: /tmp/scaffold/gated
 
       # A scaffold that builds with warnings is a scaffold that teaches the author to ignore
       # warnings. And its own tests must pass — a template whose tests fail is a template that
@@ -123,7 +137,7 @@ jobs:
           cargo build 2>&1 | tee build.log
           ! grep -q '^warning' build.log
           cargo test
-        working-directory: /tmp/scaffold/Gated
+        working-directory: /tmp/scaffold/gated
 
       - uses: actions/setup-node@v4
         if: matrix.language == 'TYPESCRIPT'
@@ -139,7 +153,7 @@ jobs:
           npm install
           npm run build
           npm test --if-present
-        working-directory: /tmp/scaffold/Gated
+        working-directory: /tmp/scaffold/gated
 
       - uses: actions/setup-python@v5
         if: matrix.language == 'PYTHON'
@@ -151,7 +165,7 @@ jobs:
           python -m compileall -q .
           pip install -r requirements.txt
           if [ -d tests ]; then pip install pytest && python -m pytest -q tests; fi
-        working-directory: /tmp/scaffold/Gated
+        working-directory: /tmp/scaffold/gated
 
   # A HOST-only scaffold must carry no Greengrass artifacts, and a Greengrass one must carry
   # them. The previous CLI emitted a Greengrass recipe into every scaffold regardless.
@@ -169,16 +183,16 @@ jobs:
         run: |
           ./cli/target/release/edgecommons component new -n com.example.HostOnly -l RUST \
             --platforms HOST -p /tmp/packs --yes
-          test ! -f /tmp/packs/HostOnly/recipe.yaml
-          test ! -f /tmp/packs/HostOnly/gdk-config.json
-          test ! -d /tmp/packs/HostOnly/k8s
-          test -f /tmp/packs/HostOnly/compose.yaml
-          test -f /tmp/packs/HostOnly/supervisor/component.conf
-          test -f /tmp/packs/HostOnly/config.schema.json
+          test ! -f /tmp/packs/host-only/recipe.yaml
+          test ! -f /tmp/packs/host-only/gdk-config.json
+          test ! -d /tmp/packs/host-only/k8s
+          test -f /tmp/packs/host-only/compose.yaml
+          test -f /tmp/packs/host-only/supervisor/component.conf
+          test -f /tmp/packs/host-only/config.schema.json
 
       - name: Greengrass scaffold carries the recipe
         run: |
           ./cli/target/release/edgecommons component new -n com.example.GgOnly -l RUST \
             --platforms GREENGRASS -p /tmp/packs --yes
-          test -f /tmp/packs/GgOnly/recipe.yaml
-          test -f /tmp/packs/GgOnly/gdk-config.json
+          test -f /tmp/packs/gg-only/recipe.yaml
+          test -f /tmp/packs/gg-only/gdk-config.json

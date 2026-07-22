@@ -192,9 +192,12 @@ against a browsed address space). For the command surface (§2.2), a Modbus `<si
 > `ecv1/{device}/{component}/{instance}/cmd/sb/{verb}` and a component/fleet-scoped command to
 > `ecv1/{device}/{component}/cmd/sb/{verb}` (no instance token). Of the verbs below, only **`sb/status`**
 > is universal — every southbound adapter implements it; `sb/browse` / `sb/read` / `sb/write` /
-> `sb/subscribe-preview` are **signal-adapter conventions**, and `writes.allow[]` (D‑U16) stays a
-> convention for adapters that implement `sb/write`. Component authors may add domain verbs (e.g. the
-> camera adapter's `sb/capture`). The shipping adapters still expose their **legacy per-instance control
+> `sb/signals` / `sb/subscribe-preview` are **signal-adapter conventions**, and `writes.allow[]`
+> (D‑U16) stays a convention for adapters that implement `sb/write`. The **lifecycle-control verbs**
+> `sb/pause` / `sb/resume` / `reconnect` / `repoll` are the standard instance-control family the
+> `protocol-adapter` scaffold ships (§6): confirmed, idempotent where they toggle state, and refused
+> when nonsensical (`repoll` while paused is `BAD_ARGS`). Component authors may add domain verbs (e.g.
+> the camera adapter's `sb/capture`). The shipping adapters still expose their **legacy per-instance control
 > topics** — `write.topic` / `read.topic` and
 > `southbound/{ComponentName}/{InstanceId}/control/{status|subscriptions|nodes}` — pending migration to
 > the UNS command inbox; `opcua-adapter` has landed the **capabilities** (paged address-space browse,
@@ -222,6 +225,11 @@ present, else the component; the verbs are registered through the `commands()` f
 | `sb/read` | request/reply | on-demand read of arbitrary signals (ref-accepting) |
 | `sb/write` | request/reply, **confirmed** | write signals; the reply reports per-write success/failure, with an **optional read-back** |
 | `sb/subscribe-preview` | request/reply | evaluate a subscription spec without subscribing |
+| `sb/signals` | request/reply | the configured signal inventory (writable flag per entry), no device round-trip |
+| `sb/pause` | request/reply, **confirmed** | suspend polling/publishing for the instance; idempotent, reply `{ paused, changed }` |
+| `sb/resume` | request/reply, **confirmed** | resume a paused instance; idempotent, reply `{ paused, changed }` |
+| `reconnect` | request/reply, **confirmed** | drop and re-establish the device session; reply `{ connected }` |
+| `repoll` | request/reply, **confirmed** | trigger an immediate poll cycle (refused while paused); reply `{ polled }` |
 
 - **`<signal-ref>`** addresses a signal by its **stable** identity where possible — for OPC UA,
   `"namespaceUri": "<uri>"` (preferred, resolved to the current index) or a literal `"ns": <int>`,
@@ -235,8 +243,11 @@ present, else the component; the verbs are registered through the `commands()` f
   when the target matches its **`writes.allow[]`** config allow-list, matched against the stable
   `signal.id` (D‑U16).
 - **Reads** reuse the §2 value/quality encoding: request `{ "signals": [ { <signal-ref> }, ... ] }` →
-  reply body `{ "id": "<instance>", "reads": [ { "signal": {id, address}, "value", "quality",
-  "qualityRaw", "sourceTs", "serverTs" }, ... ] }`.
+  reply body `{ "id": "<instance>", "reads": [ { "signal": {id, address?}, "value", "quality",
+  "qualityRaw", "sourceTs"?, "serverTs"? }, ... ] }`. `signal.address`, `sourceTs`, and `serverTs`
+  are **optional** — present when the protocol supplies them (an adapter with no device/source clock,
+  such as the scaffold's in-process sim, omits the timestamps), consistent with the §2 envelope where
+  both timestamps are optional.
 
 ## 3. Quality normalization
 
@@ -328,30 +339,47 @@ code change is needed to route it.
 Optional: `reconnects`, `writeErrors`, `signalsSubscribed`. Emit on connect/disconnect transitions
 (`emitMetricNow`) and on a periodic sampler.
 
+Beyond `southbound_health`, the `protocol-adapter` scaffold ships the **operational-metric family
+pattern**: per-family `(total, interval)` counter pairs (the interval measure resets each emit),
+dimensioned by low-cardinality labels only (`instance`, `verb`, `result`). Two families are seeded —
+`{Component}Connection` (connect attempts/failures, reconnects, drops, connected duration) and
+`{Component}Command` (command requests/latency/errors) — and a signposted extension point invites the
+adapter author to add the protocol's own `Inventory` / `Poll` / `Publish` families (as the
+`modbus-adapter` and `ethernet-ip-adapter` reference adapters do).
+
 ## 6. The `protocol-adapter` scaffold template
 
 The **`protocol-adapter` kind** is a first-class scaffold axis: `-k/--kind` selects the archetype and
-`-l/--language` the language. A protocol-adapter scaffold ships a Builder + lifecycle skeleton, a
-`recipe.yaml` / `test-configs` seeding the §4 convention, and a `config.schema.json` modelling the
-adapter's own configuration (`connection`, `subscriptions`, per-signal rules):
+`-l/--language` the language. It exists in **all four languages** (`JAVA`, `PYTHON`, `RUST`,
+`TYPESCRIPT`):
 
 ```bash
-edgecommons component new -l JAVA -k protocol-adapter \
-  -n com.example.MyAdapter --platforms GREENGRASS,HOST
-```
-
-A Python mirror ships too — a Builder + per-instance worker-thread skeleton with `recipe.yaml`,
-`Dockerfile`, and `k8s/`:
-
-```bash
-edgecommons component new -l PYTHON -k protocol-adapter \
+edgecommons component new -l RUST -k protocol-adapter \
   -n com.example.MyAdapter --platforms GREENGRASS,HOST,KUBERNETES
 ```
 
-Both scaffolds ship a `config.schema.json` modelling the southbound adapter's own configuration
-(`connection`, `subscriptions`, per-signal rules), so `edgecommons component validate` checks an
-adapter's config against the contract in §4 rather than merely against the library envelope.
-Run `edgecommons template list` for the full language × kind matrix.
+The scaffold is a runnable, sim-backed archetype that teaches the whole contract:
+
+- The **`DeviceBackend`/`DeviceSession` seam** (a backend knows the protocol; it never imports the
+  UNS, topics, envelopes, or metrics) with an in-process **sim** backend, so `run`/`test` need no PLC.
+- A one-task-per-instance supervisor: connect → poll → publish `SouthboundSignalUpdate` via the
+  `data()` facade (quality on every sample) → reconnect with jittered, capped backoff.
+- The full `sb/*` command family (§2.2) — `sb/status`, `sb/read`, `sb/write` (batch, confirmed,
+  allow-listed before any device I/O), `sb/signals`, `sb/browse`, and the lifecycle-control verbs
+  `sb/pause`/`sb/resume`/`reconnect`/`repoll` — plus the three edge-console panels
+  (`overview`/`signals`/`diagnostics`).
+- `southbound_health` (§5) and the operational-metric family pattern (§5).
+- A `config.schema.json` modelling the adapter's own configuration (`connection`, poll groups /
+  subscriptions, per-signal rules, `writes.allow[]`, `healthThresholds`), so
+  `edgecommons component validate` checks an adapter's config against the §4 contract, not merely the
+  library envelope.
+- The platform packs selected by `--platforms` (`recipe.yaml`/`gdk-config.json`/`build.sh` for
+  Greengrass, `compose.yaml`/`supervisor/`/`Dockerfile` for HOST, `Dockerfile`/`k8s/` for
+  Kubernetes), a Diátaxis `docs/` set, an org-CI caller workflow with a 90%-line coverage gate,
+  governance files, and a simulator-gated integration-test layout.
+
+The `service`, `processor`, and `sink` kinds ship the same repo hygiene around their own archetype
+seams. Run `edgecommons template list` for the full language × kind matrix.
 
 ## 7. Reference adapter
 

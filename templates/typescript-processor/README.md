@@ -20,7 +20,8 @@ state inside a stage needs no coordination.
 | Path | Purpose |
 |------|---------|
 | `src/main.ts` | Entry point: builds the `edgecommons` runtime from CLI args, runs the app. |
-| `src/app.ts` | The routes: subscribe, guard, queue, run the pipeline, restamp identity, publish. |
+| `src/app.ts` | The route logic (unit-tested): parse, the self-echo guard, the bounded queue, the stats window, the identity restamp. |
+| `src/runtime.ts` | The thin live-runtime seam: subscribe, run one loop per route, publish. Excluded from the coverage gate (needs a live runtime; validated by the deploy paths). |
 | `src/proc.ts` | **The seam you implement**: `Processor` stages and the `Pipeline` that chains them. |
 | `test/` | Vitest suites for the invariants below (`npm test`). |
 | `config.schema.json` | The component's own config (`component.global` + one route per instance). |
@@ -134,3 +135,17 @@ ConfigMap, and resolves identity from the Downward API — so the Deployment nee
 generation time, `--dep-source local`, the default). Build the sibling library first (`npm run build`
 in `core/libs/ts`), since a `file:` dependency on a TypeScript package needs its `dist/` present.
 Regenerate with `--dep-source registry` to depend on the published package instead.
+
+## Docs and further reading
+
+See [`docs/`](docs/) for the full Diátaxis set — a tutorial, how-to guides, an explanation of the
+pipeline archetype, sample configurations, and reference pages for configuration, the messaging
+interface, and metrics.
+
+## Lockfile
+
+This scaffold ships with no `package-lock.json` — a template cannot generate a *valid* lockfile
+(the resolved graph depends on the dep-source and the moment you build), and doing so at scaffold
+time would need network access, which the CLI deliberately avoids. Run `npm install` once, then
+**commit `package-lock.json`** — `.gitignore` does not exclude it — so `npm ci` is reproducible in
+CI and for every other contributor. `component validate` warns if it is missing.

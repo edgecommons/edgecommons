@@ -39,38 +39,27 @@ ComponentConfiguration:
         target: "log"
         targetConfig:
           logFileName: "/greengrass/v2/logs/{ComponentFullName}.metric.log"
+      # Adapter config: one worker per component.instances[] entry, validated by config.schema.json.
+      # The scaffold ships the in-process `sim` backend so a deployed component runs and is testable
+      # with no hardware — replace it with your protocol (see Device.java / docs/SOUTHBOUND.md).
       component:
         global:
           defaults:
-            publishIntervalMs: 1000
-            samplingRateMs: 500
-            queueSize: 100
+            pollIntervalMs: 5000
+          timeouts:
+            connectMs: 5000
+            reconnectBackoffMinMs: 1000
+            reconnectBackoffMaxMs: 60000
           healthThresholds:
             staleSignalSecs: 30
         instances:
         - id: device-1
-          adapter: example
+          adapter: sim
           connection:
-            endpoint: example://localhost:0/
-          defaults:
-            publishIntervalMs: 1000
-            samplingRateMs: 500
-            queueSize: 100
-          publish:
-            batchMs: 1000
-          write:
-            enabled: false
-          subscriptions:
-          - id: all
-            include:
-            - namespace: 0
-              match: .*
-              samplingRateMs: 500
-              queueSize: 100
-              deadband:
-                type: Absolute
-                value: 0.0
-            exclude: []
+            endpoint: sim://device-1
+          pollIntervalMs: 5000
+          writes:
+            allow: []
     accessControl:
       aws.greengrass.ipc.pubsub:
         "<<COMPONENTFULLNAME>>:ipc:1":

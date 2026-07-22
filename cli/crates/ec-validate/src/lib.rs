@@ -102,6 +102,7 @@ pub fn validate_project(root: &Path, only: Option<&Path>, platform: Option<Platf
     r.extend(artifact::lint_recipe(&root.join("recipe.yaml")).diagnostics);
     r.extend(artifact::lint_gdk_config(&root.join("gdk-config.json")).diagnostics);
     r.extend(artifact::lint_k8s(&root.join("k8s")).diagnostics);
+    r.extend(artifact::lint_lockfile(root).diagnostics);
 
     r
 }

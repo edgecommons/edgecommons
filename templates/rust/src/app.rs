@@ -69,28 +69,10 @@ pub fn configure_commands(
         SET_GREETING,
         command_handler(move |request| {
             let greeting = Arc::clone(&greeting);
-            async move {
-                let next = match request
-                    .body
-                    .get("greeting")
-                    .and_then(|value| value.as_str())
-                {
-                    Some(value) => value.to_string(),
-                    None => {
-                        return Err(CommandError::new(
-                            "BAD_ARGS",
-                            "expected a JSON body {\"greeting\": \"<text>\"}",
-                        ));
-                    }
-                };
-                let previous = {
-                    let mut guard = greeting.lock().expect("greeting mutex poisoned");
-                    std::mem::replace(&mut *guard, next.clone())
-                };
-                Ok(Some(
-                    json!({ "previousGreeting": previous, "greeting": next }),
-                ))
-            }
+            // The verb's pure logic (validate the body, swap the state) lives in
+            // `crate::commands::apply_set_greeting`, where it is unit-tested; this closure is just
+            // the runtime glue that binds it to the command inbox.
+            async move { crate::commands::apply_set_greeting(&greeting, &request.body) }
         }),
     )
 }

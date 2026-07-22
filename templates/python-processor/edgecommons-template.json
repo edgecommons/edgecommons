@@ -20,7 +20,6 @@
       "AUTHOR",
       "BINNAME",
       "COMPONENTFULLNAME",
-      "COMPONENTNAME",
       "DESCRIPTION"
     ],
     "gdk-config.json": [
@@ -59,11 +58,10 @@
       "COMPONENTNAME"
     ],
     "k8s/configmap.yaml": [
-      "BINNAME",
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "k8s/deployment.yaml": [
-      "COMPONENTNAME"
+      "BINNAME"
     ],
     "test-configs/config.json": [
       "BINNAME"
@@ -72,6 +70,41 @@
       "BINNAME"
     ],
     "tests/test_connectivity.py": [
+      "COMPONENTNAME"
+    ],
+    "docs/README.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/tutorial.md": [
+      "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "docs/how-to-guides.md": [
+      "BINNAME"
+    ],
+    "docs/sample-configurations.md": [
+      "BINNAME"
+    ],
+    "docs/reference/configuration.md": [
+      "BINNAME"
+    ],
+    "docs/reference/messaging-interface.md": [
+      "BINNAME"
+    ],
+    "docs/reference/metrics.md": [
+      "BINNAME"
+    ],
+    "AGENTS.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "CLAUDE.md": [
+      "COMPONENTNAME"
+    ],
+    "DESIGN.md": [
+      "COMPONENTFULLNAME",
       "COMPONENTNAME"
     ]
   },

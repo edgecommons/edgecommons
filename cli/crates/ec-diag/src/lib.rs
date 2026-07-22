@@ -119,6 +119,8 @@ pub const EC3004_REQUIRES_PRIVILEGE: Code = Code("EC3004");
 pub const EC3005_RECIPE_UNPARSABLE: Code = Code("EC3005");
 /// `gdk-config.json` is missing or invalid.
 pub const EC3006_GDK_CONFIG: Code = Code("EC3006");
+/// `gdk-config.json`'s publish bucket is the unresolved sentinel, so it cannot publish.
+pub const EC3007_ARTIFACT_BUCKET_SENTINEL: Code = Code("EC3007");
 
 // --- Template (EC4xxx) ------------------------------------------------------------
 /// The template manifest is invalid.
@@ -135,6 +137,8 @@ pub const EC4005_NO_ARTIFACT_BUCKET: Code = Code("EC4005");
 pub const EC4006_NO_RELEASE_INDEX: Code = Code("EC4006");
 /// A platform's artifact is a container image, which the CLI does not build.
 pub const EC4007_CONTAINER_BUILD_IS_CI: Code = Code("EC4007");
+/// A Rust/TypeScript component ships no committed lockfile, so its builds are not reproducible.
+pub const EC4008_NO_LOCKFILE: Code = Code("EC4008");
 
 /// Where a diagnostic points: a line/column, or a JSON Pointer into a config document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

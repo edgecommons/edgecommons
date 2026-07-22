@@ -1,7 +1,7 @@
 import { Config, MessageBuilder } from "@edgecommons/edgecommons";
 import { describe, expect, it } from "vitest";
 
-import { BoundedQueue, Stats, instanceConnectivity, isSelfEcho, parseRoute } from "../src/app";
+import { BoundedQueue, Stats, instanceConnectivity, isSelfEcho, parseRoute, restamp } from "../src/app";
 import { ProcMsg } from "../src/proc";
 
 const config = Config.fromValue("com.example.Processor", "gw-01", {
@@ -157,5 +157,32 @@ describe("stats", () => {
 
     expect(stats.takeInterval()).toEqual({ received: 3, published: 2, dropped: 1, errors: 0 });
     expect(stats.takeInterval()).toEqual({ received: 0, published: 0, dropped: 0, errors: 0 });
+  });
+});
+
+describe("the identity restamp", () => {
+  it("carries the body and header through but stamps the message as OURS", () => {
+    // What we publish is our identity, not the producer's — without the restamp the fleet cannot
+    // tell who emitted a message, and the self-echo guard downstream cannot work either.
+    const producer = Config.fromValue("com.example.Producer", "gw-09", {
+      hierarchy: { levels: ["site", "device"] },
+      identity: { site: "factory-1" },
+      component: { global: {}, instances: [] },
+    });
+    const incoming: ProcMsg = {
+      topic: "ecv1/gw-09/prod/main/data/temp",
+      msg: MessageBuilder.create("Reading", "2.0").withPayload({ v: 42 }).withConfig(producer).build(),
+    };
+
+    const out = restamp(config, incoming);
+
+    // Body + header name/version carried through unchanged.
+    expect(out.body).toEqual({ v: 42 });
+    expect(out.header.name).toBe("Reading");
+    expect(out.header.version).toBe("2.0");
+    // Identity restamped to us, not the producer.
+    expect(out.identity?.path).toBe(config.componentIdentity.path);
+    expect(out.identity?.component).toBe(config.componentIdentity.component);
+    expect(isSelfEcho(out, config.componentIdentity.path, config.componentIdentity.component)).toBe(true);
   });
 });
