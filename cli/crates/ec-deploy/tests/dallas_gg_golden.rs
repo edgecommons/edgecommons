@@ -1,8 +1,9 @@
 //! The Greengrass golden test, and the per-thing invariants that must never regress
 //! (DESIGN-cli §8.5.1–§8.5.3, REVIEW #3).
 //!
-//! `tests/fixtures/dallas-gg` is the Dallas filling line retargeted to Greengrass; `golden/` is
-//! its committed rendered output. Beyond byte equality this asserts the decisions the renderer
+//! The fixture is the unified Dallas definition (`tests/fixtures/dallas`) merged with its
+//! `greengrass` profile; `golden-gg/` is its committed rendered output. Beyond byte equality this
+//! asserts the decisions the renderer
 //! encodes: one deployment per thing, thing ARNs never group ARNs, pinned component versions,
 //! and the effective config carried as a stringified `ComponentConfig` merge.
 
@@ -11,17 +12,26 @@ use std::path::{Path, PathBuf};
 
 use ec_deploy::Platform;
 use ec_deploy::render::render;
-use ec_deploy::workspace::{Workspace, parse_definition, referenced_paths};
+use ec_deploy::workspace::{Workspace, parse_authored, referenced_paths};
 use serde_json::Value;
 
 fn fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dallas-gg")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dallas")
+}
+
+/// The Greengrass golden lives beside the HOST one, under `golden-gg/`, since both render from the
+/// single unified definition.
+fn golden_dir() -> PathBuf {
+    fixture_dir().join("golden-gg")
 }
 
 fn load() -> Workspace {
     let root = fixture_dir();
     let text = std::fs::read_to_string(root.join("definition.yaml")).unwrap();
-    let doc = parse_definition(&text).expect("fixture definition parses");
+    let authored = parse_authored(&text).expect("fixture definition parses");
+    let doc = authored
+        .effective("greengrass")
+        .expect("greengrass profile merges");
     let mut files = BTreeMap::new();
     for rel in referenced_paths(&doc) {
         let content = std::fs::read_to_string(root.join(&rel))
@@ -42,7 +52,7 @@ fn normalize(s: &str) -> String {
 fn greengrass_renders_byte_for_byte_to_the_committed_golden() {
     let ws = load();
     let output = render(&ws, "prod", Platform::Greengrass, "initial").expect("render succeeds");
-    let golden_root = fixture_dir().join("golden");
+    let golden_root = golden_dir();
 
     let mut mismatches = Vec::new();
     let mut produced = Vec::new();

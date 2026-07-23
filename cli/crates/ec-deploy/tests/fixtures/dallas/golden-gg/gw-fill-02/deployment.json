@@ -1,6 +1,6 @@
 {
   "targetArn": "arn:aws:iot:us-east-1:111122223333:thing/gw-fill-02",
-  "deploymentName": "dallas-greengrass-gw-fill-02-initial",
+  "deploymentName": "dallas-bottling-gw-fill-02-initial",
   "components": {
     "com.mbreissi.edgecommons.TelemetryProcessor": {
       "componentVersion": "1.4.2",

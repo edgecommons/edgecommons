@@ -1,5 +1,5 @@
 {
-  "definition": "dallas-greengrass",
+  "definition": "dallas-bottling",
   "bindings": [
     "aws.accountId",
     "aws.region"

@@ -1,6 +1,6 @@
 {
   "targetArn": "arn:aws:iot:us-east-1:111122223333:thing/gw-fill-01",
-  "deploymentName": "dallas-greengrass-gw-fill-01-initial",
+  "deploymentName": "dallas-bottling-gw-fill-01-initial",
   "components": {
     "com.mbreissi.edgecommons.OpcUaAdapter": {
       "componentVersion": "1.0.0",

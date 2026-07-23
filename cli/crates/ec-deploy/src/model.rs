@@ -368,12 +368,15 @@ pub struct ProfileDefaults {
     pub config_source: Option<ConfigSource>,
 }
 
-/// A profile's selection over the topology: node key -> the component names it deploys. When the
-/// map is present, a node absent from it is not deployed on this platform.
+/// A profile's selection over the topology. `nodes` lists the topology nodes this profile deploys
+/// (a node not listed is skipped on this platform). `only` optionally narrows a node to a subset of
+/// its components; a node absent from `only` deploys all of its components.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Deploys {
-    pub nodes: IndexMap<String, Vec<String>>,
+    pub nodes: Vec<String>,
+    #[serde(default)]
+    pub only: IndexMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -477,11 +480,20 @@ impl AuthoredDefinition {
 
         // Validate any `deploys` selection against the topology before using it.
         if let Some(deploys) = &profile.deploys {
-            for (node_key, comps) in &deploys.nodes {
-                let Some(tn) = self.topology.nodes.iter().find(|n| &n.key == node_key) else {
+            for node_key in &deploys.nodes {
+                if !self.topology.nodes.iter().any(|n| &n.key == node_key) {
                     return Err(EffectiveError::UnknownSelection {
                         profile: profile_name.to_string(),
                         detail: format!("node '{node_key}'"),
+                    });
+                }
+            }
+            for (node_key, comps) in &deploys.only {
+                let tn = self.topology.nodes.iter().find(|n| &n.key == node_key);
+                let Some(tn) = tn.filter(|_| deploys.nodes.iter().any(|n| n == node_key)) else {
+                    return Err(EffectiveError::UnknownSelection {
+                        profile: profile_name.to_string(),
+                        detail: format!("`only` for node '{node_key}'"),
                     });
                 };
                 for c in comps {
@@ -498,18 +510,22 @@ impl AuthoredDefinition {
         let default_source = profile.defaults.as_ref().and_then(|d| d.config_source);
         let mut nodes = Vec::new();
         for tn in &self.topology.nodes {
-            // Which components does this profile deploy on this node? `None` => all of them.
-            let selected: Option<&Vec<String>> = match &profile.deploys {
+            // Is this node deployed on this platform, and if so, which of its components?
+            // No `deploys` => the whole plant; otherwise membership from `nodes`, component filter
+            // from `only` (a node absent from `only` deploys all of its components).
+            let only: Option<&Vec<String>> = match &profile.deploys {
                 None => None,
-                Some(d) => match d.nodes.get(&tn.key) {
-                    Some(list) => Some(list),
-                    None => continue, // node not deployed on this platform
-                },
+                Some(d) => {
+                    if !d.nodes.iter().any(|k| k == &tn.key) {
+                        continue; // node not deployed on this platform
+                    }
+                    d.only.get(&tn.key)
+                }
             };
             let pnode = profile.nodes.get(&tn.key);
             let mut components = Vec::new();
             for tc in &tn.components {
-                if let Some(list) = selected {
+                if let Some(list) = only {
                     if !list.iter().any(|n| n == &tc.name) {
                         continue;
                     }
@@ -613,7 +629,7 @@ profiles:
     family: KUBERNETES
     environments: [{ name: local, bindings: bindings/k8s.json }]
     defaults: { configSource: CONFIGMAP }
-    deploys: { nodes: { gw-01: [opcua-adapter] } }
+    deploys: { nodes: [gw-01], only: { gw-01: [opcua-adapter] } }
     nodes:
       gw-01:
         components:
@@ -717,7 +733,10 @@ profiles:
 
     #[test]
     fn a_deploys_selection_naming_an_absent_component_is_rejected() {
-        let yaml = DEF.replace("gw-01: [opcua-adapter] }", "gw-01: [ghost] }");
+        let yaml = DEF.replace(
+            "only: { gw-01: [opcua-adapter] }",
+            "only: { gw-01: [ghost] }",
+        );
         let def: AuthoredDefinition = serde_yaml::from_str(&yaml).unwrap();
         let err = def.effective("kubernetes").unwrap_err();
         assert!(
