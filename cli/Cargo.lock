@@ -256,7 +256,9 @@ dependencies = [
  "ec-scaffold",
  "ec-studio",
  "ec-validate",
+ "jsonschema",
  "serde_json",
+ "serde_yaml",
  "sha2",
  "tempfile",
  "toml_edit",
@@ -268,8 +270,11 @@ name = "ec-deploy"
 version = "0.3.0"
 dependencies = [
  "ec-diag",
+ "indexmap",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "sha2",
  "thiserror",
 ]
 
@@ -578,6 +583,8 @@ checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
 dependencies = [
  "equivalent",
  "hashbrown",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

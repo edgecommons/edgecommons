@@ -11,7 +11,7 @@
 //! The local adapters are Phase P4, alongside the renderers they serve. The types below
 //! exist so the port boundary compiles and is reviewable now.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ec_deploy::ports::{LocalRoot, PortError};
 
@@ -92,6 +92,59 @@ pub fn which(binary: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// The result of loading a deployment workspace from the filesystem: the parsed model plus
+/// every referenced file's text, rooted at the definition's directory.
+pub struct LoadedWorkspace {
+    pub workspace: ec_deploy::workspace::Workspace,
+    pub root: PathBuf,
+    pub definition_text: String,
+}
+
+/// Load a definition (file path) and every file it references. This is the I/O half the
+/// kernel refuses to do: the kernel names the paths, the adapter reads them.
+pub fn load_workspace(definition: &Path) -> Result<LoadedWorkspace, String> {
+    let definition_text = std::fs::read_to_string(definition)
+        .map_err(|e| format!("reading {}: {e}", definition.display()))?;
+    let doc = ec_deploy::workspace::parse_definition(&definition_text).map_err(|e| e.to_string())?;
+    let root = definition
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let mut files = std::collections::BTreeMap::new();
+    for rel in ec_deploy::workspace::referenced_paths(&doc) {
+        let path = root.join(&rel);
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("reading {} (referenced by the definition): {e}", path.display()))?;
+        files.insert(rel, text);
+    }
+    Ok(LoadedWorkspace {
+        workspace: ec_deploy::workspace::Workspace { definition: doc, files },
+        root,
+        definition_text,
+    })
+}
+
+/// `<HEAD commit>` or `<HEAD commit>-dirty`, judged against `dir`; `None` outside a repo.
+#[must_use]
+pub fn describe_head(dir: &Path) -> Option<String> {
+    let run = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .ok()?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    let commit = run(&["rev-parse", "HEAD"])?;
+    let dirty = run(&["status", "--porcelain", "--", "."])
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    Some(if dirty { format!("{commit}-dirty") } else { commit })
 }
 
 #[cfg(test)]

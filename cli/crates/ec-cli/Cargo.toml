@@ -12,6 +12,8 @@ name = "edgecommons"
 path = "src/main.rs"
 
 [dependencies]
+jsonschema = { workspace = true }
+serde_yaml = { workspace = true }
 ec-adapters = { workspace = true }
 ec-deploy = { workspace = true }
 ec-diag = { workspace = true }

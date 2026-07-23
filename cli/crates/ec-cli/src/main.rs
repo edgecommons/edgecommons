@@ -149,15 +149,22 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
             commands::registry::versions(name, source.as_deref())
         }
 
-        // --- Phase P4 ---------------------------------------------------------------
-        Command::Deployment(
-            DeploymentCmd::Validate { .. }
-            | DeploymentCmd::Lock { .. }
-            | DeploymentCmd::Render { .. }
-            | DeploymentCmd::Plan { .. }
-            | DeploymentCmd::Diff { .. }
-            | DeploymentCmd::Release { .. },
-        ) => Err(commands::not_implemented("deployment")),
+        Command::Deployment(DeploymentCmd::Validate { definition }) => {
+            commands::deployment::validate(definition)
+        }
+        Command::Deployment(DeploymentCmd::Render { definition, env, target }) => {
+            commands::deployment::render_cmd(definition, env, *target, cli.quiet)
+        }
+        Command::Deployment(DeploymentCmd::Plan { definition, env, target }) => {
+            commands::deployment::plan(definition, env, *target)
+        }
+        Command::Deployment(DeploymentCmd::Release { definition, stream }) => {
+            commands::deployment::release_cmd(definition, *stream, cli.quiet)
+        }
+        // Lock (the one networked verb, §8.7) and consequence-grouped diff are not built yet.
+        Command::Deployment(DeploymentCmd::Lock { .. } | DeploymentCmd::Diff { .. }) => {
+            Err(commands::not_implemented("deployment"))
+        }
 
         Command::Studio(StudioCmd::Serve { repo, bind }) => {
             ec_studio::serve(&ec_studio::ServeOptions {
