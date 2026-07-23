@@ -69,6 +69,18 @@ pub fn render(
     target: Platform,
     config_release: &str,
 ) -> Result<RenderOutput, RenderError> {
+    render_with_lock(ws, environment, target, config_release, None)
+}
+
+/// As [`render`], with a lock file supplying what the definition does not carry — today the
+/// Greengrass component name (DESIGN-cli §8.7).
+pub fn render_with_lock(
+    ws: &Workspace,
+    environment: &str,
+    target: Platform,
+    config_release: &str,
+    lock: Option<&crate::lock::LockFile>,
+) -> Result<RenderOutput, RenderError> {
     match Platform::from_family(&ws.definition.target_standard.family) {
         Some(def_target) if def_target == target => {}
         Some(_) | None => {
@@ -80,7 +92,7 @@ pub fn render(
     }
     match target {
         Platform::Host => render_host(ws, environment, config_release),
-        Platform::Greengrass => crate::greengrass::render(ws, environment, config_release),
+        Platform::Greengrass => crate::greengrass::render(ws, environment, config_release, lock),
         Platform::Kubernetes => Err(RenderError::TargetNotBuilt(target)),
     }
 }

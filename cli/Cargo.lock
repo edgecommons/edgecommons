@@ -242,6 +242,7 @@ version = "0.3.0"
 dependencies = [
  "ec-deploy",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

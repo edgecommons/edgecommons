@@ -205,7 +205,7 @@ with **no server and no network**.
 
 ```
 edgecommons deployment validate <DEFINITION>
-edgecommons deployment lock     <DEFINITION>
+edgecommons deployment lock     <DEFINITION> [--source <CATALOG>]
 edgecommons deployment render   <DEFINITION> --env <ENV> --target <TARGET>
 edgecommons deployment plan     <DEFINITION> --env <ENV> --target <TARGET>
 edgecommons deployment diff     <DEFINITION> --against <REF>
@@ -214,15 +214,38 @@ edgecommons deployment release  <DEFINITION> --stream <STREAM>
 
 | Verb | In | Out |
 |---|---|---|
-| `validate` | a definition | Three stages: the definition's own schema, the semantic rules (S-1..S-9), then every rendered effective config against the strict runtime schema |
-| `lock` | definition + release index | Resolves each pinned version to an immutable digest. **The only verb that touches the network** |
+| `validate` | a definition | Four stages: the definition's own schema, the semantic rules (S-1..S-9), every rendered effective config against the strict runtime schema, then the compatibility guard against the lock |
+| `lock` | definition + registry | Resolves each pinned version and writes `<definition-stem>.lock` beside the definition. **The only verb that touches the network** |
 | `render` | definition, env, target | Native artifacts for the target plus the normalized plan, written under `render/<target>/`. Nothing is committed |
 | `plan` | definition, env, target | The normalized plan JSON alone — the common currency for validation, policy, CI, and the UI |
 | `diff` | a Git ref | The delta grouped by consequence: restart, storage, network, identity, permission, config, artifact, apply-order |
 | `release` | definition + the stream being promoted | Promotes **one** stream and writes the release manifest and lock |
 
 Options: `--env <ENV>` and `--target <TARGET>` (`GREENGRASS`, `HOST`, `KUBERNETES`) for `render` and
-`plan`; `--against <REF>` for `diff`; `--stream <STREAM>` (`config` or `artifact`) for `release`.
+`plan`; `--against <REF>` for `diff`; `--stream <STREAM>` (`config` or `artifact`) for `release`;
+`--source <CATALOG>` for `lock` (a local catalog path, or `$EDGECOMMONS_REGISTRY_URL`; the default is
+a `gh`-authenticated read of the registry).
+
+### The lock file
+
+`lock` writes `site.lock` beside `site.yaml` — commit it. It records, per pinned component version:
+the artifact digest, the config schema *that version* publishes, and the component's Greengrass
+component name. Everything downstream then reads files that are already in Git, which is what makes
+`validate`, `render`, and `plan` work with no network at all.
+
+The Greengrass component name is not derivable from the component token — `opcua-adapter` publishes
+as `OpcUaAdapter` — so a definition either states it as `artifact.greengrassName` or lets the lock
+supply it. An explicit override in the definition always wins. With neither, the Greengrass renderer
+stops rather than guessing a name.
+
+What cannot be resolved is recorded as unresolved **with its reason**, and reported as a warning
+(`EC4006`) rather than dropped. No EdgeCommons component publishes a release index yet, so today a
+digest is unverifiable and `lock` says so on every run. `validate` repeats the warning, and adds
+`EC5006` for each pinned version that publishes no config schema — the tool states the limit of its
+coverage instead of implying validation it did not perform.
+
+A lock that is present but unreadable, or written by a newer format version, is a usage error. It is
+never silently ignored: the facts the definition is relying on it for would go missing.
 
 **Targets.** The definition's `targetStandard.family` must match `--target`; a mismatch is a usage
 error rather than a silent retarget. The HOST and Greengrass renderers are built; Kubernetes is not
@@ -236,7 +259,7 @@ here: a recipe is a packaging artifact of a component release.
 **Streams.** Config and artifact are independently versioned and independently reconciled. The
 release lock correlates them without fusing them, so either rolls back alone.
 
-`lock` and `diff` are declared but not built in this binary; they exit `5`.
+`diff` is declared but not built in this binary; it exits `5`.
 
 ## `studio`
 

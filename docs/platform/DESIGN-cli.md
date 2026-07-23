@@ -656,8 +656,9 @@ Greengrass takes per-thing configuration through `configurationUpdate`, which ov
 What the renderer therefore needs from a component is exactly one fact it cannot derive: the
 **Greengrass component name**. Its canonical home is the registry's `greengrassComponentName`
 (alongside the existing `library` coordinate); `deployment lock` resolves it from there and commits
-it (§8.7). Until `lock` lands, a definition supplies it as `artifact.greengrassName`, and the
-renderer **errors naming both sources** rather than guessing a name.
+it (§8.7). The renderer takes an explicit `artifact.greengrassName` first and the lock second, so a
+definition may override but need not carry it. With neither, the renderer **errors naming both
+sources** rather than guessing a name.
 
 Revisit only if deployments must customise the recipe itself — per-site `accessControl` narrowing is
 the plausible driver, and it is the derived-least-privilege work that is deliberately deferred. The

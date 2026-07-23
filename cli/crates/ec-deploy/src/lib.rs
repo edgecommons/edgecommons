@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub mod greengrass;
+pub mod lock;
 pub mod merge;
 pub mod model;
 pub mod ports;
@@ -181,6 +182,11 @@ impl Plan {
 pub struct Pin {
     pub component: String,
     pub version: String,
+    /// The component's Greengrass component name, resolved from the registry's
+    /// `greengrassComponentName`. Not derivable from the token (`opcua-adapter` publishes as
+    /// `OpcUaAdapter`), so locking it is what lets a definition stop carrying an override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub greengrass_name: Option<String>,
     /// Resolved by `deployment lock`; absent until then.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
@@ -248,6 +254,7 @@ mod tests {
         let p = Pin {
             component: "telemetry-processor".into(),
             version: "0.3.0".into(),
+            greengrass_name: None,
             digest: None,
             config_schema: None,
         };

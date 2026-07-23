@@ -15,6 +15,7 @@
 
 use serde_json::{Map, Value, json};
 
+use crate::lock::LockFile;
 use crate::model::Component;
 use crate::render::{RenderError, RenderOutput, RenderedFile, effective_configs, pretty};
 use crate::workspace::{Workspace, collect_tokens, lookup};
@@ -24,6 +25,7 @@ pub(crate) fn render(
     ws: &Workspace,
     environment: &str,
     config_release: &str,
+    lock: Option<&LockFile>,
 ) -> Result<RenderOutput, RenderError> {
     let bindings = ws.bindings(environment)?;
     let region = required_binding(&bindings, "aws.region")?;
@@ -51,7 +53,7 @@ pub(crate) fn render(
             }
 
             let gg_name =
-                greengrass_name(comp).ok_or_else(|| RenderError::MissingGreengrassName {
+                greengrass_name(comp, lock).ok_or_else(|| RenderError::MissingGreengrassName {
                     component: comp.name.clone(),
                 })?;
             let version = comp
@@ -152,16 +154,26 @@ pub(crate) fn render(
     Ok(RenderOutput { files, plan })
 }
 
-/// The component's Greengrass component name.
+/// The component's Greengrass component name, which is **not derivable** from the token:
+/// `opcua-adapter` publishes as `OpcUaAdapter`, not `OpcuaAdapter`.
 ///
-/// Authored on the component (`artifact.greengrassName`) because it is **not derivable**:
-/// `opcua-adapter` publishes as `OpcUaAdapter`, not `OpcuaAdapter`. The canonical home is the
-/// registry's `greengrassComponentName`; `deployment lock` resolves it from there and commits
-/// it once that verb lands, at which point this override becomes optional rather than required.
-fn greengrass_name(comp: &Component) -> Option<String> {
+/// Resolution order, most specific first:
+///
+/// 1. `artifact.greengrassName` in the definition — an explicit override always wins.
+/// 2. the lock file, where `deployment lock` recorded it from the registry's
+///    `greengrassComponentName` (the canonical home).
+///
+/// With a lock present a definition no longer has to carry the name at all. With neither, the
+/// renderer errors naming both sources rather than guessing a name.
+fn greengrass_name(comp: &Component, lock: Option<&LockFile>) -> Option<String> {
     comp.artifact
         .as_ref()
         .and_then(|a| a.greengrass_name.clone())
+        .or_else(|| {
+            lock?
+                .lookup(&comp.name)
+                .and_then(|l| l.greengrass_name.clone())
+        })
 }
 
 fn required_binding(bindings: &Value, path: &str) -> Result<String, RenderError> {
