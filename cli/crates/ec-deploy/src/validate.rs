@@ -8,8 +8,8 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-use crate::workspace::{collect_tokens, lookup, Workspace};
 use crate::ConfigSource;
+use crate::workspace::{Workspace, collect_tokens, lookup};
 
 #[derive(Debug, Default)]
 pub struct Findings {
@@ -41,9 +41,15 @@ pub fn validate(ws: &Workspace, environment: Option<&str>) -> Findings {
     for scope in &def.hierarchy.scopes {
         let level = scope.level();
         match level_index(level) {
-            None => errors.push(format!("S-2: scope {}: level '{level}' not declared", scope.id)),
+            None => errors.push(format!(
+                "S-2: scope {}: level '{level}' not declared",
+                scope.id
+            )),
             Some(i) if i + 1 == levels.len() => {
-                errors.push(format!("S-2: scope {}: 'device' is never a scope level", scope.id));
+                errors.push(format!(
+                    "S-2: scope {}: 'device' is never a scope level",
+                    scope.id
+                ));
             }
             Some(i) => match &scope.parent {
                 None if i != 0 => errors.push(format!(
@@ -73,21 +79,20 @@ pub fn validate(ws: &Workspace, environment: Option<&str>) -> Findings {
 
     // S-4 + token collection over every referenced layer.
     let mut binding_tokens: Vec<String> = Vec::new();
-    let mut check_layer = |rel: &str, owner: &str, errors: &mut Vec<String>| match ws
-        .layer(rel, owner)
-    {
-        Err(e) => errors.push(format!("layer: {owner}: {e}")),
-        Ok(map) => {
-            for forbidden in ["hierarchy", "identity"] {
-                if map.contains_key(forbidden) {
-                    errors.push(format!(
-                        "S-4: {rel}: derived key '{forbidden}' is forbidden in authored layers"
-                    ));
+    let mut check_layer =
+        |rel: &str, owner: &str, errors: &mut Vec<String>| match ws.layer(rel, owner) {
+            Err(e) => errors.push(format!("layer: {owner}: {e}")),
+            Ok(map) => {
+                for forbidden in ["hierarchy", "identity"] {
+                    if map.contains_key(forbidden) {
+                        errors.push(format!(
+                            "S-4: {rel}: derived key '{forbidden}' is forbidden in authored layers"
+                        ));
+                    }
                 }
+                collect_tokens(&Value::Object(map), "binding", &mut binding_tokens);
             }
-            collect_tokens(&Value::Object(map), "binding", &mut binding_tokens);
-        }
-    };
+        };
 
     for scope in &def.hierarchy.scopes {
         if let Some(layer) = &scope.layer {
@@ -103,7 +108,10 @@ pub fn validate(ws: &Workspace, environment: Option<&str>) -> Findings {
             errors.push(format!("S-8: duplicate node key {}", node.key));
         }
         if !scope_ids.contains(node.scope.as_str()) {
-            errors.push(format!("S-8: node {}: unknown scope {}", node.key, node.scope));
+            errors.push(format!(
+                "S-8: node {}: unknown scope {}",
+                node.key, node.scope
+            ));
         }
         if node.thing_name() != node.key {
             warnings.push(format!(
@@ -124,7 +132,11 @@ pub fn validate(ws: &Workspace, environment: Option<&str>) -> Findings {
                         node.key
                     ));
                 }
-                check_layer(&cp.layer, &format!("{}/configProvider", node.key), &mut errors);
+                check_layer(
+                    &cp.layer,
+                    &format!("{}/configProvider", node.key),
+                    &mut errors,
+                );
             }
             None if uses_cc => errors.push(format!(
                 "node {}: components use CONFIG_COMPONENT but the node has no configProvider",

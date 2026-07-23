@@ -6,11 +6,11 @@
 //! that lands a release carries the time), and the release hash takes the renderer version as
 //! an input, so a renderer bump invalidates hashes by construction (§8.3(4)).
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::render::{catalog_version, render, RenderError};
+use crate::render::{RenderError, catalog_version, render};
 use crate::workspace::Workspace;
 use crate::{Platform, Stream};
 
@@ -80,7 +80,9 @@ pub fn build_release(
         }
         for comp in &node.components {
             let artifact = comp.artifact.as_ref();
-            let pinned = artifact.map(|a| a.version.is_some() && a.digest.is_some()).unwrap_or(false);
+            let pinned = artifact
+                .map(|a| a.version.is_some() && a.digest.is_some())
+                .unwrap_or(false);
             if !pinned {
                 dev_mode = true;
             }
