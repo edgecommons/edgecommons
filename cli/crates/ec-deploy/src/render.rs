@@ -38,6 +38,10 @@ pub enum RenderError {
     MissingGreengrassName { component: String },
     #[error("node {node}/{component}: a Greengrass deployment needs a pinned artifact.version")]
     MissingComponentVersion { node: String, component: String },
+    #[error(
+        "node {node}/{component}: a Kubernetes Deployment needs a container image; set the component's `image` in the kubernetes profile"
+    )]
+    MissingImage { node: String, component: String },
     #[error("environment binding '{0}' is required to build a thing ARN")]
     MissingBinding(String),
 }
@@ -93,7 +97,7 @@ pub fn render_with_lock(
     match target {
         Platform::Host => render_host(ws, environment, config_release),
         Platform::Greengrass => crate::greengrass::render(ws, environment, config_release, lock),
-        Platform::Kubernetes => Err(RenderError::TargetNotBuilt(target)),
+        Platform::Kubernetes => crate::kubernetes::render(ws, environment, config_release),
     }
 }
 

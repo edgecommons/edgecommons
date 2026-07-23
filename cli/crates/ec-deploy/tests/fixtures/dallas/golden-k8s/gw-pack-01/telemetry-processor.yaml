@@ -1,0 +1,313 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gw-pack-01-telemetry-processor
+  labels:
+    app.kubernetes.io/name: telemetry-processor
+    app.kubernetes.io/instance: gw-pack-01-telemetry-processor
+    app.kubernetes.io/part-of: gw-pack-01
+    app.kubernetes.io/managed-by: edgecommons
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gw-pack-01-telemetry-processor
+  labels:
+    app.kubernetes.io/name: telemetry-processor
+    app.kubernetes.io/instance: gw-pack-01-telemetry-processor
+    app.kubernetes.io/part-of: gw-pack-01
+    app.kubernetes.io/managed-by: edgecommons
+data:
+  config.json: |
+    {
+      "hierarchy": {
+        "levels": [
+          "enterprise",
+          "site",
+          "line",
+          "device"
+        ]
+      },
+      "identity": {
+        "enterprise": "bottles-r-us",
+        "site": "dallas",
+        "line": "packaging-line"
+      },
+      "tags": {
+        "appId": "bottling-plant",
+        "scenario": "bottling-company-test"
+      },
+      "logging": {
+        "level": "INFO",
+        "publish": {
+          "enabled": true,
+          "destination": "local",
+          "minLevel": "INFO"
+        }
+      },
+      "heartbeat": {
+        "enabled": true,
+        "intervalSecs": 5,
+        "measures": {
+          "cpu": true,
+          "memory": true,
+          "threads": true,
+          "files": true,
+          "fds": true
+        }
+      },
+      "metricEmission": {
+        "target": "messaging"
+      },
+      "component": {
+        "token": "telemetry-processor",
+        "global": {
+          "defaults": {
+            "key": "body.signal.id",
+            "scriptEngine": "lua",
+            "scriptsDir": "/scripts"
+          }
+        },
+        "instances": [
+          {
+            "id": "oee-availability",
+            "subscribe": [
+              "ecv1/{ThingName}/opcua-adapter/palletizer1/data/#"
+            ],
+            "pipeline": [
+              {
+                "filter": {
+                  "quality": "GOOD"
+                }
+              },
+              {
+                "filter": {
+                  "field": "body.signal.name",
+                  "op": "eq",
+                  "value": "OeeShiftSnapshot"
+                }
+              },
+              {
+                "sample": {
+                  "everyMs": 1000,
+                  "by": "body.signal.id"
+                }
+              },
+              {
+                "script": {
+                  "file": "oee/availability.lua"
+                }
+              }
+            ],
+            "target": "local",
+            "publish": {
+              "topic": "ecv1/{ThingName}/telemetry-processor/main/data/gemba/oee/availability"
+            }
+          },
+          {
+            "id": "oee-performance",
+            "subscribe": [
+              "ecv1/{ThingName}/opcua-adapter/palletizer1/data/#"
+            ],
+            "pipeline": [
+              {
+                "filter": {
+                  "quality": "GOOD"
+                }
+              },
+              {
+                "filter": {
+                  "field": "body.signal.name",
+                  "op": "eq",
+                  "value": "OeeShiftSnapshot"
+                }
+              },
+              {
+                "sample": {
+                  "everyMs": 1000,
+                  "by": "body.signal.id"
+                }
+              },
+              {
+                "script": {
+                  "file": "oee/performance.lua"
+                }
+              }
+            ],
+            "target": "local",
+            "publish": {
+              "topic": "ecv1/{ThingName}/telemetry-processor/main/data/gemba/oee/performance"
+            }
+          },
+          {
+            "id": "oee-quality",
+            "subscribe": [
+              "ecv1/{ThingName}/opcua-adapter/palletizer1/data/#"
+            ],
+            "pipeline": [
+              {
+                "filter": {
+                  "quality": "GOOD"
+                }
+              },
+              {
+                "filter": {
+                  "field": "body.signal.name",
+                  "op": "eq",
+                  "value": "OeeShiftSnapshot"
+                }
+              },
+              {
+                "sample": {
+                  "everyMs": 1000,
+                  "by": "body.signal.id"
+                }
+              },
+              {
+                "script": {
+                  "file": "oee/quality.lua"
+                }
+              }
+            ],
+            "target": "local",
+            "publish": {
+              "topic": "ecv1/{ThingName}/telemetry-processor/main/data/gemba/oee/quality"
+            }
+          },
+          {
+            "id": "oee-overall",
+            "subscribe": [
+              "ecv1/{ThingName}/opcua-adapter/palletizer1/data/#"
+            ],
+            "pipeline": [
+              {
+                "filter": {
+                  "quality": "GOOD"
+                }
+              },
+              {
+                "filter": {
+                  "field": "body.signal.name",
+                  "op": "eq",
+                  "value": "OeeShiftSnapshot"
+                }
+              },
+              {
+                "sample": {
+                  "everyMs": 1000,
+                  "by": "body.signal.id"
+                }
+              },
+              {
+                "script": {
+                  "file": "oee/oee.lua"
+                }
+              }
+            ],
+            "target": "local",
+            "publish": {
+              "topic": "ecv1/{ThingName}/telemetry-processor/main/data/gemba/oee/overall"
+            }
+          }
+        ]
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gw-pack-01-telemetry-processor
+  labels:
+    app.kubernetes.io/name: telemetry-processor
+    app.kubernetes.io/instance: gw-pack-01-telemetry-processor
+    app.kubernetes.io/part-of: gw-pack-01
+    app.kubernetes.io/managed-by: edgecommons
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: telemetry-processor
+      app.kubernetes.io/instance: gw-pack-01-telemetry-processor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: telemetry-processor
+        app.kubernetes.io/instance: gw-pack-01-telemetry-processor
+        app.kubernetes.io/part-of: gw-pack-01
+        app.kubernetes.io/managed-by: edgecommons
+    spec:
+      serviceAccountName: gw-pack-01-telemetry-processor
+      automountServiceAccountToken: true
+      nodeSelector:
+        edgecommons.io/gateway: gw-pack-01
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: component
+        image: ghcr.io/edgecommons/telemetry-processor:1.4.2
+        args:
+        - --platform
+        - KUBERNETES
+        - -c
+        - CONFIGMAP
+        - /etc/edgecommons
+        - config.json
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: EDGECOMMONS_THING_NAME
+          value: gw-pack-01
+        ports:
+        - name: health
+          containerPort: 8081
+        - name: metrics
+          containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/edgecommons
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: gw-pack-01-telemetry-processor
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gw-pack-01-telemetry-processor
+  labels:
+    app.kubernetes.io/name: telemetry-processor
+    app.kubernetes.io/instance: gw-pack-01-telemetry-processor
+    app.kubernetes.io/part-of: gw-pack-01
+    app.kubernetes.io/managed-by: edgecommons
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: telemetry-processor
+    app.kubernetes.io/instance: gw-pack-01-telemetry-processor
+  ports:
+  - name: health
+    port: 8081
+    targetPort: health
+  - name: metrics
+    port: 9090
+    targetPort: metrics

@@ -1,0 +1,172 @@
+{
+  "entries": [
+    {
+      "node": "dallas-console",
+      "component": "edge-console",
+      "consequence": "artifact",
+      "summary": "apply Deployment dallas-console-edge-console (image ghcr.io/edgecommons/edge-console:1.0.0)",
+      "restartsComponent": true
+    },
+    {
+      "node": "dallas-console",
+      "component": "edge-console",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIGMAP (ConfigMap dallas-console-edge-console)",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "opcua-adapter",
+      "consequence": "artifact",
+      "summary": "apply Deployment gw-fill-01-opcua-adapter (image ghcr.io/edgecommons/opcua-adapter:1.0.0)",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "opcua-adapter",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIGMAP (ConfigMap gw-fill-01-opcua-adapter)",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "modbus-adapter",
+      "consequence": "artifact",
+      "summary": "apply Deployment gw-fill-01-modbus-adapter (image ghcr.io/edgecommons/modbus-adapter:1.2.0)",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "modbus-adapter",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIGMAP (ConfigMap gw-fill-01-modbus-adapter)",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "telemetry-processor",
+      "consequence": "artifact",
+      "summary": "apply Deployment gw-fill-01-telemetry-processor (image ghcr.io/edgecommons/telemetry-processor:1.4.2)",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "telemetry-processor",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIGMAP (ConfigMap gw-fill-01-telemetry-processor)",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "file-replicator",
+      "consequence": "artifact",
+      "summary": "apply Deployment gw-fill-01-file-replicator (image ghcr.io/edgecommons/file-replicator:1.0.0)",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "file-replicator",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIGMAP (ConfigMap gw-fill-01-file-replicator)",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "uns-bridge",
+      "consequence": "artifact",
+      "summary": "apply Deployment gw-fill-01-uns-bridge (image ghcr.io/edgecommons/uns-bridge:1.0.0)",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "uns-bridge",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIGMAP (ConfigMap gw-fill-01-uns-bridge)",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "opcua-adapter",
+      "consequence": "artifact",
+      "summary": "apply Deployment gw-pack-01-opcua-adapter (image ghcr.io/edgecommons/opcua-adapter:1.0.0)",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "opcua-adapter",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIGMAP (ConfigMap gw-pack-01-opcua-adapter)",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "modbus-adapter",
+      "consequence": "artifact",
+      "summary": "apply Deployment gw-pack-01-modbus-adapter (image ghcr.io/edgecommons/modbus-adapter:1.2.0)",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "modbus-adapter",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIGMAP (ConfigMap gw-pack-01-modbus-adapter)",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "telemetry-processor",
+      "consequence": "artifact",
+      "summary": "apply Deployment gw-pack-01-telemetry-processor (image ghcr.io/edgecommons/telemetry-processor:1.4.2)",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "telemetry-processor",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIGMAP (ConfigMap gw-pack-01-telemetry-processor)",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "uns-bridge",
+      "consequence": "artifact",
+      "summary": "apply Deployment gw-pack-01-uns-bridge (image ghcr.io/edgecommons/uns-bridge:1.0.0)",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "uns-bridge",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIGMAP (ConfigMap gw-pack-01-uns-bridge)",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-fill-02",
+      "component": "telemetry-processor",
+      "consequence": "artifact",
+      "summary": "apply Deployment gw-fill-02-telemetry-processor (image ghcr.io/edgecommons/telemetry-processor:1.4.2)",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-02",
+      "component": "telemetry-processor",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIGMAP (ConfigMap gw-fill-02-telemetry-processor)",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-fill-02",
+      "component": "uns-bridge",
+      "consequence": "artifact",
+      "summary": "apply Deployment gw-fill-02-uns-bridge (image ghcr.io/edgecommons/uns-bridge:1.0.0)",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-02",
+      "component": "uns-bridge",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIGMAP (ConfigMap gw-fill-02-uns-bridge)",
+      "restartsComponent": false
+    }
+  ]
+}

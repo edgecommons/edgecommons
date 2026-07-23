@@ -1513,7 +1513,75 @@ fn deployment_render_to_the_wrong_target_is_a_usage_error() {
 }
 
 #[test]
-fn deployment_render_to_an_unbuilt_target_says_not_implemented() {
+fn deployment_render_to_kubernetes_produces_manifests() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(d.path().join("bindings")).unwrap();
+    std::fs::write(d.path().join("bindings/local.json"), "{}\n").unwrap();
+    let definition = d.path().join("definition.yaml");
+    std::fs::write(
+        &definition,
+        r#"apiVersion: edgecommons.io/v1alpha1
+kind: DeploymentDefinition
+metadata:
+  name: k8s
+hierarchy:
+  levels: [site, device]
+  scopes:
+    - id: site/lab
+      parent: null
+topology:
+  nodes:
+    - key: box-01
+      scope: site/lab
+      components:
+        - name: telemetry-processor
+profiles:
+  kubernetes:
+    family: KUBERNETES
+    environments:
+      - name: local
+        bindings: bindings/local.json
+    defaults:
+      configSource: CONFIGMAP
+    nodes:
+      box-01:
+        components:
+          telemetry-processor:
+            image: "ghcr.io/x/telemetry-processor:1.0.0"
+"#,
+    )
+    .unwrap();
+    let o = run(
+        &[
+            "deployment",
+            "render",
+            definition.to_str().unwrap(),
+            "--env",
+            "local",
+            "--target",
+            "KUBERNETES",
+        ],
+        d.path(),
+    );
+    assert_eq!(code(&o), 0, "kubernetes render succeeds: {}", stderr(&o));
+    let manifest = d
+        .path()
+        .join("render/kubernetes/box-01/telemetry-processor.yaml");
+    let text = std::fs::read_to_string(&manifest).expect("the component manifest is written");
+    assert!(text.contains("kind: Deployment"), "{text}");
+    assert!(
+        text.contains("image: ghcr.io/x/telemetry-processor:1.0.0"),
+        "the image is carried: {text}"
+    );
+    assert!(
+        text.contains("-c\n        - CONFIGMAP") || text.contains("CONFIGMAP"),
+        "config is delivered via a ConfigMap: {text}"
+    );
+}
+
+#[test]
+fn deployment_render_needs_an_image_on_kubernetes() {
+    // A k8s Deployment cannot be built without a container image; the renderer says so by name.
     let d = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(d.path().join("bindings")).unwrap();
     std::fs::write(d.path().join("bindings/local.json"), "{}\n").unwrap();
@@ -1548,7 +1616,6 @@ profiles:
         components:
           telemetry-processor:
             artifact: { version: "1.0.0" }
-            image: "ghcr.io/x/telemetry-processor:1.0.0"
 "#,
     )
     .unwrap();
@@ -1564,13 +1631,8 @@ profiles:
         ],
         d.path(),
     );
-    assert_eq!(
-        code(&o),
-        5,
-        "unbuilt renderer is not-implemented: {}",
-        stderr(&o)
-    );
-    assert!(stderr(&o).contains("not available"), "{}", stderr(&o));
+    assert_ne!(code(&o), 0, "a k8s component with no image cannot render");
+    assert!(stderr(&o).contains("image"), "{}", stderr(&o));
 }
 
 // --- deployment lock (§8.7) -----------------------------------------------------------------

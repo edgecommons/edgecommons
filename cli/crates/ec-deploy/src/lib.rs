@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub mod greengrass;
+pub mod kubernetes;
 pub mod lock;
 pub mod merge;
 pub mod model;

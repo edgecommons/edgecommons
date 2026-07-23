@@ -1,0 +1,212 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gw-fill-01-opcua-adapter
+  labels:
+    app.kubernetes.io/name: opcua-adapter
+    app.kubernetes.io/instance: gw-fill-01-opcua-adapter
+    app.kubernetes.io/part-of: gw-fill-01
+    app.kubernetes.io/managed-by: edgecommons
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gw-fill-01-opcua-adapter
+  labels:
+    app.kubernetes.io/name: opcua-adapter
+    app.kubernetes.io/instance: gw-fill-01-opcua-adapter
+    app.kubernetes.io/part-of: gw-fill-01
+    app.kubernetes.io/managed-by: edgecommons
+data:
+  config.json: |
+    {
+      "hierarchy": {
+        "levels": [
+          "enterprise",
+          "site",
+          "line",
+          "device"
+        ]
+      },
+      "identity": {
+        "enterprise": "bottles-r-us",
+        "site": "dallas",
+        "line": "filling-line"
+      },
+      "tags": {
+        "appId": "bottling-plant",
+        "scenario": "bottling-company-test"
+      },
+      "logging": {
+        "level": "INFO",
+        "publish": {
+          "enabled": true,
+          "destination": "local",
+          "minLevel": "INFO"
+        }
+      },
+      "heartbeat": {
+        "enabled": true,
+        "intervalSecs": 5,
+        "measures": {
+          "cpu": true,
+          "memory": true,
+          "threads": true,
+          "files": true,
+          "fds": true
+        }
+      },
+      "metricEmission": {
+        "target": "messaging",
+        "targetConfig": {
+          "destination": "local"
+        }
+      },
+      "component": {
+        "token": "opcua-adapter",
+        "global": {
+          "defaults": {
+            "publishIntervalMs": 500,
+            "samplingRateMs": 250,
+            "queueSize": 100
+          },
+          "healthThresholds": {
+            "staleSignalSecs": 30
+          }
+        },
+        "instances": [
+          {
+            "id": "filler1",
+            "connection": {
+              "endpoint": "opc.tcp://localhost:4840/",
+              "securityPolicy": "None"
+            },
+            "publish": {
+              "batchMs": 500
+            },
+            "writes": {
+              "allow": [
+                "ns=2;s=Setpoint"
+              ]
+            },
+            "subscriptions": [
+              {
+                "id": "fillhead",
+                "include": [
+                  {
+                    "namespaceUri": "urn:edgecommons:sim",
+                    "match": "^(Sine1|Counter|Line1\\..*)$",
+                    "samplingRateMs": 250,
+                    "queueSize": 50,
+                    "deadband": {
+                      "type": "None",
+                      "value": 0.0
+                    }
+                  }
+                ],
+                "exclude": []
+              }
+            ]
+          }
+        ]
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gw-fill-01-opcua-adapter
+  labels:
+    app.kubernetes.io/name: opcua-adapter
+    app.kubernetes.io/instance: gw-fill-01-opcua-adapter
+    app.kubernetes.io/part-of: gw-fill-01
+    app.kubernetes.io/managed-by: edgecommons
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opcua-adapter
+      app.kubernetes.io/instance: gw-fill-01-opcua-adapter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opcua-adapter
+        app.kubernetes.io/instance: gw-fill-01-opcua-adapter
+        app.kubernetes.io/part-of: gw-fill-01
+        app.kubernetes.io/managed-by: edgecommons
+    spec:
+      serviceAccountName: gw-fill-01-opcua-adapter
+      automountServiceAccountToken: true
+      nodeSelector:
+        edgecommons.io/gateway: gw-fill-01
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: component
+        image: ghcr.io/edgecommons/opcua-adapter:1.0.0
+        args:
+        - --platform
+        - KUBERNETES
+        - -c
+        - CONFIGMAP
+        - /etc/edgecommons
+        - config.json
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: EDGECOMMONS_THING_NAME
+          value: gw-fill-01
+        ports:
+        - name: health
+          containerPort: 8081
+        - name: metrics
+          containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/edgecommons
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: gw-fill-01-opcua-adapter
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gw-fill-01-opcua-adapter
+  labels:
+    app.kubernetes.io/name: opcua-adapter
+    app.kubernetes.io/instance: gw-fill-01-opcua-adapter
+    app.kubernetes.io/part-of: gw-fill-01
+    app.kubernetes.io/managed-by: edgecommons
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: opcua-adapter
+    app.kubernetes.io/instance: gw-fill-01-opcua-adapter
+  ports:
+  - name: health
+    port: 8081
+    targetPort: health
+  - name: metrics
+    port: 9090
+    targetPort: metrics

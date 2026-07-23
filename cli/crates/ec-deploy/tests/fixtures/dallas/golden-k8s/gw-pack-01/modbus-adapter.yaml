@@ -1,0 +1,269 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gw-pack-01-modbus-adapter
+  labels:
+    app.kubernetes.io/name: modbus-adapter
+    app.kubernetes.io/instance: gw-pack-01-modbus-adapter
+    app.kubernetes.io/part-of: gw-pack-01
+    app.kubernetes.io/managed-by: edgecommons
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gw-pack-01-modbus-adapter
+  labels:
+    app.kubernetes.io/name: modbus-adapter
+    app.kubernetes.io/instance: gw-pack-01-modbus-adapter
+    app.kubernetes.io/part-of: gw-pack-01
+    app.kubernetes.io/managed-by: edgecommons
+data:
+  config.json: |
+    {
+      "hierarchy": {
+        "levels": [
+          "enterprise",
+          "site",
+          "line",
+          "device"
+        ]
+      },
+      "identity": {
+        "enterprise": "bottles-r-us",
+        "site": "dallas",
+        "line": "packaging-line"
+      },
+      "tags": {
+        "appId": "bottling-plant",
+        "scenario": "bottling-company-test"
+      },
+      "logging": {
+        "level": "INFO",
+        "publish": {
+          "enabled": true,
+          "destination": "local",
+          "minLevel": "INFO"
+        }
+      },
+      "heartbeat": {
+        "enabled": true,
+        "intervalSecs": 5,
+        "measures": {
+          "cpu": true,
+          "memory": true,
+          "threads": true,
+          "files": true,
+          "fds": true
+        }
+      },
+      "metricEmission": {
+        "target": "messaging"
+      },
+      "component": {
+        "token": "modbus-adapter",
+        "global": {
+          "defaults": {
+            "pollIntervalMs": 500,
+            "publishMode": "always",
+            "batchMs": 0,
+            "maxGap": 4
+          }
+        },
+        "instances": [
+          {
+            "id": "casepacker1",
+            "connection": {
+              "transport": "tcp",
+              "host": "modbus.dallas.svc.cluster.local",
+              "port": 502,
+              "unitId": 1,
+              "timeoutMs": 1000
+            },
+            "publish": {
+              "batchMs": 0
+            },
+            "write": {
+              "enabled": false
+            },
+            "pollGroups": [
+              {
+                "id": "main",
+                "pollIntervalMs": 500,
+                "publishMode": "always",
+                "signals": [
+                  {
+                    "name": "GoodCaseCount",
+                    "table": "input",
+                    "address": 0,
+                    "type": "uint32"
+                  },
+                  {
+                    "name": "CaseRejectCount",
+                    "table": "input",
+                    "address": 2,
+                    "type": "uint32"
+                  },
+                  {
+                    "name": "PackerMotorCurrentA",
+                    "table": "input",
+                    "address": 4,
+                    "type": "uint16",
+                    "scale": 0.01
+                  },
+                  {
+                    "name": "CaseWeightKg",
+                    "table": "input",
+                    "address": 5,
+                    "type": "uint16",
+                    "scale": 0.01
+                  },
+                  {
+                    "name": "CaseRateCpm",
+                    "table": "input",
+                    "address": 6,
+                    "type": "uint16",
+                    "scale": 0.1
+                  },
+                  {
+                    "name": "CartonMagazinePct",
+                    "table": "input",
+                    "address": 7,
+                    "type": "uint16",
+                    "scale": 0.1
+                  },
+                  {
+                    "name": "JamStatus",
+                    "table": "discrete",
+                    "address": 0,
+                    "type": "bool"
+                  },
+                  {
+                    "name": "MagazineLow",
+                    "table": "discrete",
+                    "address": 1,
+                    "type": "bool"
+                  },
+                  {
+                    "name": "CaseAtDischarge",
+                    "table": "discrete",
+                    "address": 2,
+                    "type": "bool"
+                  },
+                  {
+                    "name": "EStopHealthy",
+                    "table": "discrete",
+                    "address": 3,
+                    "type": "bool"
+                  },
+                  {
+                    "name": "RunCommand",
+                    "table": "coil",
+                    "address": 0,
+                    "type": "bool"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gw-pack-01-modbus-adapter
+  labels:
+    app.kubernetes.io/name: modbus-adapter
+    app.kubernetes.io/instance: gw-pack-01-modbus-adapter
+    app.kubernetes.io/part-of: gw-pack-01
+    app.kubernetes.io/managed-by: edgecommons
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: modbus-adapter
+      app.kubernetes.io/instance: gw-pack-01-modbus-adapter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: modbus-adapter
+        app.kubernetes.io/instance: gw-pack-01-modbus-adapter
+        app.kubernetes.io/part-of: gw-pack-01
+        app.kubernetes.io/managed-by: edgecommons
+    spec:
+      serviceAccountName: gw-pack-01-modbus-adapter
+      automountServiceAccountToken: true
+      nodeSelector:
+        edgecommons.io/gateway: gw-pack-01
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: component
+        image: ghcr.io/edgecommons/modbus-adapter:1.2.0
+        args:
+        - --platform
+        - KUBERNETES
+        - -c
+        - CONFIGMAP
+        - /etc/edgecommons
+        - config.json
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: EDGECOMMONS_THING_NAME
+          value: gw-pack-01
+        ports:
+        - name: health
+          containerPort: 8081
+        - name: metrics
+          containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/edgecommons
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: gw-pack-01-modbus-adapter
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gw-pack-01-modbus-adapter
+  labels:
+    app.kubernetes.io/name: modbus-adapter
+    app.kubernetes.io/instance: gw-pack-01-modbus-adapter
+    app.kubernetes.io/part-of: gw-pack-01
+    app.kubernetes.io/managed-by: edgecommons
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: modbus-adapter
+    app.kubernetes.io/instance: gw-pack-01-modbus-adapter
+  ports:
+  - name: health
+    port: 8081
+    targetPort: health
+  - name: metrics
+    port: 9090
+    targetPort: metrics

@@ -165,14 +165,17 @@ pub fn validate(ws: &Workspace, environment: Option<&str>) -> Findings {
                     ));
                 }
             }
+            // What runs: an artifact (version/source, for HOST/Greengrass) or a container image
+            // (Kubernetes). A component must name one of them.
             let has_artifact = comp
                 .artifact
                 .as_ref()
                 .map(|a| a.version.is_some() || a.source.is_some())
-                .unwrap_or(false);
+                .unwrap_or(false)
+                || comp.image.is_some();
             if !has_artifact {
                 errors.push(format!(
-                    "S-6: node {}/{}: artifact needs version and/or source",
+                    "S-6: node {}/{}: needs an artifact (version/source) or an image",
                     node.key, comp.name
                 ));
             }

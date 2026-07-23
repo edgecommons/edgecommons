@@ -290,3 +290,48 @@ profiles:
             artifact: { version: "1.4.2", digest: "sha256:3ab07711cc90", greengrassName: com.mbreissi.edgecommons.TelemetryProcessor }
           uns-bridge:
             artifact: { version: "1.0.0", digest: "sha256:71d4e0b8af12", greengrassName: com.mbreissi.edgecommons.UnsBridge }
+
+  # ---- KUBERNETES: the COMPLETE plant, each component a Deployment + ConfigMap + Service +
+  # ServiceAccount. Config is delivered through CONFIGMAP (mounted as a whole volume so the kubelet
+  # ..data swap hot-reloads it); identity comes from the Downward API. No local brokers or sims:
+  # those are HOST-profile scaffolding. Named-node placement pins each component to its gateway.
+  kubernetes:
+    family: KUBERNETES
+    environments:
+      - name: cluster
+        bindings: bindings/k8s.json
+    defaults:
+      configSource: CONFIGMAP
+    nodes:
+      dallas-console:
+        components:
+          edge-console:
+            image: ghcr.io/edgecommons/edge-console:1.0.0
+      gw-fill-01:
+        components:
+          opcua-adapter:
+            image: ghcr.io/edgecommons/opcua-adapter:1.0.0
+          modbus-adapter:
+            image: ghcr.io/edgecommons/modbus-adapter:1.2.0
+          telemetry-processor:
+            image: ghcr.io/edgecommons/telemetry-processor:1.4.2
+          file-replicator:
+            image: ghcr.io/edgecommons/file-replicator:1.0.0
+          uns-bridge:
+            image: ghcr.io/edgecommons/uns-bridge:1.0.0
+      gw-pack-01:
+        components:
+          opcua-adapter:
+            image: ghcr.io/edgecommons/opcua-adapter:1.0.0
+          modbus-adapter:
+            image: ghcr.io/edgecommons/modbus-adapter:1.2.0
+          telemetry-processor:
+            image: ghcr.io/edgecommons/telemetry-processor:1.4.2
+          uns-bridge:
+            image: ghcr.io/edgecommons/uns-bridge:1.0.0
+      gw-fill-02:
+        components:
+          telemetry-processor:
+            image: ghcr.io/edgecommons/telemetry-processor:1.4.2
+          uns-bridge:
+            image: ghcr.io/edgecommons/uns-bridge:1.0.0
