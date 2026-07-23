@@ -165,8 +165,11 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
         Command::Deployment(DeploymentCmd::Release { definition, stream }) => {
             commands::deployment::release_cmd(definition, *stream, cli.quiet)
         }
-        // Lock (the one networked verb, §8.7) and consequence-grouped diff are not built yet.
-        Command::Deployment(DeploymentCmd::Lock { .. } | DeploymentCmd::Diff { .. }) => {
+        Command::Deployment(DeploymentCmd::Lock { definition, source }) => {
+            commands::deployment::lock(definition, source.as_deref(), cli.quiet)
+        }
+        // Consequence-grouped diff is not built yet.
+        Command::Deployment(DeploymentCmd::Diff { .. }) => {
             Err(commands::not_implemented("deployment"))
         }
 

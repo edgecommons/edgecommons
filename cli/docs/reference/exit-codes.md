@@ -16,7 +16,7 @@ those differently. Branch on the exit code, never on the message text.
 
 Exit `5` is deliberate. A verb that exists in the surface but is not built says so with its own code,
 so CI can tell *"this build cannot do that yet"* from *"you invoked it wrong"*. Today `deployment
-lock`, `deployment diff`, and `studio serve` exit `5`.
+diff` and `studio serve` exit `5`.
 
 ## Diagnostic codes
 
@@ -83,6 +83,9 @@ Packaging mistakes that otherwise surface only at deploy time.
 | `EC4003` | No template exists for the requested language/kind |
 | `EC4004` | A component project declares no dependency manifest to operate on |
 | `EC4005` | A Greengrass scaffold has no artifact bucket, so it cannot be published as-is |
+| `EC4006` | A component has no published release index, so a pinned version's digest cannot be verified |
+| `EC4007` | A platform's artifact is a container image, which the CLI does not build |
+| `EC4008` | A Rust/TypeScript component ships no committed lockfile, so its builds are not reproducible |
 
 ### `EC5xxx` — deployment
 
@@ -92,6 +95,15 @@ Packaging mistakes that otherwise surface only at deploy time.
 | `EC5002` | A deployment semantic rule (S-1..S-9) is violated |
 | `EC5003` | A rendered effective config fails the strict runtime config schema |
 | `EC5004` | A node's platform identity diverges from its node key (runtime-identity consequence) |
+| `EC5005` | The effective config is rejected by the config schema published by the pinned component version |
+| `EC5006` | The pinned version publishes no config schema, so its own config is validated by nothing |
+| `EC5007` | Component versions are pinned but no lock is committed, so nothing has been resolved |
+
+`EC5005`, `EC5006`, and `EC5007` are the compatibility guard. A component's own config lives under
+`component.global`, which the canonical schema leaves open, so it is validated by whatever schema the
+pinned version publishes — and by nothing at all when it publishes none. `EC5005` names the offending
+key and the version that rejected it; `EC5006` and `EC5007` are warnings that state what was *not*
+checked, so a clean run never implies coverage it does not have.
 
 `EC5004` is a warning. Diverging a node's thing name from its node key is legal, but the runtime's
 device identity — and therefore every UNS topic the node publishes — resolves from the thing name, so

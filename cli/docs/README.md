@@ -6,8 +6,8 @@ canonical schema; moves it between library versions; packages and releases it; a
 deployment definition into the artifacts a target platform actually consumes.
 
 It carries the component templates and the config schema **inside the binary**, so scaffolding and
-validation work with no network and no registry. The only network call in the whole tool is
-`deployment lock`, and it says so.
+validation work with no network and no registry. Network access exists in exactly two places, both
+named and both opt-in: `deployment lock`, and `component new --template-git`.
 
 ```bash
 edgecommons component new --name com.example.MyAdapter --language RUST --kind protocol-adapter

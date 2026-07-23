@@ -116,9 +116,10 @@ edgecommons deployment plan   site.yaml --env prod --target HOST
 edgecommons deployment render site.yaml --env prod --target HOST
 ```
 
-`validate` runs three stages: the definition's own schema, the semantic rules, then **every rendered
+`validate` runs four stages: the definition's own schema, the semantic rules, **every rendered
 effective config** against the strict runtime schema — so a config that only breaks once the
-hierarchy is merged is caught before anything is written.
+hierarchy is merged is caught before anything is written — and finally the compatibility guard
+against the lock (below).
 
 `plan` prints the normalized plan: per node, per component, what changes and whether applying it
 **restarts the component**. Restart impact is derived from each component's config source, never
@@ -132,6 +133,32 @@ onto deployment documents, so failure is per node.
 ```bash
 edgecommons deployment render site.yaml --env prod --target GREENGRASS
 ```
+
+## Lock the versions a definition pins
+
+A definition pins component versions. `lock` resolves those pins and writes what they resolved to,
+so everything downstream reads files that are already in Git:
+
+```bash
+edgecommons deployment lock site.yaml
+git add site.lock && git commit -m "lock component versions"
+```
+
+This is the one command in the tool that reaches the network. Point it somewhere else when you need
+to — a local catalog file works, which is also how you lock on a machine with no `gh` credentials:
+
+```bash
+edgecommons deployment lock site.yaml --source ../registry/components.json
+```
+
+The lock carries each pinned version's artifact digest, the config schema that version publishes, and
+its Greengrass component name. Once it is committed, `validate`, `render`, and `plan` need no network
+at all, and a Greengrass render no longer needs `artifact.greengrassName` in the definition.
+
+Re-run it whenever you change a pin. What it cannot resolve it records **with the reason** and reports
+as a warning, so a lock never looks more complete than it is — today no EdgeCommons component
+publishes a release index, so every digest comes back unverified and both `lock` and `validate` say
+so on every run.
 
 ## Promote a release
 

@@ -305,7 +305,12 @@ pub enum DeploymentCmd {
     /// Validate the deployment model and every rendered effective config.
     Validate { definition: PathBuf },
     /// Resolve pinned versions to digests. The only verb that touches the network.
-    Lock { definition: PathBuf },
+    Lock {
+        definition: PathBuf,
+        /// Registry URL or a local components.json path.
+        #[arg(long, env = "EDGECOMMONS_REGISTRY_URL")]
+        source: Option<String>,
+    },
     /// Render the model to native artifacts plus the normalized plan.
     Render {
         definition: PathBuf,

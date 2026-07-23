@@ -115,6 +115,16 @@ pub const EC5002_DEPLOYMENT_SEMANTIC: Code = Code("EC5002");
 pub const EC5003_EFFECTIVE_CONFIG: Code = Code("EC5003");
 /// A node's platform identity diverges from its node key (runtime-identity consequence).
 pub const EC5004_IDENTITY_DIVERGENCE: Code = Code("EC5004");
+/// The effective config is rejected by the config schema published by the **pinned** component
+/// version — the compatibility guard of §8.5.5, which names the offending key rather than a
+/// coarse version floor.
+pub const EC5005_CONFIG_INCOMPATIBLE_WITH_PIN: Code = Code("EC5005");
+/// The pinned component version publishes no config schema, so its own config is validated by
+/// nothing. A warning, so the tool states the limit of its coverage instead of implying it.
+pub const EC5006_COMPONENT_CONFIG_UNVALIDATED: Code = Code("EC5006");
+/// The definition pins component versions but no lock is committed beside it, so no digest and no
+/// config schema has been resolved. A warning: `render` and `plan` still work.
+pub const EC5007_NO_LOCK: Code = Code("EC5007");
 
 // --- Artifact lint (EC3xxx) -------------------------------------------------------
 /// The recipe uses the `{COMPONENT_NAME}` placeholder, which GDK does not substitute.

@@ -1190,7 +1190,6 @@ fn the_unbuilt_verbs_say_so_rather_than_crashing() {
     // Declared in the surface, not built in this binary: exit 5, and name the design section
     // rather than failing obscurely or pretending to be a usage error.
     for args in [
-        vec!["deployment", "lock", "def.yaml"],
         vec!["deployment", "diff", "def.yaml", "--against", "v1"],
         vec!["studio", "serve"],
     ] {
@@ -1550,4 +1549,283 @@ nodes:
         stderr(&o)
     );
     assert!(stderr(&o).contains("not available"), "{}", stderr(&o));
+}
+
+// --- deployment lock (§8.7) -----------------------------------------------------------------
+
+/// A workspace whose component **pins a version** — the shape `lock` operates on — with no
+/// `greengrassName` override, so the renderer has to get the name from the lock.
+fn write_pinned_workspace(dir: &Path) -> PathBuf {
+    std::fs::create_dir_all(dir.join("bindings")).unwrap();
+    // A Greengrass render builds thing ARNs, so the environment has to answer for the account.
+    std::fs::write(
+        dir.join("bindings/local.json"),
+        r#"{ "aws": { "region": "us-east-1", "accountId": "000000000000" } }"#,
+    )
+    .unwrap();
+    let definition = dir.join("site.yaml");
+    std::fs::write(
+        &definition,
+        r#"apiVersion: edgecommons.io/v1alpha1
+kind: DeploymentDefinition
+metadata:
+  name: pinned
+hierarchy:
+  levels: [site, device]
+  scopes:
+    - id: site/lab
+      parent: null
+targetStandard:
+  family: GREENGRASS
+environments:
+  - name: local
+    bindings: bindings/local.json
+nodes:
+  - key: box-01
+    scope: site/lab
+    components:
+      - name: telemetry-processor
+        artifact: { version: "0.3.0" }
+        configSource: GG_CONFIG
+        launch: { order: 30 }
+"#,
+    )
+    .unwrap();
+    definition
+}
+
+/// A local catalog file, so the one networked verb is testable without a network.
+fn write_catalog(dir: &Path) -> PathBuf {
+    let path = dir.join("components.json");
+    std::fs::write(
+        &path,
+        r#"{
+  "schemaVersion": 1,
+  "components": [
+    {
+      "name": "telemetry-processor",
+      "greengrassComponentName": "com.mbreissi.edgecommons.TelemetryProcessor"
+    }
+  ]
+}
+"#,
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn lock_records_what_resolved_and_names_what_did_not() {
+    let d = tempfile::tempdir().unwrap();
+    let definition = write_pinned_workspace(d.path());
+    let catalog = write_catalog(d.path());
+
+    let o = run(
+        &[
+            "deployment",
+            "lock",
+            definition.to_str().unwrap(),
+            "--source",
+            catalog.to_str().unwrap(),
+        ],
+        d.path(),
+    );
+    // Findings, not failure: the pin resolved as far as it can, and the gap is a warning.
+    assert_eq!(
+        code(&o),
+        0,
+        "an unverifiable digest is not an error: {}",
+        stderr(&o)
+    );
+
+    let lock: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(d.path().join("site.lock")).unwrap())
+            .expect("lock is written beside the definition, named after it");
+    let entry = &lock["components"][0];
+    assert_eq!(entry["component"], "telemetry-processor");
+    assert_eq!(entry["version"], "0.3.0");
+    // What the registry does carry is recorded...
+    assert_eq!(
+        entry["greengrassName"],
+        "com.mbreissi.edgecommons.TelemetryProcessor"
+    );
+    // ...and what it does not is marked unresolved *with its reason*, never silently omitted.
+    assert!(entry.get("digest").is_none(), "no digest was verifiable");
+    assert!(
+        entry["unresolved"]
+            .as_str()
+            .unwrap()
+            .contains("release index"),
+        "the reason is named: {entry}"
+    );
+    assert!(
+        stdout(&o).contains("EC4006") || stderr(&o).contains("EC4006"),
+        "the unverified pin is reported, not swallowed: {} {}",
+        stdout(&o),
+        stderr(&o)
+    );
+}
+
+#[test]
+fn a_locked_greengrass_name_frees_the_definition_from_carrying_it() {
+    let d = tempfile::tempdir().unwrap();
+    let definition = write_pinned_workspace(d.path());
+    let catalog = write_catalog(d.path());
+
+    // Without a lock the renderer has no name to use and says so rather than inventing one.
+    let o = run(
+        &[
+            "deployment",
+            "render",
+            definition.to_str().unwrap(),
+            "--env",
+            "local",
+            "--target",
+            "GREENGRASS",
+        ],
+        d.path(),
+    );
+    assert_ne!(
+        code(&o),
+        0,
+        "an unknown Greengrass name must not be guessed"
+    );
+
+    run(
+        &[
+            "deployment",
+            "lock",
+            definition.to_str().unwrap(),
+            "--source",
+            catalog.to_str().unwrap(),
+        ],
+        d.path(),
+    );
+    let o = run(
+        &[
+            "deployment",
+            "render",
+            definition.to_str().unwrap(),
+            "--env",
+            "local",
+            "--target",
+            "GREENGRASS",
+        ],
+        d.path(),
+    );
+    assert_eq!(code(&o), 0, "the lock supplies the name: {}", stderr(&o));
+    let rendered =
+        std::fs::read_to_string(d.path().join("render/greengrass/box-01/deployment.json"))
+            .expect("the per-thing deployment is rendered");
+    assert!(
+        rendered.contains("com.mbreissi.edgecommons.TelemetryProcessor"),
+        "the name came from the lock, not the definition: {rendered}"
+    );
+}
+
+#[test]
+fn validate_says_out_loud_what_the_lock_does_not_cover() {
+    let d = tempfile::tempdir().unwrap();
+    let definition = write_pinned_workspace(d.path());
+    let catalog = write_catalog(d.path());
+
+    // No lock at all: pinned versions, nothing resolved. A warning, not a failure.
+    let o = run(
+        &["deployment", "validate", definition.to_str().unwrap()],
+        d.path(),
+    );
+    assert_eq!(code(&o), 0, "a missing lock does not fail validation");
+    assert!(stdout(&o).contains("EC5007"), "{}", stdout(&o));
+
+    run(
+        &[
+            "deployment",
+            "lock",
+            definition.to_str().unwrap(),
+            "--source",
+            catalog.to_str().unwrap(),
+        ],
+        d.path(),
+    );
+    let o = run(
+        &["deployment", "validate", definition.to_str().unwrap()],
+        d.path(),
+    );
+    assert_eq!(code(&o), 0);
+    let out = stdout(&o);
+    // The component publishes no config schema, so its own config is validated by nothing —
+    // and the tool states that limit instead of implying coverage.
+    assert!(out.contains("EC5006"), "{out}");
+    assert!(out.contains("EC4006"), "{out}");
+}
+
+#[test]
+fn a_locked_schema_rejects_config_the_pinned_version_cannot_accept() {
+    let d = tempfile::tempdir().unwrap();
+    let definition = write_pinned_workspace(d.path());
+    // Hand-write the lock as RM-013 will publish it: the pinned version's own config schema.
+    std::fs::write(
+        d.path().join("site.lock"),
+        r#"{
+  "lockVersion": 1,
+  "definition": "site.yaml",
+  "components": [
+    {
+      "component": "telemetry-processor",
+      "version": "0.3.0",
+      "digest": "sha256:deadbeef",
+      "greengrassName": "com.mbreissi.edgecommons.TelemetryProcessor",
+      "configSchema": {
+        "type": "object",
+        "properties": { "pipeline": { "type": "object" } },
+        "additionalProperties": false
+      }
+    }
+  ]
+}
+"#,
+    )
+    .unwrap();
+    // A key that only exists in a later version.
+    std::fs::create_dir_all(d.path().join("layers/components")).unwrap();
+    std::fs::write(
+        d.path().join("layers/components/telemetry-processor.json"),
+        r#"{ "component": { "global": { "window": "5m" } } }"#,
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(&definition).unwrap().replace(
+        "        launch: { order: 30 }",
+        "        layer: layers/components/telemetry-processor.json\n        launch: { order: 30 }",
+    );
+    std::fs::write(&definition, text).unwrap();
+
+    let o = run(
+        &["deployment", "validate", definition.to_str().unwrap()],
+        d.path(),
+    );
+    assert_eq!(
+        code(&o),
+        1,
+        "an incompatible key is an error: {}",
+        stdout(&o)
+    );
+    let out = stdout(&o);
+    assert!(out.contains("EC5005"), "{out}");
+    assert!(
+        out.contains("window") && out.contains("0.3.0"),
+        "the offending key and the version it was checked against are both named: {out}"
+    );
+}
+
+#[test]
+fn an_unreadable_lock_is_an_error_not_a_silent_miss() {
+    let d = tempfile::tempdir().unwrap();
+    let definition = write_pinned_workspace(d.path());
+    std::fs::write(d.path().join("site.lock"), "{ not json").unwrap();
+    let o = run(
+        &["deployment", "validate", definition.to_str().unwrap()],
+        d.path(),
+    );
+    assert_eq!(code(&o), 2, "a corrupt lock must not be ignored");
+    assert!(stderr(&o).contains("lock"), "{}", stderr(&o));
 }
