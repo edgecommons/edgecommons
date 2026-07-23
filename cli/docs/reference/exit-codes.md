@@ -98,11 +98,14 @@ Packaging mistakes that otherwise surface only at deploy time.
 | `EC5005` | The effective config is rejected by the config schema published by the pinned component version |
 | `EC5006` | The pinned version publishes no config schema, so its own config is validated by nothing |
 | `EC5007` | Component versions are pinned but no lock is committed, so nothing has been resolved |
+| `EC5008` | A pinned version publishes no instance schema, so `component.instances[]` is validated by nothing |
 
-`EC5005`, `EC5006`, and `EC5007` are the compatibility guard. A component's own config lives under
-`component.global`, which the canonical schema leaves open, so it is validated by whatever schema the
-pinned version publishes — and by nothing at all when it publishes none. `EC5005` names the offending
-key and the version that rejected it; `EC5006` and `EC5007` are warnings that state what was *not*
+`EC5005`–`EC5008` are the compatibility guard. A component's own config lives under
+`component.global` (validated against the config schema's root) and `component.instances[]` (each
+entry validated against `#/$defs/instance`) — both of which the canonical schema leaves open, so they
+are validated by whatever schema the pinned version publishes, and by nothing at all when it publishes
+none. `EC5005` names the offending key and the version that rejected it; `EC5006` (no schema),
+`EC5007` (no lock), and `EC5008` (schema but no instance shape) are warnings that state what was *not*
 checked, so a clean run never implies coverage it does not have.
 
 `EC5004` is a warning. Diverging a node's thing name from its node key is legal, but the runtime's

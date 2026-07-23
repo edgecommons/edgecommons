@@ -247,6 +247,22 @@ coverage instead of implying validation it did not perform.
 A lock that is present but unreadable, or written by a newer format version, is a usage error. It is
 never silently ignored: the facts the definition is relying on it for would go missing.
 
+### What the config schema validates
+
+A component's own configuration lives in two places, and they are **different shapes** — not one
+shape with overrides:
+
+- `component.global` is validated against the **root** of the locked config schema.
+- each entry of `component.instances[]` is validated against **`#/$defs/instance`** in that same
+  schema.
+
+A component names its instance shape in its own terms — `device`, `route`, `camera` — and aliases it
+to `instance` with a one-line `$ref`, so the two never have to be merged into one document (they
+cannot be: both sides are closed, and they share subschemas). A pinned version that declares no
+`#/$defs/instance` while the definition supplies instances is reported with `EC5008` — a warning, so
+"unvalidated" is stated rather than a clean run implying coverage that does not exist. A component
+that takes no instances simply publishes none.
+
 **Targets.** The definition's `targetStandard.family` must match `--target`; a mismatch is a usage
 error rather than a silent retarget. The HOST and Greengrass renderers are built; Kubernetes is not
 yet, and says so (exit `5`).

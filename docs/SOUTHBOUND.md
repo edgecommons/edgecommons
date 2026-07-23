@@ -314,6 +314,14 @@ Keys that are protocol-agnostic (`connection`, `defaults`, `publish`, `writes`, 
 protocol-specific nests under `connection` or a signal spec's matcher. Security config is detailed in
 the OPC UA adapter's own doc (cert sources: `vault` / `file` / `pkcs11`).
 
+The canonical schema leaves `component.global` and `component.instances[]` open on purpose (above),
+so a component validates its *own* config with a `config.schema.json` at its repo root. The
+convention that lets tooling read it uniformly: **the schema root is `component.global`, and
+`#/$defs/instance` is one `component.instances[]` entry.** An adapter keeps its domain naming and
+aliases it — `"instance": { "$ref": "#/$defs/device" }` — so `component validate` and the deployment
+compatibility guard find the instance shape without knowing the adapter's vocabulary. `global` and an
+instance are validated separately; they are never merged into one document.
+
 > **Transition note.** `hierarchy` / `identity` / `topic.includeRoot` are top-level **schema**
 > sections (shipped — see DESIGN-uns §5 and the canonical `schema/edgecommons-config-schema.json`).
 > Until the Phase-5 adapter migration lands, the **shipping** reference adapters still accept their

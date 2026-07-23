@@ -14,7 +14,8 @@ use ec_deploy::{
 use ec_diag::{
     Diagnostic, EC4006_NO_RELEASE_INDEX, EC5001_DEPLOYMENT_SCHEMA, EC5002_DEPLOYMENT_SEMANTIC,
     EC5003_EFFECTIVE_CONFIG, EC5004_IDENTITY_DIVERGENCE, EC5005_CONFIG_INCOMPATIBLE_WITH_PIN,
-    EC5006_COMPONENT_CONFIG_UNVALIDATED, EC5007_NO_LOCK, Fatal, Report,
+    EC5006_COMPONENT_CONFIG_UNVALIDATED, EC5007_NO_LOCK, EC5008_INSTANCE_CONFIG_UNVALIDATED, Fatal,
+    Report,
 };
 
 use crate::cli::{Platform, Stream};
@@ -132,6 +133,7 @@ fn compatibility_stage(loaded: &LoadedWorkspace, report: &mut Report) {
         }
     }
 
+    let mut unvalidated_instances = std::collections::BTreeSet::new();
     for env in &loaded.workspace.definition.environments {
         let Ok(configs) = render::effective_configs(&loaded.workspace, &env.name) else {
             continue; // stage three already reported the render failure
@@ -170,8 +172,82 @@ fn compatibility_stage(loaded: &LoadedWorkspace, report: &mut Report) {
                     .with_pointer(format!("/component/global{}", error.instance_path)),
                 );
             }
+
+            // Instances are a *different shape*, not `global` with overrides: no library merges
+            // the two, and components combine them by per-key fallback on a small `defaults`
+            // block. Validating a merged document would fail both sides' `additionalProperties`.
+            let instances = config
+                .pointer("/component/instances")
+                .and_then(serde_json::Value::as_array);
+            let Some(instances) = instances.filter(|i| !i.is_empty()) else {
+                continue;
+            };
+            let Some(sub) = instance_schema(schema) else {
+                unvalidated_instances.insert((component.clone(), locked.version.clone()));
+                continue;
+            };
+            let Ok(validator) = jsonschema::validator_for(&sub) else {
+                unvalidated_instances.insert((component.clone(), locked.version.clone()));
+                continue;
+            };
+            for (i, instance) in instances.iter().enumerate() {
+                // Name the instance by its `id` rather than its index: `archive` locates the
+                // problem, `instances[1]` makes the reader go count.
+                let id = instance
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .map_or_else(|| format!("instances[{i}]"), str::to_string);
+                for error in validator.iter_errors(instance) {
+                    report.push(
+                        Diagnostic::error(
+                            EC5005_CONFIG_INCOMPATIBLE_WITH_PIN,
+                            format!(
+                                "{node}/{component}:{id}@{}: {error} is not accepted by \
+                                 {component} {}",
+                                env.name, locked.version
+                            ),
+                        )
+                        .with_pointer(format!("/component/instances/{i}{}", error.instance_path)),
+                    );
+                }
+            }
         }
     }
+
+    // Said once per pinned version, for the same reason as EC5006 above.
+    for (component, version) in unvalidated_instances {
+        report.push(
+            Diagnostic::warning(
+                EC5008_INSTANCE_CONFIG_UNVALIDATED,
+                format!(
+                    "{component} {version} declares no instance schema, so the per-instance \
+                     config in this definition is validated by nothing"
+                ),
+            )
+            .with_help(
+                "a component publishes its instance shape as `#/$defs/instance` — an alias onto \
+                 its own naming (`\"instance\": {{ \"$ref\": \"#/$defs/device\" }}`) is enough",
+            ),
+        );
+    }
+}
+
+/// The instance subschema a component publishes, by convention at `#/$defs/instance`.
+///
+/// A component names its instance shape in its own domain terms — `device`, `route`, `camera` —
+/// and aliases it to `instance`. The whole `$defs` map travels with the extracted subschema
+/// because that alias *is* a `$ref`, and because subschemas are shared across the two sides:
+/// `modbus-adapter` points both `component.global.defaults` and `instances[].defaults` at one
+/// `#/$defs/defaults`. Splitting the document would break exactly that.
+fn instance_schema(schema: &serde_json::Value) -> Option<serde_json::Value> {
+    schema.pointer("/$defs/instance")?;
+    let mut wrapper = serde_json::Map::new();
+    if let Some(dialect) = schema.get("$schema") {
+        wrapper.insert("$schema".into(), dialect.clone());
+    }
+    wrapper.insert("$defs".into(), schema.get("$defs")?.clone());
+    wrapper.insert("$ref".into(), serde_json::json!("#/$defs/instance"));
+    Some(serde_json::Value::Object(wrapper))
 }
 
 pub fn validate(definition: &Path) -> Result<Report, Fatal> {

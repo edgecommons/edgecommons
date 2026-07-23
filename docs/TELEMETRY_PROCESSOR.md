@@ -120,9 +120,10 @@ small.
 ## 4. Route model & config
 
 The processor enumerates routes via the existing `Config::instance_ids()` / `instance(id)` accessors;
-**each `component.instances[]` entry is one route**, and `component.global` holds the cross-route
-defaults each route overlays (`global ⊕ instance`). Because both subtrees are permissive, routes need
-**no** canonical-schema change (`docs/SOUTHBOUND.md` §4).
+**each `component.instances[]` entry is one route**, and `component.global.defaults` holds the
+cross-route defaults a route falls back to. Because both subtrees are permissive, routes need **no**
+canonical-schema change (`docs/SOUTHBOUND.md` §4); the component publishes their shapes itself, in
+`config.schema.json` — the root is `component.global`, and `#/$defs/instance` is the route.
 
 Each route (instance) entry:
 
@@ -138,17 +139,21 @@ Each route (instance) entry:
 
 Topic filters MUST support MQTT `+`/`#` wildcards and MUST be resolved through the existing
 `edgecommons::config::template::resolve` so an operator can write
-`southbound/{site}/{ComponentName}/+/{signal}` and have it expand against the active config. A route MAY
-omit any field present in `component.global`; the resolved route is `global ⊕ instance` with the
-instance winning per key.
+`southbound/{site}/{ComponentName}/+/{signal}` and have it expand against the active config.
+
+Global and route are **not** merged into one document. A route falls back to
+`component.global.defaults` per key, for exactly four keys — `key`, `target`, `scriptsDir`, and
+`scriptEngine` (`route_build.rs::resolve_global_wiring`). Every other route field, `pipeline`,
+`publish`, and `maxQueue` among them, is route-local and has no global counterpart.
 
 ```jsonc
 {
   "component": {
-    "global": {                                  // cross-route defaults (global ⊕ instance)
-      "maxQueue": 10000,
-      "key": "body.signal.id",
-      "publish": { "topic": "telemetry/{site}/{ComponentName}/{signal}" }
+    "global": {
+      "defaults": {                              // per-key fallback for routes that omit these
+        "key": "body.signal.id",
+        "target": "local"
+      }
     },
     "instances": [
       {
