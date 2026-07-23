@@ -8,6 +8,7 @@ node_modules/
 
 # generated at build time by scripts/sync-component-docs.mjs (pulled from component repos)
 src/content/docs/components/
+src/content/docs/tools/
 .component-src/
 
 # logs

@@ -2,9 +2,14 @@
 /**
  * sync-component-docs.mjs
  *
- * Aggregates each registered component's `docs/` into the Starlight site at
- * `src/content/docs/components/<name>/`, so the one EdgeCommons docs site carries both the
- * `edgecommons` library docs and every component's user/deployer guide.
+ * Aggregates each registry entry's `docs/` into the Starlight site, so the one EdgeCommons docs
+ * site carries the `edgecommons` library docs alongside every component's and tool's guide.
+ *
+ * Entries are split by `category`: deployable edge **components** (adapter/processor/sink/bridge/
+ * service/console) land under `src/content/docs/components/<name>/`, while **tools** - operator and
+ * developer CLIs built on the library, not deployed to an edge device - land under
+ * `src/content/docs/tools/<name>/`. They are different things to a reader: you deploy a component
+ * to a gateway, you run a tool from your shell.
  *
  * - Component list comes from the LIVE registry (single source of truth, also read by the org
  *   profile): a shallow `git clone` of edgecommons/registry at build time. Override the source
@@ -29,6 +34,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB = join(__dirname, "..");
 const REPO = join(WEB, "..");
 const OUT = join(WEB, "src/content/docs/components");
+const OUT_TOOLS = join(WEB, "src/content/docs/tools");
+// A registry `category` of `tool` is an operator/developer CLI, not a deployable component.
+const isTool = (c) => c.category === "tool";
+const sectionOf = (c) => (isTool(c) ? "tools" : "components");
 const TMP = join(WEB, ".component-src");
 const TOKEN = process.env.EDGECOMMONS_READ_TOKEN || "";
 const LOCAL_MAP = JSON.parse(process.env.COMPONENT_DOCS_MAP || "{}");
@@ -78,7 +87,7 @@ function normalizeSegs(segs) {
 // Resolve one relative doc link to a site route, resolving it relative to the source file's
 // location within docs/ (so within-reference/ siblings flatten to reference-<x>, and links that
 // escape docs/ become GitHub repo URLs). Returns null to leave the link unchanged.
-function resolveDocLink(target, { name, repo, fileDir }) {
+function resolveDocLink(target, { name, repo, fileDir, section = "components" }) {
   const h = target.indexOf("#");
   const anchor = h >= 0 ? target.slice(h) : "";
   const path = h >= 0 ? target.slice(0, h) : target;
@@ -90,15 +99,15 @@ function resolveDocLink(target, { name, repo, fileDir }) {
   const last = segs.length ? segs[segs.length - 1] : "";
   if (!/\.mdx?$/i.test(last)) {
     // a directory link (reference/, the docs root, …)
-    if (segs.includes("reference")) return `/components/${name}/reference-configuration/${anchor}`;
-    if (segs.length === 0) return `/components/${name}/${anchor}`;
+    if (segs.includes("reference")) return `/${section}/${name}/reference-configuration/${anchor}`;
+    if (segs.length === 0) return `/${section}/${name}/${anchor}`;
     return null; // unknown non-.md relative link — leave as-is
   }
   const baseName = last.replace(/\.mdx?$/i, "");
-  if (/^(readme|index)$/i.test(baseName)) return `/components/${name}/${anchor}`;
-  if (segs.includes("reference")) return `/components/${name}/reference-${baseName}/${anchor}`;
-  if (segs.includes("deployment")) return `/components/${name}/deployment-${baseName}/${anchor}`;
-  return `/components/${name}/${baseName}/${anchor}`;
+  if (/^(readme|index)$/i.test(baseName)) return `/${section}/${name}/${anchor}`;
+  if (segs.includes("reference")) return `/${section}/${name}/reference-${baseName}/${anchor}`;
+  if (segs.includes("deployment")) return `/${section}/${name}/deployment-${baseName}/${anchor}`;
+  return `/${section}/${name}/${baseName}/${anchor}`;
 }
 
 function rewriteLinks(body, opts) {
@@ -109,12 +118,12 @@ function rewriteLinks(body, opts) {
   });
 }
 
-function toStarlight(raw, { title, description, order, name, repo, fileDir, isMdx }) {
+function toStarlight(raw, { title, description, order, name, repo, fileDir, section, isMdx }) {
   let body = raw;
   const h1 = raw.match(/^\s*#\s+(.+?)\s*$/m);
   if (!title) title = h1 ? h1[1].replace(/`/g, "") : "Untitled";
   if (h1) body = raw.slice(0, h1.index) + raw.slice(h1.index + h1[0].length).replace(/^\n+/, "\n");
-  body = rewriteLinks(body, { name, repo, fileDir }).replace(/^\s+/, "");
+  body = rewriteLinks(body, { name, repo, fileDir, section }).replace(/^\s+/, "");
   let fm = `---\ntitle: ${jsonStr(title)}\n`;
   if (description) fm += `description: ${jsonStr(description)}\n`;
   fm += `sidebar:\n  order: ${order}\n---\n\n`;
@@ -156,7 +165,8 @@ function obtainDocs(c) {
 function syncComponent(c) {
   const docsDir = obtainDocs(c);
   if (!docsDir) return false;
-  const dest = join(OUT, c.name);
+  const section = sectionOf(c);
+  const dest = join(isTool(c) ? OUT_TOOLS : OUT, c.name);
   mkdirSync(dest, { recursive: true });
   for (const entry of readdirSync(docsDir)) {
     const src = join(docsDir, entry);
@@ -173,6 +183,7 @@ function syncComponent(c) {
           name: c.name,
           repo: c.repo,
           fileDir: entry,
+          section,
           isMdx: ext === ".mdx",
         });
         writeFileSync(join(dest, `${entry}-${name}${ext}`), md);
@@ -190,6 +201,7 @@ function syncComponent(c) {
       name: c.name,
       repo: c.repo,
       fileDir: "",
+      section,
       isMdx: ext === ".mdx",
     });
     writeFileSync(join(dest, `${slug}${ext}`), md);
@@ -216,8 +228,12 @@ sidebar:
 ---
 
 The EdgeCommons ecosystem ships ready-to-deploy components built on the \`edgecommons\` library —
-protocol **adapters**, edge **processors**, and northbound **sinks**. Each component's operator /
-integrator guide lives below; scaffold your own with \`edgecommons create-component\`.
+protocol **adapters**, edge **processors**, northbound **sinks**, **bridges**, **services**, and
+**consoles**. Each runs on an edge device under Greengrass, Kubernetes, or a plain host; its
+operator / integrator guide lives below. Scaffold your own with \`edgecommons component new\`.
+
+Command-line **tools** that you run from a shell rather than deploy to a device are documented
+separately, under [Tools](/tools/).
 
 | Component | Language | Protocol / Category | Platforms |
 |-----------|----------|---------------------|-----------|
@@ -227,10 +243,39 @@ ${rows || "| _none yet_ | | | |"}
   writeFileSync(join(OUT, "index.md"), md);
 }
 
+function writeToolsLanding(synced) {
+  const rows = synced
+    .map((c) => `| [${c.name}](/tools/${c.name}/) | ${c.language || "—"} | ${c.description || "—"} |`)
+    .join("\n");
+  const md = `---
+title: Tools
+description: Command-line tools for operating and developing against an EdgeCommons system.
+sidebar:
+  order: 0
+---
+
+EdgeCommons tools are command-line programs you run from your own shell — to operate, inspect, or
+develop against a running system. They are built on the same \`edgecommons\` library as the
+components, so what a tool writes is exactly what a component reads, but **a tool is not deployed
+to an edge device**.
+
+For the deployable pieces of an edge solution — adapters, processors, sinks, bridges, services, and
+consoles — see [Components](/components/).
+
+| Tool | Language | What it does |
+|------|----------|--------------|
+${rows || "| _none yet_ | | |"}
+`;
+  mkdirSync(OUT_TOOLS, { recursive: true });
+  writeFileSync(join(OUT_TOOLS, "index.md"), md);
+}
+
 // --- main ---
 const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
 rmSync(OUT, { recursive: true, force: true });
+rmSync(OUT_TOOLS, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
+mkdirSync(OUT_TOOLS, { recursive: true });
 const synced = [];
 for (const c of registry.components || []) {
   if (syncComponent(c)) {
@@ -240,5 +285,10 @@ for (const c of registry.components || []) {
     console.warn(`- skipped ${c.name} (docs unavailable)`);
   }
 }
-writeComponentsLanding(synced);
-console.log(`component docs sync complete: ${synced.length}/${(registry.components || []).length} component(s).`);
+const components = synced.filter((c) => !isTool(c));
+const tools = synced.filter(isTool);
+writeComponentsLanding(components);
+writeToolsLanding(tools);
+console.log(
+  `docs sync complete: ${components.length} component(s), ${tools.length} tool(s) of ${(registry.components || []).length} registry entries.`,
+);

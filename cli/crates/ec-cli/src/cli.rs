@@ -450,6 +450,8 @@ pub enum Category {
     Bridge,
     Console,
     Service,
+    /// An operator/developer CLI built on the library - run from a shell, not deployed to a device.
+    Tool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
