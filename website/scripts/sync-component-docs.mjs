@@ -137,9 +137,16 @@ function toStarlight(raw, { title, description, order, name, repo, fileDir, sect
   return fm + body;
 }
 
+// Where an entry's docs live inside its repo. Usually `docs/` at the root; an entry shipping from
+// a monorepo sets `docsPath` — the `edgecommons` CLI is at `cli/docs`, because the library repo's
+// root `docs/` holds the library's own internal design docs, not the CLI's user guide.
+const docsPathOf = (c) => (c.docsPath || "docs").replace(/^\/+|\/+$/g, "");
+
 function obtainDocs(c) {
+  const rel = docsPathOf(c);
   if (LOCAL_MAP[c.name]) {
     const p = LOCAL_MAP[c.name];
+    if (existsSync(join(p, rel))) return join(p, rel);
     if (existsSync(join(p, "docs"))) return join(p, "docs");
     if (existsSync(p)) return p;
     console.warn(`! local path for ${c.name} not found: ${p}`);
@@ -154,12 +161,12 @@ function obtainDocs(c) {
   try {
     // execFileSync (no shell): repo/token are passed as args, not interpolated into a shell string.
     execFileSync("git", ["clone", "--depth", "1", "--filter=blob:none", "--sparse", url, dst], { stdio: "pipe" });
-    execFileSync("git", ["-C", dst, "sparse-checkout", "set", "docs"], { stdio: "pipe" });
+    execFileSync("git", ["-C", dst, "sparse-checkout", "set", rel], { stdio: "pipe" });
   } catch (e) {
     console.warn(`! could not clone ${c.repo} (token set: ${Boolean(TOKEN)}): ${String(e.message).split("\n")[0]}`);
     return null;
   }
-  return existsSync(join(dst, "docs")) ? join(dst, "docs") : null;
+  return existsSync(join(dst, rel)) ? join(dst, rel) : null;
 }
 
 function syncComponent(c) {
