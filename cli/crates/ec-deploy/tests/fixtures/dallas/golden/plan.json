@@ -1,0 +1,144 @@
+{
+  "entries": [
+    {
+      "node": "dallas-console",
+      "component": "edge-console",
+      "consequence": "artifact",
+      "summary": "stage artifact source-form into the HOST bundle",
+      "restartsComponent": true
+    },
+    {
+      "node": "dallas-console",
+      "component": "edge-console",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIG_COMPONENT",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "opcua-adapter",
+      "consequence": "artifact",
+      "summary": "stage artifact source-form into the HOST bundle",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "opcua-adapter",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIG_COMPONENT",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "modbus-adapter",
+      "consequence": "artifact",
+      "summary": "stage artifact source-form into the HOST bundle",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "modbus-adapter",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIG_COMPONENT",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "telemetry-processor",
+      "consequence": "artifact",
+      "summary": "stage artifact source-form into the HOST bundle",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "telemetry-processor",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIG_COMPONENT",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "file-replicator",
+      "consequence": "artifact",
+      "summary": "stage artifact source-form into the HOST bundle",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "file-replicator",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIG_COMPONENT",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "uns-bridge",
+      "consequence": "artifact",
+      "summary": "stage artifact source-form into the HOST bundle",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "uns-bridge",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIG_COMPONENT",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "opcua-adapter",
+      "consequence": "artifact",
+      "summary": "stage artifact source-form into the HOST bundle",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "opcua-adapter",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIG_COMPONENT",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "modbus-adapter",
+      "consequence": "artifact",
+      "summary": "stage artifact source-form into the HOST bundle",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "modbus-adapter",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIG_COMPONENT",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "telemetry-processor",
+      "consequence": "artifact",
+      "summary": "stage artifact source-form into the HOST bundle",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "telemetry-processor",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIG_COMPONENT",
+      "restartsComponent": false
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "uns-bridge",
+      "consequence": "artifact",
+      "summary": "stage artifact source-form into the HOST bundle",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "uns-bridge",
+      "consequence": "config",
+      "summary": "deliver effective config via CONFIG_COMPONENT",
+      "restartsComponent": false
+    }
+  ]
+}
