@@ -1442,3 +1442,111 @@ nodes:
         "semantic rule diagnostics carry EC5002: {out}"
     );
 }
+
+#[test]
+fn deployment_release_writes_a_two_stream_lock() {
+    let d = tempfile::tempdir().unwrap();
+    let definition = write_minimal_workspace(d.path());
+    let o = run(
+        &[
+            "deployment",
+            "release",
+            definition.to_str().unwrap(),
+            "--stream",
+            "config",
+        ],
+        d.path(),
+    );
+    assert_eq!(code(&o), 0, "release must succeed: {}", stderr(&o));
+    // The release dir is releases/config-<commit-or-unknown>/.
+    let releases = d.path().join("releases");
+    let sub = std::fs::read_dir(&releases)
+        .unwrap()
+        .next()
+        .expect("a release dir was written")
+        .unwrap()
+        .path();
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(sub.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["promotedStream"], "config");
+    assert!(manifest["streams"]["artifact"].as_array().unwrap().len() >= 1);
+    assert!(sub.join("evidence.json").exists());
+    assert!(sub.join("rendered/box-01/supervisord.conf").exists());
+}
+
+#[test]
+fn deployment_render_to_the_wrong_target_is_a_usage_error() {
+    let d = tempfile::tempdir().unwrap();
+    let definition = write_minimal_workspace(d.path()); // family HOST
+    let o = run(
+        &[
+            "deployment",
+            "render",
+            definition.to_str().unwrap(),
+            "--env",
+            "local",
+            "--target",
+            "GREENGRASS",
+        ],
+        d.path(),
+    );
+    assert_eq!(
+        code(&o),
+        2,
+        "target mismatch is a usage error: {}",
+        stderr(&o)
+    );
+}
+
+#[test]
+fn deployment_render_to_an_unbuilt_target_says_not_implemented() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(d.path().join("bindings")).unwrap();
+    std::fs::write(d.path().join("bindings/local.json"), "{}\n").unwrap();
+    let definition = d.path().join("definition.yaml");
+    std::fs::write(
+        &definition,
+        r#"apiVersion: edgecommons.io/v1alpha1
+kind: DeploymentDefinition
+metadata:
+  name: k8s
+hierarchy:
+  levels: [site, device]
+  scopes:
+    - id: site/lab
+      parent: null
+targetStandard:
+  family: KUBERNETES
+environments:
+  - name: local
+    bindings: bindings/local.json
+nodes:
+  - key: box-01
+    scope: site/lab
+    components:
+      - name: telemetry-processor
+        artifact: { version: "1.0.0" }
+        configSource: CONFIGMAP
+"#,
+    )
+    .unwrap();
+    let o = run(
+        &[
+            "deployment",
+            "render",
+            definition.to_str().unwrap(),
+            "--env",
+            "local",
+            "--target",
+            "KUBERNETES",
+        ],
+        d.path(),
+    );
+    assert_eq!(
+        code(&o),
+        5,
+        "unbuilt renderer is not-implemented: {}",
+        stderr(&o)
+    );
+    assert!(stderr(&o).contains("not available"), "{}", stderr(&o));
+}
