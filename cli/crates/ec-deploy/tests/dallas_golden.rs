@@ -1,11 +1,14 @@
 //! The Dallas golden test: the HOST renderer's byte-for-byte acceptance gate (DESIGN-cli
-//! §8.3(3)). The fixture under `tests/fixtures/dallas` is the Dallas bottling site — the same
-//! definition that generates the adopted `bottling-company-test/sites/dallas-site` — and
-//! `golden/` is its committed rendered output. Any change to the renderer, the model, or the
-//! fixture that alters a single byte fails here.
+//! §8.3(3)). Any change to the renderer, the model, or the fixture that alters a single byte
+//! fails here.
 //!
-//! This is the same proof the Deployment Studio repo carried while the kernel lived there;
-//! it moved into core with the kernel so the tool and its golden fixture live together.
+//! The fixture under `tests/fixtures/dallas` is a **frozen snapshot** of the Dallas bottling
+//! site's definition. The *canonical* definition lives with the site it deploys, in
+//! `bottling-company-test/sites/dallas-site` (its own `config-drift-gate` renders it and diffs
+//! against the checked-in config sources). This copy is the kernel's regression oracle: it must
+//! render identically, so if the two ever diverge, one of them is wrong. When the site
+//! definition changes intentionally, refresh this snapshot in the same change. See
+//! `tests/fixtures/dallas/README.md`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
