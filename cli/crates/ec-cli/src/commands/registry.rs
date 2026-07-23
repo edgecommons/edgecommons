@@ -219,6 +219,7 @@ fn matches_category(c: &Value, want: Option<Category>) -> bool {
         Category::Bridge => "bridge",
         Category::Console => "console",
         Category::Service => "service",
+        Category::Tool => "tool",
     })
 }
 

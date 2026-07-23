@@ -40,6 +40,7 @@ export default defineConfig({
 				{ label: 'Getting Started', items: [{ autogenerate: { directory: 'start' } }] },
 				{ label: 'Guides', items: [{ autogenerate: { directory: 'guides' } }] },
 				{ label: 'Components', items: [{ autogenerate: { directory: 'components' } }] },
+				{ label: 'Tools', items: [{ autogenerate: { directory: 'tools' } }] },
 				{ label: 'API Reference', items: [{ autogenerate: { directory: 'reference' } }] },
 				{ label: 'Deployment', items: [{ autogenerate: { directory: 'deploy' } }] },
 			],
