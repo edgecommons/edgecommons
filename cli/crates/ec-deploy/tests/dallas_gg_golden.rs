@@ -172,11 +172,12 @@ fn every_node_gets_its_own_thing_targeted_deployment() {
 fn the_plan_records_per_node_artifact_and_config_consequences() {
     let ws = load();
     let output = render(&ws, "prod", Platform::Greengrass, "initial").unwrap();
-    // 5 component assignments across 2 nodes, each contributing an artifact and a config entry.
-    assert_eq!(output.plan.entries.len(), 10);
+    // 12 component assignments across the complete plant's 4 things (1 console + 5 + 4 + 2), each
+    // contributing an artifact and a config entry.
+    assert_eq!(output.plan.entries.len(), 24);
     // GG_CONFIG does not hot-reload, so every config change restarts its component (§8.5.4).
     assert!(output.plan.entries.iter().all(|e| e.restarts_component));
-    assert_eq!(output.plan.restarts().len(), 10);
+    assert_eq!(output.plan.restarts().len(), 24);
 }
 
 fn walk(root: &Path) -> Vec<PathBuf> {

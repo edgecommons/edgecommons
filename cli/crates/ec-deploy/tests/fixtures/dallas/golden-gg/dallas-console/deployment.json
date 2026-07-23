@@ -1,0 +1,12 @@
+{
+  "targetArn": "arn:aws:iot:us-east-1:111122223333:thing/dallas-console",
+  "deploymentName": "dallas-bottling-dallas-console-initial",
+  "components": {
+    "com.mbreissi.edgecommons.EdgeConsole": {
+      "componentVersion": "1.0.0",
+      "configurationUpdate": {
+        "merge": "{\"ComponentConfig\":{\"hierarchy\":{\"levels\":[\"enterprise\",\"site\",\"device\"]},\"identity\":{\"enterprise\":\"bottles-r-us\",\"site\":\"dallas\"},\"tags\":{\"appId\":\"bottling-plant\",\"scenario\":\"bottling-company-test\"},\"logging\":{\"level\":\"INFO\",\"publish\":{\"enabled\":true,\"destination\":\"local\",\"minLevel\":\"INFO\"}},\"heartbeat\":{\"enabled\":true,\"intervalSecs\":5,\"measures\":{\"cpu\":true,\"memory\":true,\"threads\":true,\"files\":true,\"fds\":true}},\"metricEmission\":{\"target\":\"messaging\"},\"messaging\":{\"local\":{\"host\":\"localhost\",\"port\":1883,\"clientId\":\"edge-console\"},\"requestTimeoutSeconds\":30},\"component\":{\"token\":\"edge-console\",\"global\":{\"console\":{\"ws\":{\"port\":8443,\"bindAddress\":\"0.0.0.0\",\"heartbeatIntervalMs\":15000,\"webRoot\":\"/app/edge-console/ui/dist\"},\"apps\":[{\"id\":\"dallas-line-1\",\"webRoot\":\"apps/dallas-operations\",\"allowedOrigins\":[\"http://127.0.0.1:8080\"],\"allowedRoles\":[\"operator\"],\"capabilities\":[\"signals\",\"alarms\"]},{\"id\":\"dallas-line-2\",\"webRoot\":\"apps/dallas-operations\",\"allowedOrigins\":[\"http://127.0.0.1:8080\"],\"allowedRoles\":[\"operator\"],\"capabilities\":[\"signals\",\"alarms\"]},{\"id\":\"tv-board\",\"webRoot\":\"apps/tv-board\",\"allowedOrigins\":[\"http://127.0.0.1:8080\",\"http://192.168.1.224:8080\",\"file://\",\"null\",\"https://google-tv.edgecommons.local\"],\"allowedRoles\":[\"operator\"],\"capabilities\":[\"signals\",\"alarms\"]}],\"staleness\":{\"warnMultiplier\":2,\"staleMultiplier\":2.5,\"offlineMultiplier\":5,\"defaultIntervalSecs\":5,\"sweepIntervalMs\":1000},\"cache\":{\"maxChannelsPerComponent\":1024},\"runtime\":{\"workerThreads\":4,\"mallocArenaMax\":2,\"eventBufferCapacity\":512}}},\"instances\":[{\"id\":\"main\"}]}}}"
+      }
+    }
+  }
+}

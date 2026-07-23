@@ -7,6 +7,10 @@
   "external": {
     "kepware": {
       "endpoint": "opc.tcp://plc-gateway.dallas.internal:49320"
+    },
+    "hostModbus": {
+      "host": "modbus-gateway.dallas.internal",
+      "port": 502
     }
   }
 }

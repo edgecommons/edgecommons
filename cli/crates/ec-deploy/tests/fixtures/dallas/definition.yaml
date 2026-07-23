@@ -245,26 +245,41 @@ profiles:
             artifact: { source: { kind: sibling, repo: uns-bridge } }
             launch: { order: 28, waitFor: ["localhost:1883"], settleSeconds: 3, startSecs: 5, stopWaitSecs: 15 }
 
-  # ---- GREENGRASS: each node maps 1:1 onto a per-thing deployment; components take their config
-  # through GG_CONFIG. Version+digest pinned (a deployment references a published componentVersion).
+  # ---- GREENGRASS: the COMPLETE plant, each node mapping 1:1 onto a per-thing deployment; every
+  # component takes its config through GG_CONFIG (the native path — no config-component provider, no
+  # local broker, no sims: those are HOST-profile runtime scaffolding). Version+digest pinned, since a
+  # deployment references a published componentVersion. No `deploys` — the whole topology is deployed.
   greengrass:
     family: GREENGRASS
     environments:
       - name: prod
         protection: protected
         bindings: bindings/prod.json
-    deploys:
-      nodes: [gw-fill-01, gw-fill-02]
-      only:
-        gw-fill-01: [opcua-adapter, telemetry-processor, uns-bridge]
-        gw-fill-02: [telemetry-processor, uns-bridge]
     defaults:
       configSource: GG_CONFIG
     nodes:
+      dallas-console:
+        components:
+          edge-console:
+            artifact: { version: "1.0.0", digest: "sha256:c3d4e5f6a7b8", greengrassName: com.mbreissi.edgecommons.EdgeConsole }
       gw-fill-01:
         components:
           opcua-adapter:
             artifact: { version: "1.0.0", digest: "sha256:9f1c22aa5d3e", greengrassName: com.mbreissi.edgecommons.OpcUaAdapter }
+          modbus-adapter:
+            artifact: { version: "1.2.0", digest: "sha256:a1b2c3d4e5f6", greengrassName: com.mbreissi.edgecommons.ModbusAdapter }
+          telemetry-processor:
+            artifact: { version: "1.4.2", digest: "sha256:3ab07711cc90", greengrassName: com.mbreissi.edgecommons.TelemetryProcessor }
+          file-replicator:
+            artifact: { version: "1.0.0", digest: "sha256:b2c3d4e5f6a7", greengrassName: com.mbreissi.edgecommons.FileReplicator }
+          uns-bridge:
+            artifact: { version: "1.0.0", digest: "sha256:71d4e0b8af12", greengrassName: com.mbreissi.edgecommons.UnsBridge }
+      gw-pack-01:
+        components:
+          opcua-adapter:
+            artifact: { version: "1.0.0", digest: "sha256:9f1c22aa5d3e", greengrassName: com.mbreissi.edgecommons.OpcUaAdapter }
+          modbus-adapter:
+            artifact: { version: "1.2.0", digest: "sha256:a1b2c3d4e5f6", greengrassName: com.mbreissi.edgecommons.ModbusAdapter }
           telemetry-processor:
             artifact: { version: "1.4.2", digest: "sha256:3ab07711cc90", greengrassName: com.mbreissi.edgecommons.TelemetryProcessor }
           uns-bridge:

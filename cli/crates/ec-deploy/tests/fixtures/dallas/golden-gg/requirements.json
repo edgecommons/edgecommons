@@ -2,6 +2,9 @@
   "definition": "dallas-bottling",
   "bindings": [
     "aws.accountId",
-    "aws.region"
+    "aws.region",
+    "external.hostModbus.host",
+    "external.hostModbus.port",
+    "external.kepware.endpoint"
   ]
 }
