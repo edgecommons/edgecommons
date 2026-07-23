@@ -4,31 +4,56 @@
   "title": "EdgeCommons DeploymentDefinition v1alpha1",
   "description": "The authored source of a deployment: hierarchy, scopes with config layers, nodes with placement and identity, per-node component assignments split into an artifact stream and a config stream. Compiles into platform-native artifacts (per-node ConfigComponent catalogs, rendered FILE configs, messaging files, supervisord bundles, Greengrass per-thing deployments, Kubernetes manifests). Semantic rules beyond JSON Schema's reach are listed in DEFINITION.md and enforced by the kernel validator.",
   "type": "object",
-  "required": ["apiVersion", "kind", "metadata", "hierarchy", "targetStandard", "environments", "nodes"],
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "hierarchy",
+    "targetStandard",
+    "environments",
+    "nodes"
+  ],
   "additionalProperties": false,
   "properties": {
-    "apiVersion": { "const": "edgecommons.io/v1alpha1" },
-    "kind": { "const": "DeploymentDefinition" },
+    "apiVersion": {
+      "const": "edgecommons.io/v1alpha1"
+    },
+    "kind": {
+      "const": "DeploymentDefinition"
+    },
     "metadata": {
       "type": "object",
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" },
-        "description": { "type": "string" }
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "description": {
+          "type": "string"
+        }
       }
     },
     "hierarchy": {
       "type": "object",
       "description": "The level vocabulary and the scope tree (the authoring form of ConfigComponent catalog nodes). The runtime device level is always last and is never a scope: nodes attach to scopes, and each node's catalog level list is derived as its scope chain's levels plus 'device'.",
-      "required": ["levels", "scopes"],
+      "required": [
+        "levels",
+        "scopes"
+      ],
       "additionalProperties": false,
       "properties": {
         "levels": {
           "type": "array",
           "minItems": 2,
           "uniqueItems": true,
-          "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
           "$comment": "Semantic rule S-1: the last entry MUST be 'device' (shipped hierarchical-config contract)."
         },
         "scopes": {
@@ -36,7 +61,10 @@
           "minItems": 1,
           "items": {
             "type": "object",
-            "required": ["id", "parent"],
+            "required": [
+              "id",
+              "parent"
+            ],
             "additionalProperties": false,
             "properties": {
               "id": {
@@ -45,7 +73,10 @@
                 "$comment": "Format '<level>/<value>'. S-2: <level> must appear in hierarchy.levels and must not be 'device'."
               },
               "parent": {
-                "type": ["string", "null"],
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "$comment": "S-3: must reference an existing scope id, or null for exactly the root(s) at the first level; chains must be acyclic and follow level order."
               },
               "layer": {
@@ -60,20 +91,35 @@
     "targetStandard": {
       "type": "object",
       "description": "One target family as the enterprise standard; exceptions are explicit, scoped, and reasoned. There are no per-node target arrays.",
-      "required": ["family"],
+      "required": [
+        "family"
+      ],
       "additionalProperties": false,
       "properties": {
-        "family": { "$ref": "#/$defs/targetFamily" },
+        "family": {
+          "$ref": "#/$defs/targetFamily"
+        },
         "exceptions": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["scope", "family", "reason"],
+            "required": [
+              "scope",
+              "family",
+              "reason"
+            ],
             "additionalProperties": false,
             "properties": {
-              "scope": { "type": "string", "description": "Scope id or node key the exception covers." },
-              "family": { "$ref": "#/$defs/targetFamily" },
-              "reason": { "type": "string" }
+              "scope": {
+                "type": "string",
+                "description": "Scope id or node key the exception covers."
+              },
+              "family": {
+                "$ref": "#/$defs/targetFamily"
+              },
+              "reason": {
+                "type": "string"
+              }
             }
           }
         }
@@ -84,11 +130,23 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["name", "bindings"],
+        "required": [
+          "name",
+          "bindings"
+        ],
         "additionalProperties": false,
         "properties": {
-          "name": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" },
-          "protection": { "enum": ["open", "protected"], "default": "open" },
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+          },
+          "protection": {
+            "enum": [
+              "open",
+              "protected"
+            ],
+            "default": "open"
+          },
           "bindings": {
             "type": "string",
             "description": "Repo-relative path to this environment's bindings.json - the answered half of the three-file IaC handshake. Layer files reference its values with '${binding:<dotted.path>}' tokens; a render fails while a referenced binding is missing (S-5)."
@@ -99,13 +157,28 @@
     "nodes": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/node" }
+      "items": {
+        "$ref": "#/$defs/node"
+      }
     }
   },
   "$defs": {
-    "targetFamily": { "enum": ["HOST", "GREENGRASS", "KUBERNETES"] },
+    "targetFamily": {
+      "enum": [
+        "HOST",
+        "GREENGRASS",
+        "KUBERNETES"
+      ]
+    },
     "configSource": {
-      "enum": ["CONFIG_COMPONENT", "FILE", "GG_CONFIG", "CONFIGMAP", "ENV", "SHADOW"],
+      "enum": [
+        "CONFIG_COMPONENT",
+        "FILE",
+        "GG_CONFIG",
+        "CONFIGMAP",
+        "ENV",
+        "SHADOW"
+      ],
       "$comment": "Selects the config delivery adapter AND the restart-impact classification (decision: config delivery is per provider; restart impact is a property of the config source)."
     },
     "launch": {
@@ -113,20 +186,53 @@
       "description": "Per-process orchestration intent on the node (HOST: supervisord program fields; other targets map or ignore per renderer).",
       "additionalProperties": false,
       "properties": {
-        "order": { "type": "integer", "minimum": 0, "description": "Start ordering (supervisord priority)." },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Start ordering (supervisord priority)."
+        },
         "waitFor": {
           "type": "array",
-          "items": { "type": "string", "pattern": "^[a-z0-9.-]+:[0-9]+$" },
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9.-]+:[0-9]+$"
+          },
           "description": "TCP readiness gates evaluated before exec (host:port)."
         },
-        "settleSeconds": { "type": "integer", "minimum": 0, "description": "Extra sleep before exec after gates pass." },
-        "exec": { "type": "string", "description": "Program invocation override (interpreter wrappers, install paths, diverging binary names). Default: the component name on PATH." },
-        "workingDir": { "type": "string" },
-        "env": { "type": "object", "additionalProperties": { "type": "string" } },
-        "user": { "type": "string", "description": "Process user (supervisord 'user=')." },
-        "startSecs": { "type": "integer", "minimum": 0 },
-        "startRetries": { "type": "integer", "minimum": 0 },
-        "stopWaitSecs": { "type": "integer", "minimum": 0 }
+        "settleSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Extra sleep before exec after gates pass."
+        },
+        "exec": {
+          "type": "string",
+          "description": "Program invocation override (interpreter wrappers, install paths, diverging binary names). Default: the component name on PATH."
+        },
+        "workingDir": {
+          "type": "string"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "user": {
+          "type": "string",
+          "description": "Process user (supervisord 'user=')."
+        },
+        "startSecs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "startRetries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stopWaitSecs": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "artifact": {
@@ -134,19 +240,45 @@
       "description": "The artifact stream: what binary/package runs. Independent of the config stream (two-stream decision); a release lock correlates a pinned artifact version+digest with a catalog version without fusing them.",
       "additionalProperties": false,
       "properties": {
-        "version": { "type": "string" },
-        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{6,64}$" },
+        "version": {
+          "type": "string"
+        },
+        "greengrassName": {
+          "type": "string",
+          "description": "The component's Greengrass component name (e.g. com.mbreissi.edgecommons.OpcUaAdapter). Not derivable from the token - 'opcua-adapter' publishes as 'OpcUaAdapter' - so it is authored. The registry's greengrassComponentName is the canonical source; `deployment lock` resolves it from there, after which this becomes optional."
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{6,64}$"
+        },
         "source": {
           "type": "object",
-          "required": ["kind"],
+          "required": [
+            "kind"
+          ],
           "additionalProperties": false,
           "properties": {
-            "kind": { "enum": ["sibling", "git", "s3", "registry"] },
-            "repo": { "type": "string", "description": "Sibling directory name, git URL, bucket/prefix, or image/package reference." },
-            "ref": { "type": "string", "description": "Git rev / registry tag when applicable." },
+            "kind": {
+              "enum": [
+                "sibling",
+                "git",
+                "s3",
+                "registry"
+              ]
+            },
+            "repo": {
+              "type": "string",
+              "description": "Sibling directory name, git URL, bucket/prefix, or image/package reference."
+            },
+            "ref": {
+              "type": "string",
+              "description": "Git rev / registry tag when applicable."
+            },
             "features": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Build feature flags (e.g. cargo features) when built from source."
             }
           }
@@ -158,20 +290,43 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "clientId": { "type": "string", "description": "Broker client id. Default convention: '<node-key>-<component>'." },
-        "type": { "type": "string", "description": "Connection type hint emitted into messaging.local (e.g. 'mqtt'), where the component's library expects it." },
-        "requestTimeoutSeconds": { "type": "integer", "minimum": 1 },
-        "file": { "type": "string", "description": "Messaging file name override (default '<component>-messaging.json')." }
+        "clientId": {
+          "type": "string",
+          "description": "Broker client id. Default convention: '<node-key>-<component>'."
+        },
+        "type": {
+          "type": "string",
+          "description": "Connection type hint emitted into messaging.local (e.g. 'mqtt'), where the component's library expects it."
+        },
+        "requestTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "file": {
+          "type": "string",
+          "description": "Messaging file name override (default '<component>-messaging.json')."
+        }
       }
     },
     "component": {
       "type": "object",
-      "required": ["name", "configSource"],
+      "required": [
+        "name",
+        "configSource"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "Component token (sanitized short name, e.g. 'telemetry-processor')." },
-        "artifact": { "$ref": "#/$defs/artifact" },
-        "configSource": { "$ref": "#/$defs/configSource" },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "Component token (sanitized short name, e.g. 'telemetry-processor')."
+        },
+        "artifact": {
+          "$ref": "#/$defs/artifact"
+        },
+        "configSource": {
+          "$ref": "#/$defs/configSource"
+        },
         "layer": {
           "type": "string",
           "description": "Repo-relative path to this component's config leaf (the catalog component body / the component slice of a rendered FILE config). Lineage above the leaf is DERIVED from the node's placement - never enumerated here (S-7)."
@@ -184,22 +339,39 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["from", "to"],
+            "required": [
+              "from",
+              "to"
+            ],
             "additionalProperties": false,
             "properties": {
-              "from": { "type": "string", "description": "Repo-relative source path or glob." },
-              "to": { "type": "string", "description": "Absolute staged path on the node." }
+              "from": {
+                "type": "string",
+                "description": "Repo-relative source path or glob."
+              },
+              "to": {
+                "type": "string",
+                "description": "Absolute staged path on the node."
+              }
             }
           },
           "description": "Non-config file assets staged with the component (scripts, models). Checksummed by the HOST bundle contract."
         },
-        "messaging": { "$ref": "#/$defs/messaging" },
-        "launch": { "$ref": "#/$defs/launch" }
+        "messaging": {
+          "$ref": "#/$defs/messaging"
+        },
+        "launch": {
+          "$ref": "#/$defs/launch"
+        }
       }
     },
     "node": {
       "type": "object",
-      "required": ["key", "scope", "components"],
+      "required": [
+        "key",
+        "scope",
+        "components"
+      ],
       "additionalProperties": false,
       "properties": {
         "key": {
@@ -221,53 +393,105 @@
             }
           }
         },
-        "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
         "localBroker": {
           "type": "object",
           "description": "The node-local message bus (HOST profile: one broker per node).",
           "additionalProperties": false,
           "properties": {
-            "kind": { "enum": ["emqx", "mosquitto", "external"] },
-            "port": { "type": "integer", "default": 1883 },
-            "env": { "type": "object", "additionalProperties": { "type": "string" } },
-            "launch": { "$ref": "#/$defs/launch" }
+            "kind": {
+              "enum": [
+                "emqx",
+                "mosquitto",
+                "external"
+              ]
+            },
+            "port": {
+              "type": "integer",
+              "default": 1883
+            },
+            "env": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "launch": {
+              "$ref": "#/$defs/launch"
+            }
           }
         },
         "configProvider": {
           "type": "object",
           "description": "The node's ConfigComponent instance, when components on this node use -c CONFIG_COMPONENT. Its own bootstrap config is a RENDERED effective config (scope-chain merge + this block) delivered via its bootstrap configSource; it never recursively depends on itself.",
-          "required": ["configSource", "layer", "catalogPath"],
+          "required": [
+            "configSource",
+            "layer",
+            "catalogPath"
+          ],
           "additionalProperties": false,
           "properties": {
-            "configSource": { "$ref": "#/$defs/configSource", "$comment": "Bootstrap source: FILE/ENV/GG_CONFIG/CONFIGMAP - S-9: not CONFIG_COMPONENT." },
-            "artifact": { "$ref": "#/$defs/artifact" },
+            "configSource": {
+              "$ref": "#/$defs/configSource",
+              "$comment": "Bootstrap source: FILE/ENV/GG_CONFIG/CONFIGMAP - S-9: not CONFIG_COMPONENT."
+            },
+            "artifact": {
+              "$ref": "#/$defs/artifact"
+            },
             "layer": {
               "type": "string",
               "description": "The provider's own config overlay (its tags/logging/component block, including component.global.configComponent with catalogSource). Merged over the scope chain to produce the rendered bootstrap document. May reference '${provider:catalog.path}', resolved from catalogPath."
             },
-            "catalogPath": { "type": "string", "description": "On-node path the rendered per-node catalog is staged to and served from; also stamps the catalog's provenance.uri." },
-            "versionBase": { "type": "string", "description": "Override for the catalog version prefix (default: the node's scope values joined by '-'). The config-release tag is appended at render time." },
-            "messaging": { "$ref": "#/$defs/messaging" },
-            "launch": { "$ref": "#/$defs/launch" }
+            "catalogPath": {
+              "type": "string",
+              "description": "On-node path the rendered per-node catalog is staged to and served from; also stamps the catalog's provenance.uri."
+            },
+            "versionBase": {
+              "type": "string",
+              "description": "Override for the catalog version prefix (default: the node's scope values joined by '-'). The config-release tag is appended at render time."
+            },
+            "messaging": {
+              "$ref": "#/$defs/messaging"
+            },
+            "launch": {
+              "$ref": "#/$defs/launch"
+            }
           }
         },
         "auxiliaries": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "command"],
+            "required": [
+              "name",
+              "command"
+            ],
             "additionalProperties": false,
             "properties": {
-              "name": { "type": "string" },
-              "command": { "type": "string", "description": "Declared controlled process (simulator, agent). The deck's negative-space rule: hooks are declared with review policy, never smuggled." },
-              "launch": { "$ref": "#/$defs/launch" }
+              "name": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string",
+                "description": "Declared controlled process (simulator, agent). The deck's negative-space rule: hooks are declared with review policy, never smuggled."
+              },
+              "launch": {
+                "$ref": "#/$defs/launch"
+              }
             }
           }
         },
         "components": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/component" }
+          "items": {
+            "$ref": "#/$defs/component"
+          }
         }
       }
     }
