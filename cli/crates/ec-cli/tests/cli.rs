@@ -1469,7 +1469,8 @@ fn deployment_release_writes_a_two_stream_lock() {
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(sub.join("manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest["promotedStream"], "config");
-    assert!(!manifest["streams"]["artifact"].as_array().unwrap().is_empty());
+    let artifacts = manifest["streams"]["artifact"].as_array().unwrap();
+    assert!(!artifacts.is_empty());
     assert!(sub.join("evidence.json").exists());
     assert!(sub.join("rendered/box-01/supervisord.conf").exists());
 }
