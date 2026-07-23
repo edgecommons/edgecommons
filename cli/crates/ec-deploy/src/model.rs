@@ -222,6 +222,11 @@ pub struct FileStage {
 pub struct Artifact {
     #[serde(default)]
     pub version: Option<String>,
+    /// The component's Greengrass component name (e.g. `com.mbreissi.edgecommons.OpcUaAdapter`).
+    /// Not derivable from the token, so it is authored; the registry's
+    /// `greengrassComponentName` is the canonical source that `deployment lock` will resolve.
+    #[serde(default)]
+    pub greengrass_name: Option<String>,
     #[serde(default)]
     pub digest: Option<String>,
     #[serde(default)]

@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub mod greengrass;
 pub mod merge;
 pub mod model;
 pub mod ports;

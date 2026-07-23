@@ -24,6 +24,22 @@ pub enum RenderError {
     TargetNotBuilt(Platform),
     #[error("definition targets {def} but --target {req:?} was requested (no exception covers it)")]
     TargetMismatch { def: String, req: Platform },
+    #[error(
+        "node {node}/{component}: config source {config_source} cannot be delivered by a Greengrass deployment; use GG_CONFIG, or deliver the catalog another way"
+    )]
+    ConfigSourceNotRenderable {
+        node: String,
+        component: String,
+        config_source: &'static str,
+    },
+    #[error(
+        "component {component}: no Greengrass component name; set artifact.greengrassName (the registry's greengrassComponentName is the canonical source, resolved by `deployment lock` once it lands)"
+    )]
+    MissingGreengrassName { component: String },
+    #[error("node {node}/{component}: a Greengrass deployment needs a pinned artifact.version")]
+    MissingComponentVersion { node: String, component: String },
+    #[error("environment binding '{0}' is required to build a thing ARN")]
+    MissingBinding(String),
 }
 
 pub struct RenderedFile {
@@ -37,12 +53,16 @@ pub struct RenderOutput {
     pub plan: Plan,
 }
 
-fn pretty(value: &Value) -> String {
+pub(crate) fn pretty(value: &Value) -> String {
     let mut s = serde_json::to_string_pretty(value).expect("JSON serialization cannot fail");
     s.push('\n');
     s
 }
 
+/// Render a definition to one target's native artifacts plus the normalized plan.
+///
+/// The definition's `targetStandard.family` must match the requested target (governed
+/// exceptions are a later slice); the per-target renderers live below.
 pub fn render(
     ws: &Workspace,
     environment: &str,
@@ -58,10 +78,18 @@ pub fn render(
             });
         }
     }
-    if target != Platform::Host {
-        return Err(RenderError::TargetNotBuilt(target));
+    match target {
+        Platform::Host => render_host(ws, environment, config_release),
+        Platform::Greengrass => crate::greengrass::render(ws, environment, config_release),
+        Platform::Kubernetes => Err(RenderError::TargetNotBuilt(target)),
     }
+}
 
+fn render_host(
+    ws: &Workspace,
+    environment: &str,
+    config_release: &str,
+) -> Result<RenderOutput, RenderError> {
     let bindings = ws.bindings(environment)?;
     let mut files = Vec::new();
     let mut all_tokens: Vec<String> = Vec::new();

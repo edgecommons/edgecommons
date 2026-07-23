@@ -1,0 +1,7 @@
+{
+  "definition": "dallas-greengrass",
+  "bindings": [
+    "aws.accountId",
+    "aws.region"
+  ]
+}

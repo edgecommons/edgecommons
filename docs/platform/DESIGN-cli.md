@@ -628,6 +628,43 @@ validation, which is the capability an author actually wants.
 repos of new work, and it belongs to **RM-013**, not to the CLI. Until a component publishes one, its config
 is unvalidated and `validate` says so out loud rather than implying coverage it does not have.
 
+### 8.5.6 Recipes belong to the component release, not to the deployment renderer (decided 2026-07-23)
+
+**Decision: `deployment render --target GREENGRASS` emits per-thing deployment documents and does
+*not* generate recipes.** This is a deliberate deviation from the deck's earlier framing (its ch. 7
+and roadmap slice both say the Greengrass renderer emits "recipes, GDK config, deployment JSON"),
+recorded here rather than slipped in.
+
+The reasoning is the same split §8.5.2 already makes. A recipe carries `ComponentDependencies`,
+`accessControl`, `Manifests` (platform, artifact URI, lifecycle), and the component's *default*
+configuration. Surveyed across the six component repos, every one of those is **component-specific
+and hand-authored**, and none of it is deployment intent:
+
+- `ComponentName` is not derivable — `opcua-adapter` publishes as `OpcUaAdapter`.
+- `ComponentDependencies` differ per component (`>=0.0.0`, `>=2.0.0`, `>=2.0.0 <3.0.0`), and
+  `uns-bridge` declares none at all.
+- `accessControl` differs (four of six need `mqttproxy`; the policy ids, operations, and resources
+  vary), platform is `linux` or `all`, and lifecycle differs per language (a bare binary, a
+  `java -jar`, an unzip-then-run).
+
+Every component already authors exactly this, correctly, in its own `recipe.yaml` beside a
+`gdk-config.json`. Producing and publishing it is **release engineering** — `component
+package|release` and RM-013 — not a per-deployment concern. On the wire this costs nothing:
+Greengrass takes per-thing configuration through `configurationUpdate`, which overrides the recipe's
+`DefaultConfiguration`, so a deployment never needs a bespoke recipe to carry site-specific config.
+
+What the renderer therefore needs from a component is exactly one fact it cannot derive: the
+**Greengrass component name**. Its canonical home is the registry's `greengrassComponentName`
+(alongside the existing `library` coordinate); `deployment lock` resolves it from there and commits
+it (§8.7). Until `lock` lands, a definition supplies it as `artifact.greengrassName`, and the
+renderer **errors naming both sources** rather than guessing a name.
+
+Revisit only if deployments must customise the recipe itself — per-site `accessControl` narrowing is
+the plausible driver, and it is the derived-least-privilege work that is deliberately deferred. The
+cheap path when that day comes is to publish each component's existing `recipe.yaml` in its release
+descriptor and overlay version/artifact/config, rather than re-authoring the metadata in a second
+schema.
+
 ### 8.6 Deviation to acknowledge: `deploy --target` is removed in v1
 
 Today `edgecommons deploy --target <arn>` shells out to `aws greengrassv2 create-deployment`. That is an

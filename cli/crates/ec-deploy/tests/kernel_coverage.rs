@@ -548,3 +548,82 @@ fn release_is_deterministic_correlates_two_streams_and_refuses_invalid() {
         .is_err()
     );
 }
+
+// --- greengrass error paths ------------------------------------------------------------------
+
+/// A Greengrass definition with one node and one component, parameterised by the bits the
+/// renderer refuses to guess.
+fn gg(artifact: &str, config_source: &str, bindings: &str) -> Workspace {
+    let yaml = format!(
+        "apiVersion: edgecommons.io/v1alpha1
+kind: DeploymentDefinition
+metadata: {{ name: gg }}
+hierarchy: {{ levels: [site, device], scopes: [ {{ id: site/lab, parent: null }} ] }}
+targetStandard: {{ family: GREENGRASS }}
+environments: [ {{ name: prod, bindings: bindings/prod.json }} ]
+nodes:
+  - key: gw-01
+    scope: site/lab
+    components:
+      - name: telemetry-processor
+        artifact: {artifact}
+        configSource: {config_source}
+        layer: leaf.json
+"
+    );
+    ws(
+        &yaml,
+        &[("bindings/prod.json", bindings), ("leaf.json", "{}")],
+    )
+}
+
+/// The error message from a render that must fail (RenderOutput is not Debug).
+fn err<T>(r: Result<T, ec_deploy::render::RenderError>) -> String {
+    match r {
+        Ok(_) => panic!("expected the render to fail"),
+        Err(e) => e.to_string(),
+    }
+}
+
+const AWS: &str = r#"{ "aws": { "region": "us-east-1", "accountId": "111122223333" } }"#;
+const PINNED: &str =
+    r#"{ version: "1.0.0", greengrassName: com.mbreissi.edgecommons.TelemetryProcessor }"#;
+
+#[test]
+fn greengrass_refuses_to_guess_what_it_is_not_told() {
+    // A pinned, named, GG_CONFIG component renders.
+    let ok = gg(PINNED, "GG_CONFIG", AWS);
+    assert!(render(&ok, "prod", Platform::Greengrass, "initial").is_ok());
+
+    // No Greengrass component name -> named error, never a guessed name.
+    let unnamed = gg(r#"{ version: "1.0.0" }"#, "GG_CONFIG", AWS);
+    assert!(
+        err(render(&unnamed, "prod", Platform::Greengrass, "initial")).contains("greengrassName")
+    );
+
+    // No pinned version -> a deployment cannot reference an unpublished component.
+    let unpinned = gg(
+        r#"{ source: { kind: sibling, repo: telemetry-processor }, greengrassName: com.x.Y }"#,
+        "GG_CONFIG",
+        AWS,
+    );
+    assert!(
+        err(render(&unpinned, "prod", Platform::Greengrass, "initial"))
+            .contains("artifact.version")
+    );
+
+    // CONFIG_COMPONENT has no Greengrass delivery path yet -> say so rather than emit a
+    // deployment carrying no configuration.
+    let cc = gg(PINNED, "CONFIG_COMPONENT", AWS);
+    assert!(err(render(&cc, "prod", Platform::Greengrass, "initial")).contains("CONFIG_COMPONENT"));
+
+    // The thing ARN needs account + region from the environment bindings.
+    let no_arn = gg(
+        PINNED,
+        "GG_CONFIG",
+        r#"{ "aws": { "region": "us-east-1" } }"#,
+    );
+    assert!(
+        err(render(&no_arn, "prod", Platform::Greengrass, "initial")).contains("aws.accountId")
+    );
+}
