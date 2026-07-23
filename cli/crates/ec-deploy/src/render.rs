@@ -8,12 +8,12 @@
 //! design doc). Golden proof: the Dallas fixture regenerates the adopted
 //! `bottling-company-test` site byte for byte.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use thiserror::Error;
 
 use crate::merge::deep_merge;
 use crate::model::{Component, Launch, Node};
-use crate::workspace::{collect_tokens, resolve_tokens, Workspace, WorkspaceError};
+use crate::workspace::{Workspace, WorkspaceError, collect_tokens, resolve_tokens};
 use crate::{Consequence, Plan, PlanEntry, Platform};
 
 #[derive(Debug, Error)]
@@ -55,7 +55,7 @@ pub fn render(
             return Err(RenderError::TargetMismatch {
                 def: ws.definition.target_standard.family.clone(),
                 req: target,
-            })
+            });
         }
     }
     if target != Platform::Host {
@@ -117,7 +117,10 @@ pub fn render(
                 if comp.config_source != crate::ConfigSource::ConfigComponent {
                     continue;
                 }
-                let rel = comp.layer.as_ref().expect("validated: CC components carry a layer");
+                let rel = comp
+                    .layer
+                    .as_ref()
+                    .expect("validated: CC components carry a layer");
                 let mut leaf = Value::Object(ws.layer(rel, &comp.name)?);
                 collect_tokens(&leaf, "binding", &mut all_tokens);
                 resolve_tokens(&mut leaf, "binding", &bindings)?;
@@ -177,7 +180,10 @@ pub fn render(
                         .as_ref()
                         .and_then(|m| m.client_id.clone())
                         .unwrap_or_else(|| format!("{}-config-component", node.key)),
-                    provider.messaging.as_ref().and_then(|m| m.request_timeout_seconds),
+                    provider
+                        .messaging
+                        .as_ref()
+                        .and_then(|m| m.request_timeout_seconds),
                 ),
             });
         }
@@ -193,7 +199,9 @@ pub fn render(
                         .as_ref()
                         .and_then(|m| m.client_id.clone())
                         .unwrap_or_else(|| format!("{}-{}", node.key, comp.name)),
-                    comp.messaging.as_ref().and_then(|m| m.request_timeout_seconds),
+                    comp.messaging
+                        .as_ref()
+                        .and_then(|m| m.request_timeout_seconds),
                 ),
             });
 
@@ -250,7 +258,11 @@ pub fn render(
 
 /// The per-node catalog version: `versionBase` override, else the scope-chain values joined,
 /// plus the config-release tag.
-pub fn catalog_version(ws: &Workspace, node: &Node, release_tag: &str) -> Result<String, WorkspaceError> {
+pub fn catalog_version(
+    ws: &Workspace,
+    node: &Node,
+    release_tag: &str,
+) -> Result<String, WorkspaceError> {
     let base = node
         .config_provider
         .as_ref()
@@ -302,7 +314,11 @@ pub fn effective_configs(
             if let Value::Object(map) = leaf {
                 deep_merge(&mut effective, &map);
             }
-            out.push((node.key.clone(), comp.name.clone(), Value::Object(effective)));
+            out.push((
+                node.key.clone(),
+                comp.name.clone(),
+                Value::Object(effective),
+            ));
         }
     }
     Ok(out)
@@ -364,7 +380,10 @@ fn launch_command(
     };
     match launch.map(|l| l.wait_for.as_slice()).unwrap_or(&[]) {
         [] => settled,
-        gates => format!("/usr/local/bin/wait-for-tcp {} -- {settled}", gates.join(" ")),
+        gates => format!(
+            "/usr/local/bin/wait-for-tcp {} -- {settled}",
+            gates.join(" ")
+        ),
     }
 }
 
@@ -415,7 +434,12 @@ fn supervisord_conf(node: &Node) -> String {
         programs.push(program);
     }
     for aux in &node.auxiliaries {
-        programs.push(program_from_launch(&aux.name, aux.command.clone(), aux.launch.as_ref(), 20));
+        programs.push(program_from_launch(
+            &aux.name,
+            aux.command.clone(),
+            aux.launch.as_ref(),
+            20,
+        ));
     }
     if let Some(provider) = &node.config_provider {
         let command = launch_command(
@@ -425,7 +449,12 @@ fn supervisord_conf(node: &Node) -> String {
             thing,
             provider.launch.as_ref(),
         );
-        programs.push(program_from_launch("config-component", command, provider.launch.as_ref(), 25));
+        programs.push(program_from_launch(
+            "config-component",
+            command,
+            provider.launch.as_ref(),
+            25,
+        ));
     }
     for comp in &node.components {
         let command = launch_command(
@@ -435,7 +464,12 @@ fn supervisord_conf(node: &Node) -> String {
             thing,
             comp.launch.as_ref(),
         );
-        programs.push(program_from_launch(&comp.name, command, comp.launch.as_ref(), 30));
+        programs.push(program_from_launch(
+            &comp.name,
+            command,
+            comp.launch.as_ref(),
+            30,
+        ));
     }
 
     let mut order: Vec<usize> = (0..programs.len()).collect();

@@ -107,7 +107,8 @@ pub struct LoadedWorkspace {
 pub fn load_workspace(definition: &Path) -> Result<LoadedWorkspace, String> {
     let definition_text = std::fs::read_to_string(definition)
         .map_err(|e| format!("reading {}: {e}", definition.display()))?;
-    let doc = ec_deploy::workspace::parse_definition(&definition_text).map_err(|e| e.to_string())?;
+    let doc =
+        ec_deploy::workspace::parse_definition(&definition_text).map_err(|e| e.to_string())?;
     let root = definition
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -115,12 +116,19 @@ pub fn load_workspace(definition: &Path) -> Result<LoadedWorkspace, String> {
     let mut files = std::collections::BTreeMap::new();
     for rel in ec_deploy::workspace::referenced_paths(&doc) {
         let path = root.join(&rel);
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| format!("reading {} (referenced by the definition): {e}", path.display()))?;
+        let text = std::fs::read_to_string(&path).map_err(|e| {
+            format!(
+                "reading {} (referenced by the definition): {e}",
+                path.display()
+            )
+        })?;
         files.insert(rel, text);
     }
     Ok(LoadedWorkspace {
-        workspace: ec_deploy::workspace::Workspace { definition: doc, files },
+        workspace: ec_deploy::workspace::Workspace {
+            definition: doc,
+            files,
+        },
         root,
         definition_text,
     })
@@ -144,7 +152,11 @@ pub fn describe_head(dir: &Path) -> Option<String> {
     let dirty = run(&["status", "--porcelain", "--", "."])
         .map(|s| !s.is_empty())
         .unwrap_or(false);
-    Some(if dirty { format!("{commit}-dirty") } else { commit })
+    Some(if dirty {
+        format!("{commit}-dirty")
+    } else {
+        commit
+    })
 }
 
 #[cfg(test)]

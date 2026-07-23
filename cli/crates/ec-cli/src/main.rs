@@ -152,12 +152,16 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
         Command::Deployment(DeploymentCmd::Validate { definition }) => {
             commands::deployment::validate(definition)
         }
-        Command::Deployment(DeploymentCmd::Render { definition, env, target }) => {
-            commands::deployment::render_cmd(definition, env, *target, cli.quiet)
-        }
-        Command::Deployment(DeploymentCmd::Plan { definition, env, target }) => {
-            commands::deployment::plan(definition, env, *target)
-        }
+        Command::Deployment(DeploymentCmd::Render {
+            definition,
+            env,
+            target,
+        }) => commands::deployment::render_cmd(definition, env, *target, cli.quiet),
+        Command::Deployment(DeploymentCmd::Plan {
+            definition,
+            env,
+            target,
+        }) => commands::deployment::plan(definition, env, *target),
         Command::Deployment(DeploymentCmd::Release { definition, stream }) => {
             commands::deployment::release_cmd(definition, *stream, cli.quiet)
         }

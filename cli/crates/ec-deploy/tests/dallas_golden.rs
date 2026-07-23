@@ -10,9 +10,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use ec_deploy::render::render;
-use ec_deploy::workspace::{parse_definition, referenced_paths, Workspace};
 use ec_deploy::Platform;
+use ec_deploy::render::render;
+use ec_deploy::workspace::{Workspace, parse_definition, referenced_paths};
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dallas")
@@ -29,7 +29,10 @@ fn load() -> Workspace {
             .unwrap_or_else(|e| panic!("reading referenced {rel}: {e}"));
         files.insert(rel, text);
     }
-    Workspace { definition: doc, files }
+    Workspace {
+        definition: doc,
+        files,
+    }
 }
 
 fn normalize(s: &str) -> String {
@@ -53,7 +56,10 @@ fn dallas_renders_byte_for_byte_to_the_committed_golden() {
                     mismatches.push(format!("{}: rendered bytes differ from golden", f.path));
                 }
             }
-            Err(_) => mismatches.push(format!("{}: no golden file (renderer produced a new file)", f.path)),
+            Err(_) => mismatches.push(format!(
+                "{}: no golden file (renderer produced a new file)",
+                f.path
+            )),
         }
     }
 
@@ -65,7 +71,9 @@ fn dallas_renders_byte_for_byte_to_the_committed_golden() {
             .to_string_lossy()
             .replace('\\', "/");
         if !rendered_paths.contains(&rel) {
-            mismatches.push(format!("{rel}: in golden but the renderer no longer produces it"));
+            mismatches.push(format!(
+                "{rel}: in golden but the renderer no longer produces it"
+            ));
         }
     }
 
@@ -83,7 +91,9 @@ fn walk(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {

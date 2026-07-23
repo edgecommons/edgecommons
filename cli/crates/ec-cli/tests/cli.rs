@@ -1301,8 +1301,12 @@ fn upgrade_of_a_project_with_no_dependency_manifest_warns() {
 /// component. Exercises validate (all three stages), render, and plan end to end.
 fn write_minimal_workspace(dir: &Path) -> PathBuf {
     std::fs::create_dir_all(dir.join("bindings")).unwrap();
-    std::fs::write(dir.join("bindings/local.json"), "{}
-").unwrap();
+    std::fs::write(
+        dir.join("bindings/local.json"),
+        "{}
+",
+    )
+    .unwrap();
     let definition = dir.join("definition.yaml");
     std::fs::write(
         &definition,
@@ -1339,7 +1343,10 @@ fn deployment_validate_render_and_plan_run_on_a_minimal_workspace() {
     let d = tempfile::tempdir().unwrap();
     let definition = write_minimal_workspace(d.path());
 
-    let o = run(&["deployment", "validate", definition.to_str().unwrap()], d.path());
+    let o = run(
+        &["deployment", "validate", definition.to_str().unwrap()],
+        d.path(),
+    );
     assert_eq!(code(&o), 0, "validate must pass: {}", stderr(&o));
 
     let o = run(
@@ -1376,7 +1383,10 @@ fn deployment_validate_render_and_plan_run_on_a_minimal_workspace() {
     );
     assert_eq!(code(&o), 0, "plan must pass: {}", stderr(&o));
     let out = String::from_utf8_lossy(&o.stdout);
-    assert!(out.contains("\"entries\""), "plan prints the normalized plan: {out}");
+    assert!(
+        out.contains("\"entries\""),
+        "plan prints the normalized plan: {out}"
+    );
     assert!(
         out.contains("\"restartsComponent\""),
         "plan entries carry restart impact: {out}"
@@ -1414,11 +1424,21 @@ nodes:
     )
     .unwrap();
     std::fs::create_dir_all(d.path().join("bindings")).unwrap();
-    std::fs::write(d.path().join("bindings/local.json"), "{}
-").unwrap();
+    std::fs::write(
+        d.path().join("bindings/local.json"),
+        "{}
+",
+    )
+    .unwrap();
 
-    let o = run(&["deployment", "validate", definition.to_str().unwrap()], d.path());
+    let o = run(
+        &["deployment", "validate", definition.to_str().unwrap()],
+        d.path(),
+    );
     assert_eq!(code(&o), 1, "findings exit code: {}", stderr(&o));
     let out = String::from_utf8_lossy(&o.stdout);
-    assert!(out.contains("EC5002"), "semantic rule diagnostics carry EC5002: {out}");
+    assert!(
+        out.contains("EC5002"),
+        "semantic rule diagnostics carry EC5002: {out}"
+    );
 }

@@ -6,11 +6,11 @@
 
 use std::path::Path;
 
-use ec_adapters::{describe_head, load_workspace, LoadedWorkspace};
-use ec_deploy::{release, render, validate as kernel_validate, Platform as KernelPlatform};
+use ec_adapters::{LoadedWorkspace, describe_head, load_workspace};
+use ec_deploy::{Platform as KernelPlatform, release, render, validate as kernel_validate};
 use ec_diag::{
-    Diagnostic, Fatal, Report, EC5001_DEPLOYMENT_SCHEMA, EC5002_DEPLOYMENT_SEMANTIC,
-    EC5003_EFFECTIVE_CONFIG, EC5004_IDENTITY_DIVERGENCE,
+    Diagnostic, EC5001_DEPLOYMENT_SCHEMA, EC5002_DEPLOYMENT_SEMANTIC, EC5003_EFFECTIVE_CONFIG,
+    EC5004_IDENTITY_DIVERGENCE, Fatal, Report,
 };
 
 use crate::cli::{Platform, Stream};
@@ -40,8 +40,9 @@ fn schema_stage(definition_text: &str, report: &mut Report) -> Result<(), Fatal>
         .map_err(|e| Fatal::Internal(format!("embedded definition schema is invalid: {e}")))?;
     let doc: serde_json::Value = serde_yaml::from_str(definition_text)
         .map_err(|e| Fatal::Usage(format!("definition is not valid YAML: {e}")))?;
-    let validator = jsonschema::validator_for(&schema)
-        .map_err(|e| Fatal::Internal(format!("embedded definition schema does not compile: {e}")))?;
+    let validator = jsonschema::validator_for(&schema).map_err(|e| {
+        Fatal::Internal(format!("embedded definition schema does not compile: {e}"))
+    })?;
     for error in validator.iter_errors(&doc) {
         report.push(
             Diagnostic::error(EC5001_DEPLOYMENT_SCHEMA, error.to_string())
@@ -143,8 +144,8 @@ pub fn plan(definition: &Path, env: &str, target: Platform) -> Result<Report, Fa
         return Ok(report);
     }
     let output = run_render(&loaded, env, target)?;
-    let mut text = serde_json::to_string_pretty(&output.plan)
-        .map_err(|e| Fatal::Internal(e.to_string()))?;
+    let mut text =
+        serde_json::to_string_pretty(&output.plan).map_err(|e| Fatal::Internal(e.to_string()))?;
     text.push('\n');
     print!("{text}");
     Ok(report)
@@ -165,7 +166,7 @@ pub fn release_cmd(definition: &Path, stream: Stream, quiet: bool) -> Result<Rep
             return Err(Fatal::Usage(format!(
                 "the definition declares {} environments; `deployment release` currently requires exactly one",
                 envs.len()
-            )))
+            )));
         }
     };
     let target = KernelPlatform::from_family(&def.target_standard.family).ok_or_else(|| {
@@ -222,10 +223,12 @@ fn run_render(
     env: &str,
     target: Platform,
 ) -> Result<render::RenderOutput, Fatal> {
-    render::render(&loaded.workspace, env, kernel_platform(target), "initial").map_err(|e| match e {
-        render::RenderError::TargetNotBuilt(p) => {
-            Fatal::NotImplemented(format!("the {p:?} renderer is not available in this build"))
-        }
-        other => Fatal::Usage(other.to_string()),
-    })
+    render::render(&loaded.workspace, env, kernel_platform(target), "initial").map_err(
+        |e| match e {
+            render::RenderError::TargetNotBuilt(p) => {
+                Fatal::NotImplemented(format!("the {p:?} renderer is not available in this build"))
+            }
+            other => Fatal::Usage(other.to_string()),
+        },
+    )
 }

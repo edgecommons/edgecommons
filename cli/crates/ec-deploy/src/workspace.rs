@@ -117,7 +117,11 @@ impl Workspace {
     }
 
     /// A referenced layer file as a JSON object.
-    pub fn layer(&self, rel: &str, owner: &str) -> Result<serde_json::Map<String, Value>, WorkspaceError> {
+    pub fn layer(
+        &self,
+        rel: &str,
+        owner: &str,
+    ) -> Result<serde_json::Map<String, Value>, WorkspaceError> {
         let text = self.file(rel, owner)?;
         let value: Value = serde_json::from_str(text)
             .map_err(|e| WorkspaceError::BadLayer(rel.into(), e.to_string()))?;

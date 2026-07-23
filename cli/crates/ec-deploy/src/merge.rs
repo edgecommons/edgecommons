@@ -33,7 +33,9 @@ mod tests {
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("shared vectors missing at {}: {e}", path.display()));
         let vectors: Value = serde_json::from_str(&text).unwrap();
-        let cases = vectors["cases"].as_array().expect("vectors carry {cases:[..]}");
+        let cases = vectors["cases"]
+            .as_array()
+            .expect("vectors carry {cases:[..]}");
         assert!(!cases.is_empty(), "no merge vectors found");
         for case in cases {
             let name = case["name"].as_str().unwrap_or("<unnamed>");
