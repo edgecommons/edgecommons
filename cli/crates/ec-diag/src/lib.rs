@@ -125,6 +125,10 @@ pub const EC5006_COMPONENT_CONFIG_UNVALIDATED: Code = Code("EC5006");
 /// The definition pins component versions but no lock is committed beside it, so no digest and no
 /// config schema has been resolved. A warning: `render` and `plan` still work.
 pub const EC5007_NO_LOCK: Code = Code("EC5007");
+/// A definition supplies `component.instances[]` for a pinned version that publishes no instance
+/// schema (`#/$defs/instance`), so the per-instance config is validated by nothing. A warning,
+/// because instances are a different shape from `component.global` and cannot borrow its schema.
+pub const EC5008_INSTANCE_CONFIG_UNVALIDATED: Code = Code("EC5008");
 
 // --- Artifact lint (EC3xxx) -------------------------------------------------------
 /// The recipe uses the `{COMPONENT_NAME}` placeholder, which GDK does not substitute.

@@ -1829,3 +1829,170 @@ fn an_unreadable_lock_is_an_error_not_a_silent_miss() {
     assert_eq!(code(&o), 2, "a corrupt lock must not be ignored");
     assert!(stderr(&o).contains("lock"), "{}", stderr(&o));
 }
+
+/// A lock carrying a schema shaped the way component repos actually ship one: the root **is**
+/// `component.global`, the instance shape is a `$defs` subschema under the component's own domain
+/// name, and `#/$defs/instance` aliases onto it. Both sides are closed, and both `$ref` one shared
+/// `#/$defs/defaults` — the arrangement that rules out splitting the document in two.
+fn write_lock_with_instance_schema(dir: &Path, alias: bool) {
+    let alias_line = if alias {
+        r##""instance": { "$ref": "#/$defs/device" },"##
+    } else {
+        ""
+    };
+    std::fs::write(
+        dir.join("site.lock"),
+        format!(
+            r##"{{
+  "lockVersion": 1,
+  "definition": "site.yaml",
+  "components": [
+    {{
+      "component": "telemetry-processor",
+      "version": "0.3.0",
+      "digest": "sha256:deadbeef",
+      "greengrassName": "com.mbreissi.edgecommons.TelemetryProcessor",
+      "configSchema": {{
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {{ "defaults": {{ "$ref": "#/$defs/defaults" }} }},
+        "additionalProperties": false,
+        "$defs": {{
+          {alias_line}
+          "defaults": {{
+            "type": "object",
+            "properties": {{ "pollIntervalMs": {{ "type": "integer" }} }},
+            "additionalProperties": false
+          }},
+          "device": {{
+            "type": "object",
+            "required": ["id", "connection"],
+            "properties": {{
+              "id": {{ "type": "string" }},
+              "connection": {{ "type": "string" }},
+              "defaults": {{ "$ref": "#/$defs/defaults" }}
+            }},
+            "additionalProperties": false
+          }}
+        }}
+      }}
+    }}
+  ]
+}}
+"##
+        ),
+    )
+    .unwrap();
+}
+
+/// Point the definition's component at a config layer.
+fn attach_layer(dir: &Path, definition: &Path, body: &str) {
+    std::fs::create_dir_all(dir.join("layers/components")).unwrap();
+    std::fs::write(dir.join("layers/components/telemetry-processor.json"), body).unwrap();
+    let text = std::fs::read_to_string(definition).unwrap().replace(
+        "        launch: { order: 30 }",
+        "        layer: layers/components/telemetry-processor.json\n        launch: { order: 30 }",
+    );
+    std::fs::write(definition, text).unwrap();
+}
+
+#[test]
+fn an_instance_is_validated_against_the_instance_schema_not_the_global_one() {
+    let d = tempfile::tempdir().unwrap();
+    let definition = write_pinned_workspace(d.path());
+    write_lock_with_instance_schema(d.path(), true);
+    // A perfectly good instance: `id` and `connection` are required of an instance and forbidden
+    // of `global`, which is exactly why the two cannot share one schema.
+    attach_layer(
+        d.path(),
+        &definition,
+        r#"{ "component": {
+               "global": { "defaults": { "pollIntervalMs": 500 } },
+               "instances": [ { "id": "line-2", "connection": "tcp://plc:502",
+                                "defaults": { "pollIntervalMs": 100 } } ] } }"#,
+    );
+
+    let o = run(
+        &["deployment", "validate", definition.to_str().unwrap()],
+        d.path(),
+    );
+    assert_eq!(
+        code(&o),
+        0,
+        "a valid instance must not be judged against the global schema: {}",
+        stdout(&o)
+    );
+}
+
+#[test]
+fn a_bad_key_inside_an_instance_names_the_instance_and_the_version() {
+    let d = tempfile::tempdir().unwrap();
+    let definition = write_pinned_workspace(d.path());
+    write_lock_with_instance_schema(d.path(), true);
+    attach_layer(
+        d.path(),
+        &definition,
+        r#"{ "component": {
+               "instances": [ { "id": "line-2", "connection": "tcp://plc:502",
+                                "pollIntervalMs": 100 } ] } }"#,
+    );
+
+    let o = run(
+        &["deployment", "validate", definition.to_str().unwrap()],
+        d.path(),
+    );
+    assert_eq!(code(&o), 1, "an unaccepted instance key is an error");
+    let out = stdout(&o);
+    assert!(out.contains("EC5005"), "{out}");
+    // `pollIntervalMs` is real, but it belongs under `defaults`, not at the instance root.
+    assert!(out.contains("pollIntervalMs"), "{out}");
+    // Named by its id, not its index — `line-2` locates it, `instances[0]` makes you go count.
+    assert!(out.contains("line-2"), "{out}");
+    assert!(out.contains("0.3.0"), "the version that rejected it: {out}");
+}
+
+#[test]
+fn a_missing_required_instance_key_is_caught() {
+    let d = tempfile::tempdir().unwrap();
+    let definition = write_pinned_workspace(d.path());
+    write_lock_with_instance_schema(d.path(), true);
+    attach_layer(
+        d.path(),
+        &definition,
+        r#"{ "component": { "instances": [ { "id": "line-2" } ] } }"#,
+    );
+
+    let o = run(
+        &["deployment", "validate", definition.to_str().unwrap()],
+        d.path(),
+    );
+    assert_eq!(code(&o), 1);
+    assert!(stdout(&o).contains("connection"), "{}", stdout(&o));
+}
+
+#[test]
+fn instances_without_an_instance_schema_are_reported_as_unvalidated() {
+    let d = tempfile::tempdir().unwrap();
+    let definition = write_pinned_workspace(d.path());
+    // Same schema, no `#/$defs/instance` alias.
+    write_lock_with_instance_schema(d.path(), false);
+    attach_layer(
+        d.path(),
+        &definition,
+        r#"{ "component": { "instances": [ { "id": "line-2", "whatever": true } ] } }"#,
+    );
+
+    let o = run(
+        &["deployment", "validate", definition.to_str().unwrap()],
+        d.path(),
+    );
+    // Not an error — the component simply has not published the shape. But never silent: the
+    // alternative would be a clean run implying coverage that does not exist.
+    assert_eq!(code(&o), 0, "{}", stdout(&o));
+    let out = stdout(&o);
+    assert!(out.contains("EC5008"), "{out}");
+    assert!(
+        out.contains("$defs/instance"),
+        "the warning must say how to close the gap: {out}"
+    );
+}
