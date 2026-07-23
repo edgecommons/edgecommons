@@ -106,6 +106,16 @@ pub const EC2008_INVALID_UNS_TOKEN: Code = Code("EC2008");
 /// The config source is not legal for the platform.
 pub const EC2009_CONFIG_SOURCE_PLATFORM: Code = Code("EC2009");
 
+// --- Deployment (EC5xxx) ----------------------------------------------------------
+/// The deployment definition fails its own schema (v1alpha1).
+pub const EC5001_DEPLOYMENT_SCHEMA: Code = Code("EC5001");
+/// A deployment semantic rule (S-1..S-9) is violated.
+pub const EC5002_DEPLOYMENT_SEMANTIC: Code = Code("EC5002");
+/// A rendered effective config fails the strict runtime config schema.
+pub const EC5003_EFFECTIVE_CONFIG: Code = Code("EC5003");
+/// A node's platform identity diverges from its node key (runtime-identity consequence).
+pub const EC5004_IDENTITY_DIVERGENCE: Code = Code("EC5004");
+
 // --- Artifact lint (EC3xxx) -------------------------------------------------------
 /// The recipe uses the `{COMPONENT_NAME}` placeholder, which GDK does not substitute.
 pub const EC3001_RECIPE_COMPONENT_NAME_PLACEHOLDER: Code = Code("EC3001");

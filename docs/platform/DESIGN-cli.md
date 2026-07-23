@@ -477,7 +477,9 @@ Local adapters, which is what makes local development free: a local clone (Git),
 The deck asserts deterministic render; REVIEW.md flags that it is never operationalized, and names it a
 load-bearing risk. It is a build gate here:
 
-1. **Byte-stable serialization**: sorted keys, fixed indentation, LF endings, no locale-dependent
+1. **Byte-stable serialization**: stable key order (authored order preserved end to end, which is
+   what lets a rendered catalog byte-match its adopted, human-reviewed form — amended from "sorted
+   keys" when the golden suite landed), fixed indentation, LF endings, no locale-dependent
    formatting, and **no timestamps or hostnames in rendered output** (they belong in the release
    manifest, not the artifact).
 2. **Effective config comes from `layered.rs`** (P4) — not a second merge implementation.

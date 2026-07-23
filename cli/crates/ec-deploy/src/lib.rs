@@ -8,18 +8,30 @@
 //!
 //! # Status
 //!
-//! The ports and the plan vocabulary are defined here and compile; the renderers
-//! (HOST, Kubernetes, Greengrass) are Phase P4 and are not built yet. `ec-cli` reports
-//! [`ec_diag::ExitCode::NotImplemented`] for the deployment verbs until they land, rather
-//! than pretending a verb exists.
+//! The model, workspace, semantic validator, **HOST renderer**, and release builder are
+//! implemented and golden-proven against the Dallas fixture (`deployment-studio` repo),
+//! whose render byte-matches the adopted `bottling-company-test` site. The Kubernetes and
+//! Greengrass renderers, `deployment lock`, and `deployment diff` are not built yet;
+//! `ec-cli` reports [`ec_diag::ExitCode::NotImplemented`] for those rather than pretending
+//! a verb exists.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub mod merge;
+pub mod model;
 pub mod ports;
+pub mod release;
+pub mod render;
+pub mod validate;
+pub mod workspace;
 
 pub use ports::{BlobPort, GitPort, IdentityPort, RunnerPort, TargetsPort};
+
+/// The normative DeploymentDefinition JSON Schema (`edgecommons.io/v1alpha1`), embedded so
+/// `deployment validate` stage one runs offline by construction.
+pub const DEFINITION_SCHEMA: &str = include_str!("../schema/deployment-definition.schema.json");
 
 /// A deployment target platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +40,19 @@ pub enum Platform {
     Greengrass,
     Host,
     Kubernetes,
+}
+
+impl Platform {
+    /// Parse a definition's `targetStandard.family` string.
+    #[must_use]
+    pub fn from_family(family: &str) -> Option<Self> {
+        match family {
+            "GREENGRASS" => Some(Self::Greengrass),
+            "HOST" => Some(Self::Host),
+            "KUBERNETES" => Some(Self::Kubernetes),
+            _ => None,
+        }
+    }
 }
 
 /// Where a component's configuration comes from at runtime.
@@ -43,6 +68,9 @@ pub enum ConfigSource {
     GgConfig,
     Shadow,
     ConfigComponent,
+    // The runtime contract spells this CONFIGMAP (one word); SCREAMING_SNAKE_CASE would
+    // produce CONFIG_MAP, which no runtime accepts.
+    #[serde(rename = "CONFIGMAP")]
     ConfigMap,
 }
 
@@ -60,6 +88,19 @@ impl ConfigSource {
             // An env change requires a new process; a Greengrass configurationUpdate does
             // not reliably restart the component either, so neither may be assumed live.
             Self::Env | Self::GgConfig => false,
+        }
+    }
+
+    /// The exact `-c/--config <SOURCE>` string the runtime contract uses.
+    #[must_use]
+    pub fn as_contract_str(self) -> &'static str {
+        match self {
+            Self::File => "FILE",
+            Self::Env => "ENV",
+            Self::GgConfig => "GG_CONFIG",
+            Self::Shadow => "SHADOW",
+            Self::ConfigComponent => "CONFIG_COMPONENT",
+            Self::ConfigMap => "CONFIGMAP",
         }
     }
 

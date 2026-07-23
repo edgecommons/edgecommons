@@ -1190,15 +1190,8 @@ fn the_unbuilt_verbs_say_so_rather_than_crashing() {
     // Declared in the surface, not built in this binary: exit 5, and name the design section
     // rather than failing obscurely or pretending to be a usage error.
     for args in [
-        vec![
-            "deployment",
-            "plan",
-            "def.yaml",
-            "--env",
-            "lab",
-            "--target",
-            "HOST",
-        ],
+        vec!["deployment", "lock", "def.yaml"],
+        vec!["deployment", "diff", "def.yaml", "--against", "v1"],
         vec!["studio", "serve"],
     ] {
         let o = run(&args, &repo_root());
@@ -1300,4 +1293,132 @@ fn upgrade_of_a_project_with_no_dependency_manifest_warns() {
     );
     assert_eq!(code(&o), 0, "nothing to bump is not a failure");
     assert!(stdout(&o).contains("EC4004"), "{}", stdout(&o));
+}
+
+// --- deployment verbs (built in this binary) ------------------------------------------------
+
+/// A minimal self-contained workspace: one scope level above `device`, one node, one FILE
+/// component. Exercises validate (all three stages), render, and plan end to end.
+fn write_minimal_workspace(dir: &Path) -> PathBuf {
+    std::fs::create_dir_all(dir.join("bindings")).unwrap();
+    std::fs::write(dir.join("bindings/local.json"), "{}
+").unwrap();
+    let definition = dir.join("definition.yaml");
+    std::fs::write(
+        &definition,
+        r#"apiVersion: edgecommons.io/v1alpha1
+kind: DeploymentDefinition
+metadata:
+  name: mini
+hierarchy:
+  levels: [site, device]
+  scopes:
+    - id: site/lab
+      parent: null
+targetStandard:
+  family: HOST
+environments:
+  - name: local
+    bindings: bindings/local.json
+nodes:
+  - key: box-01
+    scope: site/lab
+    components:
+      - name: telemetry-processor
+        artifact: { source: { kind: sibling, repo: telemetry-processor } }
+        configSource: FILE
+        launch: { order: 30, waitFor: ["localhost:1883"] }
+"#,
+    )
+    .unwrap();
+    definition
+}
+
+#[test]
+fn deployment_validate_render_and_plan_run_on_a_minimal_workspace() {
+    let d = tempfile::tempdir().unwrap();
+    let definition = write_minimal_workspace(d.path());
+
+    let o = run(&["deployment", "validate", definition.to_str().unwrap()], d.path());
+    assert_eq!(code(&o), 0, "validate must pass: {}", stderr(&o));
+
+    let o = run(
+        &[
+            "deployment",
+            "render",
+            definition.to_str().unwrap(),
+            "--env",
+            "local",
+            "--target",
+            "HOST",
+        ],
+        d.path(),
+    );
+    assert_eq!(code(&o), 0, "render must pass: {}", stderr(&o));
+    let conf = d.path().join("render/host/box-01/supervisord.conf");
+    let conf_text = std::fs::read_to_string(&conf).expect("render wrote the supervisord conf");
+    assert!(
+        conf_text.contains("-c FILE /config/config-component-config.json -t box-01"),
+        "launch line carries the FILE source and thing identity: {conf_text}"
+    );
+
+    let o = run(
+        &[
+            "deployment",
+            "plan",
+            definition.to_str().unwrap(),
+            "--env",
+            "local",
+            "--target",
+            "HOST",
+        ],
+        d.path(),
+    );
+    assert_eq!(code(&o), 0, "plan must pass: {}", stderr(&o));
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(out.contains("\"entries\""), "plan prints the normalized plan: {out}");
+    assert!(
+        out.contains("\"restartsComponent\""),
+        "plan entries carry restart impact: {out}"
+    );
+}
+
+#[test]
+fn deployment_validate_rejects_a_broken_definition() {
+    let d = tempfile::tempdir().unwrap();
+    let definition = d.path().join("definition.yaml");
+    // `device` used as a scope level (S-2) and a component without an artifact (S-6).
+    std::fs::write(
+        &definition,
+        r#"apiVersion: edgecommons.io/v1alpha1
+kind: DeploymentDefinition
+metadata:
+  name: broken
+hierarchy:
+  levels: [site, device]
+  scopes:
+    - id: device/box-01
+      parent: null
+targetStandard:
+  family: HOST
+environments:
+  - name: local
+    bindings: bindings/local.json
+nodes:
+  - key: box-01
+    scope: device/box-01
+    components:
+      - name: telemetry-processor
+        configSource: FILE
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(d.path().join("bindings")).unwrap();
+    std::fs::write(d.path().join("bindings/local.json"), "{}
+").unwrap();
+
+    let o = run(&["deployment", "validate", definition.to_str().unwrap()], d.path());
+    assert_eq!(code(&o), 1, "findings exit code: {}", stderr(&o));
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(out.contains("EC5002"), "semantic rule diagnostics carry EC5002: {out}");
 }

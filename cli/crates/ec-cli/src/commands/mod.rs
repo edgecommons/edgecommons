@@ -2,6 +2,7 @@
 //! report of findings) or it could not run (a [`ec_diag::Fatal`]).
 
 pub mod component;
+pub mod deployment;
 pub mod doctor;
 pub mod registry;
 pub mod release;
