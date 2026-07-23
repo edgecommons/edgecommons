@@ -1,0 +1,62 @@
+{
+  "hierarchy": {
+    "levels": [
+      "enterprise",
+      "site",
+      "line",
+      "device"
+    ]
+  },
+  "identity": {
+    "enterprise": "bottles-r-us",
+    "site": "dallas",
+    "line": "filling-line"
+  },
+  "tags": {
+    "appId": "bottling-plant",
+    "scenario": "bottling-company-test",
+    "componentRole": "configuration"
+  },
+  "logging": {
+    "level": "INFO",
+    "publish": {
+      "enabled": true,
+      "destination": "local",
+      "minLevel": "INFO"
+    },
+    "rust_format": "{timestamp} [{level}] [{component}] {target} - {message}"
+  },
+  "heartbeat": {
+    "enabled": true,
+    "intervalSecs": 5,
+    "measures": {
+      "cpu": true,
+      "memory": true,
+      "threads": true,
+      "files": true,
+      "fds": true
+    }
+  },
+  "metricEmission": {
+    "target": "messaging"
+  },
+  "component": {
+    "token": "edgecommons-config-component",
+    "global": {
+      "configComponent": {
+        "catalogSource": {
+          "type": "file",
+          "path": "/config/config-catalog.json",
+          "watch": true
+        },
+        "pushOnCatalogReload": true,
+        "allowVolatileCatalogUpdates": true
+      }
+    },
+    "instances": [
+      {
+        "id": "main"
+      }
+    ]
+  }
+}

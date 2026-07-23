@@ -1,0 +1,8 @@
+{
+  "definition": "dallas-bottling",
+  "bindings": [
+    "external.hostModbus.host",
+    "external.hostModbus.port",
+    "external.kepware.endpoint"
+  ]
+}
