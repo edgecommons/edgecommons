@@ -94,10 +94,13 @@ pub fn which(binary: &str) -> Option<PathBuf> {
     None
 }
 
-/// The result of loading a deployment workspace from the filesystem: the parsed model plus
-/// every referenced file's text, rooted at the definition's directory.
+/// The result of loading a deployment workspace from the filesystem: the parsed authored
+/// definition (one topology + per-platform profiles) plus every referenced file's text, rooted at
+/// the definition's directory. A command picks a profile and calls [`LoadedWorkspace::workspace`]
+/// to get the flat, effective workspace the kernel renders.
 pub struct LoadedWorkspace {
-    pub workspace: ec_deploy::workspace::Workspace,
+    pub authored: ec_deploy::model::AuthoredDefinition,
+    pub files: std::collections::BTreeMap<String, String>,
     pub root: PathBuf,
     pub definition_text: String,
     /// The lock committed beside the definition, when `deployment lock` has been run. It supplies
@@ -105,19 +108,65 @@ pub struct LoadedWorkspace {
     pub lock: Option<ec_deploy::lock::LockFile>,
 }
 
+impl LoadedWorkspace {
+    /// The effective workspace for one profile — the topology merged with that profile's delivery.
+    pub fn workspace(&self, profile: &str) -> Result<ec_deploy::workspace::Workspace, String> {
+        let definition = self
+            .authored
+            .effective(profile)
+            .map_err(|e| e.to_string())?;
+        Ok(ec_deploy::workspace::Workspace {
+            definition,
+            files: self.files.clone(),
+        })
+    }
+
+    /// Every profile name, in authored order.
+    #[must_use]
+    pub fn profile_names(&self) -> Vec<String> {
+        self.authored.profile_names()
+    }
+
+    /// The single profile whose `family` matches (e.g. `"HOST"`), or an error naming the choices.
+    pub fn profile_for_family(&self, family: &str) -> Result<String, String> {
+        let matches: Vec<&String> = self
+            .authored
+            .profiles
+            .iter()
+            .filter(|(_, p)| p.family == family)
+            .map(|(name, _)| name)
+            .collect();
+        match matches.as_slice() {
+            [one] => Ok((*one).clone()),
+            [] => Err(format!(
+                "no profile targets {family}; the definition has: {}",
+                self.profile_names().join(", ")
+            )),
+            many => Err(format!(
+                "{} profiles target {family} ({}); select one with --profile",
+                many.len(),
+                many.iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
+    }
+}
+
 /// Load a definition (file path) and every file it references. This is the I/O half the
 /// kernel refuses to do: the kernel names the paths, the adapter reads them.
 pub fn load_workspace(definition: &Path) -> Result<LoadedWorkspace, String> {
     let definition_text = std::fs::read_to_string(definition)
         .map_err(|e| format!("reading {}: {e}", definition.display()))?;
-    let doc =
-        ec_deploy::workspace::parse_definition(&definition_text).map_err(|e| e.to_string())?;
+    let authored =
+        ec_deploy::workspace::parse_authored(&definition_text).map_err(|e| e.to_string())?;
     let root = definition
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
     let mut files = std::collections::BTreeMap::new();
-    for rel in ec_deploy::workspace::referenced_paths(&doc) {
+    for rel in ec_deploy::workspace::referenced_paths_authored(&authored) {
         let path = root.join(&rel);
         let text = std::fs::read_to_string(&path).map_err(|e| {
             format!(
@@ -129,10 +178,8 @@ pub fn load_workspace(definition: &Path) -> Result<LoadedWorkspace, String> {
     }
     let lock = read_lock(definition)?;
     Ok(LoadedWorkspace {
-        workspace: ec_deploy::workspace::Workspace {
-            definition: doc,
-            files,
-        },
+        authored,
+        files,
         root,
         definition_text,
         lock,

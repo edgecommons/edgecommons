@@ -1318,19 +1318,26 @@ hierarchy:
   scopes:
     - id: site/lab
       parent: null
-targetStandard:
-  family: HOST
-environments:
-  - name: local
-    bindings: bindings/local.json
-nodes:
-  - key: box-01
-    scope: site/lab
-    components:
-      - name: telemetry-processor
-        artifact: { source: { kind: sibling, repo: telemetry-processor } }
-        configSource: FILE
-        launch: { order: 30, waitFor: ["localhost:1883"] }
+topology:
+  nodes:
+    - key: box-01
+      scope: site/lab
+      components:
+        - name: telemetry-processor
+profiles:
+  host:
+    family: HOST
+    environments:
+      - name: local
+        bindings: bindings/local.json
+    defaults:
+      configSource: FILE
+    nodes:
+      box-01:
+        components:
+          telemetry-processor:
+            artifact: { source: { kind: sibling, repo: telemetry-processor } }
+            launch: { order: 30, waitFor: ["localhost:1883"] }
 "#,
     )
     .unwrap();
@@ -1408,17 +1415,24 @@ hierarchy:
   scopes:
     - id: device/box-01
       parent: null
-targetStandard:
-  family: HOST
-environments:
-  - name: local
-    bindings: bindings/local.json
-nodes:
-  - key: box-01
-    scope: device/box-01
-    components:
-      - name: telemetry-processor
-        configSource: FILE
+topology:
+  nodes:
+    - key: box-01
+      scope: device/box-01
+      components:
+        - name: telemetry-processor
+profiles:
+  host:
+    family: HOST
+    environments:
+      - name: local
+        bindings: bindings/local.json
+    defaults:
+      configSource: FILE
+    nodes:
+      box-01:
+        components:
+          telemetry-processor: {}
 "#,
     )
     .unwrap();
@@ -1515,18 +1529,26 @@ hierarchy:
   scopes:
     - id: site/lab
       parent: null
-targetStandard:
-  family: KUBERNETES
-environments:
-  - name: local
-    bindings: bindings/local.json
-nodes:
-  - key: box-01
-    scope: site/lab
-    components:
-      - name: telemetry-processor
-        artifact: { version: "1.0.0" }
-        configSource: CONFIGMAP
+topology:
+  nodes:
+    - key: box-01
+      scope: site/lab
+      components:
+        - name: telemetry-processor
+profiles:
+  kubernetes:
+    family: KUBERNETES
+    environments:
+      - name: local
+        bindings: bindings/local.json
+    defaults:
+      configSource: CONFIGMAP
+    nodes:
+      box-01:
+        components:
+          telemetry-processor:
+            artifact: { version: "1.0.0" }
+            image: "ghcr.io/x/telemetry-processor:1.0.0"
 "#,
     )
     .unwrap();
@@ -1575,19 +1597,26 @@ hierarchy:
   scopes:
     - id: site/lab
       parent: null
-targetStandard:
-  family: GREENGRASS
-environments:
-  - name: local
-    bindings: bindings/local.json
-nodes:
-  - key: box-01
-    scope: site/lab
-    components:
-      - name: telemetry-processor
-        artifact: { version: "0.3.0" }
-        configSource: GG_CONFIG
-        launch: { order: 30 }
+topology:
+  nodes:
+    - key: box-01
+      scope: site/lab
+      components:
+        - name: telemetry-processor
+profiles:
+  greengrass:
+    family: GREENGRASS
+    environments:
+      - name: local
+        bindings: bindings/local.json
+    defaults:
+      configSource: GG_CONFIG
+    nodes:
+      box-01:
+        components:
+          telemetry-processor:
+            artifact: { version: "0.3.0" }
+            launch: { order: 30 }
 "#,
     )
     .unwrap();
@@ -1794,8 +1823,8 @@ fn a_locked_schema_rejects_config_the_pinned_version_cannot_accept() {
     )
     .unwrap();
     let text = std::fs::read_to_string(&definition).unwrap().replace(
-        "        launch: { order: 30 }",
-        "        layer: layers/components/telemetry-processor.json\n        launch: { order: 30 }",
+        "        - name: telemetry-processor\n",
+        "        - name: telemetry-processor\n          layer: layers/components/telemetry-processor.json\n",
     );
     std::fs::write(&definition, text).unwrap();
 
@@ -1889,9 +1918,10 @@ fn write_lock_with_instance_schema(dir: &Path, alias: bool) {
 fn attach_layer(dir: &Path, definition: &Path, body: &str) {
     std::fs::create_dir_all(dir.join("layers/components")).unwrap();
     std::fs::write(dir.join("layers/components/telemetry-processor.json"), body).unwrap();
+    // `layer` is a functional (topology) field, so attach it to the topology component.
     let text = std::fs::read_to_string(definition).unwrap().replace(
-        "        launch: { order: 30 }",
-        "        layer: layers/components/telemetry-processor.json\n        launch: { order: 30 }",
+        "        - name: telemetry-processor\n",
+        "        - name: telemetry-processor\n          layer: layers/components/telemetry-processor.json\n",
     );
     std::fs::write(definition, text).unwrap();
 }
