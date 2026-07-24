@@ -340,6 +340,56 @@ pub enum DeploymentCmd {
         #[arg(long, value_enum)]
         stream: Stream,
     },
+    /// Author a change as a draft (a named change; the branch is derived — register #16).
+    #[command(subcommand)]
+    Draft(DraftCmd),
+}
+
+/// The draft lifecycle: propose → review → apply. A draft is a *named change*; the Git ref is
+/// derived, never typed. `open` proposes, `edit` stages a layer change, `status` reviews it for
+/// semantic conflicts against current main, and apply is the Git host's PR merge.
+#[derive(Debug, Subcommand)]
+pub enum DraftCmd {
+    /// Open a draft from a change title and print its derived ref.
+    Open {
+        /// What the change does, in words (e.g. "Add file-replicator to the filling line").
+        title: String,
+        /// The repository (a directory holding a `definition.yaml`).
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        /// The ref the draft branches from.
+        #[arg(long, default_value = "main")]
+        base: String,
+    },
+    /// Stage a layer edit onto a draft (committed without touching the working tree).
+    Edit {
+        /// The draft ref from `open`.
+        git_ref: String,
+        /// The layer path, relative to the definition (e.g. `layers/components/site/edge-console.json`).
+        path: String,
+        /// A file whose contents become the new layer.
+        contents: PathBuf,
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+    },
+    /// List the open drafts.
+    List {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+    },
+    /// Review a draft for conflicts against current main (semantic, at the effective-config level).
+    Status {
+        /// The draft ref from `open`.
+        git_ref: String,
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        /// The profile to render for. Defaults to the definition's only profile.
+        #[arg(long)]
+        profile: Option<String>,
+        /// The ref the draft is reconciled against.
+        #[arg(long, default_value = "main")]
+        main: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]

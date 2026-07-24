@@ -4,6 +4,7 @@
 pub mod component;
 pub mod deployment;
 pub mod doctor;
+pub mod draft;
 pub mod registry;
 pub mod release;
 

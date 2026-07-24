@@ -172,6 +172,24 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
         Command::Deployment(DeploymentCmd::Diff { .. }) => {
             Err(commands::not_implemented("deployment"))
         }
+        Command::Deployment(DeploymentCmd::Draft(cmd)) => match cmd {
+            crate::cli::DraftCmd::Open { title, repo, base } => {
+                commands::draft::open(title, repo, base)
+            }
+            crate::cli::DraftCmd::Edit {
+                git_ref,
+                path,
+                contents,
+                repo,
+            } => commands::draft::edit(git_ref, path, contents, repo),
+            crate::cli::DraftCmd::List { repo } => commands::draft::list(repo),
+            crate::cli::DraftCmd::Status {
+                git_ref,
+                repo,
+                profile,
+                main,
+            } => commands::draft::status(git_ref, repo, profile.as_deref(), main),
+        },
 
         Command::Studio(StudioCmd::Serve { repo, bind }) => {
             ec_studio::serve(&ec_studio::ServeOptions {
