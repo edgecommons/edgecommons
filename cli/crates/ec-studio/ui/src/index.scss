@@ -1,0 +1,184 @@
+// Carbon Design System + the EdgeCommons brand layer — the SAME design language as edge-console.
+// The brand tokens (vendored verbatim in styles/edgecommons-tokens.css, imported from main.tsx
+// ahead of this file) are mapped onto the Carbon --cds-* variables the screens use; the shell
+// stamps data-theme="dark" so the dark token values apply.
+@use "@carbon/react";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--ec-font-sans);
+  background: var(--ec-color-background);
+}
+
+/* ============ shell ============ */
+.ec-app {
+  min-height: 100vh;
+  font-family: var(--ec-font-sans);
+  background: var(--cds-background);
+  color: var(--cds-text-primary);
+}
+
+.ec-app--light,
+.ec-app--dark {
+  --ec-app-bg: var(--ec-color-background);
+  --ec-app-surface: var(--ec-color-surface);
+  --ec-app-surface-2: var(--ec-color-surface-subtle);
+  --ec-app-field: var(--ec-color-surface-subtle);
+  --ec-app-text: var(--ec-color-text);
+  --ec-app-muted: var(--ec-color-text-muted);
+  --ec-app-border: var(--ec-color-border);
+  --ec-app-brand-primary: var(--ec-color-primary);
+  --ec-app-brand-link: var(--ec-color-link);
+  --ec-app-brand-link-hover: var(--ec-color-primary-hover);
+  --ec-app-focus: var(--ec-color-focus);
+}
+.ec-app--light {
+  --ec-app-accent-surface: #eef2f1;
+  --ec-app-helper: #76798a;
+  --ec-app-placeholder: #9ba0ab;
+  --ec-app-border-strong: #9aa6ad;
+  --ec-app-header: var(--ec-night-iris);
+  --ec-app-header-hover: #303052;
+  --ec-app-header-border: rgb(175 199 200 / 0.22);
+}
+.ec-app--dark {
+  --ec-app-accent-surface: #393955;
+  --ec-app-helper: var(--ec-color-text-muted);
+  --ec-app-field: var(--ec-color-surface);
+  --ec-app-placeholder: #9597ad;
+  --ec-app-border-strong: #8284a4;
+  --ec-app-header: #1b1b30;
+  --ec-app-header-hover: #313152;
+  --ec-app-header-border: rgb(175 199 200 / 0.18);
+}
+
+// The brand semantic tokens mapped onto Carbon's --cds-* (same set as edge-console).
+.ec-app--light,
+.ec-app--dark {
+  --cds-background: var(--ec-app-bg);
+  --cds-layer: var(--ec-app-surface);
+  --cds-layer-01: var(--ec-app-surface);
+  --cds-layer-02: var(--ec-app-surface-2);
+  --cds-layer-accent: var(--ec-app-accent-surface);
+  --cds-field: var(--ec-app-field);
+  --cds-field-01: var(--ec-app-field);
+  --cds-text-primary: var(--ec-app-text);
+  --cds-text-secondary: var(--ec-app-muted);
+  --cds-text-helper: var(--ec-app-helper);
+  --cds-text-placeholder: var(--ec-app-placeholder);
+  --cds-icon-primary: var(--ec-app-text);
+  --cds-icon-secondary: var(--ec-app-muted);
+  --cds-border-subtle: var(--ec-app-border);
+  --cds-border-subtle-00: var(--ec-app-border);
+  --cds-border-subtle-01: var(--ec-app-border);
+  --cds-border-strong: var(--ec-app-border-strong);
+  --cds-border-interactive: var(--ec-app-brand-primary);
+  --cds-link-primary: var(--ec-app-brand-link);
+  --cds-link-primary-hover: var(--ec-app-brand-link-hover);
+  --cds-focus: var(--ec-app-focus);
+  --cds-highlight: color-mix(in srgb, var(--ec-iris) 18%, transparent);
+  --cds-support-success: var(--ec-success);
+  --cds-support-warning: var(--ec-warning);
+  --cds-support-error: var(--ec-danger);
+  --cds-support-info: var(--ec-iris);
+  --cds-text-error: var(--ec-color-danger-text);
+  --cds-button-primary: var(--ec-color-primary);
+  --cds-button-primary-hover: var(--ec-color-primary-hover);
+  --cds-tag-background-blue: color-mix(in srgb, var(--ec-iris) 18%, var(--ec-app-surface));
+  --cds-tag-color-blue: var(--ec-color-info-text);
+  --cds-tag-background-purple: color-mix(in srgb, var(--ec-iris-deep) 22%, var(--ec-app-surface));
+  --cds-tag-color-purple: var(--ec-color-primary);
+  --cds-tag-background-teal: color-mix(in srgb, var(--ec-iris-mist) 22%, var(--ec-app-surface));
+  --cds-tag-color-teal: var(--ec-color-info-text);
+  --cds-tag-background-cool-gray: var(--ec-app-surface-2);
+  --cds-tag-color-cool-gray: var(--ec-app-muted);
+  --cds-tag-background-red: color-mix(in srgb, var(--ec-danger) 14%, var(--ec-app-surface));
+  --cds-tag-color-red: var(--ec-color-danger-text);
+}
+
+/* ============ application bar (the EdgeCommons lockup, as in edge-console) ============ */
+.ec-appbar {
+  z-index: 7100;
+  background: var(--ec-app-header);
+  border-bottom-color: var(--ec-app-header-border);
+  color: var(--ec-paper);
+}
+.ec-appbar .cds--header__action:hover {
+  background: var(--ec-app-header-hover);
+}
+.ec-appbar__brand {
+  display: inline-flex;
+  align-items: center;
+  height: 3rem;
+  padding: 0 0.875rem 0 0.625rem;
+  flex: none;
+  text-decoration: none;
+}
+.ec-appbar__brand:focus {
+  outline: 2px solid var(--ec-iris);
+  outline-offset: -2px;
+}
+.ec-appbar__logo {
+  display: block;
+  height: 2.25rem;
+  width: auto;
+  min-width: 9.875rem;
+}
+.ec-appbar__product {
+  display: inline-flex;
+  align-items: center;
+  height: 3rem;
+  padding: 0 1rem;
+  border-left: 1px solid var(--ec-app-header-border);
+  color: var(--ec-paper);
+  font-family: var(--ec-font-sans);
+  font-weight: 650;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+/* ============ content ============ */
+.ec-content {
+  max-width: 74rem;
+  margin: 0 auto;
+  padding: var(--ec-space-7) var(--ec-space-5) var(--ec-space-6);
+}
+.ec-content h1 {
+  font-weight: var(--ec-weight-h1);
+  letter-spacing: var(--ec-tracking-tight);
+  font-size: var(--ec-text-3xl);
+  margin: 0;
+}
+.ec-content h3 {
+  font-weight: var(--ec-weight-label);
+  color: var(--ec-app-text);
+}
+.ec-content p {
+  color: var(--cds-text-secondary);
+}
+.ec-content code,
+.ec-content pre,
+.ec-app .cds--snippet code {
+  font-family: var(--ec-font-mono);
+}
+.ec-content summary {
+  cursor: pointer;
+  padding: 0.5rem 0;
+  color: var(--ec-app-text);
+}
+.ec-content details {
+  border-bottom: 1px solid var(--ec-app-border);
+}

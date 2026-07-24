@@ -1,0 +1,225 @@
+/*
+ * VENDORED from the EdgeCommons brand system: brand/tokens/edgecommons.css
+ *
+ * The brand package is an umbrella-local folder, not a published dependency, so this repo
+ * carries a verbatim copy. Do not hand-edit. Change brand/tokens/edgecommons.tokens.json,
+ * run `npm run build` then `npm run sync` in brand/.
+ * Everything below this header is byte-for-byte the source file.
+ */
+/*
+ * GENERATED FILE — do not edit.
+ * Source: tokens/edgecommons.tokens.json   Build: npm run build
+ *
+ * EdgeCommons design tokens.
+ *
+ * Contrast rule: text tokens are derived against the *worst-case* surface they can
+ * land on, not the page background — Porcelain in light, Surface Subtle in dark.
+ * A color that clears AA on the background can still fail on an elevated panel.
+ */
+
+:root {
+  /* Primitive brand colors */
+  --ec-night-iris: #23233d;
+  --ec-iris-deep: #3f407a;
+  --ec-iris: #6f7fbd;
+  --ec-iris-mist: #afc7c8;
+  --ec-source-copper: #d67a4e;
+  --ec-paper: #fbfaf6;
+  --ec-porcelain: #f2f4f1;
+  --ec-veil: #e4e9ea;
+  --ec-slate: #686b7f;
+  --ec-white: #ffffff;
+
+  /* Primitive status colors — authoritative for fills, chips, and indicators */
+  --ec-success: #4e9e74;
+  --ec-warning: #c88a35;
+  --ec-danger: #c95a61;
+
+  /* Semantic color aliases */
+  --ec-color-background: var(--ec-paper);
+  --ec-color-surface: var(--ec-white);
+  --ec-color-surface-subtle: var(--ec-porcelain);
+  --ec-color-border: var(--ec-veil);
+  --ec-color-text: var(--ec-night-iris);
+  --ec-color-text-muted: var(--ec-slate);
+  --ec-color-primary: var(--ec-iris-deep);
+  --ec-color-primary-hover: var(--ec-night-iris);
+  --ec-color-on-primary: var(--ec-white);
+  --ec-color-link: var(--ec-iris-deep);
+  --ec-color-accent: var(--ec-source-copper);
+  --ec-color-focus: var(--ec-iris);
+  --ec-color-success: var(--ec-success);
+  --ec-color-warning: var(--ec-warning);
+  --ec-color-danger: var(--ec-danger);
+  --ec-color-info: var(--ec-iris);
+
+  /*
+   * Text-safe variants. The primitive status colors and Source Copper sit between
+   * 2.82:1 and 3.93:1 on Paper — below the 4.5:1 AA threshold. Use a *-text token
+   * whenever the color carries a glyph; use the primitive when it fills a shape.
+   */
+  --ec-color-success-text: #297c54;
+  --ec-color-warning-text: #9a6200;
+  --ec-color-danger-text: #b74a52;
+  --ec-color-info-text: #5c6ba8;
+  --ec-color-accent-text: #ad5528;
+
+  /* Typography */
+  --ec-font-sans: "Manrope", "Avenir Next", "Segoe UI", Arial, sans-serif;
+  --ec-font-mono: "JetBrains Mono", "Geist Mono", Consolas, monospace;
+
+  --ec-weight-body: 400;
+  --ec-weight-label: 600;
+  --ec-weight-heading: 650;
+  --ec-weight-h1: 700;
+  --ec-weight-wordmark: 750;
+
+  --ec-text-xs: 0.75rem;
+  --ec-text-sm: 0.875rem;
+  --ec-text-base: 1rem;
+  --ec-text-lg: 1.125rem;
+  --ec-text-xl: 1.375rem;
+  --ec-text-2xl: 1.75rem;
+  --ec-text-3xl: 2.25rem;
+  --ec-text-4xl: 3rem;
+
+  --ec-leading-tight: 1.2;
+  --ec-leading-snug: 1.35;
+  --ec-leading-normal: 1.55;
+  --ec-leading-relaxed: 1.7;
+
+  --ec-tracking-tight: -0.02em;
+  --ec-tracking-normal: 0;
+  --ec-tracking-wide: 0.04em;
+
+  /* Spacing — 4px base */
+  --ec-space-1: 4px;
+  --ec-space-2: 8px;
+  --ec-space-3: 12px;
+  --ec-space-4: 16px;
+  --ec-space-5: 24px;
+  --ec-space-6: 32px;
+  --ec-space-7: 48px;
+  --ec-space-8: 64px;
+
+  --ec-radius-sm: 4px;
+  --ec-radius-md: 8px;
+  --ec-radius-lg: 12px;
+  --ec-radius-full: 999px;
+
+  --ec-shadow-panel: 0 18px 40px rgb(35 35 61 / 0.10);
+
+  /*
+   * Categorical chart slots. Assign in order, never cycled; a 9th series folds into
+   * "Other" or small multiples. The order is the colorblind-safety mechanism and is
+   * not cosmetic — reordering degrades separation. Validated on the chart surface
+   * (Paper in light, Night Iris in dark) for protanopia and deuteranopia: worst
+   * all-pairs dE 13.38, every slot >= 3:1 against its surface. Tritanopia is not
+   * separable at eight slots — slots 5 and 7 converge (dE 1.8). A chart carrying 7
+   * or more series must carry direct labels or distinct markers.
+   */
+  --ec-chart-1: #a46e00;
+  --ec-chart-2: #684799;
+  --ec-chart-3: #953e0a;
+  --ec-chart-4: #a45b9f;
+  --ec-chart-5: #409a59;
+  --ec-chart-6: #8d386d;
+  --ec-chart-7: #667fd3;
+  --ec-chart-8: #c26081;
+
+  --ec-chart-surface: var(--ec-paper);
+  --ec-chart-ink: var(--ec-color-text);
+  --ec-chart-ink-muted: var(--ec-color-text-muted);
+  --ec-chart-grid: var(--ec-veil);
+  --ec-chart-axis: var(--ec-slate);
+}
+
+/*
+ * Dark theme. Primary cannot be inherited: Iris Deep is 1.61:1 on Night Iris.
+ * Every dark text token is derived against Surface Subtle (#383954), the lightest
+ * surface text lands on, so it holds on background and surface too.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ec-color-background: var(--ec-night-iris);
+    --ec-color-surface: #2e2e49;
+    --ec-color-surface-subtle: #383954;
+    --ec-color-border: #444461;
+    --ec-color-text: var(--ec-paper);
+    --ec-color-text-muted: #a2a5bb;
+    --ec-color-primary: #9ca1e4;
+    --ec-color-primary-hover: #b5baff;
+    /* White on the dark primary is 2.43:1 — the ink must be Night Iris. */
+    --ec-color-on-primary: var(--ec-night-iris);
+    --ec-color-link: #9ca1e4;
+    --ec-color-accent: #ed8e62;
+    --ec-color-focus: #92a4e5;
+
+    --ec-color-success-text: #66b68b;
+    --ec-color-warning-text: #d99a47;
+    --ec-color-danger-text: #f88489;
+    --ec-color-info-text: #92a4e5;
+    --ec-color-accent-text: #ed8e62;
+
+    --ec-shadow-panel: 0 18px 40px rgb(0 0 0 / 0.45);
+
+    --ec-chart-1: #ba7f14;
+    --ec-chart-2: #8363b8;
+    --ec-chart-3: #b45a2e;
+    --ec-chart-4: #b86db2;
+    --ec-chart-5: #51aa68;
+    --ec-chart-6: #ab5488;
+    --ec-chart-7: #758ee3;
+    --ec-chart-8: #d36f90;
+
+    --ec-chart-surface: var(--ec-night-iris);
+    --ec-chart-ink: var(--ec-color-text);
+    --ec-chart-ink-muted: var(--ec-color-text-muted);
+    --ec-chart-grid: #383954;
+    --ec-chart-axis: #a2a5bb;
+  }
+}
+
+/*
+ * Explicit override for hosts that persist a theme choice rather than follow the OS.
+ * Not anchored to :root — a container carrying data-theme="dark" themes its own subtree,
+ * which is what app shells that scope a theme to a wrapper element need.
+ */
+[data-theme="dark"] {
+  --ec-color-background: var(--ec-night-iris);
+  --ec-color-surface: #2e2e49;
+  --ec-color-surface-subtle: #383954;
+  --ec-color-border: #444461;
+  --ec-color-text: var(--ec-paper);
+  --ec-color-text-muted: #a2a5bb;
+  --ec-color-primary: #9ca1e4;
+  --ec-color-primary-hover: #b5baff;
+  /* White on the dark primary is 2.43:1 — the ink must be Night Iris. */
+  --ec-color-on-primary: var(--ec-night-iris);
+  --ec-color-link: #9ca1e4;
+  --ec-color-accent: #ed8e62;
+  --ec-color-focus: #92a4e5;
+
+  --ec-color-success-text: #66b68b;
+  --ec-color-warning-text: #d99a47;
+  --ec-color-danger-text: #f88489;
+  --ec-color-info-text: #92a4e5;
+  --ec-color-accent-text: #ed8e62;
+
+  --ec-shadow-panel: 0 18px 40px rgb(0 0 0 / 0.45);
+
+  --ec-chart-1: #ba7f14;
+  --ec-chart-2: #8363b8;
+  --ec-chart-3: #b45a2e;
+  --ec-chart-4: #b86db2;
+  --ec-chart-5: #51aa68;
+  --ec-chart-6: #ab5488;
+  --ec-chart-7: #758ee3;
+  --ec-chart-8: #d36f90;
+
+  --ec-chart-surface: var(--ec-night-iris);
+  --ec-chart-ink: var(--ec-color-text);
+  --ec-chart-ink-muted: var(--ec-color-text-muted);
+  --ec-chart-grid: #383954;
+  --ec-chart-axis: #a2a5bb;
+}
