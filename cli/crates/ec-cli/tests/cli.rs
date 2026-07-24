@@ -1187,12 +1187,9 @@ fn doctor_checks_greengrass_tools_only_when_greengrass_is_selected() {
 
 #[test]
 fn the_unbuilt_verbs_say_so_rather_than_crashing() {
-    // Declared in the surface, not built in this binary: exit 5, and name the design section
-    // rather than failing obscurely or pretending to be a usage error.
-    for args in [
-        vec!["deployment", "diff", "def.yaml", "--against", "v1"],
-        vec!["studio", "serve"],
-    ] {
+    // Declared in the surface, not built in this binary: exit 5, and say so plainly rather than
+    // failing obscurely or pretending to be a usage error. `deployment diff` is the last one.
+    for args in [vec!["deployment", "diff", "def.yaml", "--against", "v1"]] {
         let o = run(&args, &repo_root());
         assert_eq!(
             code(&o),
@@ -1211,6 +1208,24 @@ fn the_unbuilt_verbs_say_so_rather_than_crashing() {
             );
         }
     }
+}
+
+#[test]
+fn studio_serve_without_a_definition_is_an_environment_error() {
+    // `studio serve` is built; pointed at a repo with no definition it fails cleanly (exit 3),
+    // naming the missing file rather than crashing or serving an empty UI.
+    let d = tempfile::tempdir().unwrap();
+    let o = run(
+        &["studio", "serve", "--repo", d.path().to_str().unwrap()],
+        d.path(),
+    );
+    assert_eq!(
+        code(&o),
+        3,
+        "missing definition is an environment error: {}",
+        stderr(&o)
+    );
+    assert!(stderr(&o).contains("definition"), "{}", stderr(&o));
 }
 
 // --- remaining error paths ----------------------------------------------------------------

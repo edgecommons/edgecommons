@@ -9,4 +9,16 @@ repository.workspace = true
 
 [dependencies]
 ec-deploy = { workspace = true }
+ec-adapters = { workspace = true }
 ec-diag = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net"] }
+tower-http = { version = "0.6", features = ["cors"] }
+mime_guess = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
+tower = { version = "0.5", features = ["util"] }
+tempfile = { workspace = true }
