@@ -122,7 +122,23 @@ struct DefinitionView {
     name: String,
     description: Option<String>,
     profiles: Vec<ProfileView>,
+    /// The level vocabulary and scope tree. The UI's context spine is built from this, so no level
+    /// name is ever hardcoded client-side — a scope's level is the part of its id before the slash.
+    hierarchy: HierarchyView,
     nodes: Vec<NodeView>,
+}
+
+#[derive(Serialize)]
+struct HierarchyView {
+    levels: Vec<String>,
+    scopes: Vec<ScopeView>,
+}
+
+#[derive(Serialize)]
+struct ScopeView {
+    id: String,
+    parent: Option<String>,
+    layer: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -135,7 +151,14 @@ struct ProfileView {
 struct NodeView {
     key: String,
     scope: String,
-    components: Vec<String>,
+    components: Vec<ComponentView>,
+}
+
+#[derive(Serialize)]
+struct ComponentView {
+    name: String,
+    /// The component's config leaf — the last entry in its merge chain.
+    layer: Option<String>,
 }
 
 /// The definition's shape: metadata, the profiles it declares, and the shared topology.
@@ -152,6 +175,19 @@ async fn get_definition(State(state): State<Arc<AppState>>) -> Response {
                 family: p.family.clone(),
             })
             .collect(),
+        hierarchy: HierarchyView {
+            levels: a.hierarchy.levels.clone(),
+            scopes: a
+                .hierarchy
+                .scopes
+                .iter()
+                .map(|s| ScopeView {
+                    id: s.id.clone(),
+                    parent: s.parent.clone(),
+                    layer: s.layer.clone(),
+                })
+                .collect(),
+        },
         nodes: a
             .topology
             .nodes
@@ -159,7 +195,14 @@ async fn get_definition(State(state): State<Arc<AppState>>) -> Response {
             .map(|n| NodeView {
                 key: n.key.clone(),
                 scope: n.scope.clone(),
-                components: n.components.iter().map(|c| c.name.clone()).collect(),
+                components: n
+                    .components
+                    .iter()
+                    .map(|c| ComponentView {
+                        name: c.name.clone(),
+                        layer: c.layer.clone(),
+                    })
+                    .collect(),
             })
             .collect(),
     };
@@ -489,7 +532,19 @@ profiles:
         assert_eq!(body["name"], "studio-demo");
         assert_eq!(body["profiles"][0]["family"], "HOST");
         assert_eq!(body["nodes"][0]["key"], "box-01");
-        assert_eq!(body["nodes"][0]["components"][0], "telemetry-processor");
+        assert_eq!(
+            body["nodes"][0]["components"][0]["name"],
+            "telemetry-processor"
+        );
+        assert_eq!(
+            body["nodes"][0]["components"][0]["layer"],
+            "layers/telemetry.json"
+        );
+        // The context spine is built from this: the level vocabulary and the scope tree, so the
+        // UI never hardcodes a level name.
+        assert_eq!(body["hierarchy"]["levels"][0], "site");
+        assert_eq!(body["hierarchy"]["scopes"][0]["id"], "site/lab");
+        assert_eq!(body["hierarchy"]["scopes"][0]["parent"], Value::Null);
     }
 
     #[tokio::test]

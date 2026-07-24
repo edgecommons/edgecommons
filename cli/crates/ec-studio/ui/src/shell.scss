@@ -1,0 +1,237 @@
+/* The context spine (REVIEW-UI §4, decision 1A).
+ *
+ * A persistent rail whose fleet-tree selection drives the workspace, four global areas below it,
+ * an always-present breadcrumb, and tabs that appear by level.
+ *
+ * Layout only. Every colour, font, radius and spacing value resolves to an EdgeCommons brand token
+ * through the `--ec-app-*` intermediates defined in index.scss, so this shell inherits the same
+ * design language as edge-console rather than restating it.
+ */
+
+.ec-shell {
+  display: grid;
+  grid-template-rows: 3rem 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── context bar ─────────────────────────────────────────────────────────────────── */
+
+.ec-contextbar {
+  display: flex;
+  align-items: center;
+  gap: var(--ec-space-4);
+  padding: 0 var(--ec-space-4);
+  background: var(--ec-app-header);
+  border-bottom: 1px solid var(--ec-app-header-border);
+}
+.ec-brand { display: flex; align-items: center; }
+.ec-brand img { height: 1.15rem; display: block; }
+.ec-product {
+  font-weight: var(--ec-weight-heading);
+  font-size: var(--ec-text-sm);
+  letter-spacing: var(--ec-tracking-wide);
+  padding-left: var(--ec-space-4);
+  border-left: 1px solid var(--ec-app-header-border);
+  color: var(--ec-white);
+}
+.ec-contextbar__group { display: flex; align-items: center; gap: var(--ec-space-4); margin-left: auto; }
+.ec-field { display: flex; align-items: center; gap: var(--ec-space-2); }
+.ec-field > span {
+  font-size: var(--ec-text-xs);
+  color: var(--ec-app-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--ec-tracking-wide);
+}
+.ec-field > strong { font-size: var(--ec-text-sm); font-weight: var(--ec-weight-label); color: var(--ec-white); }
+.ec-select {
+  background: rgb(255 255 255 / 0.06);
+  color: var(--ec-app-text);
+  border: 1px solid var(--ec-app-header-border);
+  border-radius: var(--ec-radius-sm);
+  padding: 0.2rem 0.4rem;
+  font: inherit;
+  font-size: var(--ec-text-sm);
+}
+.ec-select:focus { outline: 2px solid var(--ec-app-focus); outline-offset: 1px; }
+.ec-chip {
+  font-size: var(--ec-text-xs);
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--ec-radius-full);
+  border: 1px solid var(--ec-app-header-border);
+  color: var(--ec-app-muted);
+  white-space: nowrap;
+}
+
+/* ── rail: the spine, then the global areas ──────────────────────────────────────── */
+
+.ec-body { display: grid; grid-template-columns: 17rem 1fr; min-height: 0; }
+
+.ec-rail {
+  display: flex;
+  flex-direction: column;
+  background: var(--ec-app-field);
+  border-right: 1px solid var(--ec-app-border);
+  overflow-y: auto;
+}
+.ec-rail__heading {
+  font-size: var(--ec-text-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--ec-tracking-wide);
+  color: var(--ec-app-muted);
+  padding: var(--ec-space-4) var(--ec-space-4) var(--ec-space-2);
+}
+.ec-rail__heading--global { border-top: 1px solid var(--ec-app-border); margin-top: var(--ec-space-3); }
+
+.ec-tree { padding: 0 var(--ec-space-2); }
+.ec-tree__row {
+  display: flex; align-items: center; gap: 0.4rem; width: 100%;
+  padding: 0.3rem var(--ec-space-2);
+  border: 0; background: none; color: var(--ec-app-text);
+  font: inherit; font-size: var(--ec-text-sm); text-align: left; cursor: pointer;
+  border-radius: var(--ec-radius-sm); border-left: 2px solid transparent;
+}
+.ec-tree__row:hover { background: var(--ec-app-accent-surface); }
+.ec-tree__row[aria-selected="true"] {
+  background: var(--ec-app-accent-surface);
+  border-left-color: var(--ec-iris);
+  font-weight: var(--ec-weight-label);
+}
+.ec-tree__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ec-tree__count { margin-left: auto; font-size: var(--ec-text-xs); color: var(--ec-app-muted); flex: none; }
+
+/* Rendered from the definition's own level vocabulary — never a hardcoded name. */
+.ec-level {
+  font-size: 0.625rem; text-transform: uppercase; letter-spacing: var(--ec-tracking-wide);
+  color: var(--ec-app-muted); border: 1px solid var(--ec-app-border);
+  border-radius: var(--ec-radius-sm); padding: 0 0.3rem; flex: none;
+}
+
+.ec-global { list-style: none; margin: 0; padding: 0 var(--ec-space-2); }
+.ec-global button {
+  display: flex; align-items: baseline; gap: 0.5rem; width: 100%;
+  padding: 0.4rem var(--ec-space-2);
+  border: 0; background: none; color: var(--ec-app-text);
+  font: inherit; font-size: var(--ec-text-sm); text-align: left; cursor: pointer;
+  border-radius: var(--ec-radius-sm); border-left: 2px solid transparent;
+}
+.ec-global button:hover { background: var(--ec-app-accent-surface); }
+.ec-global button[aria-current="true"] {
+  background: var(--ec-app-accent-surface); border-left-color: var(--ec-iris);
+  font-weight: var(--ec-weight-label);
+}
+.ec-global small { color: var(--ec-app-muted); font-size: var(--ec-text-xs); }
+
+.ec-rail__footer {
+  margin-top: auto; padding: var(--ec-space-4);
+  display: flex; flex-direction: column; gap: 0.25rem;
+  border-top: 1px solid var(--ec-app-border);
+}
+.ec-legend { display: flex; align-items: center; gap: 0.4rem; font-size: var(--ec-text-xs); color: var(--ec-app-muted); }
+.ec-dot { width: 0.5rem; height: 0.5rem; border-radius: var(--ec-radius-full); display: inline-block; }
+.ec-dot--config { background: var(--ec-chart-3); }
+.ec-dot--artifact { background: var(--ec-iris); }
+
+/* ── workspace ───────────────────────────────────────────────────────────────────── */
+
+.ec-workspace {
+  overflow-y: auto; overflow-x: hidden; min-width: 0;
+  padding: var(--ec-space-5) var(--ec-space-6) var(--ec-space-8);
+}
+.ec-workspace > * { min-width: 0; }
+
+.ec-crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-size: var(--ec-text-sm); }
+.ec-crumb button {
+  border: 0; background: none; padding: 0; cursor: pointer;
+  color: var(--ec-app-brand-link); font: inherit; font-size: var(--ec-text-sm);
+}
+.ec-crumb button:hover { text-decoration: underline; color: var(--ec-app-brand-link-hover); }
+.ec-crumb .sep, .ec-crumb span[aria-current], .ec-crumb__root { color: var(--ec-app-muted); }
+
+.ec-selection {
+  display: flex; align-items: baseline; gap: var(--ec-space-3);
+  margin: var(--ec-space-3) 0 var(--ec-space-2); flex-wrap: wrap;
+}
+.ec-selection h1 {
+  font-size: var(--ec-text-2xl); font-weight: var(--ec-weight-h1);
+  margin: 0; letter-spacing: var(--ec-tracking-tight);
+}
+.ec-sub { color: var(--ec-app-muted); font-size: var(--ec-text-sm); margin: 0 0 var(--ec-space-3); }
+
+.ec-tabs { display: flex; border-bottom: 1px solid var(--ec-app-border); margin-bottom: var(--ec-space-5); flex-wrap: wrap; }
+.ec-tabs button {
+  border: 0; background: none; color: var(--ec-app-muted);
+  font: inherit; font-size: var(--ec-text-sm); cursor: pointer;
+  padding: 0.6rem var(--ec-space-4); border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.ec-tabs button:hover { color: var(--ec-app-text); }
+.ec-tabs button[aria-selected="true"] {
+  color: var(--ec-app-text); border-bottom-color: var(--ec-iris); font-weight: var(--ec-weight-label);
+}
+
+/* ── panel primitives ────────────────────────────────────────────────────────────── */
+
+.ec-panel h2 { font-size: var(--ec-text-lg); font-weight: var(--ec-weight-heading); margin: var(--ec-space-6) 0 var(--ec-space-3); }
+.ec-panel h2:first-child { margin-top: 0; }
+.ec-panel code { font-family: var(--ec-font-mono); font-size: var(--ec-text-xs); }
+
+.ec-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: var(--ec-space-3); }
+.ec-card { border: 1px solid var(--ec-app-border); border-radius: var(--ec-radius-md); background: var(--ec-app-surface); padding: var(--ec-space-4); }
+.ec-card__label { font-size: var(--ec-text-xs); text-transform: uppercase; letter-spacing: var(--ec-tracking-wide); color: var(--ec-app-muted); }
+.ec-card__value { font-size: var(--ec-text-2xl); font-weight: var(--ec-weight-h1); line-height: 1.1; margin-top: 0.25rem; }
+.ec-card__note { font-size: var(--ec-text-xs); color: var(--ec-app-muted); margin-top: 0.35rem; }
+
+/* Config and artifact are shown as a pair; the UI never fuses them into one status. */
+.ec-streams { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ec-space-4); }
+.ec-stream { border: 1px solid var(--ec-app-border); border-radius: var(--ec-radius-md); background: var(--ec-app-surface); padding: var(--ec-space-4); }
+.ec-stream__head { display: flex; align-items: center; gap: var(--ec-space-2); margin-bottom: var(--ec-space-3); }
+.ec-stream--config { border-top: 2px solid var(--ec-chart-3); }
+.ec-stream--artifact { border-top: 2px solid var(--ec-iris); }
+
+.ec-kv { display: grid; grid-template-columns: 11rem 1fr; gap: 0.35rem var(--ec-space-3); font-size: var(--ec-text-sm); margin: 0; }
+.ec-kv dt { color: var(--ec-app-muted); }
+.ec-kv dd { margin: 0; }
+
+.ec-tablewrap { overflow-x: auto; }
+table.ec-table { width: 100%; border-collapse: collapse; font-size: var(--ec-text-sm); }
+table.ec-table th {
+  text-align: left; font-size: var(--ec-text-xs); text-transform: uppercase;
+  letter-spacing: var(--ec-tracking-wide); color: var(--ec-app-muted);
+  font-weight: var(--ec-weight-label); padding: 0.5rem var(--ec-space-3);
+  border-bottom: 1px solid var(--ec-app-border);
+}
+table.ec-table td { padding: 0.5rem var(--ec-space-3); border-bottom: 1px solid var(--ec-app-border); vertical-align: top; }
+
+.ec-chain { display: grid; gap: 0.35rem; }
+.ec-chain__row {
+  display: grid; grid-template-columns: 1.5rem 12rem 1fr; gap: var(--ec-space-3);
+  align-items: center; padding: 0.45rem var(--ec-space-3);
+  border: 1px solid var(--ec-app-border); border-radius: var(--ec-radius-sm);
+  background: var(--ec-app-surface); font-size: var(--ec-text-sm);
+}
+.ec-chain__row > * { min-width: 0; overflow-wrap: anywhere; }
+.ec-chain__idx { color: var(--ec-app-muted); font-family: var(--ec-font-mono); font-size: var(--ec-text-xs); }
+.ec-chain__row--leaf { border-left: 2px solid var(--ec-source-copper); }
+.ec-chain__row--empty { opacity: 0.55; }
+
+.ec-writes {
+  border: 1px dashed var(--ec-app-border); border-radius: var(--ec-radius-md);
+  padding: var(--ec-space-3) var(--ec-space-4); font-size: var(--ec-text-sm);
+  color: var(--ec-app-muted); display: flex; gap: var(--ec-space-5); align-items: baseline; flex-wrap: wrap;
+}
+.ec-writes strong { color: var(--ec-app-text); font-weight: var(--ec-weight-label); }
+
+.ec-file { border-bottom: 1px solid var(--ec-app-border); }
+.ec-file summary { cursor: pointer; padding: 0.5rem 0; font-size: var(--ec-text-sm); }
+.ec-file pre {
+  font-family: var(--ec-font-mono); font-size: var(--ec-text-xs);
+  background: var(--ec-app-field); padding: var(--ec-space-3);
+  border-radius: var(--ec-radius-sm); overflow-x: auto; margin: 0 0 var(--ec-space-3);
+}
+
+.ec-empty {
+  border: 1px dashed var(--ec-app-border); border-radius: var(--ec-radius-md);
+  padding: var(--ec-space-6); text-align: center;
+  color: var(--ec-app-muted); font-size: var(--ec-text-sm);
+}
+.ec-empty strong { display: block; color: var(--ec-app-text); margin-bottom: 0.35rem; font-size: var(--ec-text-base); }
