@@ -299,6 +299,306 @@ pub fn repo_relative(dir: &Path, file: &Path) -> String {
     }
 }
 
+// --- The Git read + draft-write ports, backed by a local clone --------------------------------
+
+/// The committer identity the Studio writes as when it acts as itself (register #16: ship a bot/App
+/// identity behind the same port as per-user acting-as-user OAuth). A later slice sets the *author* to
+/// the real actor from the identity port; the committer stays the Studio.
+const STUDIO_NAME: &str = "Deployment Studio";
+const STUDIO_EMAIL: &str = "studio@edgecommons.local";
+
+impl LocalGit {
+    fn git(&self, args: &[&str]) -> Result<std::process::Output, PortError> {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&self.root.0)
+            .args(args)
+            .output()
+            .map_err(|e| PortError::Unavailable(format!("git: {e}")))
+    }
+
+    fn git_ok(&self, args: &[&str]) -> Result<String, PortError> {
+        let out = self.git(args)?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        } else {
+            Err(PortError::Other(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ))
+        }
+    }
+}
+
+impl ec_deploy::ports::GitPort for LocalGit {
+    fn read_at(&self, git_ref: &str, path: &str) -> Result<Option<Vec<u8>>, PortError> {
+        // `git show <ref>:<path>` accepts any tree-ish, including the tree OID a merge-tree yields —
+        // which is how the render pipeline reads the would-actually-deploy output of a merge.
+        let out = self.git(&["show", &format!("{git_ref}:{path}")])?;
+        if out.status.success() {
+            Ok(Some(out.stdout))
+        } else {
+            // A missing path at a valid ref is the common, non-error case (a layer not yet authored).
+            Ok(None)
+        }
+    }
+
+    fn head_commit(&self) -> Result<String, PortError> {
+        self.git_ok(&["rev-parse", "HEAD"])
+    }
+}
+
+impl ec_deploy::ports::DraftPort for LocalGit {
+    fn open(&self, git_ref: &str, base_ref: &str) -> Result<(), PortError> {
+        // Idempotent: opening an existing draft is a no-op (propose is not "recreate").
+        if self
+            .git(&["rev-parse", "--verify", "--quiet", git_ref])?
+            .status
+            .success()
+        {
+            return Ok(());
+        }
+        self.git_ok(&["branch", git_ref, base_ref]).map(|_| ())
+    }
+
+    fn write_file(
+        &self,
+        git_ref: &str,
+        path: &str,
+        bytes: &[u8],
+        message: &str,
+    ) -> Result<(), PortError> {
+        // Commit onto the draft branch **without a working tree**: hash the blob, build a tree from
+        // the branch's tree with the path updated in a throwaway index, commit-tree, move the ref.
+        // This lets the server write a draft while the read side keeps serving the working tree.
+        let blob = {
+            use std::io::Write;
+            let mut child = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&self.root.0)
+                .args(["hash-object", "-w", "--stdin"])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| PortError::Unavailable(format!("git: {e}")))?;
+            child
+                .stdin
+                .take()
+                .ok_or_else(|| PortError::Other("git stdin".into()))?
+                .write_all(bytes)
+                .map_err(|e| PortError::Other(format!("writing blob: {e}")))?;
+            let out = child
+                .wait_with_output()
+                .map_err(|e| PortError::Unavailable(format!("git: {e}")))?;
+            if !out.status.success() {
+                return Err(PortError::Other(
+                    String::from_utf8_lossy(&out.stderr).trim().to_string(),
+                ));
+            }
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+
+        let index = self.root.0.join(".git").join(format!(
+            "studio-index-{}",
+            git_ref.replace(['/', '\\'], "_")
+        ));
+        let index_env = index.to_string_lossy().to_string();
+        let run_indexed = |args: &[&str]| -> Result<String, PortError> {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&self.root.0)
+                .env("GIT_INDEX_FILE", &index_env)
+                .args(args)
+                .output()
+                .map_err(|e| PortError::Unavailable(format!("git: {e}")))?;
+            if out.status.success() {
+                Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+            } else {
+                Err(PortError::Other(
+                    String::from_utf8_lossy(&out.stderr).trim().to_string(),
+                ))
+            }
+        };
+        run_indexed(&["read-tree", git_ref])?;
+        run_indexed(&[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("100644,{blob},{path}"),
+        ])?;
+        let tree = run_indexed(&["write-tree"])?;
+        let _ = std::fs::remove_file(&index);
+
+        let commit = {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&self.root.0)
+                .env("GIT_AUTHOR_NAME", STUDIO_NAME)
+                .env("GIT_AUTHOR_EMAIL", STUDIO_EMAIL)
+                .env("GIT_COMMITTER_NAME", STUDIO_NAME)
+                .env("GIT_COMMITTER_EMAIL", STUDIO_EMAIL)
+                .args(["commit-tree", &tree, "-p", git_ref, "-m", message])
+                .output()
+                .map_err(|e| PortError::Unavailable(format!("git: {e}")))?;
+            if !out.status.success() {
+                return Err(PortError::Other(
+                    String::from_utf8_lossy(&out.stderr).trim().to_string(),
+                ));
+            }
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        self.git_ok(&["update-ref", &format!("refs/heads/{git_ref}"), &commit])
+            .map(|_| ())
+    }
+
+    fn list(&self) -> Result<Vec<String>, PortError> {
+        let out = self.git_ok(&[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads/draft/",
+        ])?;
+        Ok(out
+            .lines()
+            .map(str::to_string)
+            .filter(|s| !s.is_empty())
+            .collect())
+    }
+
+    fn merge_tree(
+        &self,
+        draft_ref: &str,
+        main_ref: &str,
+    ) -> Result<ec_deploy::ports::MergeResult, PortError> {
+        let out = self.git(&["merge-tree", "--write-tree", main_ref, draft_ref])?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let tree = stdout.lines().next().unwrap_or_default().trim().to_string();
+        if out.status.success() {
+            return Ok(ec_deploy::ports::MergeResult::Clean(tree));
+        }
+        // On a textual conflict git prints the OID, a blank line, then `<mode> <oid> <stage>\t<path>`
+        // rows for each conflicted path. Collect the distinct paths.
+        let mut paths: Vec<String> = stdout
+            .lines()
+            .filter_map(|l| l.split_once('\t').map(|(_, p)| p.trim().to_string()))
+            .collect();
+        paths.sort();
+        paths.dedup();
+        if paths.is_empty() {
+            paths.push(stdout.trim().to_string());
+        }
+        Ok(ec_deploy::ports::MergeResult::Textual(paths))
+    }
+}
+
+/// The merge-base of a draft and current main — where the draft started, the `base` render point.
+#[must_use]
+pub fn merge_base(git: &LocalGit, draft_ref: &str, main_ref: &str) -> Option<String> {
+    git.git_ok(&["merge-base", main_ref, draft_ref]).ok()
+}
+
+/// Render a definition **at a Git ref** (a commit or a tree-ish, so a merge-tree OID works). The
+/// definition lives at `<dir_prefix>/definition.yaml`; its referenced layers and bindings are read at
+/// the same ref, so this is a pure function of the tree — the whole reason semantic conflict detection
+/// is possible (register #16). `dir_prefix` is the definition's directory relative to the repo root
+/// (`""` when the repo root is the site).
+pub fn render_at_ref(
+    git: &LocalGit,
+    dir_prefix: &str,
+    git_ref: &str,
+    profile: &str,
+) -> Result<ec_deploy::render::RenderOutput, String> {
+    use ec_deploy::ports::GitPort;
+    let at = |rel: &str| -> String {
+        if dir_prefix.is_empty() {
+            rel.to_string()
+        } else {
+            format!("{}/{rel}", dir_prefix.trim_end_matches('/'))
+        }
+    };
+    let def_bytes = git
+        .read_at(git_ref, &at("definition.yaml"))
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no definition.yaml at {git_ref}"))?;
+    let def_text = String::from_utf8(def_bytes).map_err(|e| e.to_string())?;
+    let authored = ec_deploy::workspace::parse_authored(&def_text).map_err(|e| e.to_string())?;
+
+    let mut files = std::collections::BTreeMap::new();
+    for rel in ec_deploy::workspace::referenced_paths_authored(&authored) {
+        let bytes = git
+            .read_at(git_ref, &at(&rel))
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("{rel} missing at {git_ref}"))?;
+        files.insert(
+            rel.clone(),
+            String::from_utf8(bytes).map_err(|e| e.to_string())?,
+        );
+    }
+
+    let definition = authored.effective(profile).map_err(|e| e.to_string())?;
+    let ws = ec_deploy::workspace::Workspace { definition, files };
+    let env = ws
+        .definition
+        .environments
+        .first()
+        .map(|e| e.name.clone())
+        .ok_or_else(|| "profile declares no environment".to_string())?;
+    let target = ec_deploy::Platform::from_family(&ws.definition.target_standard.family)
+        .ok_or_else(|| format!("unknown family {}", ws.definition.target_standard.family))?;
+    ec_deploy::render::render(&ws, &env, target, "initial").map_err(|e| e.to_string())
+}
+
+/// The result of checking a draft for conflicts (register #16 ruling 3): first any textual merge
+/// conflicts Git could not resolve, then the semantic divergences found by comparing rendered outputs.
+#[derive(Debug, Clone)]
+pub struct DraftCheck {
+    /// Paths Git could not merge as text — a hard conflict, reported before the semantic pass.
+    pub textual: Vec<String>,
+    /// Semantic divergences: the merged render differs from what the author reviewed.
+    pub semantic: Vec<ec_deploy::draft::Conflict>,
+}
+
+impl DraftCheck {
+    #[must_use]
+    pub fn is_clean(&self) -> bool {
+        self.textual.is_empty() && self.semantic.is_empty()
+    }
+}
+
+/// Check a draft against current main for a profile, the whole engine end to end: compute the merged
+/// tree, render `base` / `draft` / `main` / `merged`, and run the semantic detector.
+pub fn check_draft(
+    git: &LocalGit,
+    dir_prefix: &str,
+    profile: &str,
+    draft_ref: &str,
+    main_ref: &str,
+) -> Result<DraftCheck, String> {
+    use ec_deploy::ports::{DraftPort, MergeResult};
+    let merged_tree = match git
+        .merge_tree(draft_ref, main_ref)
+        .map_err(|e| e.to_string())?
+    {
+        MergeResult::Textual(paths) => {
+            return Ok(DraftCheck {
+                textual: paths,
+                semantic: Vec::new(),
+            });
+        }
+        MergeResult::Clean(tree) => tree,
+    };
+    let base_ref = merge_base(git, draft_ref, main_ref)
+        .ok_or_else(|| "no merge base between the draft and main".to_string())?;
+
+    let base = render_at_ref(git, dir_prefix, &base_ref, profile)?;
+    let draft = render_at_ref(git, dir_prefix, draft_ref, profile)?;
+    let main = render_at_ref(git, dir_prefix, main_ref, profile)?;
+    let merged = render_at_ref(git, dir_prefix, &merged_tree, profile)?;
+
+    Ok(DraftCheck {
+        textual: Vec::new(),
+        semantic: ec_deploy::draft::detect_conflicts(&base, &draft, &main, &merged),
+    })
+}
+
 // --- Registry-backed pin resolution (the Targets port) --------------------------------------
 
 /// Where the ecosystem catalog is read from, and how.

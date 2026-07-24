@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub mod codeowners;
+pub mod draft;
 pub mod greengrass;
 pub mod kubernetes;
 pub mod lock;
@@ -31,7 +32,7 @@ pub mod render;
 pub mod validate;
 pub mod workspace;
 
-pub use ports::{BlobPort, GitPort, IdentityPort, RunnerPort, TargetsPort};
+pub use ports::{BlobPort, DraftPort, GitPort, IdentityPort, MergeResult, RunnerPort, TargetsPort};
 
 /// The normative DeploymentDefinition JSON Schema (`edgecommons.io/v1alpha1`), embedded so
 /// `deployment validate` stage one runs offline by construction.
