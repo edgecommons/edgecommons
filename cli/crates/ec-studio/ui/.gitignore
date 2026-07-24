@@ -1,0 +1,5 @@
+node_modules/
+# dist/ is committed so `cargo build` embeds the UI without a Node toolchain.
+
+# TypeScript incremental build cache.
+*.tsbuildinfo
