@@ -512,8 +512,21 @@ the kernel, with four SPA screens over that API:
 It adds no capability the CLI lacks, links no cloud SDK above the port boundary, and Git remains the only
 state. Nothing in the kernel may assume a server exists (the CLI still works fully offline). **Authoring
 and branch/draft orchestration — the write path — are the remaining slice-5 cuts;** nothing built so far
-writes. Branch/draft orchestration additionally depends on the concurrent-drafts story (register W8),
-still open.
+writes.
+
+The concurrency contract those cuts must honour is decided (Studio register #16, resolving W8):
+**optimistic concurrency with no locks; conflict detection is semantic at the effective-config level,
+never textual** — render `base`, `draft`, `main-now` and `merge(draft, main-now)` and compare *outputs*,
+so a merge that changes the effective config is caught even where Git finds no textual conflict; rebase is
+continuous and surfaced as a consequence diff, not a Git conflict; conflicts are detected and surfaced,
+never auto-resolved; **branches are not user-visible** (a draft is a named change — propose → review →
+apply); and apply is the Git host's PR merge, gated by the CODEOWNERS rendering above (register #10).
+
+Two consequences land on this document's ports. First, the write path needs **Git write credentials**,
+which this binary deliberately holds none of today (the Runner port holds target credentials; §8.9) — ship
+a bot/App identity behind the same port as per-user acting-as-user OAuth, and design for the latter.
+Second, **authorization stays CODEOWNERS plus branch protection enforced by the host**: authentication
+buys attribution, acting-as-user, and "you can/cannot approve this" — never a role system of ours.
 
 ### 8.5 `release` — two streams, not one (REVIEW #2, decided 2026-07-11)
 
