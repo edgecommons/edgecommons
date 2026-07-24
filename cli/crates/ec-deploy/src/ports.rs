@@ -30,6 +30,46 @@ pub trait IdentityPort {
     fn current_actor(&self) -> Result<String, PortError>;
 }
 
+/// The write half of the source of truth: the draft lifecycle (DESIGN-cli §8.10; register #16).
+///
+/// A draft is a *named change*; the vocabulary is **propose → review → apply**, and the branch ref is
+/// derived, never authored. This port is the boundary the Studio needs write access through — the read
+/// side ([`GitPort`]) needs none. Its local adapter is a plain clone driven by `git`; production is a
+/// Git host reached with a bot/App identity behind the same trait, so acting-as-user OAuth is a later
+/// swap of the adapter, not a redesign.
+///
+/// Conflict detection ([`crate::draft::detect_conflicts`]) is **semantic**, so the one Git-native
+/// operation this port exposes beyond create/commit is [`merge_tree`](DraftPort::merge_tree): compute
+/// the merged tree of a draft and current main *without touching a working tree*, which the render
+/// pipeline then reads through [`GitPort::read_at`] to render the would-actually-deploy output.
+pub trait DraftPort {
+    /// Create the draft's branch at `base_ref`. Idempotent: opening an existing draft is a no-op.
+    fn open(&self, git_ref: &str, base_ref: &str) -> Result<(), PortError>;
+    /// Stage one file edit as a commit on the draft's branch.
+    fn write_file(
+        &self,
+        git_ref: &str,
+        path: &str,
+        bytes: &[u8],
+        message: &str,
+    ) -> Result<(), PortError>;
+    /// Every `draft/*` ref that exists.
+    fn list(&self) -> Result<Vec<String>, PortError>;
+    /// Compute the merged tree of a draft against current main. `Clean` yields a tree-ish that
+    /// [`GitPort::read_at`] can read; `Textual` reports the paths Git could not merge as text — a hard
+    /// conflict surfaced before the semantic pass even runs.
+    fn merge_tree(&self, draft_ref: &str, main_ref: &str) -> Result<MergeResult, PortError>;
+}
+
+/// The outcome of a merge-tree computation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergeResult {
+    /// A textually-clean merge: the tree-ish to read the merged render from.
+    Clean(String),
+    /// Git could not merge these paths as text — a hard conflict, listed for the author.
+    Textual(Vec<String>),
+}
+
 /// Component artifacts, evidence bundles, release render snapshots.
 ///
 /// Local adapter: the filesystem. Production: any **S3-compatible API** — not "S3 the service".

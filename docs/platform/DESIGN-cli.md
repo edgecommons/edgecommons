@@ -731,6 +731,42 @@ version with no resolvable digest. `deployment validate` then emits a **warning*
 the reason ("no release index published for `<component>`"). When the index appears, the identical code
 path begins enforcing. No redesign, no flag.
 
+### 8.10 `draft` — authoring, and semantic conflict detection (Studio register #16)
+
+Authoring is the write path, and it honours the concurrency contract §8.4 records: **optimistic
+concurrency, no locks, and conflict detection that is semantic at the effective-config level.** A draft
+is a **named change** — the author supplies a title, the ref (`draft/<slug>-<id>`) is derived, and the
+vocabulary is **propose → review → apply**. Apply is the Git host's PR merge, gated by CODEOWNERS.
+
+The lifecycle is a small verb group and a new write port, built as slices:
+
+- **`deployment draft {open, edit, list, status}`** (built). `open` proposes a change and prints the
+  derived ref; `edit` stages a layer change; `list` shows open drafts; `status` reviews a draft against
+  current main. Edits are committed onto the draft branch **without touching the working tree** — hash
+  the blob, build the tree in a throwaway index, `commit-tree`, move the ref — so the read-only server
+  keeps serving while a draft is authored.
+- **The `DraftPort`** (§8.2, built) is the write half of the source of truth; the read `GitPort` needs
+  no write access. Its local adapter drives `git`; production is a Git host reached with a **bot/App
+  identity behind the same trait**, so per-user acting-as-user OAuth is a later adapter swap, not a
+  redesign (register #16). The committer is the Studio; a later slice sets the *author* to the real
+  actor from the identity port.
+
+**Semantic conflict detection (the load-bearing rule).** Because `render` is a deterministic pure
+function of the files at a commit, `status` renders four points — `base` (the draft's merge-base with
+main), `draft` (what the author reviewed), `main` (where the base has moved), and `merged`
+(`git merge-tree` of draft and main, read back through `GitPort::read_at` on the resulting tree) — and
+compares their **outputs**. For every rendered path the merge is *expected* to be the draft's version
+where the draft changed it and current main's version elsewhere; any path where `merged` differs is a
+conflict, surfaced for a human and never auto-resolved. This catches what a textual merge cannot: two
+drafts touching *different files* that both feed one node — a clean merge with a changed effective
+config. A textual merge Git cannot resolve is reported first, as a hard conflict, before the semantic
+pass runs.
+
+**Not yet built (later slices):** the node-anchored layer *editor* UI and its live declared-write panel;
+draft orchestration in the UI (the draft list, advisory presence, conflict surfacing, apply-as-PR); and
+the GitHub App credential adapter. The engine and its CLI surface exist and are proven end to end (a
+semantic conflict detected from a textually-clean, different-files merge, against a real Git repo).
+
 ---
 
 ## 9. `registry` and `doctor`
