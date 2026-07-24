@@ -374,6 +374,7 @@ dependencies = [
  "ec-adapters",
  "ec-deploy",
  "ec-diag",
+ "include_dir",
  "mime_guess",
  "serde",
  "serde_json",

@@ -16,7 +16,7 @@ those differently. Branch on the exit code, never on the message text.
 
 Exit `5` is deliberate. A verb that exists in the surface but is not built says so with its own code,
 so CI can tell *"this build cannot do that yet"* from *"you invoked it wrong"*. Today `deployment
-diff` and `studio serve` exit `5`.
+diff` exits `5`.
 
 ## Diagnostic codes
 

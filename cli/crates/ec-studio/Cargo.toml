@@ -1,6 +1,6 @@
 [package]
 name = "ec-studio"
-description = "The Deployment Studio server shell around the same kernel. A compiling seam in v1."
+description = "The Deployment Studio server — an axum service with an embedded React/Carbon UI over the same kernel the CLI uses."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,6 +17,7 @@ axum = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net"] }
 tower-http = { version = "0.6", features = ["cors"] }
 mime_guess = "2"
+include_dir = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }

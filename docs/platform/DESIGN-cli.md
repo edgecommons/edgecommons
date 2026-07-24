@@ -491,9 +491,13 @@ load-bearing risk. It is a build gate here:
 
 ### 8.4 `studio serve`
 
-The same kernel behind an `axum` server with the SPA embedded. In v1 this is a **compiling seam**: the
-subcommand exists, the ports are wired, the server is not built. Nothing in the kernel may assume a
-server exists.
+The same kernel behind an `axum` server with an embedded React + Carbon SPA. The **read-only first cut**
+(deck ch. 13 slice 5) is built: it loads a definition from the repo and serves a read-only JSON API over
+the kernel — the plant (metadata, profiles, topology), the effective config layers per profile, and the
+render + normalized plan — with the SPA's two screens (config layers, render review) over that API. It
+adds no capability the CLI lacks, links no cloud SDK above the port boundary, and Git remains the only
+state. Nothing in the kernel may assume a server exists (the CLI still works fully offline). Authoring,
+branch/draft orchestration, evidence correlation, and access control are later slices.
 
 ### 8.5 `release` — two streams, not one (REVIEW #2, decided 2026-07-11)
 

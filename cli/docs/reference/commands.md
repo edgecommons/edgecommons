@@ -295,9 +295,11 @@ release lock correlates them without fusing them, so either rolls back alone.
 edgecommons studio serve [--repo <REPO>] [--bind <BIND>]
 ```
 
-The Deployment Studio server over the same kernel the CLI uses. `--repo` defaults to `.`, `--bind` to
-`127.0.0.1:8787`. The subcommand exists and the ports are wired; the server is not built in this
-binary and exits `5`.
+The Deployment Studio server over the same kernel the CLI uses — an `axum` service with an embedded
+React + Carbon UI. `--repo` defaults to `.` (a directory containing a `definition.yaml`), `--bind` to
+`127.0.0.1:8787`. The **read-only** cut is built: it serves the plant, the effective config layers,
+and the render + plan for any profile, and the UI's two screens (config layers, render review) over
+that API. A repo with no readable definition is an environment error (exit `3`), not a crash.
 
 ## `doctor`
 

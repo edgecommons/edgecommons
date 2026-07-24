@@ -11,14 +11,19 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::{Path as AxumPath, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, Uri, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use ec_deploy::Platform;
 use ec_deploy::render::render;
 use ec_diag::Fatal;
+use include_dir::{Dir, include_dir};
 use serde::Serialize;
 use serde_json::{Value, json};
+
+/// The React + Carbon single-page app, built by `ui/` (vite) and embedded so the Studio ships as a
+/// single static binary (deck ch. 12). Rebuild with `npm --prefix crates/ec-studio/ui run build`.
+static UI: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/ui/dist");
 
 /// Where the server serves from, and what it serves against.
 #[derive(Debug, Clone)]
@@ -90,7 +95,7 @@ fn router(state: Arc<AppState>) -> Router {
         .route("/api/definition", get(get_definition))
         .route("/api/profiles/{profile}/layers", get(get_layers))
         .route("/api/profiles/{profile}/render", get(get_render))
-        .fallback(get(index))
+        .fallback(get(serve_ui))
         .with_state(state)
 }
 
@@ -226,10 +231,22 @@ async fn get_render(
     }
 }
 
-/// The SPA entry point. The React + Carbon bundle is embedded here once built (deck ch. 12); until
-/// then this is a read-only status page confirming the server and its API are live.
-async fn index() -> Html<&'static str> {
-    Html(include_str!("index.html"))
+/// Serve the embedded SPA: an exact asset path returns that file with its content type; anything
+/// else returns `index.html` so the client-side router can take over (single-page-app fallback).
+async fn serve_ui(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    if let Some(file) = UI.get_file(path) {
+        let mime = mime_guess::from_path(path).first_or_octet_stream();
+        return (
+            [(header::CONTENT_TYPE, mime.as_ref())],
+            file.contents().to_vec(),
+        )
+            .into_response();
+    }
+    match UI.get_file("index.html") {
+        Some(index) => Html(index.contents().to_vec()).into_response(),
+        None => (StatusCode::NOT_FOUND, "UI bundle not built").into_response(),
+    }
 }
 
 #[cfg(test)]
