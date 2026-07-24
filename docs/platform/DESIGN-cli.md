@@ -491,13 +491,29 @@ load-bearing risk. It is a build gate here:
 
 ### 8.4 `studio serve`
 
-The same kernel behind an `axum` server with an embedded React + Carbon SPA. The **read-only first cut**
-(deck ch. 13 slice 5) is built: it loads a definition from the repo and serves a read-only JSON API over
-the kernel — the plant (metadata, profiles, topology), the effective config layers per profile, and the
-render + normalized plan — with the SPA's two screens (config layers, render review) over that API. It
-adds no capability the CLI lacks, links no cloud SDK above the port boundary, and Git remains the only
-state. Nothing in the kernel may assume a server exists (the CLI still works fully offline). Authoring,
-branch/draft orchestration, evidence correlation, and access control are later slices.
+The same kernel behind an `axum` server with an embedded React + Carbon SPA. The **read-only cuts**
+(deck ch. 13 slice 5) are built: it loads a definition from the repo and serves a read-only JSON API over
+the kernel, with four SPA screens over that API:
+
+- **Config layers** — the plant (metadata, profiles, topology) and the effective config per profile ×
+  node × component.
+- **Render review** — the rendered artifacts + the normalized plan for a profile.
+- **Evidence** — the correlation envelope a release would carry (REVIEW #13): the two streams (config and
+  artifact) correlated but never fused, per-file `sha256`, the `devMode` flag, and the evidence bundle
+  (schema + semantic checks, warnings, render determinism). The Studio holds intent and adjudicates
+  delivery **from evidence**; it computes the envelope in-memory (via the same `build_release` the CLI
+  uses) and writes nothing.
+- **Access** — a rendering of the repository's `CODEOWNERS` (REVIEW #10): for the definition and each
+  component's config layer, who a change would require as a reviewer. It never invents an approval lane —
+  it surfaces the Git-host rule that already governs the file (last-match-wins), and a repository with no
+  `CODEOWNERS` is reported honestly as falling to the default branch-protection review, never as
+  "unrestricted".
+
+It adds no capability the CLI lacks, links no cloud SDK above the port boundary, and Git remains the only
+state. Nothing in the kernel may assume a server exists (the CLI still works fully offline). **Authoring
+and branch/draft orchestration — the write path — are the remaining slice-5 cuts;** nothing built so far
+writes. Branch/draft orchestration additionally depends on the concurrent-drafts story (register W8),
+still open.
 
 ### 8.5 `release` — two streams, not one (REVIEW #2, decided 2026-07-11)
 

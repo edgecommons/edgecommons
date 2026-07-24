@@ -2,9 +2,13 @@
 //! kernel the CLI uses**. The server adds branch/draft orchestration, the UI, evidence correlation,
 //! and access control — never a capability the CLI lacks. Git is the only durable state.
 //!
-//! This is the read-only first cut (deck ch. 13 slice 5): it loads a definition from the repo and
-//! serves the config layers and the render/plan for any profile. No authoring, no writes, no cloud
-//! SDK above the port boundary.
+//! These are the **read-only** cuts of slice 5 (deck ch. 13): the server loads a definition from
+//! the repo and serves, for any profile, the config layers, the render/plan, the **evidence
+//! correlation** envelope a release would carry (REVIEW #13 — Studio holds intent and adjudicates
+//! from evidence), and the **access control** rendering of the repo's `CODEOWNERS` (REVIEW #10 —
+//! who must review a change is a rendering of Git-host review state, not a parallel system).
+//! Authoring and branch/draft orchestration — the write path — are later cuts; nothing here writes.
+//! No cloud SDK sits above the port boundary.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,8 +18,11 @@ use axum::extract::{Path as AxumPath, State};
 use axum::http::{StatusCode, Uri, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
-use ec_deploy::Platform;
+use ec_deploy::codeowners::CodeOwners;
+use ec_deploy::release::build_release;
 use ec_deploy::render::render;
+use ec_deploy::validate::validate as kernel_validate;
+use ec_deploy::{Platform, Stream};
 use ec_diag::Fatal;
 use include_dir::{Dir, include_dir};
 use serde::Serialize;
@@ -95,6 +102,8 @@ fn router(state: Arc<AppState>) -> Router {
         .route("/api/definition", get(get_definition))
         .route("/api/profiles/{profile}/layers", get(get_layers))
         .route("/api/profiles/{profile}/render", get(get_render))
+        .route("/api/profiles/{profile}/evidence", get(get_evidence))
+        .route("/api/access", get(get_access))
         .fallback(get(serve_ui))
         .with_state(state)
 }
@@ -231,6 +240,164 @@ async fn get_render(
     }
 }
 
+/// The evidence-correlation screen's data: the release lock a profile would produce — the
+/// correlation envelope over the two streams (config and artifact, correlated but never fused),
+/// per-file `sha256`, the `devMode` flag, and the evidence bundle (schema + semantic checks,
+/// warnings, render determinism). This is the Studio adjudicating delivery **from evidence** while
+/// holding intent (REVIEW #13); it computes the envelope in-memory and writes nothing.
+async fn get_evidence(
+    State(state): State<Arc<AppState>>,
+    AxumPath(profile): AxumPath<String>,
+) -> Response {
+    let ws = match state.loaded.workspace(&profile) {
+        Ok(ws) => ws,
+        Err(e) => return ApiError(StatusCode::NOT_FOUND, e).into_response(),
+    };
+    let Some(target) = Platform::from_family(&ws.definition.target_standard.family) else {
+        return ApiError(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("unknown family {}", ws.definition.target_standard.family),
+        )
+        .into_response();
+    };
+    let Some(env) = ws.definition.environments.first().map(|e| e.name.clone()) else {
+        return ApiError(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "profile declares no environment".into(),
+        )
+        .into_response();
+    };
+    // A release is only honest over a valid definition; run the same semantic gate the CLI does and
+    // refuse to fabricate an envelope for a broken plant.
+    let findings = kernel_validate(&ws, None);
+    if !findings.errors.is_empty() {
+        return ApiError(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!(
+                "the definition has {} semantic error(s); evidence is only produced for a valid \
+                 definition (run `deployment validate`)",
+                findings.errors.len()
+            ),
+        )
+        .into_response();
+    }
+    let commit = ec_adapters::describe_head(&state.loaded.root).unwrap_or_else(|| "unknown".into());
+    // The envelope correlates both streams regardless of which is promoted; we build once and label
+    // both independent release tags.
+    let output = match build_release(
+        &ws,
+        &env,
+        target,
+        Stream::Config,
+        "initial",
+        &commit,
+        &findings.warnings,
+        0,
+    ) {
+        Ok(o) => o,
+        Err(e) => return ApiError(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response(),
+    };
+    let read = |name: &str| -> Value {
+        output
+            .files
+            .iter()
+            .find(|(n, _)| n == name)
+            .and_then(|(_, text)| serde_json::from_str(text).ok())
+            .unwrap_or(Value::Null)
+    };
+    let short = commit.get(..12).unwrap_or(&commit);
+    axum::Json(json!({
+        "profile": profile,
+        "target": ws.definition.target_standard.family,
+        "environment": env,
+        "commit": commit,
+        "streamTags": { "config": format!("config-{short}"), "artifact": format!("artifact-{short}") },
+        "manifest": read("manifest.json"),
+        "evidence": read("evidence.json"),
+    }))
+    .into_response()
+}
+
+/// The access-control screen's data: a rendering of the repository's `CODEOWNERS` (REVIEW #10). For
+/// the definition file and each component's config layer, it reports who a change would require as a
+/// reviewer — never inventing an approval lane, only surfacing the Git-host rule that already
+/// governs the file. A repository with no `CODEOWNERS` is reported honestly as falling to the
+/// default branch-protection review.
+async fn get_access(State(state): State<Arc<AppState>>) -> Response {
+    let root = &state.loaded.root;
+    let codeowners = ec_adapters::read_codeowners(root);
+    let (owners_path, parsed) = match &codeowners {
+        Some((path, text)) => (Some(path.clone()), CodeOwners::parse(text)),
+        None => (None, CodeOwners::default()),
+    };
+
+    // Resolve one file (given as an absolute path) to (repo-relative path, matched pattern, owners).
+    let resolve = |abs: &Path| -> Value {
+        let repo_rel = ec_adapters::repo_relative(root, abs);
+        match parsed.owner_of(&repo_rel) {
+            Some(m) => json!({
+                "file": repo_rel,
+                "owners": m.owners,
+                "matchedPattern": m.pattern,
+            }),
+            None => json!({ "file": repo_rel, "owners": [], "matchedPattern": Value::Null }),
+        }
+    };
+
+    let a = &state.loaded.authored;
+    let definition_file = resolve(&state.loaded.definition_path);
+
+    let mut items = Vec::new();
+    for node in &a.topology.nodes {
+        for comp in &node.components {
+            if let Some(layer) = &comp.layer {
+                let mut entry = resolve(&root.join(layer));
+                if let Value::Object(map) = &mut entry {
+                    map.insert("node".into(), json!(node.key));
+                    map.insert("scope".into(), json!(node.scope));
+                    map.insert("component".into(), json!(comp.name));
+                }
+                items.push(entry);
+            }
+        }
+    }
+
+    let is_unowned = |i: &Value| -> bool { i["owners"].as_array().is_none_or(Vec::is_empty) };
+    let unowned =
+        items.iter().filter(|i| is_unowned(i)).count() + usize::from(is_unowned(&definition_file));
+
+    let note = access_note(owners_path.as_deref(), unowned);
+    axum::Json(json!({
+        "codeowners": owners_path.map(|p| json!({ "path": p })).unwrap_or(Value::Null),
+        "unownedCount": unowned,
+        "note": note,
+        "definitionFile": definition_file,
+        "items": items,
+    }))
+    .into_response()
+}
+
+/// The honest one-line summary the UI shows above the table.
+fn access_note(codeowners_path: Option<&str>, unowned: usize) -> String {
+    match codeowners_path {
+        None => "This repository defines no CODEOWNERS; changes to every file fall to the default \
+                 branch-protection review."
+            .to_string(),
+        Some(path) => {
+            if unowned == 0 {
+                format!(
+                    "Every deployment file is owned by a {path} rule; a change requires its owners' review."
+                )
+            } else {
+                format!(
+                    "{unowned} deployment file(s) match no {path} rule and fall to the default \
+                     branch-protection review; the rest require their owners' review."
+                )
+            }
+        }
+    }
+}
+
 /// Serve the embedded SPA: an exact asset path returns that file with its content type; anything
 /// else returns `index.html` so the client-side router can take over (single-page-app fallback).
 async fn serve_ui(uri: Uri) -> Response {
@@ -361,6 +528,90 @@ profiles:
         let (status, body) = get(&app, "/api/profiles/openshift/layers").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert!(body["error"].as_str().unwrap().contains("openshift"));
+    }
+
+    #[tokio::test]
+    async fn evidence_endpoint_returns_the_correlation_envelope() {
+        let (_d, state) = fixture();
+        let app = router(state);
+        let (status, body) = get(&app, "/api/profiles/host/evidence").await;
+        assert_eq!(status, StatusCode::OK);
+        // Both streams are present and correlated, never fused.
+        assert!(
+            !body["manifest"]["streams"]["artifact"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        // The fixture's artifact is source-form (no version+digest), so the envelope is devMode.
+        assert_eq!(body["manifest"]["devMode"], true);
+        // Evidence records the semantic gate and its two independent release tags.
+        assert!(body["evidence"]["semanticRules"].is_string());
+        assert!(
+            body["streamTags"]["config"]
+                .as_str()
+                .unwrap()
+                .starts_with("config-")
+        );
+        assert!(
+            body["streamTags"]["artifact"]
+                .as_str()
+                .unwrap()
+                .starts_with("artifact-")
+        );
+    }
+
+    #[tokio::test]
+    async fn access_endpoint_degrades_honestly_without_codeowners() {
+        // The tempdir is not a Git repository, so there is no CODEOWNERS to render.
+        let (_d, state) = fixture();
+        let app = router(state);
+        let (status, body) = get(&app, "/api/access").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["codeowners"], Value::Null);
+        assert!(body["note"].as_str().unwrap().contains("branch-protection"));
+        // Every file falls through to default review; none carries owners.
+        assert!(body["items"][0]["owners"].as_array().unwrap().is_empty());
+        assert_eq!(body["items"][0]["component"], "telemetry-processor");
+    }
+
+    #[tokio::test]
+    async fn access_endpoint_renders_codeowners_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("bindings")).unwrap();
+        std::fs::write(dir.path().join("bindings/local.json"), "{}\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("layers")).unwrap();
+        std::fs::write(
+            dir.path().join("layers/telemetry.json"),
+            r#"{ "component": { "global": { "publishIntervalMs": 500 } } }"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("definition.yaml"), DEF).unwrap();
+        // A catch-all plus a leaf rule (last-match-wins). `git init` is enough for
+        // `rev-parse --show-toplevel`; no commit is needed for ownership resolution.
+        std::fs::write(
+            dir.path().join("CODEOWNERS"),
+            "* @plant-eng\ntelemetry.json @telemetry-team\n",
+        )
+        .unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .arg("init")
+                .output()
+                .is_ok_and(|o| o.status.success()),
+            "git init must succeed for the CODEOWNERS test"
+        );
+        let loaded = ec_adapters::load_workspace(&dir.path().join("definition.yaml")).unwrap();
+        let app = router(Arc::new(AppState { loaded }));
+        let (status, body) = get(&app, "/api/access").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["codeowners"]["path"], "CODEOWNERS");
+        // The leaf rule wins for the telemetry layer; the definition falls to the catch-all.
+        assert_eq!(body["items"][0]["owners"][0], "@telemetry-team");
+        assert_eq!(body["definitionFile"]["owners"][0], "@plant-eng");
+        assert_eq!(body["unownedCount"], 0);
     }
 
     #[tokio::test]

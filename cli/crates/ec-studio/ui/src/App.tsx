@@ -6,6 +6,8 @@ import {
 import { api, type DefinitionView } from "./api";
 import { ConfigLayers } from "./ConfigLayers";
 import { RenderReview } from "./RenderReview";
+import { EvidenceReview } from "./EvidenceReview";
+import { AccessControl } from "./AccessControl";
 // The canonical EdgeCommons horizontal lockup, reversed for the dark app bar — the same asset the
 // edge-console app bar uses.
 import logoUrl from "./assets/edgecommons-logo-horizontal-reversed.svg";
@@ -61,10 +63,14 @@ export function App() {
             <TabList aria-label="Studio views">
               <Tab>Config layers</Tab>
               <Tab>Render review</Tab>
+              <Tab>Evidence</Tab>
+              <Tab>Access</Tab>
             </TabList>
             <TabPanels>
               <TabPanel>{profile && <ConfigLayers profile={profile} />}</TabPanel>
               <TabPanel>{profile && <RenderReview profile={profile} />}</TabPanel>
+              <TabPanel>{profile && <EvidenceReview profile={profile} />}</TabPanel>
+              <TabPanel><AccessControl /></TabPanel>
             </TabPanels>
           </Tabs>
         </main>

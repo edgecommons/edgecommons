@@ -102,6 +102,9 @@ pub struct LoadedWorkspace {
     pub authored: ec_deploy::model::AuthoredDefinition,
     pub files: std::collections::BTreeMap<String, String>,
     pub root: PathBuf,
+    /// The definition file itself (e.g. `<root>/definition.yaml`) — kept so callers that need to
+    /// resolve its ownership or commit history do not have to reconstruct the name.
+    pub definition_path: PathBuf,
     pub definition_text: String,
     /// The lock committed beside the definition, when `deployment lock` has been run. It supplies
     /// what the definition itself need not carry — today the Greengrass component name (§8.7).
@@ -181,6 +184,7 @@ pub fn load_workspace(definition: &Path) -> Result<LoadedWorkspace, String> {
         authored,
         files,
         root,
+        definition_path: definition.to_path_buf(),
         definition_text,
         lock,
     })
@@ -245,6 +249,54 @@ pub fn describe_head(dir: &Path) -> Option<String> {
     } else {
         commit
     })
+}
+
+/// The absolute path of the Git repository containing `dir` (its `--show-toplevel`), or `None`
+/// outside a repo. CODEOWNERS patterns are anchored at this root, so the Studio resolves ownership
+/// against repo-relative paths, not paths relative to the definition's directory.
+#[must_use]
+pub fn repo_root(dir: &Path) -> Option<PathBuf> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let top = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!top.is_empty()).then(|| PathBuf::from(top))
+}
+
+/// The repository's `CODEOWNERS` — its repo-relative display path and full text — searched in the
+/// three locations Git hosts honor (`CODEOWNERS`, `.github/CODEOWNERS`, `docs/CODEOWNERS`), in that
+/// order. `None` means the repository defines no ownership file, which the Studio renders as
+/// "changes fall to the default branch-protection review" — never as "unrestricted".
+#[must_use]
+pub fn read_codeowners(dir: &Path) -> Option<(String, String)> {
+    let root = repo_root(dir)?;
+    for rel in ["CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"] {
+        let path = root.join(rel);
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            return Some((rel.to_string(), text));
+        }
+    }
+    None
+}
+
+/// A file's path relative to the Git repo root (forward-slashed), for matching against CODEOWNERS.
+/// Falls back to the path as given when it is not under a repo or the prefix cannot be stripped.
+#[must_use]
+pub fn repo_relative(dir: &Path, file: &Path) -> String {
+    let slashed = |p: &Path| p.to_string_lossy().replace('\\', "/");
+    match repo_root(dir) {
+        Some(root) => file
+            .strip_prefix(&root)
+            .map(slashed)
+            .unwrap_or_else(|_| slashed(file)),
+        None => slashed(file),
+    }
 }
 
 // --- Registry-backed pin resolution (the Targets port) --------------------------------------
