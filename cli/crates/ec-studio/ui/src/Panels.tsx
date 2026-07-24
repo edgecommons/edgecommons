@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Loading, InlineNotification, Tag } from "@carbon/react";
+import { Button, Loading, InlineNotification, Tag } from "@carbon/react";
 import {
   api, levelOf, valueOf,
   type AccessView, type DefinitionView, type EvidenceView, type RenderView,
 } from "./api";
 import { selectionScopeId, useTopology, type Selection } from "./Shell";
+import { LayerEditor } from "./LayerEditor";
 
 /* Panels render product state. Design rationale lives in the design repo's mock and REVIEW-UI,
  * never in this surface. */
@@ -113,9 +114,12 @@ function Card({ label, value, note }: { label: string; value: React.ReactNode; n
 
 /* ── Config ───────────────────────────────────────────────────────────────────────── */
 
-export function Config({ def, sel }: { def: DefinitionView; sel: Selection }) {
+export function Config({ def, sel, profile }: { def: DefinitionView; sel: Selection; profile: string }) {
+  const [editing, setEditing] = useState(false);
   const t = useTopology(def);
   const scopeId = selectionScopeId(sel, def);
+  // Reset the editor whenever the selection changes.
+  useEffect(() => setEditing(false), [scopeId]);
   if (!scopeId) return null;
   const chain = t.chainOf(scopeId);
   const node = sel.kind === "node" ? t.nodeByKey(sel.id) : undefined;
@@ -145,10 +149,30 @@ export function Config({ def, sel }: { def: DefinitionView; sel: Selection }) {
       </div>
 
       <h2>Layer at this scope</h2>
-      <div className="ec-writes">
-        <span><strong>File</strong> <code>{ownLayer ?? "— none authored"}</code></span>
-        <span><strong>Applies to</strong> {nodes.length} node(s) · {comps} component(s)</span>
-      </div>
+      {!ownLayer ? (
+        <div className="ec-writes">
+          <span><strong>File</strong> <code>— none authored</code></span>
+          <span><strong>Applies to</strong> {nodes.length} node(s) · {comps} component(s)</span>
+        </div>
+      ) : editing ? (
+        <LayerEditor
+          profile={profile}
+          path={ownLayer}
+          scope={scopeId}
+          nodes={nodes.length}
+          components={comps}
+        />
+      ) : (
+        <>
+          <div className="ec-writes">
+            <span><strong>File</strong> <code>{ownLayer}</code></span>
+            <span><strong>Applies to</strong> {nodes.length} node(s) · {comps} component(s)</span>
+          </div>
+          <div style={{ marginTop: "0.75rem" }}>
+            <Button size="sm" kind="tertiary" onClick={() => setEditing(true)}>Edit layer</Button>
+          </div>
+        </>
+      )}
 
       <h2>Derived</h2>
       <p className="ec-sub">Computed from placement and merged into every component here.</p>

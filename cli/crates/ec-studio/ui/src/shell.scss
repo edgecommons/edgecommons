@@ -235,3 +235,18 @@ table.ec-table td { padding: 0.5rem var(--ec-space-3); border-bottom: 1px solid 
   color: var(--ec-app-muted); font-size: var(--ec-text-sm);
 }
 .ec-empty strong { display: block; color: var(--ec-app-text); margin-bottom: 0.35rem; font-size: var(--ec-text-base); }
+
+/* The layer editor (write path). */
+.ec-editor { display: flex; flex-direction: column; gap: var(--ec-space-3); }
+.ec-editor__area textarea { font-family: var(--ec-font-mono); font-size: var(--ec-text-xs); }
+.ec-propose { border: 1px solid var(--ec-app-border); border-radius: var(--ec-radius-md); padding: var(--ec-space-4); display: flex; flex-direction: column; gap: var(--ec-space-3); }
+.ec-propose__actions { display: flex; gap: var(--ec-space-3); align-items: center; }
+.ec-note {
+  border-left: 2px solid var(--ec-iris); background: var(--ec-app-surface);
+  padding: var(--ec-space-3) var(--ec-space-4); font-size: var(--ec-text-sm);
+  border-radius: 0 var(--ec-radius-sm) var(--ec-radius-sm) 0;
+}
+.ec-note--warn { border-left-color: var(--ec-warning); }
+.ec-note strong { font-weight: var(--ec-weight-label); }
+.ec-note ul { margin: 0.5rem 0 0; padding-left: 1.1rem; }
+.ec-note li { margin: 0.25rem 0; }

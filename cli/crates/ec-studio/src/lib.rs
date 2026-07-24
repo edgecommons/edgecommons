@@ -7,8 +7,12 @@
 //! correlation** envelope a release would carry (REVIEW #13 — Studio holds intent and adjudicates
 //! from evidence), and the **access control** rendering of the repo's `CODEOWNERS` (REVIEW #10 —
 //! who must review a change is a rendering of Git-host review state, not a parallel system).
-//! Authoring and branch/draft orchestration — the write path — are later cuts; nothing here writes.
-//! No cloud SDK sits above the port boundary.
+//! It also serves the **draft write path** (register #16): open a named change, stage a layer edit,
+//! and review it for semantic conflicts. Writes go only to `draft/*` branches through the
+//! [`DraftPort`](ec_deploy::ports::DraftPort) — never to main, never to the working tree the read side
+//! serves. The full draft-orchestration UI and the GitHub App credential adapter are later slices; the
+//! local adapter writes to the clone as the Studio bot identity. No cloud SDK sits above the port
+//! boundary.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -46,6 +50,40 @@ struct AppState {
     loaded: ec_adapters::LoadedWorkspace,
 }
 
+impl AppState {
+    /// The Git port over this repo. The draft write path writes here (to `draft/*` branches, never
+    /// main, never the working tree); the read side keeps serving committed state.
+    fn git(&self) -> ec_adapters::LocalGit {
+        ec_adapters::LocalGit {
+            root: ec_deploy::ports::LocalRoot(self.loaded.root.clone()),
+        }
+    }
+
+    /// The definition's directory relative to the Git repo root — the base layer paths are joined
+    /// onto when rendering a ref (a site may live in a subdirectory).
+    fn dir_prefix(&self) -> String {
+        ec_adapters::repo_relative(&self.loaded.root, &self.loaded.root)
+    }
+}
+
+/// A short, opaque disambiguator for a derived draft ref. The kernel stays pure; the entropy is
+/// supplied here (the server may read the clock — the kernel may not).
+fn short_id() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    format!("{:04x}", nanos & 0xffff)
+}
+
+/// A best-effort human title recovered from a derived ref (`draft/<slug>-<id>` → "slug words"). The
+/// authored title is not yet stored; this keeps the list readable until it is.
+fn title_from_ref(git_ref: &str) -> String {
+    let stem = git_ref.strip_prefix("draft/").unwrap_or(git_ref);
+    let words = stem.rsplit_once('-').map_or(stem, |(head, _id)| head);
+    words.replace('-', " ")
+}
+
 /// Serve the Studio UI + read-only API over the same kernel the CLI uses.
 ///
 /// # Errors
@@ -76,10 +114,7 @@ pub fn serve(opts: &ServeOptions) -> Result<(), Fatal> {
             .local_addr()
             .map(|a| a.to_string())
             .unwrap_or_else(|_| opts.bind.clone());
-        println!(
-            "Deployment Studio (read-only) serving {} at http://{addr}",
-            opts.repo
-        );
+        println!("Deployment Studio serving {} at http://{addr}", opts.repo);
         axum::serve(listener, app)
             .await
             .map_err(|e| Fatal::Internal(format!("serving: {e}")))
@@ -104,6 +139,11 @@ fn router(state: Arc<AppState>) -> Router {
         .route("/api/profiles/{profile}/render", get(get_render))
         .route("/api/profiles/{profile}/evidence", get(get_evidence))
         .route("/api/access", get(get_access))
+        // The draft write path (Studio register #16). Writes go to `draft/*` branches only.
+        .route("/api/layer", get(get_layer))
+        .route("/api/drafts", get(list_drafts).post(open_draft))
+        .route("/api/drafts/edit", axum::routing::post(edit_layer))
+        .route("/api/drafts/status", get(draft_status))
         .fallback(get(serve_ui))
         .with_state(state)
 }
@@ -441,6 +481,134 @@ fn access_note(codeowners_path: Option<&str>, unowned: usize) -> String {
     }
 }
 
+// --- The draft write path (register #16) ------------------------------------------------------
+
+use axum::extract::Query;
+use ec_deploy::draft::DraftName;
+use ec_deploy::ports::DraftPort;
+use serde::Deserialize;
+
+/// Read a layer file's current committed contents, so the editor starts from what will deploy. The
+/// path is repo-definition-relative; traversal outside the definition is refused.
+#[derive(Deserialize)]
+struct LayerQuery {
+    path: String,
+}
+
+async fn get_layer(State(state): State<Arc<AppState>>, Query(q): Query<LayerQuery>) -> Response {
+    if q.path.contains("..") {
+        return ApiError(
+            StatusCode::BAD_REQUEST,
+            "path escapes the definition".into(),
+        )
+        .into_response();
+    }
+    let full = state.loaded.root.join(&q.path);
+    match std::fs::read_to_string(&full) {
+        Ok(contents) => axum::Json(json!({ "path": q.path, "contents": contents })).into_response(),
+        Err(e) => ApiError(StatusCode::NOT_FOUND, format!("{}: {e}", q.path)).into_response(),
+    }
+}
+
+/// The open drafts, each with its ref and a human title recovered from the ref.
+async fn list_drafts(State(state): State<Arc<AppState>>) -> Response {
+    match state.git().list() {
+        Ok(refs) => {
+            let drafts: Vec<Value> = refs
+                .iter()
+                .map(|r| json!({ "ref": r, "title": title_from_ref(r) }))
+                .collect();
+            axum::Json(json!({ "drafts": drafts })).into_response()
+        }
+        Err(e) => ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Open (propose) a draft from a change title. The ref is derived and returned; the author never
+/// types it. Idempotent for a given ref.
+#[derive(Deserialize)]
+struct OpenReq {
+    title: String,
+    /// The ref to branch from; defaults to the current branch tip.
+    #[serde(default)]
+    base: Option<String>,
+}
+
+async fn open_draft(State(state): State<Arc<AppState>>, body: axum::Json<OpenReq>) -> Response {
+    let req = body.0;
+    if req.title.trim().is_empty() {
+        return ApiError(StatusCode::BAD_REQUEST, "a draft needs a title".into()).into_response();
+    }
+    let name = DraftName::derive(&req.title, &short_id());
+    let base = req.base.as_deref().unwrap_or("HEAD");
+    match state.git().open(&name.git_ref, base) {
+        Ok(()) => axum::Json(json!({ "ref": name.git_ref, "title": name.title })).into_response(),
+        Err(e) => ApiError(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response(),
+    }
+}
+
+/// Stage a layer edit onto a draft — committed to the draft branch, never the working tree.
+#[derive(Deserialize)]
+struct EditReq {
+    #[serde(rename = "ref")]
+    git_ref: String,
+    path: String,
+    contents: String,
+}
+
+async fn edit_layer(State(state): State<Arc<AppState>>, body: axum::Json<EditReq>) -> Response {
+    let req = body.0;
+    if req.path.contains("..") {
+        return ApiError(
+            StatusCode::BAD_REQUEST,
+            "path escapes the definition".into(),
+        )
+        .into_response();
+    }
+    match state.git().write_file(
+        &req.git_ref,
+        &req.path,
+        req.contents.as_bytes(),
+        &format!("author: edit {}", req.path),
+    ) {
+        Ok(()) => axum::Json(json!({ "ok": true })).into_response(),
+        Err(e) => ApiError(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response(),
+    }
+}
+
+/// Review a draft for conflicts against a target ref, semantic at the effective-config level.
+#[derive(Deserialize)]
+struct StatusQuery {
+    #[serde(rename = "ref")]
+    git_ref: String,
+    profile: String,
+    /// The ref the draft reconciles against; defaults to the current branch tip.
+    #[serde(default)]
+    main: Option<String>,
+}
+
+async fn draft_status(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<StatusQuery>,
+) -> Response {
+    let main = q.main.as_deref().unwrap_or("HEAD");
+    match ec_adapters::check_draft(
+        &state.git(),
+        &state.dir_prefix(),
+        &q.profile,
+        &q.git_ref,
+        main,
+    ) {
+        Ok(check) => axum::Json(json!({
+            "clean": check.is_clean(),
+            "textual": check.textual,
+            "semantic": check.semantic,
+        }))
+        .into_response(),
+        Err(e) => ApiError(StatusCode::UNPROCESSABLE_ENTITY, e).into_response(),
+    }
+}
+
 /// Serve the embedded SPA: an exact asset path returns that file with its content type; anything
 /// else returns `index.html` so the client-side router can take over (single-page-app fallback).
 async fn serve_ui(uri: Uri) -> Response {
@@ -521,6 +689,133 @@ profiles:
             .unwrap();
         let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
         (status, body)
+    }
+
+    async fn post(app: &Router, uri: &str, body: Value) -> (StatusCode, Value) {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    fn run_git(dir: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@e.c")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@e.c")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// The file fixture, committed to a real repo so the draft write path has somewhere to write.
+    fn git_fixture() -> (tempfile::TempDir, Arc<AppState>) {
+        let (dir, state) = fixture();
+        run_git(dir.path(), &["init", "-qb", "main"]);
+        run_git(dir.path(), &["add", "-A"]);
+        run_git(dir.path(), &["commit", "-qm", "initial"]);
+        (dir, state)
+    }
+
+    #[tokio::test]
+    async fn the_draft_write_path_runs_open_edit_status() {
+        let (_d, state) = git_fixture();
+        let app = router(state);
+
+        // The editor reads the current committed layer.
+        let (s, layer) = get(&app, "/api/layer?path=layers/telemetry.json").await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(
+            layer["contents"]
+                .as_str()
+                .unwrap()
+                .contains("publishIntervalMs")
+        );
+
+        // Propose: the ref is derived from the title.
+        let (s, draft) = post(
+            &app,
+            "/api/drafts",
+            json!({ "title": "Lower the interval" }),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        let git_ref = draft["ref"].as_str().unwrap().to_string();
+        assert!(git_ref.starts_with("draft/lower-the-interval-"));
+        assert_eq!(draft["title"], "Lower the interval");
+
+        // Stage an edit onto the draft.
+        let (s, _) = post(
+            &app,
+            "/api/drafts/edit",
+            json!({ "ref": git_ref, "path": "layers/telemetry.json",
+                    "contents": r#"{ "component": { "global": { "publishIntervalMs": 250 } } }"# }),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+
+        // It is listed…
+        let (_s, list) = get(&app, "/api/drafts").await;
+        assert_eq!(list["drafts"][0]["ref"], git_ref);
+        assert_eq!(list["drafts"][0]["title"], "lower the interval");
+
+        // …and status runs the conflict check (clean here — nothing moved under it).
+        let (s, status) = get(
+            &app,
+            &format!("/api/drafts/status?ref={git_ref}&profile=host"),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(status["clean"], true);
+    }
+
+    #[tokio::test]
+    async fn a_draft_without_a_title_is_rejected() {
+        let (_d, state) = git_fixture();
+        let app = router(state);
+        let (s, _) = post(&app, "/api/drafts", json!({ "title": "   " })).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn a_layer_path_that_escapes_the_definition_is_refused() {
+        let (_d, state) = git_fixture();
+        let app = router(state);
+        let (s, _) = get(&app, "/api/layer?path=../../etc/passwd").await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn title_is_recovered_from_a_derived_ref() {
+        assert_eq!(
+            title_from_ref("draft/lower-the-interval-7f3a"),
+            "lower the interval"
+        );
+        assert_eq!(title_from_ref("draft/x-01"), "x");
     }
 
     #[tokio::test]
