@@ -1,12 +1,20 @@
 // The wire contract between the Studio server and this UI — mirrors ec-studio/src/lib.rs.
 export interface Profile { name: string; family: string; }
-export interface NodeView { key: string; scope: string; components: string[]; }
+export interface ScopeView { id: string; parent: string | null; layer: string | null; }
+export interface HierarchyView { levels: string[]; scopes: ScopeView[]; }
+export interface ComponentView { name: string; layer: string | null; }
+export interface NodeView { key: string; scope: string; components: ComponentView[]; }
 export interface DefinitionView {
   name: string;
   description: string | null;
   profiles: Profile[];
+  hierarchy: HierarchyView;
   nodes: NodeView[];
 }
+
+/** A scope id is `<level>/<value>`; the level vocabulary is the customer's, never ours. */
+export const levelOf = (scopeId: string) => scopeId.split("/")[0];
+export const valueOf = (scopeId: string) => scopeId.split("/").slice(1).join("/");
 export interface LayerComponent { node: string; component: string; config: unknown; }
 export interface LayerEnv { environment: string; components: LayerComponent[]; }
 export interface LayersView { profile: string; environments: LayerEnv[]; }
