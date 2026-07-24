@@ -26,6 +26,61 @@ export interface RenderView {
   plan: { entries: PlanEntry[] };
 }
 
+// Evidence correlation — the release lock a profile would produce (REVIEW #13).
+export interface ArtifactStreamEntry {
+  node: string;
+  component: string;
+  version: string | null;
+  digest: string | null;
+  configSource: string;
+  hotReloads: boolean;
+}
+export interface ManifestFile { path: string; sha256: string; }
+export interface EvidenceManifest {
+  release: string;
+  devMode: boolean;
+  releaseHash: string;
+  definitionCommit: string;
+  renderer: string;
+  streams: {
+    config: Record<string, { catalogVersion?: string | null; catalogSha256?: string | null; bootstrapSha256?: string | null }>;
+    artifact: ArtifactStreamEntry[];
+  };
+  files: ManifestFile[];
+}
+export interface EvidenceBundle {
+  schemaValidation: string;
+  semanticRules: string;
+  warnings: string[];
+  renderDeterminism: string;
+}
+export interface EvidenceView {
+  profile: string;
+  target: string;
+  environment: string;
+  commit: string;
+  streamTags: { config: string; artifact: string };
+  manifest: EvidenceManifest;
+  evidence: EvidenceBundle;
+}
+
+// Access control — a rendering of the repo's CODEOWNERS (REVIEW #10).
+export interface AccessItem {
+  file: string;
+  owners: string[];
+  matchedPattern: string | null;
+  node?: string;
+  scope?: string;
+  component?: string;
+}
+export interface AccessView {
+  codeowners: { path: string } | null;
+  unownedCount: number;
+  note: string;
+  definitionFile: AccessItem;
+  items: AccessItem[];
+}
+
 async function get<T>(url: string): Promise<T> {
   const r = await fetch(url);
   if (!r.ok) {
@@ -39,4 +94,6 @@ export const api = {
   definition: () => get<DefinitionView>("/api/definition"),
   layers: (profile: string) => get<LayersView>(`/api/profiles/${profile}/layers`),
   render: (profile: string) => get<RenderView>(`/api/profiles/${profile}/render`),
+  evidence: (profile: string) => get<EvidenceView>(`/api/profiles/${profile}/evidence`),
+  access: () => get<AccessView>("/api/access"),
 };
