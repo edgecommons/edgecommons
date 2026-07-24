@@ -468,24 +468,62 @@ impl ec_deploy::ports::DraftPort for LocalGit {
         draft_ref: &str,
         main_ref: &str,
     ) -> Result<ec_deploy::ports::MergeResult, PortError> {
-        let out = self.git(&["merge-tree", "--write-tree", main_ref, draft_ref])?;
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let tree = stdout.lines().next().unwrap_or_default().trim().to_string();
-        if out.status.success() {
-            return Ok(ec_deploy::ports::MergeResult::Clean(tree));
-        }
-        // On a textual conflict git prints the OID, a blank line, then `<mode> <oid> <stage>\t<path>`
-        // rows for each conflicted path. Collect the distinct paths.
-        let mut paths: Vec<String> = stdout
-            .lines()
-            .filter_map(|l| l.split_once('\t').map(|(_, p)| p.trim().to_string()))
-            .collect();
-        paths.sort();
-        paths.dedup();
-        if paths.is_empty() {
-            paths.push(stdout.trim().to_string());
-        }
-        Ok(ec_deploy::ports::MergeResult::Textual(paths))
+        // Merge in a **temporary detached worktree** rather than `merge-tree --write-tree` (which needs
+        // git ≥ 2.38). A linked worktree shares the object store, so the tree we write is readable from
+        // the main clone, and the main working tree the read-only server serves is never touched. This
+        // works on every git that has worktrees (2.5+).
+        let wt = self.root.0.join(".git").join(format!(
+            "studio-merge-{}",
+            draft_ref.replace(['/', '\\'], "_")
+        ));
+        let wt_str = wt.to_string_lossy().to_string();
+        // Start clean: drop any worktree left by an aborted prior run.
+        let _ = self.git(&["worktree", "remove", "--force", &wt_str]);
+        let _ = std::fs::remove_dir_all(&wt);
+        self.git_ok(&["worktree", "add", "--detach", &wt_str, draft_ref])?;
+
+        let in_wt = |args: &[&str]| -> Result<std::process::Output, PortError> {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&wt)
+                .env("GIT_AUTHOR_NAME", STUDIO_NAME)
+                .env("GIT_AUTHOR_EMAIL", STUDIO_EMAIL)
+                .env("GIT_COMMITTER_NAME", STUDIO_NAME)
+                .env("GIT_COMMITTER_EMAIL", STUDIO_EMAIL)
+                .args(args)
+                .output()
+                .map_err(|e| PortError::Unavailable(format!("git: {e}")))
+        };
+
+        let merge = in_wt(&["merge", "--no-commit", "--no-ff", main_ref])?;
+        let result = if merge.status.success() {
+            // The merged result is staged; the tree it writes lands in the shared object store.
+            let tree = in_wt(&["write-tree"])?;
+            if tree.status.success() {
+                ec_deploy::ports::MergeResult::Clean(
+                    String::from_utf8_lossy(&tree.stdout).trim().to_string(),
+                )
+            } else {
+                ec_deploy::ports::MergeResult::Textual(vec![
+                    "could not write the merged tree".to_string(),
+                ])
+            }
+        } else {
+            let u = in_wt(&["diff", "--name-only", "--diff-filter=U"])?;
+            let mut paths: Vec<String> = String::from_utf8_lossy(&u.stdout)
+                .lines()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if paths.is_empty() {
+                paths.push("merge failed".to_string());
+            }
+            ec_deploy::ports::MergeResult::Textual(paths)
+        };
+
+        let _ = self.git(&["worktree", "remove", "--force", &wt_str]);
+        let _ = std::fs::remove_dir_all(&wt);
+        Ok(result)
     }
 }
 

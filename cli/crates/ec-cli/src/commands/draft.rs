@@ -176,7 +176,11 @@ profiles:
             .env("GIT_COMMITTER_EMAIL", "t@e.c")
             .output()
             .unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     fn repo() -> tempfile::TempDir {
@@ -186,8 +190,16 @@ profiles:
         std::fs::create_dir_all(p.join("bindings")).unwrap();
         std::fs::create_dir_all(p.join("layers")).unwrap();
         std::fs::write(p.join("bindings/local.json"), "{}\n").unwrap();
-        std::fs::write(p.join("layers/site.json"), "{ \"heartbeat\": { \"intervalSecs\": 30 } }\n").unwrap();
-        std::fs::write(p.join("layers/telemetry.json"), "{ \"component\": { \"global\": { \"publishIntervalMs\": 500 } } }\n").unwrap();
+        std::fs::write(
+            p.join("layers/site.json"),
+            "{ \"heartbeat\": { \"intervalSecs\": 30 } }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            p.join("layers/telemetry.json"),
+            "{ \"component\": { \"global\": { \"publishIntervalMs\": 500 } } }\n",
+        )
+        .unwrap();
         std::fs::write(p.join("layers/provider.json"), PROVIDER).unwrap();
         std::fs::write(p.join("definition.yaml"), DEF).unwrap();
         git(p, &["add", "-A"]);
@@ -212,14 +224,22 @@ profiles:
 
         // edit stages a layer change on the draft.
         let newleaf = p.join("newleaf.json");
-        std::fs::write(&newleaf, "{ \"component\": { \"global\": { \"publishIntervalMs\": 250 } } }\n").unwrap();
+        std::fs::write(
+            &newleaf,
+            "{ \"component\": { \"global\": { \"publishIntervalMs\": 250 } } }\n",
+        )
+        .unwrap();
         assert!(edit(&dref, "layers/telemetry.json", &newleaf, p).is_ok());
 
         // status with an explicit profile is clean so far.
         assert!(status(&dref, p, Some("host"), "main").is_ok());
 
         // main edits a different file → status reports a semantic conflict (still Ok — it is a review).
-        std::fs::write(p.join("layers/site.json"), "{ \"heartbeat\": { \"intervalSecs\": 5 } }\n").unwrap();
+        std::fs::write(
+            p.join("layers/site.json"),
+            "{ \"heartbeat\": { \"intervalSecs\": 5 } }\n",
+        )
+        .unwrap();
         git(p, &["add", "-A"]);
         git(p, &["commit", "-qm", "hb"]);
         assert!(status(&dref, p, Some("host"), "main").is_ok());
