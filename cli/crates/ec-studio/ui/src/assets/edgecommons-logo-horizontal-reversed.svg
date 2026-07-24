@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 128" role="img" aria-labelledby="title desc">
+  <title id="title">EdgeCommons horizontal logo reversed</title>
+  <desc id="desc">EdgeCommons native-shell mark with reversed wordmark for dark backgrounds.</desc>
+  <defs>
+    <clipPath id="ec-hex-clip">
+      <path d="M64 51L73.5 56.5Q75.5 57.75 75.5 60V70Q75.5 72.25 73.5 73.5L64 79L54.5 73.5Q52.5 72.25 52.5 70V60Q52.5 57.75 54.5 56.5Z"/>
+    </clipPath>
+    <mask id="ec-shell-break-mask" x="0" y="0" width="128" height="128" maskUnits="userSpaceOnUse">
+      <rect width="128" height="128" fill="#FFFFFF"/>
+      <path d="M64 20.5C59 43.75 47.5 56 35 57.5C48.5 73.5 79.5 73.5 93 57.5C80.5 56 69 43.75 64 20.5Z" fill="none" stroke="#000000" stroke-width="2.5" stroke-linejoin="round"/>
+    </mask>
+  </defs>
+  <g mask="url(#ec-shell-break-mask)">
+    <path d="M64 20.5C49.25 27 38.25 40 35 57.5C47.5 56 59 43.75 64 20.5Z" fill="#AFC7C8"/>
+    <path d="M64 20.5C78.75 27 89.75 40 93 57.5C80.5 56 69 43.75 64 20.5Z" fill="#6F7FBD"/>
+    <path d="M35 57.5C38.25 81.5 51.75 100 64 107.5C76.25 100 89.75 81.5 93 57.5C79.5 73.5 48.5 73.5 35 57.5Z" fill="#3F407A"/>
+    <path d="M64 51L73.5 56.5Q75.5 57.75 75.5 60V70Q75.5 72.25 73.5 73.5L64 79L54.5 73.5Q52.5 72.25 52.5 70V60Q52.5 57.75 54.5 56.5Z" fill="#D67A4E"/>
+    <path d="M35 57.5C38.25 81.5 51.75 100 64 107.5C76.25 100 89.75 81.5 93 57.5C79.5 73.5 48.5 73.5 35 57.5Z" fill="#3F407A" opacity="0.5" clip-path="url(#ec-hex-clip)"/>
+  </g>
+  <text x="142" y="77" font-family="Manrope, Avenir Next, Segoe UI, Arial, sans-serif" font-size="48" font-weight="750" letter-spacing="0">
+    <tspan fill="#FFFFFF">Edge</tspan><tspan fill="#AFC7C8">Commons</tspan>
+  </text>
+</svg>
