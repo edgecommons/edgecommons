@@ -74,7 +74,7 @@ function ContextBar({
             {def.profiles.map((p) => <option key={p.name} value={p.name}>{p.name} — {p.family}</option>)}
           </select>
         </label>
-        <span className="ec-chip" title="This server serves committed state; authoring is not built">read-only</span>
+        <span className="ec-chip" title="Reads serve committed state; edits open drafts (branches), never touching main">drafts</span>
       </div>
     </header>
   );
@@ -130,7 +130,7 @@ function Panel({
   if (!selectionScopeId(sel, def)) return null;
   switch (tab) {
     case "Overview": return <Overview def={def} sel={sel} profile={profile} />;
-    case "Config": return <Config def={def} sel={sel} />;
+    case "Config": return <Config def={def} sel={sel} profile={profile} />;
     case "Render": return <Render def={def} sel={sel} profile={profile} />;
     case "Components": return <NotBuilt what="Components" detail="The node-anchored component editor is part of the write path, which is not built." />;
     case "Topology": return <NotBuilt what="Topology" detail="The derived read-only topology graph is not built." />;

@@ -89,11 +89,29 @@ export interface AccessView {
   items: AccessItem[];
 }
 
+// Drafts — the write path (register #16). A draft is a named change; the ref is derived.
+export interface DraftSummary { ref: string; title: string; }
+export interface SemanticConflict { path: string; kind: string; summary: string; }
+export interface DraftStatus { clean: boolean; textual: string[]; semantic: SemanticConflict[]; }
+
 async function get<T>(url: string): Promise<T> {
   const r = await fetch(url);
   if (!r.ok) {
     const body = (await r.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? `request failed (${r.status})`);
+  }
+  return (await r.json()) as T;
+}
+
+async function post<T>(url: string, body: unknown): Promise<T> {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const b = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(b.error ?? `request failed (${r.status})`);
   }
   return (await r.json()) as T;
 }
@@ -104,4 +122,12 @@ export const api = {
   render: (profile: string) => get<RenderView>(`/api/profiles/${profile}/render`),
   evidence: (profile: string) => get<EvidenceView>(`/api/profiles/${profile}/evidence`),
   access: () => get<AccessView>("/api/access"),
+
+  layer: (path: string) => get<{ path: string; contents: string }>(`/api/layer?path=${encodeURIComponent(path)}`),
+  listDrafts: () => get<{ drafts: DraftSummary[] }>("/api/drafts"),
+  openDraft: (title: string) => post<DraftSummary>("/api/drafts", { title }),
+  editLayer: (ref: string, path: string, contents: string) =>
+    post<{ ok: boolean }>("/api/drafts/edit", { ref, path, contents }),
+  draftStatus: (ref: string, profile: string) =>
+    get<DraftStatus>(`/api/drafts/status?ref=${encodeURIComponent(ref)}&profile=${encodeURIComponent(profile)}`),
 };
