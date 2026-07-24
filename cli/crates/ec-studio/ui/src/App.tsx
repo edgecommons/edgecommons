@@ -15,6 +15,10 @@ export function App() {
   const [profile, setProfile] = useState("");
   const [sel, setSel] = useState<Selection | null>(null);
   const [tab, setTab] = useState<Tab>("Overview");
+  // Bumped whenever a draft is proposed, so the context-bar count, the Drafts panel, and the
+  // per-scope presence all refresh without a page reload.
+  const [draftsVersion, setDraftsVersion] = useState(0);
+  const bumpDrafts = () => setDraftsVersion((v) => v + 1);
 
   useEffect(() => {
     api.definition()
@@ -40,7 +44,7 @@ export function App() {
 
   return (
     <Theme theme="g100" className="ec-app ec-app--dark ec-shell">
-      <ContextBar def={def} profile={profile} onProfile={setProfile} />
+      <ContextBar def={def} profile={profile} onProfile={setProfile} draftsVersion={draftsVersion} />
       <div className="ec-body">
         <Rail def={def} sel={sel} onSelect={(s) => { setSel(s); setTab("Overview"); }} />
         <main className="ec-workspace">
@@ -48,7 +52,8 @@ export function App() {
           <SelectionHeader def={def} sel={sel} />
           <Tabs def={def} sel={sel} tab={tab} onTab={setTab} />
           <section className="ec-panel">
-            <Panel def={def} sel={sel} tab={tab} profile={profile} />
+            <Panel def={def} sel={sel} tab={tab} profile={profile}
+                   draftsVersion={draftsVersion} onProposed={bumpDrafts} />
           </section>
         </main>
       </div>
@@ -57,8 +62,14 @@ export function App() {
 }
 
 function ContextBar({
-  def, profile, onProfile,
-}: { def: DefinitionView; profile: string; onProfile: (p: string) => void }) {
+  def, profile, onProfile, draftsVersion,
+}: { def: DefinitionView; profile: string; onProfile: (p: string) => void; draftsVersion: number }) {
+  // The draft is visible on every screen (deck's four-things rule / REVIEW-UI G4): a live count.
+  const [draftCount, setDraftCount] = useState<number | null>(null);
+  useEffect(() => {
+    api.listDrafts().then((r) => setDraftCount(r.drafts.length)).catch(() => setDraftCount(null));
+  }, [draftsVersion]);
+
   return (
     <header className="ec-contextbar">
       <a className="ec-brand" href="#" aria-label="EdgeCommons"><img src={logoUrl} alt="EdgeCommons" /></a>
@@ -74,7 +85,9 @@ function ContextBar({
             {def.profiles.map((p) => <option key={p.name} value={p.name}>{p.name} — {p.family}</option>)}
           </select>
         </label>
-        <span className="ec-chip" title="Reads serve committed state; edits open drafts (branches), never touching main">drafts</span>
+        <span className="ec-chip" title="Reads serve committed state; edits open drafts (branches), never touching main">
+          {draftCount === null ? "drafts" : `${draftCount} draft${draftCount === 1 ? "" : "s"}`}
+        </span>
       </div>
     </header>
   );
@@ -121,16 +134,19 @@ function Tabs({
 }
 
 function Panel({
-  def, sel, tab, profile,
-}: { def: DefinitionView; sel: Selection; tab: Tab; profile: string }) {
+  def, sel, tab, profile, draftsVersion, onProposed,
+}: {
+  def: DefinitionView; sel: Selection; tab: Tab; profile: string;
+  draftsVersion: number; onProposed: () => void;
+}) {
   if (sel.kind === "global") {
     if (sel.id === "Releases") return <Releases profile={profile} />;
     return <NotBuilt what={sel.id} detail="Not built yet. The read-only cuts cover Overview, Config, Render and the Releases gate." />;
   }
   if (!selectionScopeId(sel, def)) return null;
   switch (tab) {
-    case "Overview": return <Overview def={def} sel={sel} profile={profile} />;
-    case "Config": return <Config def={def} sel={sel} profile={profile} />;
+    case "Overview": return <Overview def={def} sel={sel} profile={profile} draftsVersion={draftsVersion} />;
+    case "Config": return <Config def={def} sel={sel} profile={profile} draftsVersion={draftsVersion} onProposed={onProposed} />;
     case "Render": return <Render def={def} sel={sel} profile={profile} />;
     case "Components": return <NotBuilt what="Components" detail="The node-anchored component editor is part of the write path, which is not built." />;
     case "Topology": return <NotBuilt what="Topology" detail="The derived read-only topology graph is not built." />;

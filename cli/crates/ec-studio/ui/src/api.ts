@@ -90,7 +90,7 @@ export interface AccessView {
 }
 
 // Drafts — the write path (register #16). A draft is a named change; the ref is derived.
-export interface DraftSummary { ref: string; title: string; }
+export interface DraftSummary { ref: string; title: string; changedFiles: string[]; }
 export interface SemanticConflict { path: string; kind: string; summary: string; }
 export interface DraftStatus { clean: boolean; textual: string[]; semantic: SemanticConflict[]; }
 
@@ -130,4 +130,5 @@ export const api = {
     post<{ ok: boolean }>("/api/drafts/edit", { ref, path, contents }),
   draftStatus: (ref: string, profile: string) =>
     get<DraftStatus>(`/api/drafts/status?ref=${encodeURIComponent(ref)}&profile=${encodeURIComponent(profile)}`),
+  prUrl: (ref: string) => get<{ url: string | null }>(`/api/drafts/pr-url?ref=${encodeURIComponent(ref)}`),
 };

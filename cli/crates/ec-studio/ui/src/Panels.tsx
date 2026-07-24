@@ -6,6 +6,7 @@ import {
 } from "./api";
 import { selectionScopeId, useTopology, type Selection } from "./Shell";
 import { LayerEditor } from "./LayerEditor";
+import { DraftsPanel, ScopePresence } from "./DraftsPanel";
 
 /* Panels render product state. Design rationale lives in the design repo's mock and REVIEW-UI,
  * never in this surface. */
@@ -35,7 +36,9 @@ function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
 
 /* ── Overview ─────────────────────────────────────────────────────────────────────── */
 
-export function Overview({ def, sel, profile }: { def: DefinitionView; sel: Selection; profile: string }) {
+export function Overview({
+  def, sel, profile, draftsVersion,
+}: { def: DefinitionView; sel: Selection; profile: string; draftsVersion: number }) {
   const t = useTopology(def);
   const { data: ev } = useAsync(() => api.evidence(profile), [profile]);
 
@@ -98,6 +101,9 @@ export function Overview({ def, sel, profile }: { def: DefinitionView; sel: Sele
           ))}</tbody>
         </table>
       </div>
+
+      <h2>Drafts</h2>
+      <DraftsPanel def={def} sel={sel} profile={profile} version={draftsVersion} />
     </>
   );
 }
@@ -114,7 +120,12 @@ function Card({ label, value, note }: { label: string; value: React.ReactNode; n
 
 /* ── Config ───────────────────────────────────────────────────────────────────────── */
 
-export function Config({ def, sel, profile }: { def: DefinitionView; sel: Selection; profile: string }) {
+export function Config({
+  def, sel, profile, draftsVersion, onProposed,
+}: {
+  def: DefinitionView; sel: Selection; profile: string;
+  draftsVersion: number; onProposed: () => void;
+}) {
   const [editing, setEditing] = useState(false);
   const t = useTopology(def);
   const scopeId = selectionScopeId(sel, def);
@@ -129,6 +140,7 @@ export function Config({ def, sel, profile }: { def: DefinitionView; sel: Select
 
   return (
     <>
+      <ScopePresence def={def} sel={sel} version={draftsVersion} />
       <h2>Merge order</h2>
       <p className="ec-sub">Applied in order. Later entries win; the component leaf wins last.</p>
       <div className="ec-chain">
@@ -161,6 +173,7 @@ export function Config({ def, sel, profile }: { def: DefinitionView; sel: Select
           scope={scopeId}
           nodes={nodes.length}
           components={comps}
+          onProposed={onProposed}
         />
       ) : (
         <>

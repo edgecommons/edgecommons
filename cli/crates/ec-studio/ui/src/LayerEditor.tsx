@@ -19,8 +19,8 @@ type Phase =
   | { t: "error"; message: string };
 
 export function LayerEditor({
-  profile, path, scope, nodes, components,
-}: { profile: string; path: string; scope: string; nodes: number; components: number }) {
+  profile, path, scope, nodes, components, onProposed,
+}: { profile: string; path: string; scope: string; nodes: number; components: number; onProposed?: () => void }) {
   const [phase, setPhase] = useState<Phase>({ t: "loading" });
   const [original, setOriginal] = useState("");
   const [text, setText] = useState("");
@@ -48,6 +48,7 @@ export function LayerEditor({
       await api.editLayer(draft.ref, path, text);
       const status = await api.draftStatus(draft.ref, profile);
       setPhase({ t: "proposed", ref: draft.ref, status });
+      onProposed?.();
     } catch (e) {
       setPhase({ t: "error", message: (e as Error).message });
     }
