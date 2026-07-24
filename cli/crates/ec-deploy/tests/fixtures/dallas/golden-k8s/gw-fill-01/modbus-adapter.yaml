@@ -1,0 +1,287 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gw-fill-01-modbus-adapter
+  labels:
+    app.kubernetes.io/name: modbus-adapter
+    app.kubernetes.io/instance: gw-fill-01-modbus-adapter
+    app.kubernetes.io/part-of: gw-fill-01
+    app.kubernetes.io/managed-by: edgecommons
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gw-fill-01-modbus-adapter
+  labels:
+    app.kubernetes.io/name: modbus-adapter
+    app.kubernetes.io/instance: gw-fill-01-modbus-adapter
+    app.kubernetes.io/part-of: gw-fill-01
+    app.kubernetes.io/managed-by: edgecommons
+data:
+  config.json: |
+    {
+      "hierarchy": {
+        "levels": [
+          "enterprise",
+          "site",
+          "line",
+          "device"
+        ]
+      },
+      "identity": {
+        "enterprise": "bottles-r-us",
+        "site": "dallas",
+        "line": "filling-line"
+      },
+      "tags": {
+        "appId": "bottling-plant",
+        "scenario": "bottling-company-test"
+      },
+      "logging": {
+        "level": "INFO",
+        "publish": {
+          "enabled": true,
+          "destination": "local",
+          "minLevel": "INFO"
+        }
+      },
+      "heartbeat": {
+        "enabled": true,
+        "intervalSecs": 5,
+        "measures": {
+          "cpu": true,
+          "memory": true,
+          "threads": true,
+          "files": true,
+          "fds": true
+        }
+      },
+      "metricEmission": {
+        "target": "messaging"
+      },
+      "component": {
+        "token": "modbus-adapter",
+        "global": {
+          "defaults": {
+            "pollIntervalMs": 500,
+            "publishMode": "always",
+            "batchMs": 0,
+            "maxGap": 4
+          }
+        },
+        "instances": [
+          {
+            "id": "conveyor1",
+            "connection": {
+              "transport": "tcp",
+              "host": "localhost",
+              "port": 5020,
+              "unitId": 1,
+              "timeoutMs": 1000
+            },
+            "publish": {
+              "batchMs": 0
+            },
+            "write": {
+              "enabled": false
+            },
+            "pollGroups": [
+              {
+                "id": "main",
+                "pollIntervalMs": 500,
+                "publishMode": "always",
+                "signals": [
+                  {
+                    "name": "BottleCount",
+                    "table": "holding",
+                    "address": 0,
+                    "type": "uint16"
+                  },
+                  {
+                    "name": "ProductTemp",
+                    "table": "holding",
+                    "address": 1,
+                    "type": "float32"
+                  },
+                  {
+                    "name": "FillLevel",
+                    "table": "holding",
+                    "address": 40,
+                    "type": "uint16",
+                    "scale": 0.1
+                  },
+                  {
+                    "name": "GoodBottleCount",
+                    "table": "holding",
+                    "address": 50,
+                    "type": "uint32"
+                  },
+                  {
+                    "name": "RejectCount",
+                    "table": "holding",
+                    "address": 52,
+                    "type": "uint32"
+                  },
+                  {
+                    "name": "UnderfillRejectCount",
+                    "table": "holding",
+                    "address": 54,
+                    "type": "uint32"
+                  },
+                  {
+                    "name": "OverfillRejectCount",
+                    "table": "holding",
+                    "address": 56,
+                    "type": "uint32"
+                  },
+                  {
+                    "name": "CapRejectCount",
+                    "table": "holding",
+                    "address": 58,
+                    "type": "uint32"
+                  },
+                  {
+                    "name": "ConveyorSpeedPct",
+                    "table": "holding",
+                    "address": 60,
+                    "type": "uint16",
+                    "scale": 0.1
+                  },
+                  {
+                    "name": "BowlLevelPct",
+                    "table": "holding",
+                    "address": 61,
+                    "type": "uint16",
+                    "scale": 0.1
+                  },
+                  {
+                    "name": "ProductTempC",
+                    "table": "holding",
+                    "address": 62,
+                    "type": "int16",
+                    "scale": 0.1
+                  },
+                  {
+                    "name": "ConveyorRunning",
+                    "table": "discrete",
+                    "address": 0,
+                    "type": "bool"
+                  },
+                  {
+                    "name": "InfeedStarved",
+                    "table": "discrete",
+                    "address": 1,
+                    "type": "bool"
+                  },
+                  {
+                    "name": "EStopHealthy",
+                    "table": "discrete",
+                    "address": 2,
+                    "type": "bool"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gw-fill-01-modbus-adapter
+  labels:
+    app.kubernetes.io/name: modbus-adapter
+    app.kubernetes.io/instance: gw-fill-01-modbus-adapter
+    app.kubernetes.io/part-of: gw-fill-01
+    app.kubernetes.io/managed-by: edgecommons
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: modbus-adapter
+      app.kubernetes.io/instance: gw-fill-01-modbus-adapter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: modbus-adapter
+        app.kubernetes.io/instance: gw-fill-01-modbus-adapter
+        app.kubernetes.io/part-of: gw-fill-01
+        app.kubernetes.io/managed-by: edgecommons
+    spec:
+      serviceAccountName: gw-fill-01-modbus-adapter
+      automountServiceAccountToken: true
+      nodeSelector:
+        edgecommons.io/gateway: gw-fill-01
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: component
+        image: ghcr.io/edgecommons/modbus-adapter:1.2.0
+        args:
+        - --platform
+        - KUBERNETES
+        - -c
+        - CONFIGMAP
+        - /etc/edgecommons
+        - config.json
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: EDGECOMMONS_THING_NAME
+          value: gw-fill-01
+        ports:
+        - name: health
+          containerPort: 8081
+        - name: metrics
+          containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/edgecommons
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: gw-fill-01-modbus-adapter
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gw-fill-01-modbus-adapter
+  labels:
+    app.kubernetes.io/name: modbus-adapter
+    app.kubernetes.io/instance: gw-fill-01-modbus-adapter
+    app.kubernetes.io/part-of: gw-fill-01
+    app.kubernetes.io/managed-by: edgecommons
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: modbus-adapter
+    app.kubernetes.io/instance: gw-fill-01-modbus-adapter
+  ports:
+  - name: health
+    port: 8081
+    targetPort: health
+  - name: metrics
+    port: 9090
+    targetPort: metrics

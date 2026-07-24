@@ -28,6 +28,15 @@ fn kernel_platform(p: Platform) -> KernelPlatform {
     }
 }
 
+/// The `targetStandard.family` string a profile declares for this platform.
+fn target_family(p: Platform) -> &'static str {
+    match p {
+        Platform::Greengrass => "GREENGRASS",
+        Platform::Host => "HOST",
+        Platform::Kubernetes => "KUBERNETES",
+    }
+}
+
 fn kernel_stream(s: Stream) -> ec_deploy::Stream {
     match s {
         Stream::Artifact => ec_deploy::Stream::Artifact,
@@ -85,11 +94,26 @@ fn semantic_stage(ws: &ec_deploy::workspace::Workspace, report: &mut Report) {
 /// publishes no schema each produce a **warning naming the reason** rather than a silent pass. When
 /// components begin publishing schemas (RM-013), this same code path starts enforcing — no flag.
 fn compatibility_stage(loaded: &LoadedWorkspace, report: &mut Report) {
-    let pins = kernel_lock::pins_for(&loaded.workspace);
+    // Pins, and therefore compatibility, are per-profile (Greengrass/Kubernetes pin versions; HOST
+    // uses source-form and has none). Run the guard against each profile's effective workspace.
+    for profile in loaded.profile_names() {
+        let Ok(ws) = loaded.workspace(&profile) else {
+            continue; // effective() failure is surfaced by the semantic/schema stages
+        };
+        compatibility_for(&ws, loaded.lock.as_ref(), report);
+    }
+}
+
+fn compatibility_for(
+    ws: &ec_deploy::workspace::Workspace,
+    lock: Option<&ec_deploy::lock::LockFile>,
+    report: &mut Report,
+) {
+    let pins = kernel_lock::pins_for(ws);
     if pins.is_empty() {
         return; // nothing pinned: a source-form definition has no version to be compatible with
     }
-    let Some(lock) = &loaded.lock else {
+    let Some(lock) = lock else {
         report.push(
             Diagnostic::warning(
                 EC5007_NO_LOCK,
@@ -134,8 +158,8 @@ fn compatibility_stage(loaded: &LoadedWorkspace, report: &mut Report) {
     }
 
     let mut unvalidated_instances = std::collections::BTreeSet::new();
-    for env in &loaded.workspace.definition.environments {
-        let Ok(configs) = render::effective_configs(&loaded.workspace, &env.name) else {
+    for env in &ws.definition.environments {
+        let Ok(configs) = render::effective_configs(ws, &env.name) else {
             continue; // stage three already reported the render failure
         };
         for (node, component, config) in configs {
@@ -254,26 +278,36 @@ pub fn validate(definition: &Path) -> Result<Report, Fatal> {
     let loaded = load(definition)?;
     let mut report = Report::new();
     schema_stage(&loaded.definition_text, &mut report)?;
-    semantic_stage(&loaded.workspace, &mut report);
+    // Every profile is validated: the semantic rules and the effective-config checks run against
+    // each profile's merged workspace, so a definition is only clean if it is clean on every
+    // platform it declares.
+    let profiles = loaded.profile_names();
+    for profile in &profiles {
+        let ws = loaded.workspace(profile).map_err(Fatal::Usage)?;
+        semantic_stage(&ws, &mut report);
+    }
     if report.error_count() > 0 {
         return Ok(report);
     }
-    // Stage three: every rendered effective config against the strict runtime schema,
-    // per environment (DESIGN-cli §8.1).
-    for env in &loaded.workspace.definition.environments {
-        let configs = render::effective_configs(&loaded.workspace, &env.name)
-            .map_err(|e| Fatal::Usage(e.to_string()))?;
-        for (node, component, config) in configs {
-            let inner = ec_validate::schema::validate_envelope(
-                &config,
-                &format!("{node}/{component}@{}", env.name),
-            );
-            for d in inner.diagnostics {
-                // Re-tag under the deployment family so CI can distinguish "your component
-                // config is broken" surfaced through a deployment render.
-                let mut d = d;
-                d.code = EC5003_EFFECTIVE_CONFIG;
-                report.push(d);
+    // Stage three: every rendered effective config against the strict runtime schema, per profile
+    // and environment (DESIGN-cli §8.1).
+    for profile in &profiles {
+        let ws = loaded.workspace(profile).map_err(Fatal::Usage)?;
+        for env in &ws.definition.environments {
+            let configs = render::effective_configs(&ws, &env.name)
+                .map_err(|e| Fatal::Usage(e.to_string()))?;
+            for (node, component, config) in configs {
+                let inner = ec_validate::schema::validate_envelope(
+                    &config,
+                    &format!("{profile}:{node}/{component}@{}", env.name),
+                );
+                for d in inner.diagnostics {
+                    // Re-tag under the deployment family so CI can distinguish "your component
+                    // config is broken" surfaced through a deployment render.
+                    let mut d = d;
+                    d.code = EC5003_EFFECTIVE_CONFIG;
+                    report.push(d);
+                }
             }
         }
     }
@@ -290,7 +324,11 @@ pub fn render_cmd(
     let loaded = load(definition)?;
     let mut report = Report::new();
     schema_stage(&loaded.definition_text, &mut report)?;
-    semantic_stage(&loaded.workspace, &mut report);
+    let profile = loaded
+        .profile_for_family(target_family(target))
+        .map_err(Fatal::Usage)?;
+    let ws = loaded.workspace(&profile).map_err(Fatal::Usage)?;
+    semantic_stage(&ws, &mut report);
     if report.error_count() > 0 {
         return Ok(report);
     }
@@ -322,7 +360,11 @@ pub fn plan(definition: &Path, env: &str, target: Platform) -> Result<Report, Fa
     let loaded = load(definition)?;
     let mut report = Report::new();
     schema_stage(&loaded.definition_text, &mut report)?;
-    semantic_stage(&loaded.workspace, &mut report);
+    let profile = loaded
+        .profile_for_family(target_family(target))
+        .map_err(Fatal::Usage)?;
+    let ws = loaded.workspace(&profile).map_err(Fatal::Usage)?;
+    semantic_stage(&ws, &mut report);
     if report.error_count() > 0 {
         return Ok(report);
     }
@@ -338,11 +380,25 @@ pub fn release_cmd(definition: &Path, stream: Stream, quiet: bool) -> Result<Rep
     let loaded = load(definition)?;
     let mut report = Report::new();
     schema_stage(&loaded.definition_text, &mut report)?;
-    semantic_stage(&loaded.workspace, &mut report);
+    // A release is per-platform. With multiple profiles it needs one selected; until `release`
+    // grows a `--profile`, it requires a single-profile definition.
+    let profiles = loaded.profile_names();
+    let profile = match profiles.as_slice() {
+        [only] => only.clone(),
+        _ => {
+            return Err(Fatal::Usage(format!(
+                "the definition declares {} profiles ({}); `deployment release` currently requires exactly one",
+                profiles.len(),
+                profiles.join(", ")
+            )));
+        }
+    };
+    let ws = loaded.workspace(&profile).map_err(Fatal::Usage)?;
+    semantic_stage(&ws, &mut report);
     if report.error_count() > 0 {
         return Ok(report);
     }
-    let def = &loaded.workspace.definition;
+    let def = &ws.definition;
     let environment = match def.environments.as_slice() {
         [only] => only.name.clone(),
         envs => {
@@ -365,7 +421,7 @@ pub fn release_cmd(definition: &Path, stream: Stream, quiet: bool) -> Result<Rep
         .map(|d| d.message.clone())
         .collect();
     let output = release::build_release(
-        &loaded.workspace,
+        &ws,
         &environment,
         target,
         kernel_stream(stream),
@@ -406,8 +462,12 @@ fn run_render(
     env: &str,
     target: Platform,
 ) -> Result<render::RenderOutput, Fatal> {
+    let profile = loaded
+        .profile_for_family(target_family(target))
+        .map_err(Fatal::Usage)?;
+    let ws = loaded.workspace(&profile).map_err(Fatal::Usage)?;
     render::render_with_lock(
-        &loaded.workspace,
+        &ws,
         env,
         kernel_platform(target),
         "initial",
@@ -431,12 +491,24 @@ pub fn lock(definition: &Path, source: Option<&str>, quiet: bool) -> Result<Repo
     let loaded = load(definition)?;
     let mut report = Report::new();
     schema_stage(&loaded.definition_text, &mut report)?;
-    semantic_stage(&loaded.workspace, &mut report);
+    // Pins come from every profile (Greengrass/Kubernetes pin versions; HOST is source-form). The
+    // lock is one file for the whole definition, so collect the union, deduplicated.
+    let mut pins: Vec<ec_deploy::Pin> = Vec::new();
+    for profile in loaded.profile_names() {
+        let ws = loaded.workspace(&profile).map_err(Fatal::Usage)?;
+        semantic_stage(&ws, &mut report);
+        for pin in kernel_lock::pins_for(&ws) {
+            if !pins
+                .iter()
+                .any(|p| p.component == pin.component && p.version == pin.version)
+            {
+                pins.push(pin);
+            }
+        }
+    }
     if report.error_count() > 0 {
         return Ok(report);
     }
-
-    let pins = kernel_lock::pins_for(&loaded.workspace);
     if pins.is_empty() {
         return Err(Fatal::Usage(
             "nothing to lock: no component in this definition pins an artifact.version \

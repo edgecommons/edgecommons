@@ -1318,19 +1318,26 @@ hierarchy:
   scopes:
     - id: site/lab
       parent: null
-targetStandard:
-  family: HOST
-environments:
-  - name: local
-    bindings: bindings/local.json
-nodes:
-  - key: box-01
-    scope: site/lab
-    components:
-      - name: telemetry-processor
-        artifact: { source: { kind: sibling, repo: telemetry-processor } }
-        configSource: FILE
-        launch: { order: 30, waitFor: ["localhost:1883"] }
+topology:
+  nodes:
+    - key: box-01
+      scope: site/lab
+      components:
+        - name: telemetry-processor
+profiles:
+  host:
+    family: HOST
+    environments:
+      - name: local
+        bindings: bindings/local.json
+    defaults:
+      configSource: FILE
+    nodes:
+      box-01:
+        components:
+          telemetry-processor:
+            artifact: { source: { kind: sibling, repo: telemetry-processor } }
+            launch: { order: 30, waitFor: ["localhost:1883"] }
 "#,
     )
     .unwrap();
@@ -1408,17 +1415,24 @@ hierarchy:
   scopes:
     - id: device/box-01
       parent: null
-targetStandard:
-  family: HOST
-environments:
-  - name: local
-    bindings: bindings/local.json
-nodes:
-  - key: box-01
-    scope: device/box-01
-    components:
-      - name: telemetry-processor
-        configSource: FILE
+topology:
+  nodes:
+    - key: box-01
+      scope: device/box-01
+      components:
+        - name: telemetry-processor
+profiles:
+  host:
+    family: HOST
+    environments:
+      - name: local
+        bindings: bindings/local.json
+    defaults:
+      configSource: FILE
+    nodes:
+      box-01:
+        components:
+          telemetry-processor: {}
 "#,
     )
     .unwrap();
@@ -1499,7 +1513,7 @@ fn deployment_render_to_the_wrong_target_is_a_usage_error() {
 }
 
 #[test]
-fn deployment_render_to_an_unbuilt_target_says_not_implemented() {
+fn deployment_render_to_kubernetes_produces_manifests() {
     let d = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(d.path().join("bindings")).unwrap();
     std::fs::write(d.path().join("bindings/local.json"), "{}\n").unwrap();
@@ -1515,18 +1529,25 @@ hierarchy:
   scopes:
     - id: site/lab
       parent: null
-targetStandard:
-  family: KUBERNETES
-environments:
-  - name: local
-    bindings: bindings/local.json
-nodes:
-  - key: box-01
-    scope: site/lab
-    components:
-      - name: telemetry-processor
-        artifact: { version: "1.0.0" }
-        configSource: CONFIGMAP
+topology:
+  nodes:
+    - key: box-01
+      scope: site/lab
+      components:
+        - name: telemetry-processor
+profiles:
+  kubernetes:
+    family: KUBERNETES
+    environments:
+      - name: local
+        bindings: bindings/local.json
+    defaults:
+      configSource: CONFIGMAP
+    nodes:
+      box-01:
+        components:
+          telemetry-processor:
+            image: "ghcr.io/x/telemetry-processor:1.0.0"
 "#,
     )
     .unwrap();
@@ -1542,13 +1563,76 @@ nodes:
         ],
         d.path(),
     );
-    assert_eq!(
-        code(&o),
-        5,
-        "unbuilt renderer is not-implemented: {}",
-        stderr(&o)
+    assert_eq!(code(&o), 0, "kubernetes render succeeds: {}", stderr(&o));
+    let manifest = d
+        .path()
+        .join("render/kubernetes/box-01/telemetry-processor.yaml");
+    let text = std::fs::read_to_string(&manifest).expect("the component manifest is written");
+    assert!(text.contains("kind: Deployment"), "{text}");
+    assert!(
+        text.contains("image: ghcr.io/x/telemetry-processor:1.0.0"),
+        "the image is carried: {text}"
     );
-    assert!(stderr(&o).contains("not available"), "{}", stderr(&o));
+    assert!(
+        text.contains("-c\n        - CONFIGMAP") || text.contains("CONFIGMAP"),
+        "config is delivered via a ConfigMap: {text}"
+    );
+}
+
+#[test]
+fn deployment_render_needs_an_image_on_kubernetes() {
+    // A k8s Deployment cannot be built without a container image; the renderer says so by name.
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(d.path().join("bindings")).unwrap();
+    std::fs::write(d.path().join("bindings/local.json"), "{}\n").unwrap();
+    let definition = d.path().join("definition.yaml");
+    std::fs::write(
+        &definition,
+        r#"apiVersion: edgecommons.io/v1alpha1
+kind: DeploymentDefinition
+metadata:
+  name: k8s
+hierarchy:
+  levels: [site, device]
+  scopes:
+    - id: site/lab
+      parent: null
+topology:
+  nodes:
+    - key: box-01
+      scope: site/lab
+      components:
+        - name: telemetry-processor
+profiles:
+  kubernetes:
+    family: KUBERNETES
+    environments:
+      - name: local
+        bindings: bindings/local.json
+    defaults:
+      configSource: CONFIGMAP
+    nodes:
+      box-01:
+        components:
+          telemetry-processor:
+            artifact: { version: "1.0.0" }
+"#,
+    )
+    .unwrap();
+    let o = run(
+        &[
+            "deployment",
+            "render",
+            definition.to_str().unwrap(),
+            "--env",
+            "local",
+            "--target",
+            "KUBERNETES",
+        ],
+        d.path(),
+    );
+    assert_ne!(code(&o), 0, "a k8s component with no image cannot render");
+    assert!(stderr(&o).contains("image"), "{}", stderr(&o));
 }
 
 // --- deployment lock (§8.7) -----------------------------------------------------------------
@@ -1575,19 +1659,26 @@ hierarchy:
   scopes:
     - id: site/lab
       parent: null
-targetStandard:
-  family: GREENGRASS
-environments:
-  - name: local
-    bindings: bindings/local.json
-nodes:
-  - key: box-01
-    scope: site/lab
-    components:
-      - name: telemetry-processor
-        artifact: { version: "0.3.0" }
-        configSource: GG_CONFIG
-        launch: { order: 30 }
+topology:
+  nodes:
+    - key: box-01
+      scope: site/lab
+      components:
+        - name: telemetry-processor
+profiles:
+  greengrass:
+    family: GREENGRASS
+    environments:
+      - name: local
+        bindings: bindings/local.json
+    defaults:
+      configSource: GG_CONFIG
+    nodes:
+      box-01:
+        components:
+          telemetry-processor:
+            artifact: { version: "0.3.0" }
+            launch: { order: 30 }
 "#,
     )
     .unwrap();
@@ -1794,8 +1885,8 @@ fn a_locked_schema_rejects_config_the_pinned_version_cannot_accept() {
     )
     .unwrap();
     let text = std::fs::read_to_string(&definition).unwrap().replace(
-        "        launch: { order: 30 }",
-        "        layer: layers/components/telemetry-processor.json\n        launch: { order: 30 }",
+        "        - name: telemetry-processor\n",
+        "        - name: telemetry-processor\n          layer: layers/components/telemetry-processor.json\n",
     );
     std::fs::write(&definition, text).unwrap();
 
@@ -1889,9 +1980,10 @@ fn write_lock_with_instance_schema(dir: &Path, alias: bool) {
 fn attach_layer(dir: &Path, definition: &Path, body: &str) {
     std::fs::create_dir_all(dir.join("layers/components")).unwrap();
     std::fs::write(dir.join("layers/components/telemetry-processor.json"), body).unwrap();
+    // `layer` is a functional (topology) field, so attach it to the topology component.
     let text = std::fs::read_to_string(definition).unwrap().replace(
-        "        launch: { order: 30 }",
-        "        layer: layers/components/telemetry-processor.json\n        launch: { order: 30 }",
+        "        - name: telemetry-processor\n",
+        "        - name: telemetry-processor\n          layer: layers/components/telemetry-processor.json\n",
     );
     std::fs::write(definition, text).unwrap();
 }

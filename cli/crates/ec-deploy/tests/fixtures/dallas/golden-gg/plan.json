@@ -1,0 +1,172 @@
+{
+  "entries": [
+    {
+      "node": "dallas-console",
+      "component": "edge-console",
+      "consequence": "artifact",
+      "summary": "deploy componentVersion 1.0.0 to thing dallas-console",
+      "restartsComponent": true
+    },
+    {
+      "node": "dallas-console",
+      "component": "edge-console",
+      "consequence": "config",
+      "summary": "deliver effective config via GG_CONFIG",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "opcua-adapter",
+      "consequence": "artifact",
+      "summary": "deploy componentVersion 1.0.0 to thing gw-fill-01",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "opcua-adapter",
+      "consequence": "config",
+      "summary": "deliver effective config via GG_CONFIG",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "modbus-adapter",
+      "consequence": "artifact",
+      "summary": "deploy componentVersion 1.2.0 to thing gw-fill-01",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "modbus-adapter",
+      "consequence": "config",
+      "summary": "deliver effective config via GG_CONFIG",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "telemetry-processor",
+      "consequence": "artifact",
+      "summary": "deploy componentVersion 1.4.2 to thing gw-fill-01",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "telemetry-processor",
+      "consequence": "config",
+      "summary": "deliver effective config via GG_CONFIG",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "file-replicator",
+      "consequence": "artifact",
+      "summary": "deploy componentVersion 1.0.0 to thing gw-fill-01",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "file-replicator",
+      "consequence": "config",
+      "summary": "deliver effective config via GG_CONFIG",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "uns-bridge",
+      "consequence": "artifact",
+      "summary": "deploy componentVersion 1.0.0 to thing gw-fill-01",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-01",
+      "component": "uns-bridge",
+      "consequence": "config",
+      "summary": "deliver effective config via GG_CONFIG",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "opcua-adapter",
+      "consequence": "artifact",
+      "summary": "deploy componentVersion 1.0.0 to thing gw-pack-01",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "opcua-adapter",
+      "consequence": "config",
+      "summary": "deliver effective config via GG_CONFIG",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "modbus-adapter",
+      "consequence": "artifact",
+      "summary": "deploy componentVersion 1.2.0 to thing gw-pack-01",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "modbus-adapter",
+      "consequence": "config",
+      "summary": "deliver effective config via GG_CONFIG",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "telemetry-processor",
+      "consequence": "artifact",
+      "summary": "deploy componentVersion 1.4.2 to thing gw-pack-01",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "telemetry-processor",
+      "consequence": "config",
+      "summary": "deliver effective config via GG_CONFIG",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "uns-bridge",
+      "consequence": "artifact",
+      "summary": "deploy componentVersion 1.0.0 to thing gw-pack-01",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-pack-01",
+      "component": "uns-bridge",
+      "consequence": "config",
+      "summary": "deliver effective config via GG_CONFIG",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-02",
+      "component": "telemetry-processor",
+      "consequence": "artifact",
+      "summary": "deploy componentVersion 1.4.2 to thing gw-fill-02",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-02",
+      "component": "telemetry-processor",
+      "consequence": "config",
+      "summary": "deliver effective config via GG_CONFIG",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-02",
+      "component": "uns-bridge",
+      "consequence": "artifact",
+      "summary": "deploy componentVersion 1.0.0 to thing gw-fill-02",
+      "restartsComponent": true
+    },
+    {
+      "node": "gw-fill-02",
+      "component": "uns-bridge",
+      "consequence": "config",
+      "summary": "deliver effective config via GG_CONFIG",
+      "restartsComponent": true
+    }
+  ]
+}

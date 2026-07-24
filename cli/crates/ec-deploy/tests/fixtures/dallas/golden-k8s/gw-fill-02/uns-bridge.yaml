@@ -1,0 +1,223 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gw-fill-02-uns-bridge
+  labels:
+    app.kubernetes.io/name: uns-bridge
+    app.kubernetes.io/instance: gw-fill-02-uns-bridge
+    app.kubernetes.io/part-of: gw-fill-02
+    app.kubernetes.io/managed-by: edgecommons
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gw-fill-02-uns-bridge
+  labels:
+    app.kubernetes.io/name: uns-bridge
+    app.kubernetes.io/instance: gw-fill-02-uns-bridge
+    app.kubernetes.io/part-of: gw-fill-02
+    app.kubernetes.io/managed-by: edgecommons
+data:
+  config.json: |
+    {
+      "hierarchy": {
+        "levels": [
+          "enterprise",
+          "site",
+          "line",
+          "device"
+        ]
+      },
+      "identity": {
+        "enterprise": "bottles-r-us",
+        "site": "dallas",
+        "line": "filling-line"
+      },
+      "tags": {
+        "appId": "bottling-plant",
+        "scenario": "bottling-company-test"
+      },
+      "logging": {
+        "level": "INFO",
+        "publish": {
+          "enabled": true,
+          "destination": "local",
+          "minLevel": "INFO"
+        }
+      },
+      "heartbeat": {
+        "enabled": true,
+        "intervalSecs": 5,
+        "measures": {
+          "cpu": true,
+          "memory": true,
+          "threads": true,
+          "files": true,
+          "fds": true
+        }
+      },
+      "metricEmission": {
+        "target": "messaging"
+      },
+      "messaging": {
+        "local": {
+          "host": "localhost",
+          "port": 1883,
+          "clientId": "fill-bridge-local"
+        },
+        "requestTimeoutSeconds": 30
+      },
+      "component": {
+        "token": "uns-bridge",
+        "instances": [
+          {
+            "id": "site",
+            "siteBroker": {
+              "host": "dallas-site",
+              "port": 1883,
+              "clientId": "fill-bridge-site"
+            },
+            "uplink": {
+              "classes": {
+                "state": {
+                  "enabled": true
+                },
+                "cfg": {
+                  "enabled": true
+                },
+                "evt": {
+                  "enabled": true,
+                  "bufferWhileDisconnected": {
+                    "maxMessages": 1000
+                  }
+                },
+                "metric": {
+                  "enabled": true,
+                  "maxRatePerSec": 50
+                },
+                "data": {
+                  "enabled": true,
+                  "maxRatePerSec": 200,
+                  "burst": 400
+                },
+                "log": {
+                  "enabled": true,
+                  "maxRatePerSec": 50
+                },
+                "app": {
+                  "enabled": false
+                }
+              }
+            },
+            "reply": {
+              "ttlSecs": 60,
+              "maxPending": 1024
+            },
+            "maxHops": 4,
+            "queue": {
+              "data": 512,
+              "default": 64
+            }
+          }
+        ]
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gw-fill-02-uns-bridge
+  labels:
+    app.kubernetes.io/name: uns-bridge
+    app.kubernetes.io/instance: gw-fill-02-uns-bridge
+    app.kubernetes.io/part-of: gw-fill-02
+    app.kubernetes.io/managed-by: edgecommons
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: uns-bridge
+      app.kubernetes.io/instance: gw-fill-02-uns-bridge
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: uns-bridge
+        app.kubernetes.io/instance: gw-fill-02-uns-bridge
+        app.kubernetes.io/part-of: gw-fill-02
+        app.kubernetes.io/managed-by: edgecommons
+    spec:
+      serviceAccountName: gw-fill-02-uns-bridge
+      automountServiceAccountToken: true
+      nodeSelector:
+        edgecommons.io/gateway: gw-fill-02
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: component
+        image: ghcr.io/edgecommons/uns-bridge:1.0.0
+        args:
+        - --platform
+        - KUBERNETES
+        - -c
+        - CONFIGMAP
+        - /etc/edgecommons
+        - config.json
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: EDGECOMMONS_THING_NAME
+          value: gw-fill-02
+        ports:
+        - name: health
+          containerPort: 8081
+        - name: metrics
+          containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/edgecommons
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: gw-fill-02-uns-bridge
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gw-fill-02-uns-bridge
+  labels:
+    app.kubernetes.io/name: uns-bridge
+    app.kubernetes.io/instance: gw-fill-02-uns-bridge
+    app.kubernetes.io/part-of: gw-fill-02
+    app.kubernetes.io/managed-by: edgecommons
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: uns-bridge
+    app.kubernetes.io/instance: gw-fill-02-uns-bridge
+  ports:
+  - name: health
+    port: 8081
+    targetPort: health
+  - name: metrics
+    port: 9090
+    targetPort: metrics

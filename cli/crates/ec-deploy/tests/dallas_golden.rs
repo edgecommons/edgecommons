@@ -12,17 +12,20 @@ use std::path::{Path, PathBuf};
 
 use ec_deploy::Platform;
 use ec_deploy::render::render;
-use ec_deploy::workspace::{Workspace, parse_definition, referenced_paths};
+use ec_deploy::workspace::{Workspace, parse_authored, referenced_paths};
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dallas")
 }
 
-/// Load the fixture the way an adapter would, but from this crate's test tree.
+/// Load the fixture the way an adapter would, but from this crate's test tree: parse the authored
+/// (topology + profiles) definition and merge in the `host` profile to get the effective
+/// definition the HOST renderer consumes.
 fn load() -> Workspace {
     let root = fixture_dir();
     let definition_text = std::fs::read_to_string(root.join("definition.yaml")).unwrap();
-    let doc = parse_definition(&definition_text).expect("fixture definition parses");
+    let authored = parse_authored(&definition_text).expect("fixture definition parses");
+    let doc = authored.effective("host").expect("host profile merges");
     let mut files = BTreeMap::new();
     for rel in referenced_paths(&doc) {
         let text = std::fs::read_to_string(root.join(&rel))

@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::model::{DefinitionDoc, Node, Scope};
+use crate::model::{AuthoredDefinition, DefinitionDoc, Node, Scope};
 
 #[derive(Debug, Error)]
 pub enum WorkspaceError {
@@ -39,7 +39,47 @@ pub struct Workspace {
     pub files: BTreeMap<String, String>,
 }
 
-/// Parse a definition document from YAML text.
+/// Parse an authored definition (`topology` + `profiles`) from YAML text.
+pub fn parse_authored(text: &str) -> Result<AuthoredDefinition, WorkspaceError> {
+    serde_yaml::from_str(text).map_err(|e| WorkspaceError::Definition(e.to_string()))
+}
+
+/// Every workspace-relative path an authored definition references, across the topology and **all**
+/// profiles — the loader reads this union so any profile's effective definition can be built without
+/// re-reading. Scope + component layers come from the shared topology; bindings and provider layers
+/// come from each profile.
+#[must_use]
+pub fn referenced_paths_authored(def: &AuthoredDefinition) -> Vec<String> {
+    let mut out = Vec::new();
+    for scope in &def.hierarchy.scopes {
+        if let Some(layer) = &scope.layer {
+            out.push(layer.clone());
+        }
+    }
+    for node in &def.topology.nodes {
+        for comp in &node.components {
+            if let Some(layer) = &comp.layer {
+                out.push(layer.clone());
+            }
+        }
+    }
+    for profile in def.profiles.values() {
+        for env in &profile.environments {
+            out.push(env.bindings.clone());
+        }
+        for pnode in profile.nodes.values() {
+            if let Some(cp) = &pnode.config_provider {
+                out.push(cp.layer.clone());
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Parse a flat (already-effective) definition document from YAML text — used internally on the
+/// output of [`AuthoredDefinition::effective`].
 pub fn parse_definition(text: &str) -> Result<DefinitionDoc, WorkspaceError> {
     serde_yaml::from_str(text).map_err(|e| WorkspaceError::Definition(e.to_string()))
 }

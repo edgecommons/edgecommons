@@ -2,16 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://edgecommons.io/schemas/deployment-definition/v1alpha1.json",
   "title": "EdgeCommons DeploymentDefinition v1alpha1",
-  "description": "The authored source of a deployment: hierarchy, scopes with config layers, nodes with placement and identity, per-node component assignments split into an artifact stream and a config stream. Compiles into platform-native artifacts (per-node ConfigComponent catalogs, rendered FILE configs, messaging files, supervisord bundles, Greengrass per-thing deployments, Kubernetes manifests). Semantic rules beyond JSON Schema's reach are listed in DEFINITION.md and enforced by the kernel validator.",
+  "description": "One shared plant `topology` deployed to any platform via per-platform `profiles`. Each profile merges with the topology (effective = topology component's functional half + the profile's delivery half) into the flat form the renderers consume. See docs/platform/DESIGN-deployment-profiles.md. Semantic rules beyond JSON Schema live in DEFINITION.md and the kernel validator.",
   "type": "object",
   "required": [
     "apiVersion",
     "kind",
     "metadata",
     "hierarchy",
-    "targetStandard",
-    "environments",
-    "nodes"
+    "topology",
+    "profiles"
   ],
   "additionalProperties": false,
   "properties": {
@@ -88,77 +87,29 @@
         }
       }
     },
-    "targetStandard": {
+    "topology": {
       "type": "object",
-      "description": "One target family as the enterprise standard; exceptions are explicit, scoped, and reasoned. There are no per-node target arrays.",
+      "description": "The plant, platform-agnostic.",
       "required": [
-        "family"
+        "nodes"
       ],
       "additionalProperties": false,
       "properties": {
-        "family": {
-          "$ref": "#/$defs/targetFamily"
-        },
-        "exceptions": {
+        "nodes": {
           "type": "array",
+          "minItems": 1,
           "items": {
-            "type": "object",
-            "required": [
-              "scope",
-              "family",
-              "reason"
-            ],
-            "additionalProperties": false,
-            "properties": {
-              "scope": {
-                "type": "string",
-                "description": "Scope id or node key the exception covers."
-              },
-              "family": {
-                "$ref": "#/$defs/targetFamily"
-              },
-              "reason": {
-                "type": "string"
-              }
-            }
+            "$ref": "#/$defs/topologyNode"
           }
         }
       }
     },
-    "environments": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "required": [
-          "name",
-          "bindings"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "type": "string",
-            "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
-          },
-          "protection": {
-            "enum": [
-              "open",
-              "protected"
-            ],
-            "default": "open"
-          },
-          "bindings": {
-            "type": "string",
-            "description": "Repo-relative path to this environment's bindings.json - the answered half of the three-file IaC handshake. Layer files reference its values with '${binding:<dotted.path>}' tokens; a render fails while a referenced binding is missing (S-5)."
-          }
-        }
-      }
-    },
-    "nodes": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "$ref": "#/$defs/node"
+    "profiles": {
+      "type": "object",
+      "description": "Per-platform delivery, keyed by a profile name (e.g. host, greengrass, kubernetes).",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/profile"
       }
     }
   },
@@ -308,11 +259,120 @@
         }
       }
     },
-    "component": {
+    "environment": {
       "type": "object",
       "required": [
         "name",
-        "configSource"
+        "bindings"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "protection": {
+          "enum": [
+            "open",
+            "protected"
+          ],
+          "default": "open"
+        },
+        "bindings": {
+          "type": "string",
+          "description": "Repo-relative path to this environment's bindings.json - the answered half of the three-file IaC handshake. Layer files reference its values with '${binding:<dotted.path>}' tokens; a render fails while a referenced binding is missing (S-5)."
+        }
+      }
+    },
+    "localBroker": {
+      "type": "object",
+      "description": "The node-local message bus (HOST profile: one broker per node).",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "emqx",
+            "mosquitto",
+            "external"
+          ]
+        },
+        "port": {
+          "type": "integer",
+          "default": 1883
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "launch": {
+          "$ref": "#/$defs/launch"
+        }
+      }
+    },
+    "configProvider": {
+      "type": "object",
+      "description": "The node's ConfigComponent instance, when components on this node use -c CONFIG_COMPONENT. Its own bootstrap config is a RENDERED effective config (scope-chain merge + this block) delivered via its bootstrap configSource; it never recursively depends on itself.",
+      "required": [
+        "configSource",
+        "layer",
+        "catalogPath"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "configSource": {
+          "$ref": "#/$defs/configSource",
+          "$comment": "Bootstrap source: FILE/ENV/GG_CONFIG/CONFIGMAP - S-9: not CONFIG_COMPONENT."
+        },
+        "artifact": {
+          "$ref": "#/$defs/artifact"
+        },
+        "layer": {
+          "type": "string",
+          "description": "The provider's own config overlay (its tags/logging/component block, including component.global.configComponent with catalogSource). Merged over the scope chain to produce the rendered bootstrap document. May reference '${provider:catalog.path}', resolved from catalogPath."
+        },
+        "catalogPath": {
+          "type": "string",
+          "description": "On-node path the rendered per-node catalog is staged to and served from; also stamps the catalog's provenance.uri."
+        },
+        "versionBase": {
+          "type": "string",
+          "description": "Override for the catalog version prefix (default: the node's scope values joined by '-'). The config-release tag is appended at render time."
+        },
+        "messaging": {
+          "$ref": "#/$defs/messaging"
+        },
+        "launch": {
+          "$ref": "#/$defs/launch"
+        }
+      }
+    },
+    "auxiliary": {
+      "type": "object",
+      "required": [
+        "name",
+        "command"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string",
+          "description": "Declared controlled process (simulator, agent). The deck's negative-space rule: hooks are declared with review policy, never smuggled."
+        },
+        "launch": {
+          "$ref": "#/$defs/launch"
+        }
+      }
+    },
+    "topologyComponent": {
+      "type": "object",
+      "description": "A component's functional half: its identity and the config it merges. Delivery (configSource, artifact, launch, image) is supplied by a profile.",
+      "required": [
+        "name"
       ],
       "additionalProperties": false,
       "properties": {
@@ -321,19 +381,13 @@
           "pattern": "^[a-z][a-z0-9-]*$",
           "description": "Component token (sanitized short name, e.g. 'telemetry-processor')."
         },
-        "artifact": {
-          "$ref": "#/$defs/artifact"
-        },
-        "configSource": {
-          "$ref": "#/$defs/configSource"
+        "catalogKey": {
+          "type": "string",
+          "description": "Display key for this leaf in the rendered catalog's components map (default: PascalCase of the component name). Authored metadata; runtime matching uses the leaf's component.token."
         },
         "layer": {
           "type": "string",
           "description": "Repo-relative path to this component's config leaf (the catalog component body / the component slice of a rendered FILE config). Lineage above the leaf is DERIVED from the node's placement - never enumerated here (S-7)."
-        },
-        "catalogKey": {
-          "type": "string",
-          "description": "Display key for this leaf in the rendered catalog's components map (default: PascalCase of the component name). Authored metadata; runtime matching uses the leaf's component.token."
         },
         "files": {
           "type": "array",
@@ -359,13 +413,10 @@
         },
         "messaging": {
           "$ref": "#/$defs/messaging"
-        },
-        "launch": {
-          "$ref": "#/$defs/launch"
         }
       }
     },
-    "node": {
+    "topologyNode": {
       "type": "object",
       "required": [
         "key",
@@ -399,98 +450,144 @@
             "type": "string"
           }
         },
-        "localBroker": {
-          "type": "object",
-          "description": "The node-local message bus (HOST profile: one broker per node).",
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "enum": [
-                "emqx",
-                "mosquitto",
-                "external"
-              ]
-            },
-            "port": {
-              "type": "integer",
-              "default": 1883
-            },
-            "env": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "string"
-              }
-            },
-            "launch": {
-              "$ref": "#/$defs/launch"
-            }
-          }
-        },
-        "configProvider": {
-          "type": "object",
-          "description": "The node's ConfigComponent instance, when components on this node use -c CONFIG_COMPONENT. Its own bootstrap config is a RENDERED effective config (scope-chain merge + this block) delivered via its bootstrap configSource; it never recursively depends on itself.",
-          "required": [
-            "configSource",
-            "layer",
-            "catalogPath"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "configSource": {
-              "$ref": "#/$defs/configSource",
-              "$comment": "Bootstrap source: FILE/ENV/GG_CONFIG/CONFIGMAP - S-9: not CONFIG_COMPONENT."
-            },
-            "artifact": {
-              "$ref": "#/$defs/artifact"
-            },
-            "layer": {
-              "type": "string",
-              "description": "The provider's own config overlay (its tags/logging/component block, including component.global.configComponent with catalogSource). Merged over the scope chain to produce the rendered bootstrap document. May reference '${provider:catalog.path}', resolved from catalogPath."
-            },
-            "catalogPath": {
-              "type": "string",
-              "description": "On-node path the rendered per-node catalog is staged to and served from; also stamps the catalog's provenance.uri."
-            },
-            "versionBase": {
-              "type": "string",
-              "description": "Override for the catalog version prefix (default: the node's scope values joined by '-'). The config-release tag is appended at render time."
-            },
-            "messaging": {
-              "$ref": "#/$defs/messaging"
-            },
-            "launch": {
-              "$ref": "#/$defs/launch"
-            }
-          }
-        },
-        "auxiliaries": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": [
-              "name",
-              "command"
-            ],
-            "additionalProperties": false,
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "command": {
-                "type": "string",
-                "description": "Declared controlled process (simulator, agent). The deck's negative-space rule: hooks are declared with review policy, never smuggled."
-              },
-              "launch": {
-                "$ref": "#/$defs/launch"
-              }
-            }
-          }
-        },
         "components": {
           "type": "array",
           "minItems": 1,
           "items": {
-            "$ref": "#/$defs/component"
+            "$ref": "#/$defs/topologyComponent"
+          }
+        }
+      }
+    },
+    "profileComponent": {
+      "type": "object",
+      "description": "A component's delivery half on one platform.",
+      "additionalProperties": false,
+      "properties": {
+        "configSource": {
+          "$ref": "#/$defs/configSource"
+        },
+        "artifact": {
+          "$ref": "#/$defs/artifact"
+        },
+        "launch": {
+          "$ref": "#/$defs/launch"
+        },
+        "image": {
+          "type": "string",
+          "description": "Container image (Kubernetes profile)."
+        }
+      }
+    },
+    "profileNode": {
+      "type": "object",
+      "description": "Per-node platform adornments and the per-component delivery overlay, keyed by component name.",
+      "additionalProperties": false,
+      "properties": {
+        "localBroker": {
+          "$ref": "#/$defs/localBroker"
+        },
+        "auxiliaries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/auxiliary"
+          }
+        },
+        "configProvider": {
+          "$ref": "#/$defs/configProvider"
+        },
+        "components": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/profileComponent"
+          }
+        }
+      }
+    },
+    "deploys": {
+      "type": "object",
+      "description": "Selection over the topology. `nodes` lists the deployed node keys; `only` optionally narrows a node to a subset of its components.",
+      "required": [
+        "nodes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "only": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "description": "How the topology is delivered on one platform.",
+      "required": [
+        "family",
+        "environments"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "$ref": "#/$defs/targetFamily"
+        },
+        "exceptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "scope",
+              "family",
+              "reason"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "scope": {
+                "type": "string",
+                "description": "Scope id or node key the exception covers."
+              },
+              "family": {
+                "$ref": "#/$defs/targetFamily"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "environments": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/environment"
+          }
+        },
+        "deploys": {
+          "$ref": "#/$defs/deploys"
+        },
+        "defaults": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "configSource": {
+              "$ref": "#/$defs/configSource"
+            }
+          }
+        },
+        "nodes": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/profileNode"
           }
         }
       }

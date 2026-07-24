@@ -263,14 +263,26 @@ cannot be: both sides are closed, and they share subschemas). A pinned version t
 "unvalidated" is stated rather than a clean run implying coverage that does not exist. A component
 that takes no instances simply publishes none.
 
-**Targets.** The definition's `targetStandard.family` must match `--target`; a mismatch is a usage
-error rather than a silent retarget. The HOST and Greengrass renderers are built; Kubernetes is not
-yet, and says so (exit `5`).
+**One topology, many profiles.** A definition is a shared `topology` (the plant — what runs where and
+each component's functional config) plus per-platform `profiles` (`host`, `greengrass`, `kubernetes`),
+each supplying delivery: config source, artifact or image, and platform specifics. `--target <FAMILY>`
+selects the profile whose `family` matches, and the renderer sees the merged effective definition.
+
+**Targets.** `--target` names the platform family; the definition must declare a profile for it, or
+you get a usage error naming the profiles it does have. **All three renderers — HOST, Greengrass, and
+Kubernetes — are built.** `validate` (which takes no target) checks *every* profile.
 
 **Greengrass** renders **one deployment document per thing** — thing ARNs, never thing groups — so a
 definition's nodes map one-to-one onto deployments and failure is per node. Components taking
 `GG_CONFIG` carry their effective config as a `configurationUpdate` merge. Recipes are *not* produced
 here: a recipe is a packaging artifact of a component release.
+
+**Kubernetes** renders each component to one YAML file carrying a ServiceAccount, a ConfigMap (its
+effective config), a Deployment, and a ClusterIP Service. Config is delivered through `CONFIGMAP`,
+mounted as a whole volume so the kubelet's atomic swap hot-reloads it — and deliberately with **no
+checksum annotation**, since rolling the pod on a config edit would defeat that. Identity comes from
+the Downward API, the pod runs non-root with a read-only root filesystem, and a `nodeSelector` pins
+each component to its gateway. A Kubernetes component needs an `image` (its "what runs").
 
 **Streams.** Config and artifact are independently versioned and independently reconciled. The
 release lock correlates them without fusing them, so either rolls back alone.
