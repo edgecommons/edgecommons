@@ -1,8 +1,13 @@
 # DESIGN — one topology, per-platform profiles
 
-> **Status: PROPOSED (2026-07-23).** A change to the deployment-definition language so a single
-> **plant topology** is deployed to any platform, replacing today's N divergent per-platform
-> definitions. Companion to `DESIGN-cli.md` (§8); adds a decision to that register when accepted.
+> **Status: SHIPPED (2026-07-23).** A change to the deployment-definition language so a single
+> **plant topology** is deployed to any platform, replacing the former N divergent per-platform
+> definitions. Recorded as D-CLI-24/-25 in `DESIGN-cli.md`. Delivered in six stages: the authored
+> model + `effective()` merge; Dallas unified onto one topology (HOST + Greengrass goldens proven
+> byte-neutral); the CLI threaded onto profiles (the flat shape removed); the Greengrass profile
+> completed to the whole plant; the Kubernetes renderer + `profiles.kubernetes` + a k8s golden; and
+> `bottling-company-test` moved onto the unified definition. One Dallas topology renders to HOST,
+> Greengrass, and Kubernetes.
 
 ## 1. Problem
 
