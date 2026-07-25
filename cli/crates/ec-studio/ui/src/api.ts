@@ -131,4 +131,6 @@ export const api = {
   draftStatus: (ref: string, profile: string) =>
     get<DraftStatus>(`/api/drafts/status?ref=${encodeURIComponent(ref)}&profile=${encodeURIComponent(profile)}`),
   prUrl: (ref: string) => get<{ url: string | null }>(`/api/drafts/pr-url?ref=${encodeURIComponent(ref)}`),
+  applyDraft: (ref: string, title: string) =>
+    post<{ applied: boolean; url: string | null; reason?: string }>("/api/drafts/apply", { ref, title }),
 };

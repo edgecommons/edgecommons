@@ -145,6 +145,7 @@ fn router(state: Arc<AppState>) -> Router {
         .route("/api/drafts/edit", axum::routing::post(edit_layer))
         .route("/api/drafts/status", get(draft_status))
         .route("/api/drafts/pr-url", get(draft_pr_url))
+        .route("/api/drafts/apply", axum::routing::post(apply_draft))
         .fallback(get(serve_ui))
         .with_state(state)
 }
@@ -486,7 +487,7 @@ fn access_note(codeowners_path: Option<&str>, unowned: usize) -> String {
 
 use axum::extract::Query;
 use ec_deploy::draft::DraftName;
-use ec_deploy::ports::DraftPort;
+use ec_deploy::ports::{DraftPort, HostPort};
 use serde::Deserialize;
 
 /// Read a layer file's current committed contents, so the editor starts from what will deploy. The
@@ -543,6 +544,43 @@ struct RefQuery {
 async fn draft_pr_url(State(state): State<Arc<AppState>>, Query(q): Query<RefQuery>) -> Response {
     let url = ec_adapters::github_pr_url(&state.git(), &q.git_ref);
     axum::Json(json!({ "url": url })).into_response()
+}
+
+/// Apply a draft: push its branch to the host and open the pull request (register #16). Gated by
+/// CODEOWNERS on the host — the Studio never merges. When no host is configured, it degrades to a
+/// stated manual instruction rather than a broken action. Outward-facing, so a `POST`.
+#[derive(Deserialize)]
+struct ApplyReq {
+    #[serde(rename = "ref")]
+    git_ref: String,
+    title: String,
+    #[serde(default)]
+    base: Option<String>,
+}
+
+async fn apply_draft(State(state): State<Arc<AppState>>, body: axum::Json<ApplyReq>) -> Response {
+    let req = body.0;
+    let host = state.git();
+    if !host.available() {
+        return axum::Json(json!({
+            "applied": false,
+            "url": Value::Null,
+            "reason": "No GitHub remote or gh CLI on this clone — push the draft branch and open the \
+                       pull request on your Git host. Apply is gated by CODEOWNERS.",
+        }))
+        .into_response();
+    }
+    let base = req
+        .base
+        .or_else(|| ec_adapters::current_branch(&host))
+        .unwrap_or_else(|| "main".to_string());
+    match host
+        .push_draft(&req.git_ref)
+        .and_then(|()| host.open_pull_request(&req.git_ref, &base, &req.title))
+    {
+        Ok(url) => axum::Json(json!({ "applied": true, "url": url })).into_response(),
+        Err(e) => ApiError(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response(),
+    }
 }
 
 /// Open (propose) a draft from a change title. The ref is derived and returned; the author never
@@ -837,6 +875,24 @@ profiles:
         let app = router(state);
         let (s, _) = get(&app, "/api/layer?path=../../etc/passwd").await;
         assert_eq!(s, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn apply_without_a_host_degrades_to_a_manual_instruction() {
+        // No GitHub remote on the fixture, so apply cannot push/open a PR — it must say so, not fail.
+        let (_d, state) = git_fixture();
+        run_git(&state.loaded.root, &["branch", "draft/x-01", "HEAD"]);
+        let app = router(state);
+        let (s, body) = post(
+            &app,
+            "/api/drafts/apply",
+            json!({ "ref": "draft/x-01", "title": "x" }),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(body["applied"], false);
+        assert_eq!(body["url"], Value::Null);
+        assert!(body["reason"].as_str().unwrap().contains("CODEOWNERS"));
     }
 
     #[tokio::test]

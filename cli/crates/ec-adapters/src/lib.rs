@@ -575,6 +575,76 @@ pub fn github_pr_url(git: &LocalGit, draft_ref: &str) -> Option<String> {
     ))
 }
 
+/// The `gh pr create` arguments for a draft — pure, so the command is testable without running it.
+/// The body states the change was proposed via the Studio and that CODEOWNERS gates the merge.
+#[must_use]
+pub fn pr_create_args(git_ref: &str, base: &str, title: &str) -> Vec<String> {
+    [
+        "pr",
+        "create",
+        "--head",
+        git_ref,
+        "--base",
+        base,
+        "--title",
+        title,
+        "--body",
+        "Proposed via Deployment Studio. Review and merge here — CODEOWNERS gates the merge.",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+impl ec_deploy::ports::HostPort for LocalGit {
+    fn available(&self) -> bool {
+        // Apply needs a Git-host CLI and a host remote to act against. We check for GitHub
+        // specifically, since that is the host this adapter drives; a different host is a different
+        // adapter behind the same port.
+        which("gh").is_some() && github_pr_url(self, "_probe").is_some()
+    }
+
+    fn push_draft(&self, git_ref: &str) -> Result<(), PortError> {
+        // Uses the operator's git credential helper — the Studio holds no token of its own.
+        self.git_ok(&["push", "-u", "origin", git_ref]).map(|_| ())
+    }
+
+    fn open_pull_request(
+        &self,
+        git_ref: &str,
+        base: &str,
+        title: &str,
+    ) -> Result<String, PortError> {
+        let args = pr_create_args(git_ref, base, title);
+        // `gh` runs in the repo and acts as the authenticated user; the host enforces their
+        // permissions and CODEOWNERS. The Studio never merges — it only opens the request.
+        let out = std::process::Command::new("gh")
+            .current_dir(&self.root.0)
+            .args(&args)
+            .output()
+            .map_err(|e| PortError::Unavailable(format!("gh: {e}")))?;
+        if !out.status.success() {
+            return Err(PortError::Other(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ));
+        }
+        // `gh pr create` prints the PR URL; take the first URL it emits.
+        String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .find(|t| t.starts_with("https://"))
+            .map(str::to_string)
+            .ok_or_else(|| PortError::Other("gh did not return a pull-request URL".into()))
+    }
+}
+
+/// The branch the working tree is on — the default base for a draft's pull request.
+#[must_use]
+pub fn current_branch(git: &LocalGit) -> Option<String> {
+    git.git_ok(&["rev-parse", "--abbrev-ref", "HEAD"])
+        .ok()
+        .filter(|b| b != "HEAD")
+}
+
 /// Parse `owner/repo` from a GitHub remote URL (https or ssh); `None` if it is not GitHub.
 fn parse_github_remote(url: &str) -> Option<(String, String)> {
     let rest = url
@@ -831,6 +901,22 @@ mod tests {
         // Not GitHub, or malformed: no URL invented.
         assert_eq!(parse_github_remote("https://gitlab.com/o/r.git"), None);
         assert_eq!(parse_github_remote("git@github.com:onlyowner"), None);
+    }
+
+    #[test]
+    fn pr_create_args_target_the_draft_branch() {
+        let args = pr_create_args("draft/lower-x-01", "main", "Lower x");
+        assert_eq!(args[0], "pr");
+        assert_eq!(args[1], "create");
+        // The head is the draft branch, the base is the target, the title is the change name.
+        let head = args.iter().position(|a| a == "--head").unwrap();
+        assert_eq!(args[head + 1], "draft/lower-x-01");
+        let base = args.iter().position(|a| a == "--base").unwrap();
+        assert_eq!(args[base + 1], "main");
+        let title = args.iter().position(|a| a == "--title").unwrap();
+        assert_eq!(args[title + 1], "Lower x");
+        // The body names CODEOWNERS as the gate — the Studio never merges.
+        assert!(args.iter().any(|a| a.contains("CODEOWNERS")));
     }
 
     #[test]

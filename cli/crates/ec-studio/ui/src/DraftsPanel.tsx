@@ -69,8 +69,9 @@ function DraftRow({
   draft, profile, touches,
 }: { draft: DraftSummary; profile: string; touches: boolean }) {
   const [status, setStatus] = useState<DraftStatus | null>(null);
-  const [pr, setPr] = useState<{ url: string | null } | null>(null);
+  const [apply, setApply] = useState<{ applied: boolean; url: string | null; reason?: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [applying, setApplying] = useState(false);
 
   async function review() {
     setBusy(true);
@@ -79,10 +80,19 @@ function DraftRow({
     finally { setBusy(false); }
   }
 
-  async function openPr() {
-    const r = await api.prUrl(draft.ref);
-    setPr(r);
-    if (r.url) window.open(r.url, "_blank", "noopener");
+  // Apply pushes the draft branch and opens its pull request, gated by CODEOWNERS on the host —
+  // the Studio never merges. It degrades to a stated instruction when no host is configured.
+  async function doApply() {
+    setApplying(true);
+    try {
+      const r = await api.applyDraft(draft.ref, draft.title);
+      setApply(r);
+      if (r.applied && r.url) window.open(r.url, "_blank", "noopener");
+    } catch (e) {
+      setApply({ applied: false, url: null, reason: (e as Error).message });
+    } finally {
+      setApplying(false);
+    }
   }
 
   return (
@@ -97,7 +107,9 @@ function DraftRow({
         <Button size="sm" kind="tertiary" disabled={busy} onClick={review}>
           {busy ? "Reviewing…" : "Review conflicts"}
         </Button>
-        <Button size="sm" kind="ghost" onClick={openPr}>Open pull request</Button>
+        <Button size="sm" kind="ghost" disabled={applying} onClick={doApply}>
+          {applying ? "Applying…" : "Apply — open pull request"}
+        </Button>
       </div>
 
       {status && (status.clean ? (
@@ -120,12 +132,14 @@ function DraftRow({
         </>
       ))}
 
-      {pr && pr.url === null && (
+      {apply && (apply.applied ? (
+        <InlineNotification kind="success" lowContrast hideCloseButton title="Pull request opened"
+          subtitle={apply.url ? `Review and merge on your Git host: ${apply.url}` : "Opened on your Git host."} />
+      ) : (
         <p className="ec-sub">
-          No GitHub remote on this clone — push <code>{draft.ref}</code> and open a pull request on your
-          Git host. Apply is gated by CODEOWNERS; the Studio never merges.
+          {apply.reason ?? "Apply unavailable."} The Studio never merges — CODEOWNERS gates the merge.
         </p>
-      )}
+      ))}
     </div>
   );
 }

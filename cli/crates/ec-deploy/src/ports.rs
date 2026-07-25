@@ -61,6 +61,32 @@ pub trait DraftPort {
     fn merge_tree(&self, draft_ref: &str, main_ref: &str) -> Result<MergeResult, PortError>;
 }
 
+/// Apply: push a draft to the Git host and open its pull request (DESIGN-cli §8.10; register #16).
+///
+/// This is the boundary that needs **credentials**, which the read path never does. Apply is the Git
+/// host's PR merge gated by CODEOWNERS — the Studio never merges; it only opens the request.
+///
+/// The register mandates: **design for per-user acting-as-user OAuth, ship the pragmatic credential
+/// path behind the same trait.** The local adapter uses the operator's existing `git` credential
+/// helper and `gh` auth, so it acts as whoever is authenticated and the host enforces their
+/// permissions and CODEOWNERS — correct for a single-operator deployment. A hosted multi-user
+/// deployment swaps in a GitHub App user-to-server adapter behind this same trait; nothing above it
+/// changes.
+pub trait HostPort {
+    /// Whether apply is possible now: a Git host remote is configured and its CLI is available.
+    /// `false` degrades apply to a stated manual instruction, never a broken action.
+    fn available(&self) -> bool;
+    /// Push a draft branch to the host so a pull request can be opened for it.
+    fn push_draft(&self, git_ref: &str) -> Result<(), PortError>;
+    /// Open a pull request for a draft and return its URL. Gated by CODEOWNERS on the host.
+    fn open_pull_request(
+        &self,
+        git_ref: &str,
+        base: &str,
+        title: &str,
+    ) -> Result<String, PortError>;
+}
+
 /// The outcome of a merge-tree computation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MergeResult {
