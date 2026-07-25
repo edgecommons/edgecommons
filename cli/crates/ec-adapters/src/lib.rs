@@ -533,6 +533,62 @@ pub fn merge_base(git: &LocalGit, draft_ref: &str, main_ref: &str) -> Option<Str
     git.git_ok(&["merge-base", main_ref, draft_ref]).ok()
 }
 
+/// The definition-relative files a draft changes since it branched from `main_ref`. Files outside
+/// the definition's directory are dropped, so the result is the set of layers/bindings the draft
+/// touches — what the UI intersects with a scope to compute advisory presence (register #16 ruling 6).
+#[must_use]
+pub fn draft_changed_files(
+    git: &LocalGit,
+    dir_prefix: &str,
+    draft_ref: &str,
+    main_ref: &str,
+) -> Vec<String> {
+    let out = git
+        .git_ok(&["diff", "--name-only", &format!("{main_ref}...{draft_ref}")])
+        .unwrap_or_default();
+    out.lines()
+        .filter_map(|line| {
+            let path = line.trim();
+            if path.is_empty() {
+                return None;
+            }
+            if dir_prefix.is_empty() {
+                Some(path.to_string())
+            } else {
+                path.strip_prefix(&format!("{}/", dir_prefix.trim_end_matches('/')))
+                    .map(str::to_string)
+            }
+        })
+        .collect()
+}
+
+/// The pull-request-create URL for a draft branch, derived from the `origin` remote when it is a
+/// GitHub remote. `None` when there is no GitHub remote (e.g. a purely local clone) — apply then
+/// degrades to a stated instruction rather than a broken link. The Studio never opens the PR itself
+/// here; acting as the user to push and open it is the credential-adapter slice.
+#[must_use]
+pub fn github_pr_url(git: &LocalGit, draft_ref: &str) -> Option<String> {
+    let url = git.git_ok(&["remote", "get-url", "origin"]).ok()?;
+    let (owner, repo) = parse_github_remote(url.trim())?;
+    Some(format!(
+        "https://github.com/{owner}/{repo}/pull/new/{draft_ref}"
+    ))
+}
+
+/// Parse `owner/repo` from a GitHub remote URL (https or ssh); `None` if it is not GitHub.
+fn parse_github_remote(url: &str) -> Option<(String, String)> {
+    let rest = url
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("git@github.com:"))
+        .or_else(|| url.strip_prefix("ssh://git@github.com/"))?;
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    let (owner, repo) = rest.split_once('/')?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((owner.to_string(), repo.to_string()))
+}
+
 /// Render a definition **at a Git ref** (a commit or a tree-ish, so a merge-tree OID works). The
 /// definition lives at `<dir_prefix>/definition.yaml`; its referenced layers and bindings are read at
 /// the same ref, so this is a pure function of the tree — the whole reason semantic conflict detection
@@ -756,6 +812,25 @@ mod tests {
     fn external_tools_map_to_their_binaries() {
         assert_eq!(ExternalTool::Gdk.binary(), "gdk");
         assert_eq!(ExternalTool::GreengrassCli.binary(), "greengrass-cli");
+    }
+
+    #[test]
+    fn github_remotes_parse_to_owner_repo() {
+        assert_eq!(
+            parse_github_remote("https://github.com/edgecommons/edgecommons.git"),
+            Some(("edgecommons".into(), "edgecommons".into()))
+        );
+        assert_eq!(
+            parse_github_remote("git@github.com:edgecommons/bottling-company-test.git"),
+            Some(("edgecommons".into(), "bottling-company-test".into()))
+        );
+        assert_eq!(
+            parse_github_remote("https://github.com/o/r"),
+            Some(("o".into(), "r".into()))
+        );
+        // Not GitHub, or malformed: no URL invented.
+        assert_eq!(parse_github_remote("https://gitlab.com/o/r.git"), None);
+        assert_eq!(parse_github_remote("git@github.com:onlyowner"), None);
     }
 
     #[test]

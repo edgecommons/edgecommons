@@ -144,6 +144,7 @@ fn router(state: Arc<AppState>) -> Router {
         .route("/api/drafts", get(list_drafts).post(open_draft))
         .route("/api/drafts/edit", axum::routing::post(edit_layer))
         .route("/api/drafts/status", get(draft_status))
+        .route("/api/drafts/pr-url", get(draft_pr_url))
         .fallback(get(serve_ui))
         .with_state(state)
 }
@@ -510,18 +511,38 @@ async fn get_layer(State(state): State<Arc<AppState>>, Query(q): Query<LayerQuer
     }
 }
 
-/// The open drafts, each with its ref and a human title recovered from the ref.
+/// The open drafts: each with its ref, a human title recovered from the ref, and the
+/// definition-relative files it changes — which the UI intersects with a scope to show advisory
+/// presence ("N other open drafts touch this scope", register #16 ruling 6).
 async fn list_drafts(State(state): State<Arc<AppState>>) -> Response {
-    match state.git().list() {
+    let git = state.git();
+    let prefix = state.dir_prefix();
+    match git.list() {
         Ok(refs) => {
             let drafts: Vec<Value> = refs
                 .iter()
-                .map(|r| json!({ "ref": r, "title": title_from_ref(r) }))
+                .map(|r| {
+                    let files = ec_adapters::draft_changed_files(&git, &prefix, r, "HEAD");
+                    json!({ "ref": r, "title": title_from_ref(r), "changedFiles": files })
+                })
                 .collect();
             axum::Json(json!({ "drafts": drafts })).into_response()
         }
         Err(e) => ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
+}
+
+/// The pull-request-create URL for a draft, derived from a GitHub `origin` remote. `null` when the
+/// clone has no GitHub remote — apply then degrades to a stated instruction, never a broken link.
+#[derive(Deserialize)]
+struct RefQuery {
+    #[serde(rename = "ref")]
+    git_ref: String,
+}
+
+async fn draft_pr_url(State(state): State<Arc<AppState>>, Query(q): Query<RefQuery>) -> Response {
+    let url = ec_adapters::github_pr_url(&state.git(), &q.git_ref);
+    axum::Json(json!({ "url": url })).into_response()
 }
 
 /// Open (propose) a draft from a change title. The ref is derived and returned; the author never
@@ -778,10 +799,19 @@ profiles:
         .await;
         assert_eq!(s, StatusCode::OK);
 
-        // It is listed…
+        // It is listed, with the file it changes (for advisory presence).
         let (_s, list) = get(&app, "/api/drafts").await;
         assert_eq!(list["drafts"][0]["ref"], git_ref);
         assert_eq!(list["drafts"][0]["title"], "lower the interval");
+        assert_eq!(
+            list["drafts"][0]["changedFiles"][0],
+            "layers/telemetry.json"
+        );
+
+        // With no GitHub remote, the PR URL degrades to null rather than a broken link.
+        let (s, pr) = get(&app, &format!("/api/drafts/pr-url?ref={git_ref}")).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(pr["url"], Value::Null);
 
         // …and status runs the conflict check (clean here — nothing moved under it).
         let (s, status) = get(
@@ -807,6 +837,28 @@ profiles:
         let app = router(state);
         let (s, _) = get(&app, "/api/layer?path=../../etc/passwd").await;
         assert_eq!(s, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn a_github_remote_yields_a_pr_url() {
+        let (_d, state) = git_fixture();
+        run_git(
+            &state.loaded.root,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:edgecommons/demo.git",
+            ],
+        );
+        run_git(&state.loaded.root, &["branch", "draft/x-01", "HEAD"]);
+        let app = router(state);
+        let (s, pr) = get(&app, "/api/drafts/pr-url?ref=draft/x-01").await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(
+            pr["url"],
+            "https://github.com/edgecommons/demo/pull/new/draft/x-01"
+        );
     }
 
     #[test]

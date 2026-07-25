@@ -68,6 +68,44 @@ export function selectionScopeId(sel: Selection, def: DefinitionView): string | 
   return sel.id;
 }
 
+/** Every layer path whose edit would change the render of any component under a selection: the
+ *  scope chain (ancestors + self), descendant scope layers, and the component leaves under it. A
+ *  draft "touches this scope" (register #16 ruling 6) when it changes any of these. Pure — no hook. */
+export function layersForSelection(def: DefinitionView, sel: Selection): Set<string> {
+  const set = new Set<string>();
+  const scopeId = selectionScopeId(sel, def);
+  if (!scopeId) return set;
+  const scopeById = (id: string) => def.hierarchy.scopes.find((s) => s.id === id);
+
+  // The chain (ancestors + self): a parent-scope layer merges down into this scope.
+  let cur: string | null = scopeId;
+  while (cur) {
+    const s = scopeById(cur);
+    if (!s) break;
+    if (s.layer) set.add(s.layer);
+    cur = s.parent;
+  }
+  // Descendant scope layers.
+  const descendants = (id: string) => {
+    for (const s of def.hierarchy.scopes) {
+      if (s.parent === id) {
+        if (s.layer) set.add(s.layer);
+        descendants(s.id);
+      }
+    }
+  };
+  descendants(scopeId);
+  // Component leaves under the selection.
+  const ids = new Set<string>();
+  const collect = (id: string) => { ids.add(id); def.hierarchy.scopes.filter((s) => s.parent === id).forEach((s) => collect(s.id)); };
+  collect(scopeId);
+  const nodes = sel.kind === "node"
+    ? def.nodes.filter((n) => n.key === sel.id)
+    : def.nodes.filter((n) => ids.has(n.scope));
+  nodes.forEach((n) => n.components.forEach((c) => c.layer && set.add(c.layer)));
+  return set;
+}
+
 export const TABS = ["Overview", "Components", "Config", "Topology", "Render", "History"] as const;
 export type Tab = (typeof TABS)[number];
 
