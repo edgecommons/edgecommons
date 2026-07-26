@@ -21,6 +21,14 @@
 //! 5. `signal.id` is the **only** hard reject — a publish with no stable id fails with
 //!    [`crate::EdgeCommonsError::Facade`] at the call site.
 //!
+//! ## Sample extras and explicit nulls (`docs/SOUTHBOUND.md` §2)
+//! A sample MAY carry additive protocol-specific fields beside the canonical five: the facade
+//! copies [`Sample::extra`] entries into the sample JSON object after the canonical fields, and
+//! rejects the [`RESERVED_SAMPLE_KEYS`] as extras with a fail-fast error. A legitimate protocol
+//! null is publishable — [`Sample::null_value`] opts in, and the facade serializes
+//! `"value": null` with the normal quality defaulting; an accidental missing value (no opt-in)
+//! still fails fast.
+//!
 //! ## Channel routing (DESIGN-class-facades §4, D1)
 //! Per-call [`SignalUpdate::via`] override ▸ config `publish.channel` (instance ▸ global) ▸
 //! [`Channel::Local`]. A `stream:<name>` route serializes the same envelope and appends it to the
@@ -48,6 +56,17 @@ pub const DATA_MESSAGE_NAME: &str = "SouthboundSignalUpdate";
 pub const DATA_MESSAGE_VERSION: &str = "1.0";
 /// The `qualityRaw` marker written when `quality` was defaulted to [`Quality::Good`].
 pub const QUALITY_UNSPECIFIED: &str = "unspecified";
+/// The canonical sample keys a [`Sample`]'s extras may never override (`docs/SOUTHBOUND.md` §2):
+/// a reserved key among the extras is a fail-fast [`crate::EdgeCommonsError::Facade`] at publish.
+pub const RESERVED_SAMPLE_KEYS: [&str; 7] = [
+    "value",
+    "quality",
+    "qualityRaw",
+    "sourceTs",
+    "serverTs",
+    "sourceTsMs",
+    "serverTsMs",
+];
 
 /// The `data()` publish facade bound to one instance — see the [module docs](self). Obtain via
 /// [`crate::EdgeCommonsInstance::data`] (or the `main`-instance convenience [`crate::EdgeCommons::data`]).
@@ -156,8 +175,9 @@ impl DataFacade {
     /// routes to the resolved channel.
     ///
     /// # Errors
-    /// [`EdgeCommonsError::Facade`] when `signal.id` is missing/empty, `samples` is empty, or a sample
-    /// carries no value; [`EdgeCommonsError::UnsValidation`] on a bad channel token;
+    /// [`EdgeCommonsError::Facade`] when `signal.id` is missing/empty, `samples` is empty, a sample
+    /// carries no value without the [`Sample::null_value`] opt-in, or a sample extra uses a
+    /// [`RESERVED_SAMPLE_KEYS`] key; [`EdgeCommonsError::UnsValidation`] on a bad channel token;
     /// [`EdgeCommonsError::Messaging`] when no messaging transport is wired.
     pub async fn publish(&self, update: SignalUpdate) -> Result<()> {
         let signal_id = update
@@ -196,7 +216,8 @@ impl DataFacade {
     /// given the injected clock — this is the exact body the vectors pin.
     ///
     /// # Errors
-    /// [`EdgeCommonsError::Facade`] when a sample carries no value.
+    /// [`EdgeCommonsError::Facade`] when a sample carries no value without the explicit-null
+    /// opt-in, or a sample extra uses a reserved canonical key.
     pub fn build_body(&self, update: &SignalUpdate) -> Result<Value> {
         let mut signal = Map::new();
         signal.insert(
@@ -224,15 +245,23 @@ impl DataFacade {
         Ok(Value::Object(body))
     }
 
-    /// Builds one sample with the quality/qualityRaw/serverTs defaulting rules.
+    /// Builds one sample with the quality/qualityRaw/serverTs defaulting rules, plus the additive
+    /// extras: a `None` value is publishable as JSON `null` iff the sample opted in via
+    /// [`Sample::null_value`]/`explicit_null` (an accidental missing value still fails fast), and
+    /// extras are copied after the canonical fields with the [`RESERVED_SAMPLE_KEYS`] check.
     fn build_sample(&self, sample: &Sample) -> Result<Value> {
-        let value = sample.value.clone().ok_or_else(|| {
-            EdgeCommonsError::Facade(
-                "data sample value is required (a quality-only sample is not a sample) - pass \
-                 BAD/UNCERTAIN for a failed read"
-                    .to_string(),
-            )
-        })?;
+        let value = match sample.value.clone() {
+            Some(value) => value,
+            None if sample.explicit_null => Value::Null,
+            None => {
+                return Err(EdgeCommonsError::Facade(
+                    "data sample value is required (a quality-only sample is not a sample) - pass \
+                     BAD/UNCERTAIN for a failed read, or Sample::null_value() for a legitimate \
+                     protocol null"
+                        .to_string(),
+                ));
+            }
+        };
         let mut out = Map::new();
         out.insert("value".to_string(), value);
 
@@ -257,6 +286,18 @@ impl DataFacade {
         }
         let server_ts = sample.server_ts.clone().unwrap_or_else(|| (self.clock)());
         out.insert("serverTs".to_string(), Value::String(server_ts));
+
+        if let Some(extra) = &sample.extra {
+            for (key, extra_value) in extra {
+                if RESERVED_SAMPLE_KEYS.contains(&key.as_str()) {
+                    return Err(EdgeCommonsError::Facade(format!(
+                        "data sample extra key '{key}' is reserved - the canonical sample fields \
+                         cannot be set through extras"
+                    )));
+                }
+                out.insert(key.clone(), extra_value.clone());
+            }
+        }
         Ok(Value::Object(out))
     }
 
@@ -511,6 +552,110 @@ mod tests {
             f.publish(update).await,
             Err(EdgeCommonsError::Facade(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn null_value_sample_publishes_an_explicit_json_null() {
+        let messaging = RecordingMessaging::new();
+        let f = facade(messaging.clone());
+        f.publish(f.signal("temp").sample(Sample::null_value()).build())
+            .await
+            .unwrap();
+        let (_, msg) = &messaging.local()[0];
+        let sample = &msg.body["samples"][0];
+        assert!(
+            sample.as_object().unwrap().contains_key("value"),
+            "the explicit null must be present, not omitted"
+        );
+        assert_eq!(sample["value"], json!(null));
+        assert_eq!(sample["quality"], "GOOD", "quality defaulting still applies");
+        assert_eq!(sample["qualityRaw"], "unspecified");
+        assert_eq!(sample["serverTs"], "2026-07-01T12:00:00Z");
+    }
+
+    #[tokio::test]
+    async fn accidental_missing_value_still_fails_fast_without_the_opt_in() {
+        let messaging = RecordingMessaging::new();
+        let f = facade(messaging);
+        // The same value-less sample as null_value(), but WITHOUT explicit_null.
+        let update = SignalUpdate::builder()
+            .signal_id("temp")
+            .sample(Sample::default())
+            .build();
+        assert!(matches!(
+            f.publish(update).await,
+            Err(EdgeCommonsError::Facade(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn sample_extras_are_copied_after_the_canonical_fields() {
+        let messaging = RecordingMessaging::new();
+        let f = facade(messaging.clone());
+        f.publish(
+            f.signal("temp")
+                .sample(
+                    Sample::new(21.5)
+                        .extra("valueType", "Double")
+                        .extra("statusText", "Good (0x0)"),
+                )
+                .build(),
+        )
+        .await
+        .unwrap();
+        let (_, msg) = &messaging.local()[0];
+        let sample = msg.body["samples"][0].as_object().unwrap();
+        assert_eq!(sample["value"], 21.5);
+        assert_eq!(sample["valueType"], "Double");
+        assert_eq!(sample["statusText"], "Good (0x0)");
+    }
+
+    #[tokio::test]
+    async fn reserved_sample_extra_key_is_rejected() {
+        let messaging = RecordingMessaging::new();
+        let f = facade(messaging.clone());
+        for reserved in RESERVED_SAMPLE_KEYS {
+            let update = f
+                .signal("temp")
+                .sample(Sample::new(1).extra(reserved, "clobber"))
+                .build();
+            let error = f.publish(update).await.unwrap_err();
+            assert!(
+                matches!(&error, EdgeCommonsError::Facade(message) if message.contains(reserved)),
+                "extra key '{reserved}' must fail fast, got: {error}"
+            );
+        }
+        assert!(
+            messaging.local().is_empty(),
+            "a reserved extra key must never publish"
+        );
+    }
+
+    /// A published sample with an extra + explicit null round-trips through the protobuf wire
+    /// codec (`Message::to_vec`/`Message::from_slice`) with `value == null` and the extra intact.
+    #[tokio::test]
+    async fn null_value_and_extras_round_trip_through_the_proto_codec() {
+        let messaging = RecordingMessaging::new();
+        let f = facade(messaging.clone());
+        f.publish(
+            f.signal("temp")
+                .sample(Sample::null_value().extra("valueType", "null"))
+                .build(),
+        )
+        .await
+        .unwrap();
+        let (_, msg) = &messaging.local()[0];
+
+        let bytes = msg.to_vec().unwrap();
+        let back = crate::messaging::message::Message::from_slice(&bytes).unwrap();
+        let sample = back.body["samples"][0].as_object().unwrap();
+        assert!(
+            sample.contains_key("value"),
+            "the explicit null must survive the wire round-trip"
+        );
+        assert_eq!(sample["value"], json!(null));
+        assert_eq!(sample["valueType"], "null", "the extra key must survive");
+        assert_eq!(sample["quality"], "GOOD");
     }
 
     #[tokio::test]

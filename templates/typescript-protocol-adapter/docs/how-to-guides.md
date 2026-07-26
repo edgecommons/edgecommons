@@ -95,7 +95,7 @@ publish ecv1/<device>/<<COMPONENTNAME>>/cmd/sb/pause   {"header":{"name":"sb/pau
 publish ecv1/<device>/<<COMPONENTNAME>>/cmd/sb/resume  {"header":{"name":"sb/resume","reply_to":"app/r","correlation_id":"4"},"body":{}}
 ```
 
-`repoll` refuses with `BAD_ARGS` while paused ("resume first") — pausing means *nothing* touches
+`repoll` refuses with `PAUSED` while paused ("resume first") — pausing means *nothing* touches
 the device, not even an on-demand poll.
 
 ---
@@ -159,7 +159,8 @@ identity from the Downward API).
 ## Observe health and status
 
 - **Metric** `southbound_health` — `connectionState`, `publishLatencyMs`, `pollLatencyMs`,
-  `readErrors`, `staleSignals`, `reconnects` (the exact SOUTHBOUND.md §5 set).
+  `readErrors`, `staleSignals`, `reconnects`, `writeErrors`, `signalsSubscribed` (the exact
+  SOUTHBOUND.md §5 set).
 - **Operational metrics** `<<COMPONENTNAME>>Connection` (connect lifecycle) and
   `<<COMPONENTNAME>>Command` (the `sb/*` surface, dimensioned `instance`×`verb`×`result`).
 - **State keepalive:** `ecv1/{device}/{component}/state` every ~5 s, carrying each instance's

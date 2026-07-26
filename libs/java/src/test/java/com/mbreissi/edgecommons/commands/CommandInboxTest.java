@@ -33,7 +33,9 @@ import java.util.function.BooleanSupplier;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -94,6 +96,11 @@ class CommandInboxTest {
         return "ecv1/test-thing/TestComponent/main/cmd/" + verb;
     }
 
+    /** A component-scoped delivery topic (D‑U28: no instance slot). */
+    private static String componentTopic(String verb) {
+        return "ecv1/test-thing/TestComponent/cmd/" + verb;
+    }
+
     /** A well-formed request for a verb: {@code header.name} = verb, pinned {@code reply_to}. */
     private static Message request(String verb) {
         Message message = MessageBuilder.create(verb, "1.0").withPayload(new JsonObject()).build();
@@ -115,15 +122,28 @@ class CommandInboxTest {
     }
 
     private static void assertVerb(JsonArray verbs, String verb, boolean builtIn) {
-        for (int i = 0; i < verbs.size(); i++) {
-            JsonObject entry = verbs.get(i).getAsJsonObject();
+        assertEquals(builtIn, commandEntry(verbs, verb).get("builtIn").getAsBoolean(),
+                "builtIn flag for " + verb);
+    }
+
+    /** The describe {@code commands[]} entry for a verb. */
+    private static JsonObject commandEntry(JsonArray commands, String verb) {
+        for (int i = 0; i < commands.size(); i++) {
+            JsonObject entry = commands.get(i).getAsJsonObject();
             if (verb.equals(entry.get("verb").getAsString())) {
-                assertEquals(builtIn, entry.get("builtIn").getAsBoolean(),
-                        "builtIn flag for " + verb);
-                return;
+                return entry;
             }
         }
         throw new AssertionError("verb not present in describe output: " + verb);
+    }
+
+    /** Runs {@value CommandInbox#DESCRIBE} through the wire and returns the reply's result. */
+    private JsonObject describeResult() {
+        messaging.clearPublishedMessages();
+        messaging.simulateMessage(topic(CommandInbox.DESCRIBE), request(CommandInbox.DESCRIBE));
+        JsonObject body = onlyReplyBody();
+        assertTrue(body.get("ok").getAsBoolean());
+        return body.getAsJsonObject("result");
     }
 
     private static void awaitCondition(BooleanSupplier condition, String message)
@@ -687,6 +707,218 @@ class CommandInboxTest {
                         {"id":"overview","title":"Different"}
                         """).getAsJsonObject()),
                 "duplicate ids are rejected");
+    }
+
+    // ===================== defaultView (the panel-set default flag) =====================
+
+    @Test
+    void defaultViewHonorsTheDefaultTrueFlag() {
+        inbox.registerPanel(JsonParser.parseString("""
+                {"id":"overview","title":"Overview","order":10}
+                """).getAsJsonObject());
+        inbox.registerPanel(JsonParser.parseString("""
+                {"id":"signals","title":"Signals","order":20,"default":true}
+                """).getAsJsonObject());
+        inbox.start();
+
+        JsonObject panels = describeResult().getAsJsonObject("panels");
+        assertEquals("signals", panels.get("defaultView").getAsString(),
+                "defaultView is the first view flagged \"default\": true, not views[0]");
+        JsonArray views = panels.getAsJsonArray("views");
+        assertTrue(views.get(1).getAsJsonObject().get("default").getAsBoolean(),
+                "views are emitted verbatim - the default key is not stripped");
+    }
+
+    @Test
+    void defaultViewFallsBackToTheFirstViewWithoutADefaultTrueFlag() {
+        inbox.registerPanel(JsonParser.parseString("""
+                {"id":"overview","title":"Overview"}
+                """).getAsJsonObject());
+        inbox.registerPanel(JsonParser.parseString("""
+                {"id":"signals","title":"Signals","default":"true"}
+                """).getAsJsonObject());
+        inbox.start();
+
+        assertEquals("overview",
+                describeResult().getAsJsonObject("panels").get("defaultView").getAsString(),
+                "only boolean true selects a default view - anything else falls back to views[0]");
+    }
+
+    // ===================== command availability =====================
+
+    @Test
+    void availabilitySurfacesStateAndTrimmedReasonInDescribe() {
+        inbox.register("sb/write", req -> null);
+        inbox.setCommandAvailability("sb/write", "disabled", "  writes.allow[] is empty  ");
+        inbox.start();
+
+        JsonObject entry = commandEntry(describeResult().getAsJsonArray("commands"), "sb/write");
+        assertEquals(Set.of("verb", "builtIn", "availability"), entry.keySet(),
+                "the entry shape is {verb, builtIn, availability}");
+        JsonObject availability = entry.getAsJsonObject("availability");
+        assertEquals("disabled", availability.get("state").getAsString());
+        assertEquals("writes.allow[] is empty", availability.get("reason").getAsString(),
+                "the reason is trimmed");
+    }
+
+    @Test
+    void availabilityWithoutAReasonOmitsTheKey() {
+        inbox.setCommandAvailability(CommandInbox.RELOAD_CONFIG, "unsupported");
+        inbox.start();
+
+        JsonObject availability = commandEntry(describeResult().getAsJsonArray("commands"),
+                CommandInbox.RELOAD_CONFIG).getAsJsonObject("availability");
+        assertEquals("unsupported", availability.get("state").getAsString(),
+                "built-in verbs can carry availability too");
+        assertFalse(availability.has("reason"), "an absent reason is omitted, not empty");
+    }
+
+    @Test
+    void availabilityEmptyReasonIsOmittedAndLongReasonIsTruncated() {
+        inbox.register("sb/write", req -> null);
+        inbox.register("sb/browse", req -> null);
+        inbox.setCommandAvailability("sb/write", "disabled", "   ");
+        inbox.setCommandAvailability("sb/browse", "disabled",
+                "x".repeat(CommandInbox.MAX_AVAILABILITY_REASON_CHARS + 44));
+        inbox.start();
+
+        JsonArray commands = describeResult().getAsJsonArray("commands");
+        assertFalse(commandEntry(commands, "sb/write").getAsJsonObject("availability")
+                .has("reason"), "a whitespace-only reason is omitted");
+        assertEquals(CommandInbox.MAX_AVAILABILITY_REASON_CHARS,
+                commandEntry(commands, "sb/browse").getAsJsonObject("availability")
+                        .get("reason").getAsString().length(),
+                "the reason is truncated to the bound");
+    }
+
+    @Test
+    void availabilityAvailableRemovesTheStoredEntry() {
+        inbox.register("sb/write", req -> null);
+        inbox.setCommandAvailability("sb/write", "disabled", "maintenance");
+        inbox.setCommandAvailability("sb/write", "available");
+        inbox.start();
+
+        JsonObject entry = commandEntry(describeResult().getAsJsonArray("commands"), "sb/write");
+        assertEquals(Set.of("verb", "builtIn"), entry.keySet(),
+                "available reverts the entry to the plain {verb, builtIn}");
+    }
+
+    @Test
+    void availabilityRejectsUnknownStatesAndUnregisteredVerbs() {
+        inbox.register("sb/write", req -> null);
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.setCommandAvailability("sb/write", "paused"),
+                "the state must be exactly available/disabled/unsupported");
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.setCommandAvailability("no-such-verb", "disabled"),
+                "the verb must already be registered");
+        assertThrows(NullPointerException.class,
+                () -> inbox.setCommandAvailability(null, "disabled"));
+        assertThrows(NullPointerException.class,
+                () -> inbox.setCommandAvailability("sb/write", null));
+    }
+
+    @Test
+    void availabilityChangesTheDescribeDigestAndClearingRestoresIt() {
+        inbox.register("sb/write", req -> null);
+        inbox.start();
+
+        String original = describeResult().get("digest").getAsString();
+        inbox.setCommandAvailability("sb/write", "disabled", "maintenance");
+        assertNotEquals(original, describeResult().get("digest").getAsString(),
+                "a stored availability must change the describe digest");
+        inbox.setCommandAvailability("sb/write", "available");
+        assertEquals(original, describeResult().get("digest").getAsString(),
+                "clearing availability restores the original digest");
+    }
+
+    // ===================== scoped registration (the addressed instance) =====================
+
+    @Test
+    void scopedHandlerReceivesTheAddressedInstanceToken() {
+        AtomicReference<String> seen = new AtomicReference<>("unset");
+        inbox.registerScoped("sb/read", (req, addressedInstance) -> {
+            seen.set(addressedInstance);
+            JsonObject result = new JsonObject();
+            result.addProperty("scope",
+                    addressedInstance == null ? "component" : addressedInstance);
+            return result;
+        });
+        inbox.start();
+
+        messaging.simulateMessage("ecv1/test-thing/TestComponent/plc7/cmd/sb/read",
+                request("sb/read"));
+        assertEquals("plc7", seen.get(), "an instance-scoped topic carries its instance token");
+        assertEquals("plc7", onlyReplyBody().getAsJsonObject("result").get("scope").getAsString());
+
+        messaging.clearPublishedMessages();
+        messaging.simulateMessage(componentTopic("sb/read"), request("sb/read"));
+        assertNull(seen.get(), "a component-scoped topic addresses no instance (null)");
+        assertEquals("component",
+                onlyReplyBody().getAsJsonObject("result").get("scope").getAsString());
+    }
+
+    @Test
+    void scopedVerbParticipatesInDescribeLikeAPlainOne() {
+        inbox.registerScoped("sb/read", (req, addressedInstance) -> null);
+        inbox.start();
+        assertVerb(describeResult().getAsJsonArray("commands"), "sb/read", false);
+        assertTrue(inbox.verbs().contains("sb/read"));
+    }
+
+    @Test
+    void scopedRegistrationSharesTheOneHandlerPerVerbRule() {
+        inbox.registerScoped("mine", (req, addressedInstance) -> null);
+        assertThrows(IllegalArgumentException.class, () -> inbox.register("mine", req -> null),
+                "a scoped verb cannot also get a plain handler");
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.registerScoped("mine", (req, addressedInstance) -> null),
+                "an already-registered scoped verb cannot be re-registered");
+        inbox.register("plain", req -> null);
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.registerScoped("plain", (req, addressedInstance) -> null),
+                "a plain verb cannot also get a scoped handler");
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.registerScoped(CommandInbox.PING, (req, addressedInstance) -> null),
+                "a built-in verb cannot be shadowed by a scoped handler");
+
+        inbox.unregister("mine");
+        assertFalse(inbox.verbs().contains("mine"), "unregister removes a scoped handler");
+    }
+
+    @Test
+    void scopedHandlerErrorsUseTheStandardReplyWrappers() {
+        inbox.registerScoped("guarded", (req, addressedInstance) -> {
+            throw new CommandException("NOT_ALLOWED", "operator role required");
+        });
+        inbox.start();
+        messaging.simulateMessage(topic("guarded"), request("guarded"));
+        JsonObject body = onlyReplyBody();
+        assertFalse(body.get("ok").getAsBoolean());
+        assertEquals("NOT_ALLOWED", body.getAsJsonObject("error").get("code").getAsString(),
+                "scoped handlers share the plain handlers' coded-error semantics");
+    }
+
+    @Test
+    void plainRegistrationIsUntouchedAndServesBothCmdScopes() {
+        AtomicInteger calls = new AtomicInteger();
+        inbox.register("restart-pipeline", req -> {
+            calls.incrementAndGet();
+            return null;
+        });
+        inbox.start();
+
+        messaging.simulateMessage(topic("restart-pipeline"), request("restart-pipeline"));
+        messaging.simulateMessage(componentTopic("restart-pipeline"),
+                request("restart-pipeline"));
+
+        assertEquals(2, calls.get(),
+                "a plain handler still serves instance- and component-scoped deliveries");
+        assertEquals(2, messaging.getPublishedMessages().size());
+        for (MockMessagingService.PublishedMessage published : messaging.getPublishedMessages()) {
+            assertTrue(published.message.toDict().getAsJsonObject("body")
+                    .get("ok").getAsBoolean());
+        }
     }
 
     // ===================== unknown / fire-and-forget / malformed =====================

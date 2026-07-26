@@ -198,6 +198,24 @@ class TestSignalUpdateAndSample:
         with pytest.raises(RuntimeError):
             detached.publish()
 
+    def test_null_value_factory_marks_an_explicit_null(self):
+        a = Sample.null_value()
+        assert a.value is None
+        assert a.explicit_null is True
+        assert a.quality is None, "quality defaulting (-> GOOD) still applies at build"
+        assert a.extra is None
+
+        b = Sample.null_value(Quality.BAD, "0x80000000", "2026-01-01T00:00:00Z")
+        assert b.quality is Quality.BAD
+        assert b.quality_raw == "0x80000000"
+        assert b.source_ts == "2026-01-01T00:00:00Z"
+
+    def test_plain_samples_default_the_new_fields(self):
+        # Positional five-field construction keeps working (frozen dataclass compat).
+        sample = Sample(1.0, Quality.GOOD, "raw", None, None)
+        assert sample.extra is None
+        assert sample.explicit_null is False
+
 
 # ===================== DataFacade =====================
 
@@ -278,6 +296,61 @@ class TestDataFacade:
         ).build()
         with pytest.raises(ValueError):
             facade.publish_update(update)
+
+    def test_explicit_null_publishes_json_null_with_normal_quality_defaulting(self):
+        # Sample.null_value() is the opt-in: value rides as JSON null; an accidental
+        # None (the test above) stays the fail-fast ValueError.
+        messaging = _RecordingMessaging()
+        facade = DataFacade(_FakeConfigManager(), "kep1", _uns(), messaging, clock=FIXED_CLOCK)
+        facade.signal("temp").add_sample(Sample.null_value()).publish()
+        sample = messaging.local[0][1].to_dict()["body"]["samples"][0]
+        assert sample["value"] is None
+        assert "value" in sample, "the explicit null is present, not omitted"
+        assert sample["quality"] == "GOOD"
+        assert sample["qualityRaw"] == "unspecified"
+        assert sample["serverTs"] == NOW
+
+    def test_sample_extras_are_copied_after_the_canonical_fields(self):
+        messaging = _RecordingMessaging()
+        facade = DataFacade(_FakeConfigManager(), "kep1", _uns(), messaging, clock=FIXED_CLOCK)
+        facade.signal("temp").add_sample(
+            Sample(21.5, extra={"valueType": "float", "bitIndex": 3})
+        ).publish()
+        sample = messaging.local[0][1].to_dict()["body"]["samples"][0]
+        assert sample["valueType"] == "float"
+        assert sample["bitIndex"] == 3
+        assert list(sample.keys()) == [
+            "value", "quality", "qualityRaw", "serverTs", "valueType", "bitIndex",
+        ], "extras follow the canonical fields"
+
+    @pytest.mark.parametrize(
+        "reserved",
+        ["value", "quality", "qualityRaw", "sourceTs", "serverTs", "sourceTsMs", "serverTsMs"],
+    )
+    def test_reserved_extra_keys_are_rejected_at_build(self, reserved):
+        facade = DataFacade(_FakeConfigManager(), "kep1", _uns(), _RecordingMessaging())
+        update = SignalUpdateBuilder("temp").add_sample(
+            Sample(1.0, extra={reserved: "x"})
+        ).build()
+        with pytest.raises(ValueError):
+            facade.publish_update(update)
+
+    def test_explicit_null_with_extra_round_trips_through_message_bytes(self):
+        # The protobuf codec carries unknown sample keys and an explicit null value:
+        # publish -> to_bytes -> from_bytes keeps "value": null and the extra key.
+        from edgecommons.messaging.message import Message
+
+        messaging = _RecordingMessaging()
+        facade = DataFacade(_FakeConfigManager(), "kep1", _uns(), messaging, clock=FIXED_CLOCK)
+        facade.signal("temp").add_sample(
+            Sample(None, extra={"valueType": "null"}, explicit_null=True)
+        ).publish()
+        _, msg = messaging.local[0]
+        decoded = Message.from_bytes(msg.to_bytes())
+        sample = decoded.get_body()["samples"][0]
+        assert "value" in sample and sample["value"] is None
+        assert sample["valueType"] == "null"
+        assert sample["quality"] == "GOOD"
 
     def test_explicit_quality_raw_passed_through_verbatim(self):
         messaging = _RecordingMessaging()

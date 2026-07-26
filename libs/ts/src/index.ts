@@ -158,6 +158,8 @@ export {
 } from "./commands";
 export type {
   CommandHandler,
+  ScopedCommandHandler,
+  CommandAvailabilityState,
   CommandResult,
   OutcomeCommandHandler,
   CommandOutcome,
@@ -173,6 +175,7 @@ export {
   DATA_MESSAGE_NAME,
   DATA_MESSAGE_VERSION,
   QUALITY_UNSPECIFIED,
+  RESERVED_SAMPLE_KEYS,
   EventsFacade,
   EVT_MESSAGE_NAME,
   EVT_MESSAGE_VERSION,

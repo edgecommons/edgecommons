@@ -200,12 +200,25 @@ def test_health_gauges_and_interval_counters_feed_the_metric():
 
     health.incr_read_error()
     health.incr_read_error()
+    health.incr_write_error()
     health.incr_reconnect()
     # `take_*` drains the interval counter (read-and-reset) — the metric emit convention.
     assert health.take_read_errors() == 2
     assert health.take_read_errors() == 0, "the interval counter reset on read"
+    assert health.take_write_errors() == 1
+    assert health.take_write_errors() == 0
     assert health.take_reconnects() == 1
     assert health.take_reconnects() == 0
+
+
+def test_signals_subscribed_reports_the_inventory_only_while_online():
+    health = Health()
+    health.set_signal_inventory(2)
+    assert health.signals_subscribed() == 0, "0 while disconnected"
+    health.set_link(ONLINE)
+    assert health.signals_subscribed() == 2, "the sb/signals inventory size while connected"
+    health.set_link(BACKOFF)
+    assert health.signals_subscribed() == 0, "a broken link serves nothing"
 
 
 # --- Backoff: exponential with full jitter, capped -----------------------------------------------
@@ -336,6 +349,10 @@ def test_a_device_wires_its_seam_and_reports_its_handle_and_connectivity():
     assert handle.cfg.id == "plc-1"
     assert [s.id for s in handle.signals] == ["temperature-1", "pressure-1"], "the sim inventory"
     assert device.connectivity().state == CONNECTING, "not connected until the first connect"
+    # The inventory size seeds the signalsSubscribed gauge — 0 until the link comes up.
+    assert handle.health.signals_subscribed() == 0
+    handle.health.set_link(ONLINE)
+    assert handle.health.signals_subscribed() == 2
 
 
 def test_connect_polls_and_publishes_good_and_bad_readings_through_the_data_facade():

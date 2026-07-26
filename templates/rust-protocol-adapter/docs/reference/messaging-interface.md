@@ -54,7 +54,7 @@ Because the inbox is component-scoped, a multi-device adapter selects the target
 reply body is `{"ok": true, "result": <verb result>}` on success, or
 `{"ok": false, "error": {"code", "message"}}` on failure — codes: `BAD_ARGS`, `NO_SUCH_INSTANCE`,
 `WRITE_NOT_ALLOWED`, `WRITE_FAILED`, `DEVICE_UNAVAILABLE`, `READ_FAILED`, `RECONNECT_FAILED`,
-`BROWSE_UNSUPPORTED`, `BROWSE_FAILED`.
+`BROWSE_UNSUPPORTED`, `BROWSE_FAILED`, `PAUSED` (a `repoll` on a paused instance — resume first).
 
 ## Data plane
 
@@ -105,12 +105,51 @@ omitted.
 - **`sb/status`** → `{ id, adapter, connected, state, paused, endpoint, metrics }`.
 - **`sb/signals`** → `{ id, signals: [ { id, name, writable }, ... ] }` — the configured/backend
   inventory, no device round-trip.
-- **`sb/browse`** → `{ id, entries: [ { id, name, type }, ... ], cursor? }`, or `BROWSE_UNSUPPORTED`
-  if the backend has no discovery (the simulator's one-page browse is the worked example).
+- **`sb/browse`** → paged discovery by default: `{ id, entries: [ { id, name, type }, ... ],
+  cursor? }`, or `BROWSE_UNSUPPORTED` if the backend has no discovery (the simulator's one-page
+  browse is the worked example). A request carrying `ref` selects the hierarchical panel mode
+  instead (below); mixing `ref`/`depth`/`maxRefs` with `cursor`/`max` is `BAD_ARGS`, as is
+  `depth`/`maxRefs` without `ref`.
 - **`sb/pause`** / **`sb/resume`** → `{ id, paused, changed }` — idempotent; pausing an
   already-paused device reports `changed: false`.
 - **`reconnect`** → `{ id, connected: true }` or a `RECONNECT_FAILED` error.
-- **`repoll`** → `{ id, polled: <count> }`; refused with `BAD_ARGS` while paused.
+- **`repoll`** → `{ id, polled: <count> }`; refused with `PAUSED` while paused.
+
+### Hierarchical `sb/browse` (the panel mode)
+
+The `treeBrowser` panel drives `sb/browse` with `{ instance?, ref, depth?, maxRefs? }` instead of a
+cursor. `ref` selects the node: `"root"` is the device itself, whose `contains` refs are the same
+inventory the paged mode serves; a signal id selects that node as a known leaf (`"refs": []`). An
+unknown `ref` is `BAD_ARGS`, and so is `depth`/`maxRefs` without `ref`. `depth` is bounded 1–4
+(default 1) and `maxRefs` 1–1000 (default 200); the adapter's inventory is flat, so a deeper `depth`
+finds no grandchildren.
+
+```jsonc
+// request: { "ref": "root", "depth": 1, "maxRefs": 200 }
+// reply:   { "id": "device-1", "mode": "hierarchical",
+//            "root": { "nodeId": "root", "name": "device-1", "nodeClass": "device", "dataType": null,
+//                      "refs": [ { "referenceType": "contains",
+//                                  "target": { "nodeId": "temperature-1", "name": "Ambient temperature",
+//                                              "nodeClass": "signal", "dataType": "REAL" } } ] },
+//            "refCount": 1, "depth": 1, "truncated": false }
+```
+
+## Panels
+
+Three edge-console panel descriptors are registered via `register_panel` (`src/commands.rs`),
+`scope: "instance"` (repeated on every command-backed widget), order 10/20/30:
+
+- **`overview`** — an *Adapter overview* summary (Signals / Lifecycle / Writes rows) plus a
+  *Lifecycle bindings* command summary (`sb/status`, `reconnect`, `sb/pause`, `sb/resume`,
+  `repoll`).
+- **`signals`** — a `signalGrid` bound to `sb/signals` through both `signalsVerb` and the
+  renderer-compat `subscriptionsVerb` alias (a descriptor field alias — no `sb/subscriptions` wire
+  verb exists), with `readVerb: sb/read`.
+- **`diagnostics`** — a hierarchical `treeBrowser` (`browseVerb: sb/browse`, `rootRef: "root"`,
+  `depth: 1`, `maxRefs: 200`, `readVerb: sb/read`) plus a *Diagnostic commands* summary
+  (`sb/status`, `sb/browse`).
+
+No widget names a `writeVerb` — writes stay on the command surface behind the allow-list.
 
 ## Events (`evt` class)
 

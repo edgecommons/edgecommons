@@ -107,9 +107,11 @@ impl App {
             dm.define_all();
 
             // The signal inventory `sb/signals` shows — a config/backend view, no device round-trip.
+            // Its size drives the `southbound_health.signalsSubscribed` gauge while the link is up.
             let signals = make_backend(device)
                 .map(|b| b.inventory(&device.connection))
                 .unwrap_or_default();
+            health.set_signal_inventory(signals.len() as u64);
 
             let (control_tx, control_rx) = mpsc::channel::<DeviceControl>(16);
             reported.push((device.clone(), Arc::clone(&health)));

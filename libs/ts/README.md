@@ -98,6 +98,20 @@ at most 1024 entries, lifetime is capped at 1,860,000 ms, open expiry emits the 
 cancelling remaining tokens. Deferred state retains only reply metadata and the eventual
 reply, not the original request body or application job payload.
 
+## Command availability and the addressed instance
+
+`CommandInbox.setCommandAvailability(verb, state, reason?)` declares a registered verb's
+availability for `describe()` consumers. `disabled` / `unsupported` store `{state, reason?}` and
+the verb's describe entry becomes `{verb, builtIn, availability}` — the describe digest changes
+with it; `available` removes the stored entry so the entry reverts to `{verb, builtIn}`. The
+optional reason is trimmed, truncated to 256 characters, and omitted when empty.
+
+`CommandInbox.registerScoped(verb, handler)` registers a scope-aware handler that receives the
+request plus the **addressed instance**: the delivery topic's `{instance}` token for an
+instance-scope command (`ecv1/{device}/{component}/{instance}/cmd/{verb}`), or `undefined` for a
+component-scope one (`ecv1/{device}/{component}/cmd/{verb}`). It follows the same
+one-handler-per-verb rule, `describe()` participation, and reply/error handling as `register`.
+
 ## Startup gates and candidate validation
 
 `EdgeCommonsBuilder.initialReady(false)` holds the application readiness gate closed until the

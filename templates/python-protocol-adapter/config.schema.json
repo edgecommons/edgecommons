@@ -34,6 +34,7 @@
     }
   },
   "$defs": {
+    "instance": { "$ref": "#/$defs/device" },
     "device": {
       "title": "One device",
       "description": "One entry of `component.instances[]`: a single field device / endpoint. Each device runs on its own worker thread and publishes to its own UNS data topics (ecv1/{device}/{component}/{instance}/data/{signalPath}).",

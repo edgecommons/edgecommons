@@ -136,6 +136,85 @@ describe("DataFacade", () => {
     });
   });
 
+  describe("explicit null and sample extras (SOUTHBOUND §2)", () => {
+    it("a null value is a legitimate explicit protocol null with normal quality defaulting", async () => {
+      const { facade, messaging } = makeFacade();
+      await facade.signal("temp").addSample(null).publish();
+
+      const sample = firstSample(lastBody(messaging));
+      expect(sample.value, "an explicit null publishes as JSON null").toBeNull();
+      expect(sample.quality, "the normal quality defaulting applies").toBe("GOOD");
+      expect(sample.qualityRaw).toBe("unspecified");
+      expect(sample.serverTs).toBe(NOW);
+    });
+
+    it("null publishes while undefined stays the fail-fast (the explicit opt-in split)", async () => {
+      const { facade, messaging } = makeFacade();
+      await expect(
+        facade.publish(new SignalUpdateBuilder("temp").addSample(undefined).build()),
+      ).rejects.toThrow(/value is required/);
+      expect(messaging.published).toHaveLength(0);
+      await expect(facade.publish("temp", null)).resolves.toBeUndefined();
+      expect(firstSample(lastBody(messaging)).value).toBeNull();
+    });
+
+    it("extras are copied into the sample after the canonical fields", async () => {
+      const { facade, messaging } = makeFacade();
+      await facade
+        .signal("temp")
+        .addSample(21.5, { quality: Quality.Good, qualityRaw: "Good", extra: { valueType: "float", raw: 42 } })
+        .publish();
+
+      const sample = firstSample(lastBody(messaging));
+      expect(sample.valueType).toBe("float");
+      expect(sample.raw).toBe(42);
+      expect(Object.keys(sample), "extras land after the canonical fields").toEqual([
+        "value",
+        "quality",
+        "qualityRaw",
+        "serverTs",
+        "valueType",
+        "raw",
+      ]);
+    });
+
+    it("the extra map is copied at addSample, never shared mutable", async () => {
+      const { facade, messaging } = makeFacade();
+      const callerExtras: Record<string, unknown> = { valueType: "float" };
+      const builder = facade.signal("temp").addSample(1.0, { extra: callerExtras });
+      callerExtras.valueType = "mutated";
+      callerExtras.late = true;
+      await builder.publish();
+
+      const sample = firstSample(lastBody(messaging));
+      expect(sample.valueType).toBe("float");
+      expect(sample.late).toBeUndefined();
+    });
+
+    it("every reserved extra key is rejected fail-fast", async () => {
+      const { facade, messaging } = makeFacade();
+      for (const key of ["value", "quality", "qualityRaw", "sourceTs", "serverTs", "sourceTsMs", "serverTsMs"]) {
+        await expect(
+          facade.signal("temp").addSample(1.0, { extra: { [key]: "x" } }).publish(),
+          `reserved key '${key}' must be rejected`,
+        ).rejects.toThrow(/collides with a canonical sample field/);
+      }
+      expect(messaging.published, "nothing reaches the wire").toHaveLength(0);
+    });
+
+    it("an explicit-null sample with extras round-trips through the proto codec", async () => {
+      const { facade, messaging } = makeFacade();
+      await facade.signal("temp").addSample(null, { extra: { valueType: "null" } }).publish();
+
+      const decoded = Message.fromBytes(messaging.published[0].message!.toBytes());
+      expect(decoded.getBodyCase()).toBe(MessageBodyCase.SouthboundSignalUpdate);
+      const sample = ((decoded.getBody() as Record<string, unknown>).samples as Record<string, unknown>[])[0];
+      expect(sample.value, "the explicit null survives the wire").toBeNull();
+      expect(sample.valueType, "the extra key survives the wire").toBe("null");
+      expect(sample.quality).toBe("GOOD");
+    });
+  });
+
   describe("channel sanitization", () => {
     it("the channel path is sanitized", async () => {
       const { facade, messaging } = makeFacade();

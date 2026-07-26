@@ -50,7 +50,7 @@ body `instance` field selects which one (`BAD_ARGS` if missing, `NO_SUCH_INSTANC
 The reply body is `{"ok": true, "result": <verb result>}` on success or
 `{"ok": false, "error": {"code", "message"}}` on failure. Error codes:
 `BAD_ARGS`, `NO_SUCH_INSTANCE`, `WRITE_NOT_ALLOWED`, `WRITE_FAILED`, `DEVICE_UNAVAILABLE`,
-`READ_FAILED`, `RECONNECT_FAILED`, `BROWSE_UNSUPPORTED`, `BROWSE_FAILED`.
+`READ_FAILED`, `RECONNECT_FAILED`, `BROWSE_UNSUPPORTED`, `BROWSE_FAILED`, `PAUSED`.
 
 ## Data plane
 
@@ -108,12 +108,36 @@ returns `quality: BAD, qualityRaw: "UNRESOLVED_REF"`.
 Allow-list checked **before** any device I/O. `WRITE_NOT_ALLOWED` when every entry is refused by
 the allow-list; `WRITE_FAILED` when every allowed write reached the device and every one failed.
 
-### `sb/browse` (paged discovery)
+### `sb/browse` (paged and hierarchical discovery)
+
+Two request forms serve the same browsed inventory.
+
+**Paged** (`cursor`/`max`):
 
 ```jsonc
 // request body: { "cursor"?: "<opaque>", "max"?: 200 }
 // result: { "id", "entries": [ { "id", "name", "type" }, ... ], "cursor"?: "<opaque>" }
 ```
+
+**Hierarchical** (`ref`/`depth`/`maxRefs`) — the form the edge-console `treeBrowser` widget sends.
+Presence of `ref` selects it; mixing `ref`/`depth`/`maxRefs` with `cursor`/`max` is `BAD_ARGS`.
+`depth` is bounded 1–4 (default 1) and `maxRefs` 1–1000 (default 200).
+
+```jsonc
+// request body: { "ref": "root", "depth"?: 1, "maxRefs"?: 200 }
+// result: { "id", "mode": "hierarchical",
+//           "root": { "nodeId": "root", "name": "<instance>", "nodeClass": "device",
+//                     "dataType": null,
+//                     "refs": [ { "referenceType": "contains",
+//                                 "target": { "nodeId", "name", "nodeClass": "signal",
+//                                             "dataType" } }, ... ] },
+//           "refCount": 1, "depth": 1, "truncated": false }
+```
+
+`ref: "root"` answers the device node whose `contains` refs are the browsed signals (bounded by
+`maxRefs`; `truncated` reports whether more exist). A signal id as `ref` answers that node with
+`"refs": []` (a known leaf); an unknown ref is `BAD_ARGS`. The scaffold's tree is flat, so a depth
+beyond 1 finds no grandchildren.
 
 `BROWSE_UNSUPPORTED` when the backend has no discovery service (the default seam behavior).
 
@@ -129,7 +153,7 @@ Idempotent — pausing an already-paused instance replies `changed: false`.
 
 ```jsonc
 // reconnect result: { "id", "connected": true }             (or a RECONNECT_FAILED error)
-// repoll    result: { "id", "polled": <signals published> } (BAD_ARGS if paused)
+// repoll    result: { "id", "polled": <signals published> } (PAUSED if paused)
 ```
 
 ## Events (`evt` class)

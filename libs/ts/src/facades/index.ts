@@ -5,7 +5,7 @@
  * `EdgeCommons.data()`/`.events()`/`.app()` (the `main`-instance convenience) or
  * `EdgeCommonsInstance.data()`/`.events()`/`.app()` (per-instance, primary) — see `edgecommons.ts`.
  */
-export { DataFacade, DATA_MESSAGE_NAME, DATA_MESSAGE_VERSION, QUALITY_UNSPECIFIED } from "./data_facade";
+export { DataFacade, DATA_MESSAGE_NAME, DATA_MESSAGE_VERSION, QUALITY_UNSPECIFIED, RESERVED_SAMPLE_KEYS } from "./data_facade";
 export { EventsFacade, EVT_MESSAGE_NAME, EVT_MESSAGE_VERSION } from "./events_facade";
 export { AppFacade, PreparedAppMessage, APP_MESSAGE_VERSION } from "./app_facade";
 

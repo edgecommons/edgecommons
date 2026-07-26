@@ -26,7 +26,8 @@ above it (the connection lifecycle, backoff, publishing, health, the command sur
   `quality`** (`GOOD|BAD|UNCERTAIN`) plus the native `qualityRaw`; a failed read is published as `BAD`,
   never dropped.
 - Defines and emits **`southbound_health`** — the exact SOUTHBOUND.md §5 set (`connectionState`,
-  `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, `reconnects`), dimensioned by
+  `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, `reconnects`, `writeErrors`,
+  `signalsSubscribed`), dimensioned by
   `instance` — plus two worked **operational-metric families** (`<<COMPONENTNAME>>Connection`,
   `<<COMPONENTNAME>>Command`) showing the total/interval counter-pair pattern. `Metrics.java` marks where
   to add your protocol's own `Inventory`/`Poll`/`Publish` families.
@@ -50,13 +51,14 @@ optional when exactly one device is configured, otherwise required.
 | `sb/read` | On-demand read of named signals (`{signals:[{signalId|id|name}]}`). |
 | `sb/write` | Batch write (`{writes:[{signalId,value}]}`); the **allow-list is checked before any device I/O**; per-entry confirmation. |
 | `sb/signals` | The configured signal inventory (no device round-trip). |
-| `sb/browse` | Paged address-space discovery; the default is `BROWSE_UNSUPPORTED` for protocols with no discovery. |
+| `sb/browse` | Paged address-space discovery plus the hierarchical panel mode (`ref`/`depth`/`maxRefs`); the default is `BROWSE_UNSUPPORTED` for protocols with no discovery. |
 | `sb/pause` / `sb/resume` | Idempotent pause/resume of telemetry production. |
 | `reconnect` | Drop the session and re-establish it (one confirmed attempt). |
 | `repoll` | Trigger an immediate poll (refused while paused). |
 
 Errors use the standardized codes: `BAD_ARGS`, `NO_SUCH_INSTANCE`, `WRITE_NOT_ALLOWED`, `WRITE_FAILED`,
-`DEVICE_UNAVAILABLE`, `READ_FAILED`, `RECONNECT_FAILED`, `BROWSE_UNSUPPORTED`, `BROWSE_FAILED`.
+`DEVICE_UNAVAILABLE`, `READ_FAILED`, `RECONNECT_FAILED`, `BROWSE_UNSUPPORTED`, `BROWSE_FAILED`,
+`PAUSED`.
 
 ## What you fill in
 

@@ -12,13 +12,13 @@ subsystem is required for Tier-1.**
 > top-level **`identity`** element (`tags.thing` is removed), and signal updates ride the UNS
 > **`data`** class instead of the legacy `southbound/…` topic templates. The **command surface**
 > (§2.2, the `cmd/sb/*` family — the UNS-addressed topics plus the cross-adapter `writes.allow[]`
-> convention) is the approved **Phase 5 target design and is NOT yet built** — the shipping adapters
-> still use their legacy per-instance control topics (`.../control/status|subscriptions|nodes`). The
-> **capabilities** that family targets are no longer purely aspirational, though: `opcua-adapter`
-> landed paged address-space browse, a confirmed write with per-entry acknowledgment, and
-> regex-matched on-demand reads on its own legacy topics (merged 2026-07-02, "command-surface-parity",
-> `opcua-adapter@5dbb789`) — a first per-adapter proof of the target *behavior*, not yet the UNS
-> `cmd/sb/*` topic family or a shared cross-adapter facade. See §2.2 and §7.
+> convention) is **shipped by the `protocol-adapter` scaffold**: every generated adapter registers
+> the family on the library command inbox, which subscribes both D-U28 command scopes
+> (`…/cmd/#` and `…/+/cmd/#`) and exposes the topic-addressed instance to scoped handlers (§2.2).
+> The shipping **reference adapters** (`opcua-adapter`, `modbus-adapter`) still use their legacy
+> per-instance control topics (`.../control/status|subscriptions|nodes`) pending migration;
+> `opcua-adapter` carries the target *capabilities* (paged browse, confirmed per-entry writes,
+> regex reads) on those legacy topics. See §2.2 and §7.
 
 ## 1. Why a contract, not a subsystem
 
@@ -106,6 +106,19 @@ Design rules:
   **array-valued signal is a JSON array**, each element following these same rules (and writes accept a
   JSON array, coerced to the element type). A value an adapter cannot model as one of these (e.g. an
   opaque blob or a structure) MAY be rendered as a string; adapters SHOULD document such fallbacks.
+- **Explicit null values.** A protocol whose data model includes a legitimate null (e.g. a BACnet
+  relinquished priority slot) publishes it as sample `value: null` with **`quality: "GOOD"`** and a
+  protocol `qualityRaw` naming the native form. A *failed* read is `value: null` with
+  `quality: "BAD"`. The facades distinguish a deliberate null from an accidentally missing value:
+  an explicit-null sample is constructed through the facade's null-sample form (`Sample.ofNull` /
+  `Sample.null_value` / `Sample::null_value` / a literal JSON `null` in TypeScript), while an
+  absent value remains a fail-fast construction error.
+- **Additive sample fields.** A `samples[]` entry MAY carry additive protocol-specific fields
+  beside the canonical five (for example a per-sample `valueType`/`valueEncoding` pair on a
+  dynamically-typed protocol). The wire envelope round-trips such fields; the facades attach them
+  through the sample's `extra` map. The canonical keys (`value`, `quality`, `qualityRaw`,
+  `sourceTs`, `serverTs`, `sourceTsMs`, `serverTsMs`) are reserved and rejected as extras.
+  Consumers MUST ignore sample fields they do not understand.
 
 ### 2.0 The data-plane topic — the UNS `data` class
 
@@ -196,14 +209,24 @@ against a browsed address space). For the command surface (§2.2), a Modbus `<si
 > (D‑U16) stays a convention for adapters that implement `sb/write`. The **lifecycle-control verbs**
 > `sb/pause` / `sb/resume` / `reconnect` / `repoll` are the standard instance-control family the
 > `protocol-adapter` scaffold ships (§6): confirmed, idempotent where they toggle state, and refused
-> when nonsensical (`repoll` while paused is `BAD_ARGS`). Component authors may add domain verbs (e.g.
-> the camera adapter's `sb/capture`). The shipping adapters still expose their **legacy per-instance control
-> topics** — `write.topic` / `read.topic` and
+> when nonsensical — an operation the paused state prohibits as a whole (`repoll` while paused) is
+> refused with the top-level code **`PAUSED`**. Component authors may add domain verbs (e.g.
+> the camera adapter's `sb/capture`). The shipping reference adapters still expose their **legacy
+> per-instance control topics** — `write.topic` / `read.topic` and
 > `southbound/{ComponentName}/{InstanceId}/control/{status|subscriptions|nodes}` — pending migration to
-> the UNS command inbox; `opcua-adapter` has landed the **capabilities** (paged address-space browse,
+> the UNS command inbox (they also predate the `PAUSED` refusal code and answer `BAD_ARGS` until
+> migrated); `opcua-adapter` has landed the **capabilities** (paged address-space browse,
 > a confirmed write with per-entry `SouthboundWriteResult`, regex include/exclude reads; merged
 > 2026-07-02, `opcua-adapter@5dbb789`) on its legacy topics as a reference implementation of the
-> *behavior*, not the family itself being shipped.
+> *behavior*.
+>
+> **Instance addressing and routing.** The library command inbox subscribes **both** D‑U28 command
+> scopes and exposes the topic-addressed instance token to handlers registered through the scoped
+> registration form (`registerScoped` / `register_scoped`): `null`/`None` for a component-scoped
+> delivery, the `{instance}` token otherwise. An adapter routes on the request's `body.instance`
+> (optional iff exactly one instance is configured) and SHOULD treat a topic-addressed instance as
+> authoritative: when both are present and disagree, refuse with `BAD_ARGS`; when only the topic
+> token is present, route by it.
 
 Beyond streaming subscriptions, an adapter exposes an on-demand command surface as **built-in `cmd`
 verbs on its UNS inbox**, family-namespaced under `sb/` and addressed per **D‑U28** — instance-scoped to
@@ -229,7 +252,7 @@ present, else the component; the verbs are registered through the `commands()` f
 | `sb/pause` | request/reply, **confirmed** | suspend polling/publishing for the instance; idempotent, reply `{ paused, changed }` |
 | `sb/resume` | request/reply, **confirmed** | resume a paused instance; idempotent, reply `{ paused, changed }` |
 | `reconnect` | request/reply, **confirmed** | drop and re-establish the device session; reply `{ connected }` |
-| `repoll` | request/reply, **confirmed** | trigger an immediate poll cycle (refused while paused); reply `{ polled }` |
+| `repoll` | request/reply, **confirmed** | trigger an immediate poll cycle (refused while paused with `PAUSED`); reply `{ polled }` |
 
 - **`<signal-ref>`** addresses a signal by its **stable** identity where possible — for OPC UA,
   `"namespaceUri": "<uri>"` (preferred, resolved to the current index) or a literal `"ns": <int>`,
@@ -344,8 +367,14 @@ code change is needed to route it.
 | `readErrors` | Count | 60 | read errors over the interval |
 | `staleSignals` | Count | 60 | signals with no update past `healthThresholds.staleSignalSecs` |
 
-Optional: `reconnects`, `writeErrors`, `signalsSubscribed`. Emit on connect/disconnect transitions
-(`emitMetricNow`) and on a periodic sampler.
+Optional per the contract: `reconnects` (Count, 60 — reconnect attempts over the interval),
+`writeErrors` (Count, 60 — write entries that failed on the device path over the interval: the
+entry passed validation and the allow-list and was then rejected by the device or aborted by an
+unavailable session; policy refusals and caller errors do not count, mirroring `readErrors`), and
+`signalsSubscribed` (Count, 1 — the number of signals the instance's session currently serves;
+0 while disconnected).
+The `protocol-adapter` scaffold emits **all eight** measures. Emit on connect/disconnect
+transitions (`emitMetricNow`) and on a periodic sampler.
 
 Beyond `southbound_health`, the `protocol-adapter` scaffold ships the **operational-metric family
 pattern**: per-family `(total, interval)` counter pairs (the interval measure resets each emit),
@@ -373,9 +402,10 @@ The scaffold is a runnable, sim-backed archetype that teaches the whole contract
 - A one-task-per-instance supervisor: connect → poll → publish `SouthboundSignalUpdate` via the
   `data()` facade (quality on every sample) → reconnect with jittered, capped backoff.
 - The full `sb/*` command family (§2.2) — `sb/status`, `sb/read`, `sb/write` (batch, confirmed,
-  allow-listed before any device I/O), `sb/signals`, `sb/browse`, and the lifecycle-control verbs
-  `sb/pause`/`sb/resume`/`reconnect`/`repoll` — plus the three edge-console panels
-  (`overview`/`signals`/`diagnostics`).
+  allow-listed before any device I/O), `sb/signals`, `sb/browse` (paged and hierarchical panel
+  modes), and the lifecycle-control verbs `sb/pause`/`sb/resume`/`reconnect`/`repoll` — plus the
+  three renderable edge-console panels (`overview`/`signals`/`diagnostics`) bound to `sb/status`,
+  `sb/signals`, and `sb/browse`.
 - `southbound_health` (§5) and the operational-metric family pattern (§5).
 - A `config.schema.json` modelling the adapter's own configuration (`connection`, poll groups /
   subscriptions, per-signal rules, `writes.allow[]`, `healthThresholds`), so

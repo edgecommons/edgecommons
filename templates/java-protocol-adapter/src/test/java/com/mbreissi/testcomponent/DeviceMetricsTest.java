@@ -67,7 +67,12 @@ class DeviceMetricsTest {
     }
 
     private static DeviceMetrics deviceMetrics(RecordingEmitter emitter, Health health, long staleSecs) {
-        DeviceMetrics dm = new DeviceMetrics(emitter, config(), "plc-1", health, staleSecs);
+        return deviceMetrics(emitter, health, staleSecs, 2);
+    }
+
+    private static DeviceMetrics deviceMetrics(RecordingEmitter emitter, Health health, long staleSecs,
+                                               int signalCount) {
+        DeviceMetrics dm = new DeviceMetrics(emitter, config(), "plc-1", health, staleSecs, signalCount);
         dm.defineAll();
         return dm;
     }
@@ -152,6 +157,40 @@ class DeviceMetricsTest {
         assertTrue(view.getAsJsonObject("connectionDrops").get("total").getAsDouble() >= 1.0);
         assertTrue(view.getAsJsonObject("connectFailures").get("total").getAsDouble() >= 1.0);
         assertTrue(emitter.emitted.contains(Metrics.HEALTH), "emitNow flushes the mandatory health metric");
+    }
+
+    @Test
+    void writeErrorsDrainOnEmitLikeReadErrors() {
+        RecordingEmitter emitter = new RecordingEmitter();
+        Health health = new Health();
+        DeviceMetrics dm = deviceMetrics(emitter, health, 30);
+
+        health.incrementWriteErrors();
+        health.incrementWriteErrors();
+        dm.emitPeriodic();
+        assertEquals(2.0f, emitter.last.get(Metrics.HEALTH).get("writeErrors"),
+                "the write-error interval counter is drained into the emit");
+
+        dm.emitPeriodic();
+        assertEquals(0.0f, emitter.last.get(Metrics.HEALTH).get("writeErrors"),
+                "drained on emit - the next interval starts clean");
+    }
+
+    @Test
+    void signalsSubscribedIsTheInventorySizeWhileConnectedAndZeroWhileDown() {
+        RecordingEmitter emitter = new RecordingEmitter();
+        Health health = new Health();
+        DeviceMetrics dm = deviceMetrics(emitter, health, 30, 2);
+
+        health.setLink(LinkState.ONLINE);
+        dm.emitPeriodic();
+        assertEquals(2.0f, emitter.last.get(Metrics.HEALTH).get("signalsSubscribed"),
+                "connected: the sb/signals inventory size");
+
+        health.setLink(LinkState.BACKOFF);
+        dm.emitPeriodic();
+        assertEquals(0.0f, emitter.last.get(Metrics.HEALTH).get("signalsSubscribed"),
+                "disconnected: zero");
     }
 
     @Test

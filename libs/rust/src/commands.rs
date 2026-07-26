@@ -20,7 +20,8 @@
 //! that topic with the request's `correlation_id` (the `uns-bridge` rewrites `reply_to` across
 //! brokers, so console→component request/reply works transparently over the site bus); a `cmd`
 //! without `reply_to` is fire-and-forget (the handler runs, no reply). Obtain the facade via
-//! [`crate::EdgeCommons::commands`] and register custom verbs with [`CommandInbox::register`].
+//! [`crate::EdgeCommons::commands`] and register custom verbs with [`CommandInbox::register`] —
+//! or [`CommandInbox::register_scoped`] when the handler needs the topic's addressed instance.
 //!
 //! ## Normative behavior (mirrored by the Java/Python/TS inboxes; pinned by
 //! `uns-test-vectors/commands.json`)
@@ -142,6 +143,16 @@ pub const ERR_COMPONENT_STOPPING: &str = "COMPONENT_STOPPING";
 /// own subscription for it on the same inbox path, so the inbox must never dispatch or
 /// error-reply it.
 pub const SET_CONFIG_VERB: &str = "set-config";
+
+/// Command availability state: the verb is available — clears any stored availability entry, so
+/// [`DESCRIBE`] reverts to the plain `{verb, builtIn}` shape.
+pub const AVAILABILITY_AVAILABLE: &str = "available";
+/// Command availability state: the verb is registered but currently disabled.
+pub const AVAILABILITY_DISABLED: &str = "disabled";
+/// Command availability state: the verb is registered but unsupported by this deployment.
+pub const AVAILABILITY_UNSUPPORTED: &str = "unsupported";
+/// Maximum characters retained from a caller-supplied availability `reason` (trimmed first).
+pub const MAX_AVAILABILITY_REASON_CHARS: usize = 256;
 
 /// The built-in verbs (registered at construction; shadowing/unregistering is rejected). The order
 /// is pinned by `uns-test-vectors/commands.json` (`behavior.builtInVerbs`).
@@ -271,6 +282,58 @@ where
     Fut: Future<Output = std::result::Result<Option<Value>, CommandError>> + Send + 'static,
 {
     Arc::new(FnCommandHandler(f))
+}
+
+/// A scope-aware command-verb handler ([`CommandInbox::register_scoped`]): identical to
+/// [`CommandHandler`] plus the **addressed instance** — the `{instance}` token of the delivery
+/// topic (D-U28: `ecv1/{device}/{component}/{instance}/cmd/{verb}`), or `None` for a
+/// component-scoped delivery (`ecv1/{device}/{component}/cmd/{verb}`). Result/reply/error
+/// semantics are exactly [`CommandHandler`]'s.
+#[async_trait]
+pub trait ScopedCommandHandler: Send + Sync + 'static {
+    /// Handles one command request. `addressed_instance` is the topic's instance token, or
+    /// `None` when the command was addressed to the component as a whole.
+    async fn handle(
+        &self,
+        request: Message,
+        addressed_instance: Option<String>,
+    ) -> std::result::Result<Option<Value>, CommandError>;
+}
+
+/// Adapts an async closure into a [`ScopedCommandHandler`].
+struct FnScopedCommandHandler<F>(F);
+
+#[async_trait]
+impl<F, Fut> ScopedCommandHandler for FnScopedCommandHandler<F>
+where
+    F: Fn(Message, Option<String>) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = std::result::Result<Option<Value>, CommandError>> + Send + 'static,
+{
+    async fn handle(
+        &self,
+        request: Message,
+        addressed_instance: Option<String>,
+    ) -> std::result::Result<Option<Value>, CommandError> {
+        (self.0)(request, addressed_instance).await
+    }
+}
+
+/// Wrap an async closure as a [`ScopedCommandHandler`] for [`CommandInbox::register_scoped`].
+///
+/// # Examples
+/// ```
+/// use edgecommons::commands::scoped_command_handler;
+/// use serde_json::json;
+/// let _h = scoped_command_handler(|_request, addressed_instance| async move {
+///     Ok(Some(json!({ "instance": addressed_instance })))
+/// });
+/// ```
+pub fn scoped_command_handler<F, Fut>(f: F) -> Arc<dyn ScopedCommandHandler>
+where
+    F: Fn(Message, Option<String>) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = std::result::Result<Option<Value>, CommandError>> + Send + 'static,
+{
+    Arc::new(FnScopedCommandHandler(f))
 }
 
 /// The explicit outcome of a long- or short-running command handler.
@@ -428,7 +491,13 @@ pub struct CommandInbox {
     handlers: Mutex<HashMap<String, Arc<dyn CommandHandler>>>,
     /// verb → explicit outcome handler; kept separate so the legacy handler trait is untouched.
     outcome_handlers: Mutex<HashMap<String, Arc<dyn OutcomeCommandHandler>>>,
-    /// Serializes cross-map registration/unregistration so one verb can never enter both maps.
+    /// verb → scope-aware handler ([`Self::register_scoped`]); kept separate so the legacy
+    /// handler trait is untouched.
+    scoped_handlers: Mutex<HashMap<String, Arc<dyn ScopedCommandHandler>>>,
+    /// verb → stored non-available availability entry (`{state, reason?}`), surfaced by
+    /// [`DESCRIBE`]; maintained via [`Self::set_command_availability`].
+    availability: Mutex<HashMap<String, Value>>,
+    /// Serializes cross-map registration/unregistration so one verb can never enter two maps.
     registration: Mutex<()>,
     /// Component-provided edge-console panel descriptors, registered via [`Self::register_panel`].
     panels: Mutex<Vec<Value>>,
@@ -575,6 +644,8 @@ impl CommandInbox {
             config,
             handlers: Mutex::new(handlers),
             outcome_handlers: Mutex::new(HashMap::new()),
+            scoped_handlers: Mutex::new(HashMap::new()),
+            availability: Mutex::new(HashMap::new()),
             registration: Mutex::new(()),
             panels: Mutex::new(Vec::new()),
             deferred,
@@ -631,13 +702,56 @@ impl CommandInbox {
             EdgeCommonsError::Command("command registration lock is poisoned".to_string())
         })?;
         let mut handlers = self.handlers.lock().unwrap();
-        if handlers.contains_key(verb) || self.outcome_handlers.lock().unwrap().contains_key(verb) {
+        if handlers.contains_key(verb)
+            || self.outcome_handlers.lock().unwrap().contains_key(verb)
+            || self.scoped_handlers.lock().unwrap().contains_key(verb)
+        {
             return Err(EdgeCommonsError::Command(format!(
                 "verb '{verb}' is already registered - unregister it first to replace the handler"
             )));
         }
         handlers.insert(verb.to_string(), handler);
         tracing::debug!(verb, "command verb registered");
+        Ok(())
+    }
+
+    /// Registers a scope-aware verb handler that also receives the **addressed instance** — the
+    /// delivery topic's `{instance}` token (D-U28), or `None` for a component-scoped command.
+    /// Everything else — verb validation, namespaced verbs, the one-handler-per-verb rule,
+    /// duplicate-registration errors, [`DESCRIBE`] participation, and reply/error handling — is
+    /// identical to [`Self::register`].
+    ///
+    /// # Errors
+    /// [`EdgeCommonsError::UnsValidation`] when a verb token violates the §2.2 token rule;
+    /// [`EdgeCommonsError::Command`] when the verb is built-in/delegated/already registered.
+    pub fn register_scoped(&self, verb: &str, handler: Arc<dyn ScopedCommandHandler>) -> Result<()> {
+        for token in verb.split('/') {
+            crate::uns::check_token(token, "verb token")?;
+        }
+        if BUILT_IN_VERBS.contains(&verb) {
+            return Err(EdgeCommonsError::Command(format!(
+                "verb '{verb}' is a built-in verb and cannot be shadowed"
+            )));
+        }
+        if DELEGATED_VERBS.contains(&verb) {
+            return Err(EdgeCommonsError::Command(format!(
+                "verb '{verb}' is owned by another library subsystem and cannot be registered"
+            )));
+        }
+        let _registration = self.registration.lock().map_err(|_| {
+            EdgeCommonsError::Command("command registration lock is poisoned".to_string())
+        })?;
+        let mut scoped_handlers = self.scoped_handlers.lock().unwrap();
+        if scoped_handlers.contains_key(verb)
+            || self.handlers.lock().unwrap().contains_key(verb)
+            || self.outcome_handlers.lock().unwrap().contains_key(verb)
+        {
+            return Err(EdgeCommonsError::Command(format!(
+                "verb '{verb}' is already registered - unregister it first to replace the handler"
+            )));
+        }
+        scoped_handlers.insert(verb.to_string(), handler);
+        tracing::debug!(verb, "scoped command verb registered");
         Ok(())
     }
 
@@ -667,7 +781,10 @@ impl CommandInbox {
             EdgeCommonsError::Command("command registration lock is poisoned".to_string())
         })?;
         let mut outcome_handlers = self.outcome_handlers.lock().unwrap();
-        if outcome_handlers.contains_key(verb) || self.handlers.lock().unwrap().contains_key(verb) {
+        if outcome_handlers.contains_key(verb)
+            || self.handlers.lock().unwrap().contains_key(verb)
+            || self.scoped_handlers.lock().unwrap().contains_key(verb)
+        {
             return Err(EdgeCommonsError::Command(format!(
                 "verb '{verb}' is already registered - unregister it first to replace the handler"
             )));
@@ -706,8 +823,12 @@ impl CommandInbox {
             EdgeCommonsError::Command("command registration lock is poisoned".to_string())
         })?;
         let removed = self.handlers.lock().unwrap().remove(verb).is_some()
-            || self.outcome_handlers.lock().unwrap().remove(verb).is_some();
+            || self.outcome_handlers.lock().unwrap().remove(verb).is_some()
+            || self.scoped_handlers.lock().unwrap().remove(verb).is_some();
         if removed {
+            // An unregistered verb's availability entry must not resurface on a later
+            // re-registration of the same verb name.
+            self.availability.lock().unwrap().remove(verb);
             tracing::debug!(verb, "command verb unregistered");
         }
         Ok(())
@@ -718,7 +839,61 @@ impl CommandInbox {
         let mut verbs: std::collections::HashSet<String> =
             self.handlers.lock().unwrap().keys().cloned().collect();
         verbs.extend(self.outcome_handlers.lock().unwrap().keys().cloned());
+        verbs.extend(self.scoped_handlers.lock().unwrap().keys().cloned());
         verbs
+    }
+
+    /// Sets a registered verb's **availability** as surfaced by [`DESCRIBE`]: `state` must be
+    /// exactly [`AVAILABILITY_AVAILABLE`], [`AVAILABILITY_DISABLED`], or
+    /// [`AVAILABILITY_UNSUPPORTED`]. `available` removes any stored entry (the verb's describe
+    /// entry reverts to `{verb, builtIn}`); `disabled`/`unsupported` store
+    /// `{"state": …, "reason"?: …}` — `reason` is trimmed, truncated to
+    /// [`MAX_AVAILABILITY_REASON_CHARS`] chars, and omitted when empty/absent. The describe
+    /// digest changes with the stored availability, so a console re-fetches on transition.
+    ///
+    /// # Errors
+    /// [`EdgeCommonsError::Command`] when `state` is not one of the three exact tokens, or
+    /// `verb` is not currently registered (built-in or custom).
+    pub fn set_command_availability(
+        &self,
+        verb: &str,
+        state: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        if ![
+            AVAILABILITY_AVAILABLE,
+            AVAILABILITY_DISABLED,
+            AVAILABILITY_UNSUPPORTED,
+        ]
+        .contains(&state)
+        {
+            return Err(EdgeCommonsError::Command(format!(
+                "availability state '{state}' is invalid - use '{AVAILABILITY_AVAILABLE}', \
+                 '{AVAILABILITY_DISABLED}', or '{AVAILABILITY_UNSUPPORTED}'"
+            )));
+        }
+        if !self.verbs().contains(verb) {
+            return Err(EdgeCommonsError::Command(format!(
+                "verb '{verb}' is not registered on this component - availability applies only \
+                 to registered verbs"
+            )));
+        }
+        let mut availability = self.availability.lock().unwrap();
+        if state == AVAILABILITY_AVAILABLE {
+            availability.remove(verb);
+            return Ok(());
+        }
+        let mut entry = serde_json::Map::new();
+        entry.insert("state".to_string(), Value::String(state.to_string()));
+        let reason = reason
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(|reason| reason.chars().take(MAX_AVAILABILITY_REASON_CHARS).collect());
+        if let Some(reason) = reason {
+            entry.insert("reason".to_string(), Value::String(reason));
+        }
+        availability.insert(verb.to_string(), Value::Object(entry));
+        Ok(())
     }
 
     /// Starts a continuation only after its token has been accepted for a specific command.
@@ -821,11 +996,19 @@ impl CommandInbox {
     fn describe(&self) -> Value {
         let mut verbs: Vec<String> = self.verbs().into_iter().collect();
         verbs.sort();
+        let availability = self.availability.lock().unwrap().clone();
         let commands = verbs
             .into_iter()
             .map(|verb| {
                 let built_in = BUILT_IN_VERBS.contains(&verb.as_str());
-                json!({ "verb": verb, "builtIn": built_in })
+                // {verb, builtIn, availability?}: the availability member is present only for a
+                // verb with a stored non-available state.
+                match availability.get(&verb) {
+                    Some(entry) => {
+                        json!({ "verb": verb, "builtIn": built_in, "availability": entry })
+                    }
+                    None => json!({ "verb": verb, "builtIn": built_in }),
+                }
             })
             .collect();
         let snapshot = self.config.load_full();
@@ -1171,11 +1354,43 @@ impl CommandInbox {
             );
             return;
         }
-        Self::dispatch(self, verb.to_string(), message).await;
+        let verb = verb.to_string();
+        let addressed_instance = self.addressed_instance(&topic[..marker]);
+        Self::dispatch(self, verb, message, addressed_instance).await;
+    }
+
+    /// The delivery topic's addressed instance (D-U28), derived from the stored component-scope
+    /// filter prefix (the same `/cmd/` marker logic both subscriptions share — identity is never
+    /// re-derived from config a second way): a `…/{component}` prefix → component scope →
+    /// `None`; a `…/{component}/{instance}` prefix → `Some(instance)`. A malformed prefix
+    /// (impossible through the subscribed filters) is treated as component scope.
+    fn addressed_instance(&self, topic_prefix: &str) -> Option<String> {
+        let component_prefix = {
+            let inner = self.inner.lock().unwrap();
+            inner
+                .component_inbox_filter
+                .as_deref()
+                .and_then(|filter| filter.strip_suffix("/cmd/#"))
+                .map(str::to_string)
+        }?;
+        let instance = topic_prefix
+            .strip_prefix(component_prefix.as_str())?
+            .strip_prefix('/')?;
+        if instance.is_empty() || instance.contains('/') {
+            return None;
+        }
+        Some(instance.to_string())
     }
 
     /// Dispatches a well-formed request to its handler and replies (when `reply_to` is set).
-    async fn dispatch(inbox: Arc<Self>, verb: String, request: Message) {
+    /// `addressed_instance` is the delivery topic's instance token (`None` for component scope),
+    /// forwarded only to [`ScopedCommandHandler`]s.
+    async fn dispatch(
+        inbox: Arc<Self>,
+        verb: String,
+        request: Message,
+        addressed_instance: Option<String>,
+    ) {
         let wants_reply = request
             .header
             .reply_to
@@ -1183,7 +1398,8 @@ impl CommandInbox {
             .is_some_and(|s| !s.is_empty());
         let handler = { inbox.handlers.lock().unwrap().get(&verb).cloned() };
         let outcome_handler = { inbox.outcome_handlers.lock().unwrap().get(&verb).cloned() };
-        if handler.is_none() && outcome_handler.is_none() {
+        let scoped_handler = { inbox.scoped_handlers.lock().unwrap().get(&verb).cloned() };
+        if handler.is_none() && outcome_handler.is_none() && scoped_handler.is_none() {
             if wants_reply {
                 tracing::debug!(
                     verb,
@@ -1224,6 +1440,32 @@ impl CommandInbox {
                             .await;
                     } else {
                         tracing::warn!(verb, code = %e.code, message = %e.message, "fire-and-forget verb failed");
+                    }
+                }
+            }
+            return;
+        }
+
+        if let Some(scoped_handler) = scoped_handler {
+            // The scoped path mirrors the legacy path exactly, plus the addressed instance.
+            match scoped_handler
+                .handle(request.clone(), addressed_instance)
+                .await
+            {
+                Ok(result) => {
+                    if wants_reply {
+                        let body =
+                            json!({ "ok": true, "result": result.unwrap_or_else(|| json!({})) });
+                        inbox.send_reply(&request, &verb, body).await;
+                    }
+                }
+                Err(e) => {
+                    if wants_reply {
+                        inbox
+                            .send_reply(&request, &verb, error_body(&e.code, e.message))
+                            .await;
+                    } else {
+                        tracing::warn!(verb, code = %e.code, message = %e.message, "fire-and-forget scoped verb failed");
                     }
                 }
             }
@@ -1429,8 +1671,12 @@ fn describe_payload(commands: Vec<Value>, views: Vec<Value>, component: Option<V
         .and_then(Value::as_str)
         .unwrap_or("component")
         .to_string();
+    // The first view carrying boolean `"default": true` wins; else fall back to views[0]. The
+    // views themselves are emitted verbatim (the `default` key is not stripped).
     let default_view = views
-        .first()
+        .iter()
+        .find(|view| view.get("default").and_then(Value::as_bool) == Some(true))
+        .or_else(|| views.first())
         .and_then(|view| view.get("id"))
         .and_then(Value::as_str)
         .map(ToString::to_string);
@@ -2035,6 +2281,302 @@ mod tests {
             descriptor_digest(commands, &result["panels"]),
             "digest must be computed from deterministic commands+panels JSON"
         );
+    }
+
+    /// `defaultView` = the id of the first view whose `default` property is boolean `true`
+    /// (falling back to `views[0].id`, covered by the describe test above); views ride verbatim.
+    #[tokio::test]
+    async fn describe_default_view_honors_the_default_flag() {
+        let f = fixture();
+        f.inbox
+            .register_panel(json!({ "id": "first", "title": "First" }))
+            .unwrap();
+        f.inbox
+            .register_panel(json!({ "id": "stringy", "title": "Stringy", "default": "true" }))
+            .unwrap();
+        f.inbox
+            .register_panel(json!({ "id": "second", "title": "Second", "default": true }))
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(&topic(DESCRIBE), request(DESCRIBE))
+            .await;
+        let body = only_reply_body(&f.messaging);
+        let panels = &body["result"]["panels"];
+        assert_eq!(
+            panels["defaultView"], "second",
+            "the first view with boolean default:true wins (a non-boolean flag never matches)"
+        );
+        assert_eq!(
+            panels["views"][2]["default"],
+            json!(true),
+            "views are emitted verbatim - the default key is not stripped"
+        );
+    }
+
+    // ===================== command availability =====================
+
+    /// The `{verb, builtIn, availability?}` entry for one verb in a describe payload.
+    fn command_entry(describe: &Value, verb: &str) -> Value {
+        describe["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["verb"] == verb)
+            .unwrap_or_else(|| panic!("describe has no entry for verb '{verb}'"))
+            .clone()
+    }
+
+    #[test]
+    fn set_command_availability_validates_state_and_verb() {
+        let f = fixture();
+        assert!(matches!(
+            f.inbox.set_command_availability(PING, "broken", None),
+            Err(EdgeCommonsError::Command(_))
+        ));
+        assert!(matches!(
+            f.inbox.set_command_availability(PING, "DISABLED", None),
+            Err(EdgeCommonsError::Command(_)),
+        ), "the state tokens are exact - no case folding");
+        assert!(matches!(
+            f.inbox
+                .set_command_availability("no-such-verb", AVAILABILITY_DISABLED, None),
+            Err(EdgeCommonsError::Command(_))
+        ));
+        // Built-ins are registered verbs, so their availability is settable.
+        f.inbox
+            .set_command_availability(PING, AVAILABILITY_DISABLED, Some("maintenance"))
+            .unwrap();
+        assert_eq!(
+            command_entry(&f.inbox.describe(), PING)["availability"],
+            json!({ "state": "disabled", "reason": "maintenance" })
+        );
+    }
+
+    #[test]
+    fn availability_surfaces_in_describe_and_the_digest_tracks_it() {
+        let f = fixture();
+        f.inbox
+            .register("sb/write", command_handler(|_r| async move { Ok(None) }))
+            .unwrap();
+        let baseline = f.inbox.describe();
+        let baseline_digest = baseline["digest"].clone();
+        assert!(
+            command_entry(&baseline, "sb/write").get("availability").is_none(),
+            "no stored state -> the plain {{verb, builtIn}} entry"
+        );
+
+        f.inbox
+            .set_command_availability("sb/write", AVAILABILITY_DISABLED, Some("writes.allow[] is empty"))
+            .unwrap();
+        let disabled = f.inbox.describe();
+        assert_eq!(
+            command_entry(&disabled, "sb/write"),
+            json!({
+                "verb": "sb/write",
+                "builtIn": false,
+                "availability": { "state": "disabled", "reason": "writes.allow[] is empty" }
+            })
+        );
+        assert_ne!(
+            disabled["digest"], baseline_digest,
+            "the digest must change when availability changes"
+        );
+
+        f.inbox
+            .set_command_availability("sb/write", AVAILABILITY_AVAILABLE, None)
+            .unwrap();
+        let restored = f.inbox.describe();
+        assert!(
+            command_entry(&restored, "sb/write").get("availability").is_none(),
+            "'available' removes the stored entry"
+        );
+        assert_eq!(
+            restored["digest"], baseline_digest,
+            "clearing availability must restore the original digest"
+        );
+    }
+
+    #[test]
+    fn availability_reason_is_trimmed_truncated_and_omitted_when_empty() {
+        let f = fixture();
+        f.inbox
+            .register("sb/write", command_handler(|_r| async move { Ok(None) }))
+            .unwrap();
+
+        // Blank-only reasons are omitted entirely.
+        f.inbox
+            .set_command_availability("sb/write", AVAILABILITY_UNSUPPORTED, Some("   "))
+            .unwrap();
+        assert_eq!(
+            command_entry(&f.inbox.describe(), "sb/write")["availability"],
+            json!({ "state": "unsupported" })
+        );
+
+        // Reasons are trimmed and truncated to the 256-char cap.
+        let long = "x".repeat(MAX_AVAILABILITY_REASON_CHARS + 44);
+        f.inbox
+            .set_command_availability("sb/write", AVAILABILITY_DISABLED, Some(&format!("  {long}  ")))
+            .unwrap();
+        let reason = command_entry(&f.inbox.describe(), "sb/write")["availability"]["reason"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(reason.chars().count(), MAX_AVAILABILITY_REASON_CHARS);
+        assert!(reason.starts_with('x') && reason.ends_with('x'), "trimmed before truncation");
+    }
+
+    #[test]
+    fn unregister_drops_the_verb_availability_entry() {
+        let f = fixture();
+        f.inbox
+            .register("sb/write", command_handler(|_r| async move { Ok(None) }))
+            .unwrap();
+        f.inbox
+            .set_command_availability("sb/write", AVAILABILITY_DISABLED, None)
+            .unwrap();
+        f.inbox.unregister("sb/write").unwrap();
+        f.inbox
+            .register("sb/write", command_handler(|_r| async move { Ok(None) }))
+            .unwrap();
+        assert!(
+            command_entry(&f.inbox.describe(), "sb/write").get("availability").is_none(),
+            "a stale availability entry must not resurface on re-registration"
+        );
+    }
+
+    // ===================== scoped registration (the addressed instance) =====================
+
+    #[tokio::test]
+    async fn scoped_handler_receives_the_addressed_instance() {
+        let f = fixture();
+        let seen: Arc<Mutex<Vec<Option<String>>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen_handler = seen.clone();
+        f.inbox
+            .register_scoped(
+                "sb/read",
+                scoped_command_handler(move |_request, addressed_instance| {
+                    let seen = seen_handler.clone();
+                    async move {
+                        seen.lock().unwrap().push(addressed_instance.clone());
+                        Ok(Some(json!({ "instance": addressed_instance })))
+                    }
+                }),
+            )
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        // Instance-scoped topic -> the token; component-scoped topic -> None (D-U28).
+        f.messaging
+            .simulate_message(&topic("sb/read"), request("sb/read"))
+            .await;
+        f.messaging
+            .simulate_message("ecv1/test-thing/TestComponent/cmd/sb/read", request("sb/read"))
+            .await;
+        assert_eq!(*seen.lock().unwrap(), vec![Some("main".to_string()), None]);
+        let replies = f.messaging.replies();
+        assert_eq!(replies.len(), 2);
+        assert_eq!(replies[0].1.body["result"]["instance"], "main");
+        assert_eq!(replies[1].1.body["result"]["instance"], json!(null));
+
+        // A malformed prefix (unreachable through the subscribed filters) is component scope.
+        assert_eq!(
+            f.inbox.addressed_instance("ecv1/test-thing/TestComponent/a/b"),
+            None
+        );
+        assert_eq!(
+            f.inbox.addressed_instance("ecv1/other-thing/OtherComponent"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn scoped_handler_error_keeps_its_code() {
+        let f = fixture();
+        f.inbox
+            .register_scoped(
+                "sb/read",
+                scoped_command_handler(|_request, _addressed_instance| async move {
+                    Err(CommandError::new("NOT_ALLOWED", "operator role required"))
+                }),
+            )
+            .unwrap();
+        f.inbox.clone().start().await;
+        f.messaging
+            .simulate_message(&topic("sb/read"), request("sb/read"))
+            .await;
+        let body = only_reply_body(&f.messaging);
+        assert!(!body["ok"].as_bool().unwrap());
+        assert_eq!(body["error"]["code"], "NOT_ALLOWED");
+    }
+
+    #[tokio::test]
+    async fn register_scoped_shares_the_one_handler_per_verb_namespace() {
+        let f = fixture();
+        // Built-in / delegated verbs are rejected exactly as for register().
+        assert!(matches!(
+            f.inbox.register_scoped(
+                PING,
+                scoped_command_handler(|_r, _i| async move { Ok(None) })
+            ),
+            Err(EdgeCommonsError::Command(_))
+        ));
+        assert!(matches!(
+            f.inbox.register_scoped(
+                SET_CONFIG_VERB,
+                scoped_command_handler(|_r, _i| async move { Ok(None) })
+            ),
+            Err(EdgeCommonsError::Command(_))
+        ));
+        assert!(matches!(
+            f.inbox.register_scoped(
+                "bad+verb",
+                scoped_command_handler(|_r, _i| async move { Ok(None) })
+            ),
+            Err(EdgeCommonsError::UnsValidation { .. })
+        ));
+
+        // One verb namespace across plain, outcome, and scoped registration.
+        f.inbox
+            .register("plain", command_handler(|_r| async move { Ok(None) }))
+            .unwrap();
+        assert!(matches!(
+            f.inbox.register_scoped(
+                "plain",
+                scoped_command_handler(|_r, _i| async move { Ok(None) })
+            ),
+            Err(EdgeCommonsError::Command(_))
+        ));
+        f.inbox
+            .register_scoped(
+                "scoped",
+                scoped_command_handler(|_r, _i| async move { Ok(None) }),
+            )
+            .unwrap();
+        assert!(matches!(
+            f.inbox
+                .register("scoped", command_handler(|_r| async move { Ok(None) })),
+            Err(EdgeCommonsError::Command(_))
+        ));
+        assert!(matches!(
+            f.inbox.register_outcome(
+                "scoped",
+                outcome_handler(|_r, _d| async move { CommandOutcome::ImmediateSuccess(None) })
+            ),
+            Err(EdgeCommonsError::Command(_))
+        ));
+
+        // Scoped verbs participate in verbs()/describe() identically to register().
+        assert!(f.inbox.verbs().contains("scoped"));
+        assert_eq!(
+            command_entry(&f.inbox.describe(), "scoped"),
+            json!({ "verb": "scoped", "builtIn": false })
+        );
+
+        // ...and unregister() removes them.
+        f.inbox.unregister("scoped").unwrap();
+        assert!(!f.inbox.verbs().contains("scoped"));
     }
 
     // ===================== custom verbs (the registration seam) =====================

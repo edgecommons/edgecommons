@@ -622,6 +622,212 @@ def test_register_panel_rejects_duplicate_ids(h):
         h.inbox.register_panel({"id": "overview", "title": "Duplicate"})
 
 
+def _describe_result(h):
+    h.messaging.simulate_message(
+        _topic(CommandInbox.DESCRIBE), _request(CommandInbox.DESCRIBE)
+    )
+    body = h.messaging.published[-1].message.get_body()
+    assert body["ok"] is True
+    return body["result"]
+
+
+def test_default_view_honors_the_default_true_flag(h):
+    # defaultView = the first view carrying boolean "default": true, not views[0].
+    h.inbox.register_panel({"id": "overview", "title": "Overview", "order": 10})
+    h.inbox.register_panel(
+        {"id": "signals", "title": "Signals", "order": 20, "default": True}
+    )
+    h.inbox.start()
+    panels = _describe_result(h)["panels"]
+    assert panels["defaultView"] == "signals"
+    # Views are emitted verbatim - the "default" key is not stripped.
+    assert panels["views"][1]["default"] is True
+
+
+def test_default_view_falls_back_to_the_first_view_without_the_flag(h):
+    h.inbox.register_panel({"id": "overview", "title": "Overview"})
+    h.inbox.register_panel({"id": "signals", "title": "Signals"})
+    h.inbox.start()
+    assert _describe_result(h)["panels"]["defaultView"] == "overview"
+
+
+def test_default_view_ignores_a_non_boolean_default_value(h):
+    # Only boolean true selects; "true"/1 are not the flag (the TS `=== true` rule).
+    h.inbox.register_panel({"id": "overview", "title": "Overview"})
+    h.inbox.register_panel({"id": "signals", "title": "Signals", "default": "true"})
+    h.inbox.register_panel({"id": "diag", "title": "Diagnostics", "default": 1})
+    h.inbox.start()
+    assert _describe_result(h)["panels"]["defaultView"] == "overview"
+
+
+# ===================== command availability =====================
+
+
+def test_set_command_availability_surfaces_on_the_describe_entry(h):
+    h.inbox.register("sb/pause", lambda request: None)
+    h.inbox.set_command_availability("sb/pause", "disabled", "instance is paused")
+    h.inbox.start()
+    commands = {entry["verb"]: entry for entry in _describe_result(h)["commands"]}
+    entry = commands["sb/pause"]
+    assert list(entry.keys()) == ["verb", "builtIn", "availability"], (
+        "the entry shape is {verb, builtIn, availability?}"
+    )
+    assert entry == {
+        "verb": "sb/pause",
+        "builtIn": False,
+        "availability": {"state": "disabled", "reason": "instance is paused"},
+    }
+    # Other verbs stay the plain two-key entry.
+    assert commands[CommandInbox.PING] == {"verb": CommandInbox.PING, "builtIn": True}
+
+
+def test_set_command_availability_available_clears_the_stored_entry(h):
+    h.inbox.register("sb/pause", lambda request: None)
+    h.inbox.set_command_availability("sb/pause", "unsupported")
+    h.inbox.set_command_availability("sb/pause", "available")
+    h.inbox.start()
+    commands = {entry["verb"]: entry for entry in _describe_result(h)["commands"]}
+    assert commands["sb/pause"] == {"verb": "sb/pause", "builtIn": False}, (
+        "'available' removes the stored entry - describe reverts to {verb, builtIn}"
+    )
+
+
+def test_set_command_availability_accepts_built_in_verbs(h):
+    h.inbox.set_command_availability(CommandInbox.RELOAD_CONFIG, "unsupported")
+    h.inbox.start()
+    commands = {entry["verb"]: entry for entry in _describe_result(h)["commands"]}
+    assert commands[CommandInbox.RELOAD_CONFIG]["availability"] == {
+        "state": "unsupported"
+    }
+
+
+def test_set_command_availability_trims_and_truncates_the_reason(h):
+    h.inbox.register("sb/pause", lambda request: None)
+    h.inbox.set_command_availability("sb/pause", "disabled", "  padded reason  ")
+    h.inbox.start()
+    commands = {entry["verb"]: entry for entry in _describe_result(h)["commands"]}
+    assert commands["sb/pause"]["availability"]["reason"] == "padded reason"
+
+    h.inbox.set_command_availability("sb/pause", "disabled", "x" * 300)
+    commands = {entry["verb"]: entry for entry in _describe_result(h)["commands"]}
+    assert commands["sb/pause"]["availability"]["reason"] == "x" * 256
+
+
+def test_set_command_availability_omits_an_empty_or_absent_reason(h):
+    h.inbox.register("sb/pause", lambda request: None)
+    h.inbox.register("sb/resume", lambda request: None)
+    h.inbox.set_command_availability("sb/pause", "disabled")
+    h.inbox.set_command_availability("sb/resume", "disabled", "   ")
+    h.inbox.start()
+    commands = {entry["verb"]: entry for entry in _describe_result(h)["commands"]}
+    assert commands["sb/pause"]["availability"] == {"state": "disabled"}
+    assert commands["sb/resume"]["availability"] == {"state": "disabled"}
+
+
+def test_set_command_availability_rejects_unknown_states_and_verbs(h):
+    h.inbox.register("sb/pause", lambda request: None)
+    with pytest.raises(ValueError):
+        h.inbox.set_command_availability("sb/pause", "DISABLED")
+    with pytest.raises(ValueError):
+        h.inbox.set_command_availability("sb/pause", "gone")
+    with pytest.raises(ValueError):
+        h.inbox.set_command_availability("not-registered", "disabled")
+    with pytest.raises(ValueError):
+        h.inbox.set_command_availability(None, "disabled")
+
+
+def test_availability_changes_the_describe_digest_and_clearing_restores_it(h):
+    h.inbox.register("sb/pause", lambda request: None)
+    h.inbox.start()
+    original = _describe_result(h)["digest"]
+    h.inbox.set_command_availability("sb/pause", "disabled", "paused")
+    changed = _describe_result(h)["digest"]
+    assert changed != original, "setting availability must change the describe digest"
+    h.inbox.set_command_availability("sb/pause", "available")
+    assert _describe_result(h)["digest"] == original, (
+        "clearing availability must restore the original digest"
+    )
+
+
+# ===================== scoped registration (D-U28 addressed instance) =====================
+
+
+def test_register_scoped_receives_none_for_a_component_scoped_delivery(h):
+    seen = []
+    h.inbox.register_scoped("sb/pause", lambda request, instance: seen.append(instance) or {"paused": True})
+    h.inbox.start()
+    h.messaging.simulate_message(
+        "ecv1/test-thing/TestComponent/cmd/sb/pause", _request("sb/pause")
+    )
+    assert seen == [None], "a component-scoped topic addresses no instance"
+    assert h.only_reply_body()["result"]["paused"] is True
+
+
+def test_register_scoped_receives_the_instance_token_for_an_instance_scoped_delivery(h):
+    seen = []
+    h.inbox.register_scoped("sb/pause", lambda request, instance: seen.append(instance))
+    h.inbox.start()
+    h.messaging.simulate_message(
+        "ecv1/test-thing/TestComponent/plc-3/cmd/sb/pause", _request("sb/pause")
+    )
+    assert seen == ["plc-3"], "the instance-scoped topic's token is the addressed instance"
+
+
+def test_register_scoped_error_handling_matches_plain_handlers(h):
+    def handler(request, instance):
+        raise CommandException("NOT_NOW", f"instance {instance} is busy")
+
+    h.inbox.register_scoped("sb/pause", handler)
+    h.inbox.start()
+    h.messaging.simulate_message(
+        "ecv1/test-thing/TestComponent/plc-3/cmd/sb/pause", _request("sb/pause")
+    )
+    body = h.only_reply_body()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "NOT_NOW"
+    assert body["error"]["message"] == "instance plc-3 is busy"
+
+
+def test_register_scoped_participates_in_describe_and_verbs(h):
+    h.inbox.register_scoped("sb/pause", lambda request, instance: None)
+    assert "sb/pause" in h.inbox.verbs()
+    h.inbox.start()
+    commands = {entry["verb"]: entry for entry in _describe_result(h)["commands"]}
+    assert commands["sb/pause"] == {"verb": "sb/pause", "builtIn": False}
+
+
+def test_register_scoped_keeps_the_one_handler_per_verb_rule(h):
+    h.inbox.register("mine", lambda request: None)
+    with pytest.raises(ValueError):
+        h.inbox.register_scoped("mine", lambda request, instance: None)
+    h.inbox.register_scoped("scoped", lambda request, instance: None)
+    with pytest.raises(ValueError):
+        h.inbox.register("scoped", lambda request: None)
+    with pytest.raises(ValueError):
+        h.inbox.register_scoped("scoped", lambda request, instance: None)
+    with pytest.raises(ValueError):
+        h.inbox.register_scoped(CommandInbox.PING, lambda request, instance: None)
+    with pytest.raises(ValueError):
+        h.inbox.register_scoped(None, lambda request, instance: None)
+    with pytest.raises(ValueError):
+        h.inbox.register_scoped("scoped2", None)
+    h.inbox.unregister("scoped")
+    assert "scoped" not in h.inbox.verbs()
+
+
+def test_plain_register_never_sees_the_addressed_instance(h):
+    # The existing register contract is untouched: the handler still takes only the
+    # request, whichever scope the delivery arrived on.
+    calls = []
+    h.inbox.register("mine", lambda request: calls.append(request) or {"ok": 1})
+    h.inbox.start()
+    h.messaging.simulate_message(
+        "ecv1/test-thing/TestComponent/plc-3/cmd/mine", _request("mine")
+    )
+    assert len(calls) == 1
+    assert h.only_reply_body()["result"] == {"ok": 1}
+
+
 # ===================== unknown / fire-and-forget / malformed =====================
 
 

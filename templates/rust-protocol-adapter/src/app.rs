@@ -138,10 +138,10 @@ impl LinkState {
 }
 
 /// The shared per-device state the metrics emitter reads and the connectivity provider renders.
-/// The gauges (`connection_state`, latencies) and the interval counters (`read_errors`, `reconnects`)
-/// feed `southbound_health` ([`crate::metrics`]); `paused` and `link` feed the connectivity token and
-/// `sb/status`. One source, several surfaces — so a health dot, a metric, and a status reply can
-/// never disagree.
+/// The gauges (`connection_state`, `signals_subscribed`, latencies) and the interval counters
+/// (`read_errors`, `write_errors`, `reconnects`) feed `southbound_health` ([`crate::metrics`]);
+/// `paused` and `link` feed the connectivity token and `sb/status`. One source, several surfaces —
+/// so a health dot, a metric, and a status reply can never disagree.
 #[derive(Default)]
 pub struct Health {
     /// 1 = connected, 0 = down.
@@ -154,7 +154,14 @@ pub struct Health {
     pub poll_latency_ms: AtomicU64,
     pub publish_latency_ms: AtomicU64,
     pub read_errors: AtomicU64,
+    /// Write entries that failed on the device path (`sb/write`: rejected by the device, or
+    /// aborted by an unavailable device) — drained into `southbound_health.writeErrors` on each
+    /// emit.
+    pub write_errors: AtomicU64,
     pub reconnects: AtomicU64,
+    /// The size of this device's `sb/signals` inventory. Read it through
+    /// [`Health::signals_subscribed`], which reports it only while the link is ONLINE.
+    signal_inventory: AtomicU64,
 }
 
 impl Health {
@@ -174,6 +181,23 @@ impl Health {
     #[must_use]
     pub fn is_paused(&self) -> bool {
         self.paused.load(Ordering::Relaxed)
+    }
+
+    /// Record the size of the `sb/signals` inventory this device serves.
+    pub fn set_signal_inventory(&self, count: u64) {
+        self.signal_inventory.store(count, Ordering::Relaxed);
+    }
+
+    /// The `southbound_health.signalsSubscribed` gauge: the `sb/signals` inventory size while the
+    /// link is ONLINE, and 0 while it is not — the gauge and the connection state come from the same
+    /// source, so they can never disagree.
+    #[must_use]
+    pub fn signals_subscribed(&self) -> u64 {
+        if self.link() == LinkState::Online {
+            self.signal_inventory.load(Ordering::Relaxed)
+        } else {
+            0
+        }
     }
 }
 
@@ -367,5 +391,16 @@ mod tests {
         assert_eq!(health.connection_state.load(Ordering::Relaxed), 1);
         health.set_link(LinkState::Backoff);
         assert_eq!(health.connection_state.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn signals_subscribed_reports_the_inventory_only_while_online() {
+        let health = Health::default();
+        health.set_signal_inventory(2);
+        assert_eq!(health.signals_subscribed(), 0, "0 while disconnected");
+        health.set_link(LinkState::Online);
+        assert_eq!(health.signals_subscribed(), 2, "the sb/signals inventory size while connected");
+        health.set_link(LinkState::Backoff);
+        assert_eq!(health.signals_subscribed(), 0, "a broken link serves nothing");
     }
 }

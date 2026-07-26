@@ -13,7 +13,7 @@ surface.
   ``NO_SUCH_INSTANCE``.
 * **Standardized error codes:** ``BAD_ARGS``, ``NO_SUCH_INSTANCE``, ``WRITE_NOT_ALLOWED``,
   ``WRITE_FAILED``, ``DEVICE_UNAVAILABLE``, ``READ_FAILED``, ``RECONNECT_FAILED``,
-  ``BROWSE_UNSUPPORTED``, ``BROWSE_FAILED``.
+  ``BROWSE_UNSUPPORTED``, ``BROWSE_FAILED``, ``PAUSED``.
 * **The session is never touched here.** Every verb that reads/writes/reconnects/pauses is routed to
   the device's own control seam and *confirmed* through what it returns — the session lives in the
   device worker and is serialized there, never touched from the command thread.
@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from edgecommons.command_inbox import CommandException
 
 from .device import (
+    BrowsedSignal,
     BrowseFailed,
     BrowsePage,
     BrowseUnsupported,
@@ -46,24 +47,60 @@ from .device import (
 def panels() -> List[Dict[str, Any]]:
     """The three edge-console panel descriptors. Core validates ``id``/``title``/uniqueness; the
     widget kinds and bound verbs are console-interpreted, so they ride verbatim. ``order`` 10/20/30,
-    ``scope: "instance"``."""
+    ``scope: "instance"`` — repeated on each command-backed widget, which the console renderer
+    requires. No widget names a ``writeVerb``: writes stay on the command surface behind the
+    allow-list."""
     return [
         {
             "id": "overview", "title": "Overview", "order": 10, "scope": "instance",
             "widgets": [
-                {"kind": "summary", "fields": ["connected", "state", "paused", "endpoint"]},
-                {"kind": "commandSummary", "actions": ["reconnect", "sb/pause", "sb/resume"]},
+                {
+                    "kind": "summary", "id": "overview-summary", "title": "Adapter overview",
+                    "rows": [
+                        {"label": "Signals", "value": "Configured signal inventory via cmd/sb/signals"},
+                        {"label": "Lifecycle", "value": "Pause, resume, reconnect, and repoll the instance"},
+                        {"label": "Writes", "value": "Allow-listed via writes.allow[]; checked before device I/O"},
+                    ],
+                },
+                {
+                    "kind": "commandSummary", "id": "overview-lifecycle", "title": "Lifecycle bindings",
+                    "verbs": ["sb/status", "reconnect", "sb/pause", "sb/resume", "repoll"],
+                },
             ],
             "verbs": ["sb/status", "reconnect", "sb/pause", "sb/resume"],
         },
         {
             "id": "signals", "title": "Signals", "order": 20, "scope": "instance",
-            "widgets": [{"kind": "signalGrid"}],
+            "widgets": [
+                {
+                    "kind": "signalGrid", "id": "configured-signals", "title": "Configured signals",
+                    "scope": "instance",
+                    "signalsVerb": "sb/signals",
+                    # Descriptor-compat hint: the shipped edge-console signalGrid reads
+                    # `subscriptionsVerb` (falling back to the removed `sb/subscriptions`). Point
+                    # that key at the `sb/signals` verb too, so the current console binds correctly
+                    # until it reads `signalsVerb`. This is a descriptor field alias, NOT a
+                    # wire-verb alias — no `sb/subscriptions` verb exists.
+                    "subscriptionsVerb": "sb/signals",
+                    "readVerb": "sb/read",
+                },
+            ],
             "verbs": ["sb/signals", "sb/read", "sb/write", "repoll"],
         },
         {
             "id": "diagnostics", "title": "Diagnostics", "order": 30, "scope": "instance",
-            "widgets": [{"kind": "treeBrowser"}, {"kind": "keyValueList"}],
+            "widgets": [
+                {
+                    "kind": "treeBrowser", "id": "inventory-tree", "title": "Inventory",
+                    "scope": "instance", "mode": "hierarchical", "rootRef": "root",
+                    "depth": 1, "maxRefs": 200,
+                    "browseVerb": "sb/browse", "readVerb": "sb/read",
+                },
+                {
+                    "kind": "commandSummary", "id": "diagnostic-commands", "title": "Diagnostic commands",
+                    "verbs": ["sb/status", "sb/browse"],
+                },
+            ],
             "verbs": ["sb/browse", "sb/status"],
         },
     ]
@@ -231,6 +268,10 @@ class Commander:
         attempted = 0
         succeeded = 0
 
+        # A write entry that fails on the DEVICE PATH — rejected by the device, or aborted because
+        # the device became unavailable — feeds `southbound_health.writeErrors` (drained on emit,
+        # exactly like `readErrors`). Entries that never reach the device (unresolved refs,
+        # allow-list refusals, missing values) are per-entry results, not device write errors.
         for entry in entries:
             entry = entry if isinstance(entry, dict) else {}
             sid, label = self._resolve_ref(h, entry)
@@ -253,8 +294,10 @@ class Commander:
                 succeeded += 1
                 results.append({"signal": sid, "value": value, "ok": True})
             except WriteRejected as e:
+                h.health.incr_write_error()
                 results.append({"signal": sid, "value": value, "ok": False, "error": str(e)})
             except DeviceUnavailable:
+                h.health.incr_write_error()
                 h.dm.record_command("sb/write", False, _ms(started))
                 raise _device_unavailable()
 
@@ -270,11 +313,26 @@ class Commander:
         h.dm.record_command("sb/write", True, _ms(started))
         return {"id": h.cfg.id, "written": succeeded, "results": results}
 
-    # --- sb/browse (paged address-space discovery) ------------------------------------------------
+    # --- sb/browse (paged address-space discovery + the hierarchical panel mode) ------------------
 
     def browse(self, body: Dict[str, Any]) -> Dict[str, Any]:
         h = self._resolve(body)
         started = time.monotonic()
+        # The two request forms are mutually exclusive: `ref`/`depth`/`maxRefs` select the
+        # hierarchical panel mode, `cursor`/`max` the paged one — and the hierarchical-only
+        # arguments are meaningless without a `ref`.
+        hierarchical_keys = any(k in body for k in ("ref", "depth", "maxRefs"))
+        if hierarchical_keys and any(k in body for k in ("cursor", "max")):
+            h.dm.record_command("sb/browse", False, _ms(started))
+            raise CommandException(
+                "BAD_ARGS",
+                "`ref`/`depth`/`maxRefs` (hierarchical) and `cursor`/`max` (paged) are mutually exclusive")
+        if hierarchical_keys and "ref" not in body:
+            h.dm.record_command("sb/browse", False, _ms(started))
+            raise CommandException(
+                "BAD_ARGS", "`depth`/`maxRefs` are hierarchical-mode arguments and require `ref`")
+        if "ref" in body:
+            return self._browse_hierarchical(h, body, started)
         cursor = body.get("cursor") if isinstance(body.get("cursor"), str) else None
         max_entries = body.get("max")
         max_entries = int(max_entries) if isinstance(max_entries, int) else 200
@@ -298,6 +356,78 @@ class Commander:
         }
         if page.next_cursor is not None:
             out["cursor"] = page.next_cursor
+        h.dm.record_command("sb/browse", True, _ms(started))
+        return out
+
+    def _browse_hierarchical(self, h: DeviceHandle, body: Dict[str, Any], started: float) -> Dict[str, Any]:
+        """The ``treeBrowser`` panel mode of ``sb/browse``: ``ref`` names a node in the **same**
+        :class:`~.device.BrowsedSignal` inventory the paged mode serves. ``"root"`` is
+        the device node, whose ``contains`` refs are the inventory (bounded by ``maxRefs``); a
+        signal id is a known leaf (``"refs": []``); an unknown ref is ``BAD_ARGS``. ``depth`` and
+        ``maxRefs`` are clamped to 1..4 / 1..1000 (the same convention as the paged ``max``); the
+        template inventory is flat, so a deeper ``depth`` finds no grandchildren — it is still
+        validated and echoed."""
+        ref = body.get("ref")
+        if not isinstance(ref, str) or not ref:
+            h.dm.record_command("sb/browse", False, _ms(started))
+            raise CommandException("BAD_ARGS", "`ref` must be a non-empty string")
+        depth = body.get("depth")
+        depth = max(1, min(4, int(depth) if isinstance(depth, int) else 1))
+        max_refs = body.get("maxRefs")
+        max_refs = max(1, min(1000, int(max_refs) if isinstance(max_refs, int) else 200))
+
+        # Collect the whole inventory through the same control seam the paged mode uses, following
+        # its cursors — one source, both browse modes.
+        entries: List[BrowsedSignal] = []
+        cursor: Optional[str] = None
+        try:
+            while True:
+                page: BrowsePage = h.control.browse(cursor, 1000)
+                entries.extend(page.entries)
+                if page.next_cursor is None:
+                    break
+                cursor = page.next_cursor
+        except BrowseUnsupported:
+            h.dm.record_command("sb/browse", False, _ms(started))
+            raise CommandException("BROWSE_UNSUPPORTED", "this adapter has no discovery service")
+        except BrowseFailed as e:
+            h.dm.record_command("sb/browse", False, _ms(started))
+            raise CommandException("BROWSE_FAILED", str(e))
+        except DeviceUnavailable:
+            h.dm.record_command("sb/browse", False, _ms(started))
+            raise _device_unavailable()
+
+        if ref == "root":
+            refs = [{
+                "referenceType": "contains",
+                "target": {"nodeId": e.id, "name": e.name, "nodeClass": "signal",
+                           "dataType": e.type_name},
+            } for e in entries[:max_refs]]
+            out = {
+                "id": h.cfg.id,
+                "mode": "hierarchical",
+                "root": {"nodeId": "root", "name": h.cfg.id, "nodeClass": "device",
+                         "dataType": None, "refs": refs},
+                "refCount": len(refs),
+                "depth": depth,
+                "truncated": len(entries) > max_refs,
+            }
+            h.dm.record_command("sb/browse", True, _ms(started))
+            return out
+
+        node = next((e for e in entries if e.id == ref), None)
+        if node is None:
+            h.dm.record_command("sb/browse", False, _ms(started))
+            raise CommandException("BAD_ARGS", f"unknown browse ref `{ref}`")
+        out = {
+            "id": h.cfg.id,
+            "mode": "hierarchical",
+            "root": {"nodeId": node.id, "name": node.name, "nodeClass": "signal",
+                     "dataType": node.type_name, "refs": []},
+            "refCount": 0,
+            "depth": depth,
+            "truncated": False,
+        }
         h.dm.record_command("sb/browse", True, _ms(started))
         return out
 
@@ -341,14 +471,14 @@ class Commander:
         h.dm.record_command("reconnect", True, _ms(started))
         return {"id": h.cfg.id, "connected": True}
 
-    # --- repoll (refused while paused) ------------------------------------------------------------
+    # --- repoll (refused with PAUSED while paused) ------------------------------------------------
 
     def repoll(self, body: Dict[str, Any]) -> Dict[str, Any]:
         h = self._resolve(body)
         started = time.monotonic()
         if h.health.is_paused():
             h.dm.record_command("repoll", False, _ms(started))
-            raise CommandException("BAD_ARGS", "instance is paused - resume first")
+            raise CommandException("PAUSED", "instance is paused - resume first")
         try:
             polled = h.control.repoll()
         except RepollRefused as e:

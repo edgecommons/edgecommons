@@ -18,7 +18,7 @@
  *
  * Every **counter** is emitted as a measure PAIR: `<name>Total` (monotonic since start) and
  * `<name>Interval` (since the previous emit of that family; **reset on emit** — see {@link Pair}).
- * **Gauges** (`connectionState`) and interval **sums** (the `*Ms` latencies/durations) are single
+ * **Gauges** (`connectionState`, `signalsSubscribed`) and interval **sums** (the `*Ms` latencies/durations) are single
  * measures. This is the same convention `modbus-adapter` and `ethernet-ip-adapter` use, so a fleet
  * dashboard reads every adapter the same way.
  *
@@ -78,10 +78,11 @@ export const COMMAND_VERBS: readonly string[] = [
 ];
 
 /**
- * The **exact** SOUTHBOUND.md §5 measure set of `southbound_health` — `connectionState`,
- * `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, plus the §5-optional
- * `reconnects`. This literal list is the parity anchor the metrics test asserts against; if you
- * change what `emitHealth` emits, this list and {@link familyDefs} must move with it.
+ * The **exact** SOUTHBOUND.md §5 measure set of `southbound_health` — the gauges
+ * `connectionState` and `signalsSubscribed`, the latency gauges `publishLatencyMs`/`pollLatencyMs`,
+ * and the interval counters `readErrors`, `writeErrors`, `staleSignals`, `reconnects`. This
+ * literal list is the parity anchor the metrics test asserts against; if you change what
+ * `emitHealth` emits, this list and {@link familyDefs} must move with it.
  */
 export const HEALTH_MEASURES: readonly string[] = [
   "connectionState",
@@ -90,6 +91,8 @@ export const HEALTH_MEASURES: readonly string[] = [
   "readErrors",
   "staleSignals",
   "reconnects",
+  "writeErrors",
+  "signalsSubscribed",
 ];
 
 const UNIT_COUNT = "Count";
@@ -141,6 +144,8 @@ export function familyDefs(): FamilyDef[] {
       m("readErrors", UNIT_COUNT, 60),
       m("staleSignals", UNIT_COUNT, 60),
       m("reconnects", UNIT_COUNT, 60),
+      m("writeErrors", UNIT_COUNT, 60),
+      m("signalsSubscribed", UNIT_COUNT, 1),
     ],
   });
 
@@ -276,6 +281,11 @@ export class DeviceMetrics {
     private readonly instance: string,
     private readonly health: Health,
     staleSignalSecs: number,
+    /**
+     * The size of the instance's `sb/signals` inventory — the `signalsSubscribed` gauge while the
+     * session is connected (`0` while disconnected).
+     */
+    private readonly signalCount: number = 0,
   ) {
     this.staleAfterMs = Math.max(1, staleSignalSecs) * 1000;
     for (const verb of COMMAND_VERBS) {
@@ -426,9 +436,14 @@ export class DeviceMetrics {
       readErrors: this.health.readErrors,
       staleSignals: this.staleCount(Date.now()),
       reconnects: this.health.reconnects,
+      writeErrors: this.health.writeErrors,
+      // The signals the connected session currently serves: the sb/signals inventory size while
+      // connected, 0 while the link is down.
+      signalsSubscribed: this.health.connectionState === 1 ? this.signalCount : 0,
     };
     // Interval counters reset on emit (parity with the §5 Count/60 measures).
     this.health.readErrors = 0;
+    this.health.writeErrors = 0;
     this.health.reconnects = 0;
     await this.emitCombo(HEALTH, [["instance", this.instance]], v, now);
   }

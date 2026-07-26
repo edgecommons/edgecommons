@@ -17,8 +17,8 @@ own.
 
 Every **counter** is emitted as a measure PAIR: ``<name>Total`` (monotonic since start) and
 ``<name>Interval`` (since the previous emit of that family; **reset on emit** — see :class:`_Pair`).
-**Gauges** (``connectionState``) and interval **sums** (the ``*Ms`` latencies/durations) are single
-measures. This is the same convention ``modbus-adapter`` and ``ethernet-ip-adapter`` use, so a fleet
+**Gauges** (``connectionState``, ``signalsSubscribed``) and interval **sums** (the ``*Ms``
+latencies/durations) are single measures. This is the same convention ``modbus-adapter`` and ``ethernet-ip-adapter`` use, so a fleet
 dashboard reads every adapter the same way.
 
 ## Dimensions are LOW-CARDINALITY only
@@ -68,13 +68,13 @@ COMMAND_VERBS = (
 )
 
 #: The **exact** SOUTHBOUND.md §5 measure set of ``southbound_health`` — ``connectionState``,
-#: ``publishLatencyMs``, ``pollLatencyMs``, ``readErrors``, ``staleSignals``, plus the §5-optional
-#: ``reconnects``. This literal list is the parity anchor the metrics test asserts against; if you
-#: change what :meth:`DeviceMetrics._emit_health` emits, this list and :func:`family_defs` must move
-#: with it.
+#: ``publishLatencyMs``, ``pollLatencyMs``, ``readErrors``, ``staleSignals``, ``reconnects``,
+#: ``writeErrors``, and the ``signalsSubscribed`` gauge. This literal list is the parity anchor the
+#: metrics test asserts against; if you change what :meth:`DeviceMetrics._emit_health` emits, this
+#: list and :func:`family_defs` must move with it.
 HEALTH_MEASURES = (
     "connectionState", "publishLatencyMs", "pollLatencyMs", "readErrors", "staleSignals",
-    "reconnects",
+    "reconnects", "writeErrors", "signalsSubscribed",
 )
 
 _UNIT_COUNT = "Count"
@@ -125,6 +125,8 @@ def family_defs() -> List[FamilyDef]:
             MeasureDef("readErrors", _UNIT_COUNT, 60),
             MeasureDef("staleSignals", _UNIT_COUNT, 60),
             MeasureDef("reconnects", _UNIT_COUNT, 60),
+            MeasureDef("writeErrors", _UNIT_COUNT, 60),
+            MeasureDef("signalsSubscribed", _UNIT_COUNT, 1),
         ),
     ))
 
@@ -370,6 +372,8 @@ class DeviceMetrics:
             "readErrors": float(self._health.take_read_errors()),
             "staleSignals": self._stale_count(time.monotonic()),
             "reconnects": float(self._health.take_reconnects()),
+            "writeErrors": float(self._health.take_write_errors()),
+            "signalsSubscribed": float(self._health.signals_subscribed()),
         }
         self._emit_combo(HEALTH, [("instance", self._instance)], v, now)
 

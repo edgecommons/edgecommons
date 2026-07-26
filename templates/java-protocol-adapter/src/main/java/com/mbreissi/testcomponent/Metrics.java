@@ -35,7 +35,7 @@ import java.util.Map;
  * <h2>The Total/Interval counter convention</h2>
  * Every <b>counter</b> is emitted as a measure PAIR: {@code <name>Total} (monotonic since start) and
  * {@code <name>Interval} (since the previous emit of that family; <b>reset on emit</b> — see
- * {@link Pair}). <b>Gauges</b> ({@code connectionState}) and interval <b>sums</b> (the {@code *Ms}
+ * {@link Pair}). <b>Gauges</b> ({@code connectionState}, {@code signalsSubscribed}) and interval <b>sums</b> (the {@code *Ms}
  * latencies/durations) are single measures. This is the same convention {@code modbus-adapter} and
  * {@code ethernet-ip-adapter} use, so a fleet dashboard reads every adapter the same way.
  *
@@ -86,14 +86,16 @@ public final class Metrics {
     };
 
     /**
-     * The <b>exact</b> SOUTHBOUND.md §5 measure set of {@code southbound_health} — {@code connectionState},
-     * {@code publishLatencyMs}, {@code pollLatencyMs}, {@code readErrors}, {@code staleSignals}, plus the
-     * §5-optional {@code reconnects}. This literal list is the parity anchor the metrics test asserts
-     * against; if you change what {@link DeviceMetrics#emitPeriodic()} emits, this list and
-     * {@link #familyDefs()} must move with it.
+     * The <b>exact</b> SOUTHBOUND.md §5 measure set of {@code southbound_health} — the gauges
+     * {@code connectionState} and {@code signalsSubscribed}, the latency gauges
+     * {@code publishLatencyMs}/{@code pollLatencyMs}, and the interval counters {@code readErrors},
+     * {@code writeErrors}, {@code staleSignals}, {@code reconnects}. This literal list is the parity
+     * anchor the metrics test asserts against; if you change what
+     * {@link DeviceMetrics#emitPeriodic()} emits, this list and {@link #familyDefs()} must move with it.
      */
     public static final String[] HEALTH_MEASURES = {
-            "connectionState", "publishLatencyMs", "pollLatencyMs", "readErrors", "staleSignals", "reconnects",
+            "connectionState", "publishLatencyMs", "pollLatencyMs", "readErrors", "staleSignals",
+            "reconnects", "writeErrors", "signalsSubscribed",
     };
 
     static final String UNIT_COUNT = "Count";
@@ -134,7 +136,9 @@ public final class Metrics {
                 m("pollLatencyMs", UNIT_MS, 1),
                 m("readErrors", UNIT_COUNT, 60),
                 m("staleSignals", UNIT_COUNT, 60),
-                m("reconnects", UNIT_COUNT, 60))));
+                m("reconnects", UNIT_COUNT, 60),
+                m("writeErrors", UNIT_COUNT, 60),
+                m("signalsSubscribed", UNIT_COUNT, 1))));
 
         // <<COMPONENTNAME>>Connection — the connect/reconnect lifecycle (dims: instance).
         List<MeasureDef> conn = new ArrayList<>();
@@ -219,6 +223,11 @@ final class DeviceMetrics {
      * ({@code component.global.healthThresholds.staleSignalSecs}).
      */
     private final long staleAfterNanos;
+    /**
+     * The size of the instance's {@code sb/signals} inventory — the {@code signalsSubscribed} gauge
+     * while the session is connected ({@code 0} while disconnected).
+     */
+    private final int signalCount;
 
     private final Object sync = new Object();
     private final ConnCounters conn = new ConnCounters();
@@ -228,12 +237,13 @@ final class DeviceMetrics {
     private final Map<String, Long> lastUpdateNanos = new HashMap<>();
 
     DeviceMetrics(MetricEmitter svc, ConfigManager config, String instance, Health health,
-                  long staleSignalSecs) {
+                  long staleSignalSecs, int signalCount) {
         this.svc = svc;
         this.config = config;
         this.instance = instance;
         this.health = health;
         this.staleAfterNanos = Math.max(1L, staleSignalSecs) * 1_000_000_000L;
+        this.signalCount = signalCount;
         for (String verb : Metrics.COMMAND_VERBS) {
             Map<String, CmdCounters> byResult = new LinkedHashMap<>();
             for (String result : Metrics.RESULTS) {
@@ -403,13 +413,18 @@ final class DeviceMetrics {
     }
 
     private void emitHealth(boolean now) {
+        long connected = health.connectionState();
         Map<String, Float> v = new LinkedHashMap<>();
-        v.put("connectionState", (float) health.connectionState());
+        v.put("connectionState", (float) connected);
         v.put("publishLatencyMs", (float) health.publishLatencyMs());
         v.put("pollLatencyMs", (float) health.pollLatencyMs());
         v.put("readErrors", (float) health.takeReadErrors());
         v.put("staleSignals", (float) staleCount(System.nanoTime()));
         v.put("reconnects", (float) health.takeReconnects());
+        v.put("writeErrors", (float) health.takeWriteErrors());
+        // The signals the connected session currently serves: the sb/signals inventory size while
+        // connected, 0 while the link is down.
+        v.put("signalsSubscribed", connected == 1 ? (float) signalCount : 0.0f);
         emitCombo(Metrics.HEALTH, dims("instance", instance), v, now);
     }
 

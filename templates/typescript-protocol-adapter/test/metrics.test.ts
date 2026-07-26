@@ -47,6 +47,8 @@ const SECTION_5 = new Set([
   "readErrors",
   "staleSignals",
   "reconnects",
+  "writeErrors",
+  "signalsSubscribed",
 ]);
 
 describe("southbound_health parity (SOUTHBOUND.md §5)", () => {
@@ -120,14 +122,31 @@ describe("DeviceMetrics emission", () => {
     const health = new Health();
     const dm = new DeviceMetrics(rec, testConfig(), "plc-1", health, 30);
     health.readErrors = 3;
+    health.writeErrors = 4;
     health.reconnects = 2;
     await dm.emitPeriodic();
     const h = rec.last(HEALTH);
     expect(h.readErrors).toBe(3);
+    expect(h.writeErrors).toBe(4);
     expect(h.reconnects).toBe(2);
     // Reset after the emit so the next interval starts clean.
     expect(health.readErrors).toBe(0);
+    expect(health.writeErrors).toBe(0);
     expect(health.reconnects).toBe(0);
+  });
+
+  it("gauges signalsSubscribed as the inventory size while connected, zero while down", async () => {
+    const rec = new RecordingMetrics();
+    const health = new Health();
+    const dm = new DeviceMetrics(rec, testConfig(), "plc-1", health, 30, 2);
+
+    health.setLink("ONLINE");
+    await dm.emitPeriodic();
+    expect(rec.last(HEALTH).signalsSubscribed).toBe(2); // connected: the sb/signals inventory size
+
+    health.setLink("BACKOFF");
+    await dm.emitPeriodic();
+    expect(rec.last(HEALTH).signalsSubscribed).toBe(0); // disconnected: zero
   });
 
   it("records a command into the Command family's (verb, result) counters", async () => {

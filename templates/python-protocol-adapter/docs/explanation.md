@@ -88,8 +88,8 @@ not a feature — this ordering is not negotiable.
 ## The operational-metrics pattern
 
 `southbound_health` is the exact SOUTHBOUND.md §5 measure set — `connectionState`,
-`publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, plus the optional `reconnects` —
-every adapter emits it, regardless of protocol. On top of that, `<<COMPONENTNAME>>Connection` and
+`publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, `reconnects`, `writeErrors`, and
+the `signalsSubscribed` gauge — every adapter emits it, regardless of protocol. On top of that, `<<COMPONENTNAME>>Connection` and
 `<<COMPONENTNAME>>Command` are the **worked operational-family pattern**: a `Total`/`Interval`
 counter pair per measure (monotonic since start, reset on each emit), low-cardinality dimensions
 only. Your protocol likely wants `Inventory`/`Poll`/`Publish` families of its own — see the
@@ -98,9 +98,12 @@ only. Your protocol likely wants `Inventory`/`Poll`/`Publish` families of its ow
 ## Panels
 
 Three edge-console panel descriptors (`overview`, `signals`, `diagnostics`; order 10/20/30,
-`scope: "instance"`) are registered via `commands.register_panel` alongside the command verbs, bound
-to the verbs above — so a console gets a working operator surface the moment this component is
-deployed, before any custom UI work.
+`scope: "instance"`) are registered via `commands.register_panel` alongside the command verbs — an
+adapter-overview summary with lifecycle bindings, a signal grid bound to `sb/signals`, and a
+hierarchical inventory tree driving `sb/browse`'s `ref` mode — so a console gets a working operator
+surface the moment this component is deployed, before any custom UI work. See
+[reference/messaging-interface.md](reference/messaging-interface.md#panels) for the exact
+descriptors.
 
 ## UNS addressing
 

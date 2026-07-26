@@ -17,7 +17,8 @@ The adapter never writes reserved `metric` topics directly — it defines metric
 
 Every **counter** measure is emitted as a pair: `<name>Total` (monotonic since start) and
 `<name>Interval` (since the previous emit of that family — **reset on emit**). **Gauges**
-(`connectionState`) and interval **sums** (the `*Ms` latencies/durations) are single measures. This is
+(`connectionState`, `signalsSubscribed`) and interval **sums** (the `*Ms` latencies/durations) are
+single measures. This is
 the same convention the reference adapters (`modbus-adapter`, `ethernet-ip-adapter`) use, so a fleet
 dashboard reads every adapter the same way.
 
@@ -43,6 +44,8 @@ Dimensions: `instance`.
 | `readErrors` | Count | Read errors observed during the reporting interval. |
 | `staleSignals` | Count | Signals with no update for longer than `component.global.healthThresholds.staleSignalSecs`. |
 | `reconnects` | Count | Reconnect events (link drops) observed during the reporting interval. |
+| `writeErrors` | Count | Write entries that failed on the device path during the reporting interval — device rejections and unavailable-device aborts. Entries that never reach the device (unresolved refs, allow-list refusals, missing values) are not counted. |
+| `signalsSubscribed` | Count | Signals the connected session currently serves (the `sb/signals` inventory size); `0` while disconnected. A gauge, not a pair. |
 
 ## `<<COMPONENTNAME>>Connection`
 

@@ -100,6 +100,48 @@ Note (init order): the messaging client is initialized before the config loads, 
 default is late-bound right after the `ConfigManager` exists; until then the built-in 30 s applies
 (deliberately — the CONFIG_COMPONENT bootstrap request gets a deadline too).
 
+#### Scoped command registration
+
+The command inbox subscribes both cmd scopes (D-U28): the component-scope topic
+(`ecv1/{device}/{component}/cmd/{verb}`) and the instance-scope topic
+(`ecv1/{device}/{component}/{instance}/cmd/{verb}`). A plain `CommandInbox.register(verb, handler)`
+handler receives only the request, whichever scope the command arrived on.
+`register_scoped(verb, handler)` additionally passes the addressed instance:
+
+```python
+def pause(request, addressed_instance):
+    # addressed_instance is the topic's {instance} token, or None for a
+    # component-scoped delivery.
+    ...
+    return {"paused": True}
+
+commands.register_scoped("sb/pause", pause)
+```
+
+A verb has either a plain or a scoped handler — the one-handler-per-verb rule, the
+shadowing/duplicate errors, the reply and error handling, and the `describe()` participation are
+identical to `register(...)`.
+
+#### Command availability
+
+`CommandInbox.set_command_availability(verb, state, reason=None)` declares a registered verb's
+availability on the `describe()` discovery surface. `state` is exactly `"available"`, `"disabled"`,
+or `"unsupported"`; any other value raises `ValueError`, as does an unregistered verb. `"disabled"`
+and `"unsupported"` add `"availability": {"state": ..., "reason"?: ...}` to that verb's describe
+command entry (`{verb, builtIn, availability?}`); `"available"` removes the stored entry and the
+verb reverts to the plain `{verb, builtIn}` shape. The `reason` is trimmed, truncated to 256
+characters, and omitted when empty or absent. The describe `digest` changes whenever availability
+changes, so consoles re-fetch on the next announcement.
+
+```python
+commands.set_command_availability("sb/write", "disabled", "writes.allow[] is empty")
+commands.set_command_availability("sb/write", "available")  # clears the entry
+```
+
+`describe()`'s panel manifest selects `defaultView` as the first registered view whose `default`
+property is boolean `true`, falling back to the first view; views are emitted verbatim (the
+`default` key is not stripped).
+
 #### Deferred command replies
 
 Handlers registered with `CommandInbox.register(...)` retain the existing immediate `dict`/`None`

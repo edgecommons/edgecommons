@@ -290,7 +290,8 @@ export type LinkState = "CONNECTING" | "ONLINE" | "BACKOFF";
 
 /**
  * The shared per-device state the metrics emitter reads and the connectivity provider renders. The
- * gauges (`connectionState`, latencies) and the interval counters (`readErrors`, `reconnects`) feed
+ * gauges (`connectionState`, latencies) and the interval counters (`readErrors`, `writeErrors`,
+ * `reconnects`) feed
  * `southbound_health` (`src/metrics.ts`); `paused` and `link` feed the connectivity token and
  * `sb/status`. One source, several surfaces — so a health dot, a metric, and a status reply can
  * never disagree.
@@ -308,6 +309,12 @@ export class Health {
   publishLatencyMs = 0;
   /** Reset on each `southbound_health` emit. */
   readErrors = 0;
+  /**
+   * One per DEVICE-failed `sb/write` entry — an entry that passed validation and the allow-list
+   * and then failed at the device (mirrors `readErrors` as device health; caller/policy errors do
+   * not count). Reset on each `southbound_health` emit.
+   */
+  writeErrors = 0;
   /** Reset on each `southbound_health` emit. */
   reconnects = 0;
 

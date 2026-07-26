@@ -24,7 +24,7 @@ class MetricsTest {
         // A second, independent copy of §5 — NOT the module const, so a wrong edit to one is caught.
         Set<String> section5 = new TreeSet<>(List.of(
                 "connectionState", "publishLatencyMs", "pollLatencyMs", "readErrors", "staleSignals",
-                "reconnects"));
+                "reconnects", "writeErrors", "signalsSubscribed"));
 
         Metrics.FamilyDef health = Metrics.familyDefs().stream()
                 .filter(f -> f.name().equals(Metrics.HEALTH)).findFirst().orElseThrow();

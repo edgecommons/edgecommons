@@ -209,12 +209,23 @@ public final class CommandInbox implements AutoCloseable {
     /** Verbs owned by other library subscriptions on the same inbox path — always ignored. */
     public static final Set<String> DELEGATED_VERBS = Set.of(SET_CONFIG_VERB);
 
+    /** The command availability states accepted by {@link #setCommandAvailability}. */
+    public static final Set<String> AVAILABILITY_STATES =
+            Set.of("available", "disabled", "unsupported");
+
+    /** Maximum stored length of a {@link #setCommandAvailability} reason (longer text is truncated). */
+    public static final int MAX_AVAILABILITY_REASON_CHARS = 256;
+
     private final ConfigManager configManager;
     private final MessagingClient messagingClient;
     /** verb → handler; built-ins seeded at construction, custom verbs via {@link #register}. */
     private final Map<String, CommandHandler> handlers = new ConcurrentHashMap<>();
     /** verb → explicit-outcome handler; custom verbs via {@link #registerOutcome}. */
     private final Map<String, OutcomeCommandHandler> outcomeHandlers = new ConcurrentHashMap<>();
+    /** verb → scope-aware handler; custom verbs via {@link #registerScoped}. */
+    private final Map<String, ScopedCommandHandler> scopedHandlers = new ConcurrentHashMap<>();
+    /** verb → stored non-available availability ({@code {state, reason?}}); see {@link #setCommandAvailability}. */
+    private final Map<String, JsonObject> availability = new ConcurrentHashMap<>();
     /** panel id → descriptor; custom panels via {@link #registerPanel(JsonObject)}. */
     private final Map<String, JsonObject> panels = Collections.synchronizedMap(new LinkedHashMap<>());
 
@@ -552,6 +563,78 @@ public final class CommandInbox implements AutoCloseable {
         LOGGER.debug("Outcome command verb '{}' registered", verb);
     }
 
+    /**
+     * Registers a scope-aware handler ({@link ScopedCommandHandler}) — the same registration seam
+     * as {@link #register}, but the handler additionally receives the <b>addressed instance</b>:
+     * the delivery topic's {@code {instance}} token for an instance-scoped command, or
+     * {@code null} for a component-scoped one (D‑U28). The token is parsed against the inbox's
+     * own subscribed filters, never re-derived from config. A verb has EITHER a plain or a scoped
+     * handler (the one-handler-per-verb rule and duplicate-registration errors are shared), and a
+     * scoped verb participates in {@code describe} identically to a plain one.
+     *
+     * @param verb    the verb (the {@code cmd} channel, {@code /}-namespaces allowed)
+     * @param handler the scope-aware handler to dispatch it to
+     * @throws IllegalArgumentException when the verb is built-in/delegated/already registered
+     * @throws com.mbreissi.edgecommons.uns.UnsValidationException when a verb token violates the
+     *                                                           §2.2 token rule
+     */
+    public synchronized void registerScoped(String verb, ScopedCommandHandler handler) {
+        Objects.requireNonNull(verb, "verb must not be null");
+        Objects.requireNonNull(handler, "handler must not be null");
+        validateCustomVerbRegistration(verb);
+        if (scopedHandlers.putIfAbsent(verb, handler) != null) {
+            throw new IllegalArgumentException("verb '" + verb + "' is already registered -"
+                    + " unregister it first to replace the handler");
+        }
+        LOGGER.debug("Scoped command verb '{}' registered", verb);
+    }
+
+    /**
+     * Declares a registered verb's <b>availability</b> for {@value #DESCRIBE} consumers (a
+     * console greys a {@code disabled} verb, hides an {@code unsupported} one). {@code available}
+     * removes any stored declaration — the verb's describe entry reverts to the plain
+     * {@code {verb, builtIn}}; {@code disabled}/{@code unsupported} store
+     * {@code {state, reason?}}, surfaced on the entry as {@code "availability"} (the describe
+     * digest changes with it). The reason is caller-provided operator text — trimmed, truncated
+     * to {@value #MAX_AVAILABILITY_REASON_CHARS} chars, omitted when empty.
+     *
+     * @param verb   an already-registered verb (built-in or custom)
+     * @param state  {@code "available"}, {@code "disabled"} or {@code "unsupported"}
+     * @param reason the operator-facing reason, or {@code null} for none (ignored for
+     *               {@code available})
+     * @throws IllegalArgumentException when the state is unknown or the verb is not registered
+     */
+    public synchronized void setCommandAvailability(String verb, String state, String reason) {
+        Objects.requireNonNull(verb, "verb must not be null");
+        Objects.requireNonNull(state, "state must not be null");
+        if (!AVAILABILITY_STATES.contains(state)) {
+            throw new IllegalArgumentException("availability state '" + state + "' is not one of "
+                    + "available/disabled/unsupported");
+        }
+        if (!handlers.containsKey(verb) && !outcomeHandlers.containsKey(verb)
+                && !scopedHandlers.containsKey(verb)) {
+            throw new IllegalArgumentException("verb '" + verb + "' is not registered - command"
+                    + " availability applies to registered verbs only");
+        }
+        if ("available".equals(state)) {
+            availability.remove(verb);
+            return;
+        }
+        JsonObject entry = new JsonObject();
+        entry.addProperty("state", state);
+        String trimmed = reason == null ? "" : reason.trim();
+        if (!trimmed.isEmpty()) {
+            entry.addProperty("reason", trimmed.length() > MAX_AVAILABILITY_REASON_CHARS
+                    ? trimmed.substring(0, MAX_AVAILABILITY_REASON_CHARS) : trimmed);
+        }
+        availability.put(verb, entry);
+    }
+
+    /** {@link #setCommandAvailability(String, String, String)} with no reason. */
+    public void setCommandAvailability(String verb, String state) {
+        setCommandAvailability(verb, state, null);
+    }
+
     private void validateCustomVerbRegistration(String verb) {
         for (String token : verb.split("/", -1)) {
             Uns.checkToken(token, "verb token");
@@ -564,7 +647,8 @@ public final class CommandInbox implements AutoCloseable {
             throw new IllegalArgumentException("verb '" + verb + "' is owned by another library"
                     + " subsystem and cannot be registered");
         }
-        if (handlers.containsKey(verb) || outcomeHandlers.containsKey(verb)) {
+        if (handlers.containsKey(verb) || outcomeHandlers.containsKey(verb)
+                || scopedHandlers.containsKey(verb)) {
             throw new IllegalArgumentException("verb '" + verb + "' is already registered -"
                     + " unregister it first to replace the handler");
         }
@@ -583,7 +667,9 @@ public final class CommandInbox implements AutoCloseable {
             throw new IllegalArgumentException("verb '" + verb + "' is a built-in verb and"
                     + " cannot be unregistered");
         }
-        if (handlers.remove(verb) != null || outcomeHandlers.remove(verb) != null) {
+        if (handlers.remove(verb) != null || outcomeHandlers.remove(verb) != null
+                || scopedHandlers.remove(verb) != null) {
+            availability.remove(verb);  // a re-registered verb starts available again
             LOGGER.debug("Command verb '{}' unregistered", verb);
         }
     }
@@ -593,6 +679,7 @@ public final class CommandInbox implements AutoCloseable {
         Set<String> verbs = ConcurrentHashMap.newKeySet();
         verbs.addAll(handlers.keySet());
         verbs.addAll(outcomeHandlers.keySet());
+        verbs.addAll(scopedHandlers.keySet());
         return Set.copyOf(verbs);
     }
 
@@ -757,6 +844,10 @@ public final class CommandInbox implements AutoCloseable {
             JsonObject entry = new JsonObject();
             entry.addProperty("verb", verb);
             entry.addProperty("builtIn", BUILT_IN_VERBS.contains(verb));
+            JsonObject declared = availability.get(verb);
+            if (declared != null) {
+                entry.add("availability", declared.deepCopy());
+            }
             commands.add(entry);
         });
         result.add("commands", commands);
@@ -770,8 +861,7 @@ public final class CommandInbox implements AutoCloseable {
         panelSet.addProperty("provider", identity == null ? "component" : identity.getComponent());
         panelSet.addProperty("renderer", "descriptor");
         if (views.size() > 0) {
-            panelSet.addProperty("defaultView",
-                    views.get(0).getAsJsonObject().get("id").getAsString());
+            panelSet.addProperty("defaultView", defaultViewId(views));
         }
         panelSet.add("views", views);
         result.add("panels", panelSet);
@@ -782,6 +872,23 @@ public final class CommandInbox implements AutoCloseable {
         result.addProperty("digest", sha256Digest(digestSource));
 
         return result;
+    }
+
+    /**
+     * The panel set's {@code defaultView}: the {@code id} of the first view whose {@code default}
+     * property is boolean {@code true}, falling back to {@code views[0].id}. Views themselves are
+     * emitted verbatim (the {@code default} key is not stripped).
+     */
+    private static String defaultViewId(JsonArray views) {
+        for (JsonElement element : views) {
+            JsonObject view = element.getAsJsonObject();
+            if (view.has("default") && view.get("default").isJsonPrimitive()
+                    && view.get("default").getAsJsonPrimitive().isBoolean()
+                    && view.get("default").getAsBoolean()) {
+                return view.get("id").getAsString();
+            }
+        }
+        return views.get(0).getAsJsonObject().get("id").getAsString();
     }
 
     private static String sha256Digest(JsonObject source) {
@@ -1121,18 +1228,55 @@ public final class CommandInbox implements AutoCloseable {
                         + " equal the topic verb)", topic);
                 return;
             }
-            dispatch(verb, message);
+            dispatch(verb, message, addressedInstance(topic, cmdMarker, prefix));
         } catch (Exception e) {
             LOGGER.debug("Ignoring malformed cmd payload on '{}': {}", topic, e.toString());
         }
     }
 
+    /**
+     * The delivery topic's addressed instance (D‑U28), parsed against the inbox's own subscribed
+     * filters (never re-derived from config): the segments before the {@code /cmd/} marker are
+     * either the component head ({@code ecv1/{device}/{component}} → component scope,
+     * {@code null}) or the head plus exactly one {@code {instance}} token → that token. A
+     * malformed topic (impossible through the subscribed filters) is treated as component scope.
+     *
+     * @param prefix the instance-scope filter minus the trailing {@code #}
+     *               ({@code ecv1/{device}/{component}/+/cmd/})
+     */
+    private static String addressedInstance(String topic, int cmdMarker, String prefix) {
+        String instanceSlot = "/+/cmd/";
+        if (prefix == null || !prefix.endsWith(instanceSlot)) {
+            return null;
+        }
+        String componentHead = prefix.substring(0, prefix.length() - instanceSlot.length());
+        String head = topic.substring(0, cmdMarker);
+        if (head.equals(componentHead)) {
+            return null;    // component scope: no instance slot in the topic
+        }
+        if (head.length() > componentHead.length() + 1
+                && head.startsWith(componentHead)
+                && head.charAt(componentHead.length()) == '/') {
+            String token = head.substring(componentHead.length() + 1);
+            if (token.indexOf('/') < 0) {
+                return token;
+            }
+        }
+        return null;    // malformed -> component scope
+    }
+
     /** Dispatches a well-formed request to its handler and replies (when {@code reply_to} set). */
-    private void dispatch(String verb, Message request) {
+    private void dispatch(String verb, Message request, String addressedInstance) {
         boolean wantsReply = request.getHeader().getReplyTo() != null
                 && !request.getHeader().getReplyTo().isEmpty();
         OutcomeCommandHandler outcomeHandler = outcomeHandlers.get(verb);
         CommandHandler handler = handlers.get(verb);
+        ScopedCommandHandler scopedHandler = scopedHandlers.get(verb);
+        if (handler == null && scopedHandler != null) {
+            // A scoped handler is a plain handler that also sees the addressed instance; adapting
+            // here keeps the reply/error handling below literally identical for both.
+            handler = req -> scopedHandler.handle(req, addressedInstance);
+        }
         if (handler == null && outcomeHandler == null) {
             if (wantsReply) {
                 LOGGER.debug("Unknown verb '{}' - sending {} error reply", verb, ERR_UNKNOWN_VERB);

@@ -123,10 +123,10 @@ class DeviceConfig:
 
 class Health:
     """The shared per-device state the metrics emitter reads and the connectivity provider renders.
-    The gauges (``connection_state``, latencies) and the interval counters (``read_errors``,
-    ``reconnects``) feed ``southbound_health`` (:mod:`metrics`); ``paused`` and ``link`` feed the
-    connectivity token and ``sb/status``. One source, several surfaces — so a health dot, a metric,
-    and a status reply can never disagree."""
+    The gauges (``connection_state``, ``signals_subscribed``, latencies) and the interval counters
+    (``read_errors``, ``write_errors``, ``reconnects``) feed ``southbound_health`` (:mod:`metrics`);
+    ``paused`` and ``link`` feed the connectivity token and ``sb/status``. One source, several
+    surfaces — so a health dot, a metric, and a status reply can never disagree."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -136,7 +136,9 @@ class Health:
         self._poll_latency_ms = 0
         self._publish_latency_ms = 0
         self._read_errors = 0
+        self._write_errors = 0
         self._reconnects = 0
+        self._signal_inventory = 0
 
     def set_link(self, state: str) -> None:
         """Record the link's condition. The metric's boolean and the reported state token move
@@ -187,6 +189,12 @@ class Health:
         with self._lock:
             self._read_errors += 1
 
+    def incr_write_error(self) -> None:
+        """One write entry that failed on the device path (rejected, or aborted by an unavailable
+        device) — feeds ``southbound_health.writeErrors``."""
+        with self._lock:
+            self._write_errors += 1
+
     def incr_reconnect(self) -> None:
         with self._lock:
             self._reconnects += 1
@@ -197,11 +205,28 @@ class Health:
             self._read_errors = 0
             return v
 
+    def take_write_errors(self) -> int:
+        with self._lock:
+            v = self._write_errors
+            self._write_errors = 0
+            return v
+
     def take_reconnects(self) -> int:
         with self._lock:
             v = self._reconnects
             self._reconnects = 0
             return v
+
+    def set_signal_inventory(self, count: int) -> None:
+        """The size of this device's ``sb/signals`` inventory. ``signals_subscribed`` reports it
+        while the link is up, and 0 while it is not — the gauge and the connection state read the
+        same lock, so they can never disagree."""
+        with self._lock:
+            self._signal_inventory = max(0, int(count))
+
+    def signals_subscribed(self) -> int:
+        with self._lock:
+            return self._signal_inventory if self._link == ONLINE else 0
 
 
 def set_paused(health: Health, paused: bool) -> bool:
@@ -274,7 +299,9 @@ class Device:
                                  stale_signal_secs)
         self._dm.define_all()
         # The signal inventory `sb/signals` shows — a config/backend view, no device round-trip.
+        # Its size drives the `southbound_health.signalsSubscribed` gauge while the link is up.
         self._signals = self._backend.inventory(cfg.connection) if self._backend is not None else []
+        self._health.set_signal_inventory(len(self._signals))
         self._session = None
         self._session_lock = threading.RLock()
         self._stop = threading.Event()

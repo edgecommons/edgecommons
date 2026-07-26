@@ -25,6 +25,11 @@
  * 5. `signal.id` is the **only** hard reject — a publish with no stable id throws
  *    `EdgeCommonsError` (kind `Validation`) at the call site.
  *
+ * Sample extras + explicit null (`docs/SOUTHBOUND.md` §2): a sample MAY carry additive
+ * protocol-specific fields beside the canonical five ({@link Sample.extra}, copied after the
+ * canonical fields; {@link RESERVED_SAMPLE_KEYS} are rejected), and a `null` value is a
+ * legitimate explicit protocol null — `undefined` remains the missing-value fail-fast.
+ *
  * Channel routing (DESIGN-class-facades §4, D1): per-call {@link SignalUpdate.via} override ▸
  * config `publish.channel` (instance ▸ global) ▸ {@link Channel.LOCAL}. A `stream:<name>` route
  * serializes the same envelope and appends it via the bound {@link StreamSink} (partition key =
@@ -58,6 +63,20 @@ export const DATA_MESSAGE_NAME = "SouthboundSignalUpdate";
 export const DATA_MESSAGE_VERSION = "1.0";
 /** The `qualityRaw` marker written when `quality` was defaulted to {@link Quality.Good}. */
 export const QUALITY_UNSPECIFIED = "unspecified";
+/**
+ * Sample keys a {@link Sample.extra} entry may not use (`docs/SOUTHBOUND.md` §2): the canonical
+ * five plus the derived epoch-millis twins. A colliding extra key is rejected fail-fast at
+ * publish/build.
+ */
+export const RESERVED_SAMPLE_KEYS: ReadonlySet<string> = new Set([
+  "value",
+  "quality",
+  "qualityRaw",
+  "sourceTs",
+  "serverTs",
+  "sourceTsMs",
+  "serverTsMs",
+]);
 
 export class DataFacade {
   private warnedNoStream = false;
@@ -179,12 +198,17 @@ export class DataFacade {
     return body;
   }
 
-  /** Builds one sample with the quality/qualityRaw/serverTs defaulting rules. */
+  /**
+   * Builds one sample with the quality/qualityRaw/serverTs defaulting rules. A `null` value is a
+   * legitimate explicit protocol null (published as JSON `null`, normal quality defaulting);
+   * `undefined` is the accidental-missing-value fail-fast. {@link Sample.extra} entries are
+   * copied after the canonical fields; a reserved key ({@link RESERVED_SAMPLE_KEYS}) is rejected.
+   */
   private buildSample(sample: Sample): Record<string, unknown> {
     if (sample.value === undefined) {
       throw EdgeCommonsError.validation(
         "data sample value is required (a quality-only sample is not a sample) - pass" +
-          " BAD/UNCERTAIN for a failed read",
+          " BAD/UNCERTAIN for a failed read, or an explicit null for a protocol null",
       );
     }
     const out: Record<string, unknown> = { value: sample.value };
@@ -201,6 +225,18 @@ export class DataFacade {
 
     if (sample.sourceTs !== undefined) out.sourceTs = sample.sourceTs;
     out.serverTs = sample.serverTs ?? toIso(this.clockMillis());
+
+    if (sample.extra !== undefined) {
+      for (const [key, value] of Object.entries(sample.extra)) {
+        if (RESERVED_SAMPLE_KEYS.has(key)) {
+          throw EdgeCommonsError.validation(
+            `sample extra key '${key}' collides with a canonical sample field - reserved keys: ` +
+              [...RESERVED_SAMPLE_KEYS].join(", "),
+          );
+        }
+        out[key] = value;
+      }
+    }
     return out;
   }
 
