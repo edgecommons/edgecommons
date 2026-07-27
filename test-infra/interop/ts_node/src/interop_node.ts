@@ -15,6 +15,8 @@
  *   interop_node status-request      <component>
  *   interop_node state-instances-pub <component>
  *   interop_node state-instances-sub <component>
+ *   interop_node describe-responder  <component>
+ *   interop_node describe-requester  <component>
  *
  * Messages are built without a config — the envelope legally omits `identity` unless
  * one is stamped explicitly (the UNS roles); `tags.thing` no longer exists (UNS hard cut).
@@ -1346,6 +1348,81 @@ async function runStateInstancesSub(component: string): Promise<number> {
   }
 }
 
+// --- declared verb scope on the `describe` manifest (DESIGN-scoped-commands §2.3) --------------
+
+/**
+ * The ONE custom verb every language's describe-responder registers, declared INSTANCE-scoped, so
+ * the manifest advertises a non-built-in entry whose `scope` differs from the five built-ins (all
+ * `both`, D-SC-3).
+ */
+const DESCRIBE_PROBE_VERB = "sb/probe";
+
+/**
+ * describe-responder <component> — a real component carrying exactly ONE custom verb, `sb/probe`,
+ * declared INSTANCE-scoped, so the built-in `describe` manifest advertises a non-built-in entry
+ * with scope "instance" beside the five "both" built-ins.
+ */
+async function runDescribeResponder(component: string): Promise<never> {
+  const path = writeCommandRuntimeConfig(component);
+  let gg: Awaited<ReturnType<EdgeCommonsBuilder["build"]>> | undefined;
+  try {
+    gg = await new EdgeCommonsBuilder(`com.mbreissi.edgecommons.interop.${LANG}.DescribeResponder`)
+      .args(logRuntimeArgs(path))
+      .configureCommands((inbox) => {
+        inbox.register(DESCRIBE_PROBE_VERB, CommandScopes.Instance, (_request, addressedInstance) => ({
+          probe: LANG,
+          instance: addressedInstance ?? null,
+        }));
+      })
+      .build();
+    process.stdout.write("READY\n");
+    await stayAlive();
+  } finally {
+    if (gg) await gg.close();
+    try {
+      unlinkSync(path);
+    } catch {
+      // best effort after a failed startup
+    }
+  }
+  throw new Error("unreachable describe responder completion");
+}
+
+/**
+ * describe-requester <component> — pull the built-in `describe` verb on that component's inbox and
+ * print the manifest (the command reply body is `{ok, result}`; `result` is the manifest).
+ */
+async function runDescribeRequester(component: string): Promise<number> {
+  const svc = await service("describereq");
+  try {
+    const request = MessageBuilder.create("describe", "1.0")
+      .withCommand({ from: LANG })
+      .withTags({})
+      .build();
+    let reply: Message;
+    try {
+      reply = await svc.request(commandTopic(component, "describe"), request, 15_000);
+    } catch (e) {
+      emit({ ok: false, error: `timeout: ${String(e)}` });
+      return 1;
+    }
+    const body = reply.getBody() as Record<string, unknown> | null;
+    if (!body || body.ok !== true) {
+      emit({ ok: false, error: `command failed: ${JSON.stringify(body)}` });
+      return 1;
+    }
+    const result = body.result as Record<string, unknown> | undefined;
+    if (!result || !Array.isArray(result.commands) || typeof result.digest !== "string") {
+      emit({ ok: false, error: `unexpected describe manifest: ${JSON.stringify(result)}` });
+      return 1;
+    }
+    emit({ ok: true, reply_body: result });
+    return 0;
+  } finally {
+    await svc.disconnect();
+  }
+}
+
 async function main(): Promise<void> {
   const [role, a, b, c] = process.argv.slice(2);
   switch (role) {
@@ -1401,6 +1478,11 @@ async function main(): Promise<void> {
       return;
     case "state-instances-sub":
       process.exit(await runStateInstancesSub(a));
+    case "describe-responder":
+      await runDescribeResponder(a);
+      return;
+    case "describe-requester":
+      process.exit(await runDescribeRequester(a));
     default:
       process.stderr.write(`unknown role: ${role}\n`);
       process.exit(2);

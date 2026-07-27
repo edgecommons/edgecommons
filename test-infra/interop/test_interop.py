@@ -850,3 +850,124 @@ def test_interop_state_instances(commands, publisher, subscriber):
                 sub.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 sub.kill()
+
+
+# ---------------------------------------------------------------------------------------------
+# `describe` - the declared verb scope and the manifest digest
+# (DESIGN-scoped-commands 2.3, and 3 step 5: "the interop matrix for the describe-shape change")
+#
+# 0.5.0 added "scope" to every describe.commands[] entry and folded it into the existing describe
+# digest. Two claims have to hold ACROSS languages, and neither is provable from one language's
+# own unit tests:
+#   * the SHAPE - each entry is exactly {verb, builtIn, scope, availability?}, `scope` carries the
+#     lowercase wire token, and a custom verb's DECLARED scope survives to the manifest beside the
+#     five scope-indifferent built-ins;
+#   * the DIGEST - four independent canonicalize-then-SHA-256 implementations must produce the
+#     SAME string for the SAME manifest. A console caches on that digest, so a language that
+#     hashed a differently-canonicalized payload would look correct on its own and make every
+#     mixed-language fleet re-fetch forever (or miss a real change).
+#
+# Key order is deliberately NOT asserted: each library pins {verb, builtIn, scope, availability?}
+# in its own serialization, but the envelope body is a protobuf map (EcValue/EcMap), so JSON member
+# order is erased in transit - what a node observes is an artifact of its OWN parser, not of the
+# producer. The matrix pins what the wire really carries: the exact key SET per entry, the array
+# order, the values, and the digest (which every language computes over a key-canonicalized
+# payload). Per-language key order stays covered by each library's own unit tests.
+# ---------------------------------------------------------------------------------------------
+
+# ONE fixed component token for every describe-responder. panels.provider IS the component token
+# and the digest covers panels, so a per-pair random token would have the four languages hashing
+# four DIFFERENT manifests and make the cross-language digest claim vacuous. The matrix runs one
+# responder at a time (each is terminated and reaped before the next starts), so a fixed token is
+# safe on the shared broker.
+DESCRIBE_COMPONENT = "describeprobe"
+
+# The single CUSTOM verb every node registers, declared INSTANCE-scoped, so the manifest carries a
+# non-built-in entry whose scope differs from the built-ins' "both" (D-SC-3).
+DESCRIBE_PROBE_VERB = "sb/probe"
+
+# The exact manifest commands[] every language must advertise for that component: the five
+# scope-indifferent built-ins plus the one instance-scoped custom verb, sorted by verb. Array order
+# IS normative (all four sort the verb set). No entry carries `availability`, because none was
+# declared - an optional member emitted as null/empty would fail the key-set assertion below AND
+# change the digest.
+EXPECTED_DESCRIBE_COMMANDS = [
+    {"verb": "describe", "builtIn": True, "scope": "both"},
+    {"verb": "get-configuration", "builtIn": True, "scope": "both"},
+    {"verb": "ping", "builtIn": True, "scope": "both"},
+    {"verb": "reload-config", "builtIn": True, "scope": "both"},
+    {"verb": DESCRIBE_PROBE_VERB, "builtIn": False, "scope": "instance"},
+    {"verb": "status", "builtIn": True, "scope": "both"},
+]
+
+# pair -> (commands, digest) for every pair observed so far. Each pair asserts agreement with all
+# earlier ones, so by the last of the 16 the whole matrix has been compared transitively.
+_DESCRIBE_SEEN = {}
+
+
+@pytest.mark.parametrize("consumer", LANGS)
+@pytest.mark.parametrize("producer", LANGS)
+def test_describe_scope_matrix(commands, producer, consumer):
+    """Every producer's `describe` manifest advertises the declared per-verb scope, and all four
+    languages compute the SAME digest over it (16 pairs)."""
+    for lang in (producer, consumer):
+        if lang not in commands:
+            pytest.skip(f"{lang} toolchain/artifact unavailable")
+
+    pair = f"{producer}->{consumer}"
+    resp = subprocess.Popen(
+        commands[producer]("describe-responder", DESCRIBE_COMPONENT),
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, cwd=str(RUN_DIR),
+    )
+    try:
+        assert _wait_ready(resp, timeout=40), f"{producer} describe-responder never signalled READY"
+
+        result = subprocess.run(
+            commands[consumer]("describe-requester", DESCRIBE_COMPONENT),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=40,
+            cwd=str(RUN_DIR),
+        )
+        assert result.returncode == 0, (
+            f"{pair} describe-requester failed: {result.stdout}\n{result.stderr}")
+        payload = _last_json(result.stdout.splitlines())
+        assert payload is not None, f"no JSON from {consumer}: {result.stdout}"
+        assert payload["ok"] is True, f"{pair}: describe not ok: {payload}"
+
+        manifest = payload["reply_body"]
+        assert manifest["schemaVersion"] == "edgecommons.component.describe.v1"
+        # The premise of the digest claim: all four responders describe the SAME component, so the
+        # panels.provider the digest covers is the same string everywhere.
+        assert manifest["panels"]["provider"] == DESCRIBE_COMPONENT, (
+            f"{pair}: the manifest must describe the fixed interop component: {manifest['panels']}")
+
+        got = manifest["commands"]
+        assert len(got) == len(EXPECTED_DESCRIBE_COMMANDS), (
+            f"{pair}: expected {len(EXPECTED_DESCRIBE_COMMANDS)} commands, got {got}")
+        for expected, entry in zip(EXPECTED_DESCRIBE_COMMANDS, got):
+            # Exactly the pinned members - no extra field, and no optional member (`availability`)
+            # emitted as null/empty by a language that "helpfully" always writes it.
+            assert set(entry) == set(expected), (
+                f"{pair}: the {expected['verb']} entry members must be exactly {sorted(expected)},"
+                f" got {sorted(entry)}")
+            assert entry == expected, f"{pair}: {expected['verb']} entry mismatch: {entry}"
+
+        digest = manifest["digest"]
+        assert isinstance(digest, str) and digest.startswith("sha256:") and len(digest) == 71, (
+            f"{pair}: digest must be 'sha256:' + 64 hex chars, got {digest!r}")
+        int(digest[len("sha256:"):], 16)  # hex only, in every language
+
+        # Cross-language agreement: the manifest one language SERVES and another PARSES must hash
+        # to the same digest in all 16 pairs - compared against every pair already observed.
+        for seen_pair, (seen_commands, seen_digest) in _DESCRIBE_SEEN.items():
+            assert got == seen_commands, (
+                f"{pair} and {seen_pair} disagree on commands[]: {got} vs {seen_commands}")
+            assert digest == seen_digest, (
+                f"{pair} computed digest {digest}, but {seen_pair} computed {seen_digest} for the"
+                " same manifest - the four canonicalizations have diverged")
+        _DESCRIBE_SEEN[pair] = (got, digest)
+    finally:
+        resp.terminate()
+        try:
+            resp.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            resp.kill()

@@ -101,6 +101,27 @@ transport and asserts the canonical topic, envelope header, top-level identity, 
 `edgecommons.log.v1` body shape. This is the local MQTT gate for changes to the
 library-owned UNS `log` class.
 
+## `describe` scope + digest roles (DESIGN-scoped-commands §2.3)
+
+Every `describe.commands[]` entry carries the verb's declared `"scope"`, and that field
+participates in the describe digest a console caches on. Two roles prove both across languages:
+
+- `describe-responder <componentToken>` — start a real HOST/MQTT component that registers exactly
+  one custom verb, `sb/probe`, with the **INSTANCE** scope, so its `describe` manifest advertises a
+  non-built-in entry with `"scope": "instance"` beside the five scope-indifferent `"both"`
+  built-ins. Prints `READY`, then serves until terminated.
+- `describe-requester <componentToken>` — pull that component's built-in `describe` verb over its
+  command inbox (`ecv1/interop-device/<component>/cmd/describe`) and print
+  `{"ok": true, "reply_body": <manifest>}`.
+
+`test_describe_scope_matrix` runs all 16 ordered producer/consumer pairs against ONE fixed
+component token — `panels.provider` is that token and the digest covers `panels`, so every language
+hashes the *same* manifest. Each pair asserts the entry key set, the array order, the scope tokens,
+and a `sha256:`-prefixed digest, then compares both the `commands[]` array and the digest against
+every pair already observed: all 16 must agree. Key order within an entry is not asserted — the
+envelope body is a protobuf map (`EcValue`/`EcMap`), so JSON member order is erased in transit and
+each library's pinned order stays covered by its own unit tests.
+
 Nodes (each consumes its library's public API, like a real component):
 - `python_node.py` — uses the installed `edgecommons` package.
 - `rust_node/` — a small cargo binary depending on `libs/rust` by path.
