@@ -11,6 +11,7 @@ import {
   parseDevice,
   publishReadings,
   setPaused,
+  stampReceived,
   toLibQuality,
 } from "../src/app";
 import { Quality, SimBackend } from "../src/device";
@@ -236,6 +237,136 @@ describe("the southbound publish path", () => {
 
     expect(calls).toBe(2); // both attempted
     expect(count).toBe(1); // only the second succeeded
+  });
+});
+
+describe("the four-slot timestamp model (SOUTHBOUND.md §2)", () => {
+  const device = { id: "device-1", connection: { endpoint: "sim://device-1" } };
+
+  function firstSample(published: Published[]): Record<string, unknown> {
+    const body = published[0].msg.body as { samples: Record<string, unknown>[] };
+    return body.samples[0];
+  }
+
+  it("auto-stamps receivedTs at read completion, only when absent", () => {
+    const out = stampReceived(
+      [
+        { signalId: "s1", value: 1, quality: Quality.Good, qualityRaw: "OK" },
+        { signalId: "s2", value: 2, quality: Quality.Good, qualityRaw: "OK", receivedTs: "2026-07-27T09:00:00Z" },
+      ],
+      "2026-07-27T10:00:00Z",
+    );
+
+    expect(out[0].receivedTs).toBe("2026-07-27T10:00:00Z"); // absent -> stamped with now
+    expect(out[1].receivedTs).toBe("2026-07-27T09:00:00Z"); // a backend stamp is never overwritten
+    // Receipt is never promoted to capture or source.
+    expect(out[0].sourceTs).toBeUndefined();
+    expect(out[0].captureTs).toBeUndefined();
+  });
+
+  it("publishes captureTs as the sample's serverTs", async () => {
+    // A protocol with a mediating server: its capture stamp is the sample's serverTs.
+    const { data, published } = dataFacadeFor("device-1");
+
+    await publishReadings(data, "sim", device, [
+      {
+        signalId: "s1",
+        value: 1,
+        quality: Quality.Good,
+        qualityRaw: "OK",
+        captureTs: "2026-07-27T10:00:00Z",
+        receivedTs: "2026-07-27T10:00:00Z",
+      },
+    ]);
+
+    expect(firstSample(published).serverTs).toBe("2026-07-27T10:00:00Z");
+  });
+
+  it("falls back to receivedTs as serverTs when captureTs is absent — receive IS capture", async () => {
+    // A direct-client protocol: the adapter's receive moment IS the capture moment.
+    const { data, published } = dataFacadeFor("device-1");
+
+    await publishReadings(data, "sim", device, [
+      { signalId: "s1", value: 1, quality: Quality.Good, qualityRaw: "OK", receivedTs: "2026-07-27T10:00:00Z" },
+    ]);
+
+    const sample = firstSample(published);
+    expect(sample.serverTs).toBe("2026-07-27T10:00:00Z");
+    // receivedTs equals the effective serverTs -> the extra would be noise, so it is omitted.
+    expect(sample.receivedTs).toBeUndefined();
+  });
+
+  it("carries receivedTs as a per-sample extra only when it differs from the effective serverTs", async () => {
+    const { data, published } = dataFacadeFor("device-1");
+
+    await publishReadings(data, "sim", device, [
+      {
+        signalId: "s1",
+        value: 1,
+        quality: Quality.Good,
+        qualityRaw: "OK",
+        captureTs: "2026-07-27T10:00:00Z",
+        receivedTs: "2026-07-27T10:00:02Z", // a mediating server made the two moments differ
+      },
+      {
+        signalId: "s2",
+        value: 2,
+        quality: Quality.Good,
+        qualityRaw: "OK",
+        captureTs: "2026-07-27T10:00:00Z",
+        receivedTs: "2026-07-27T10:00:00Z", // identical -> omitted
+      },
+    ]);
+
+    const first = firstSample(published);
+    expect(first.serverTs).toBe("2026-07-27T10:00:00Z");
+    expect(first.receivedTs).toBe("2026-07-27T10:00:02Z");
+
+    const second = (published[1].msg.body as { samples: Record<string, unknown>[] }).samples[0];
+    expect(second.receivedTs).toBeUndefined();
+  });
+
+  it("passes sourceTs through verbatim and never synthesizes it", async () => {
+    const { data, published } = dataFacadeFor("device-1");
+
+    await publishReadings(data, "sim", device, [
+      {
+        signalId: "s1",
+        value: 1,
+        quality: Quality.Good,
+        qualityRaw: "OK",
+        sourceTs: "2026-07-27T09:59:58Z", // present: through verbatim
+        receivedTs: "2026-07-27T10:00:00Z",
+      },
+      { signalId: "s2", value: 2, quality: Quality.Good, qualityRaw: "OK", receivedTs: "2026-07-27T10:00:00Z" },
+    ]);
+
+    expect(firstSample(published).sourceTs).toBe("2026-07-27T09:59:58Z");
+    // Absent stays absent — a machine timestamp the device never authored must not be invented.
+    const second = (published[1].msg.body as { samples: Record<string, unknown>[] }).samples[0];
+    expect(second.sourceTs).toBeUndefined();
+  });
+
+  it("carries the same timestamp fields on the BAD/null publish path", async () => {
+    // A failed read is timestamped exactly like a good one.
+    const { data, published } = dataFacadeFor("device-1");
+
+    await publishReadings(data, "sim", device, [
+      {
+        signalId: "pressure-1",
+        value: null,
+        quality: Quality.Bad,
+        qualityRaw: "SENSOR_FAULT",
+        captureTs: "2026-07-27T10:00:00Z",
+        receivedTs: "2026-07-27T10:00:02Z",
+      },
+    ]);
+
+    const sample = firstSample(published);
+    expect(sample.quality).toBe("BAD");
+    expect(sample.serverTs).toBe("2026-07-27T10:00:00Z");
+    expect(sample.receivedTs).toBe("2026-07-27T10:00:02Z");
+    expect(sample.sourceTs).toBeUndefined();
   });
 });
 

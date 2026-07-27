@@ -21,6 +21,11 @@ describe("the sim backend", () => {
     expect(readings).toHaveLength(2);
     expect(readings[0].signalId).toBe("temperature-1");
     expect(readings[0].quality).toBe(Quality.Good);
+    // A direct-client backend supplies no protocol timestamps: sourceTs/captureTs stay absent
+    // (the worker stamps receivedTs at read completion; the publish path does the rest).
+    expect(readings[0].sourceTs).toBeUndefined();
+    expect(readings[0].captureTs).toBeUndefined();
+    expect(readings[0].receivedTs).toBeUndefined();
   });
 
   it("publishes a failed read as BAD quality rather than omitting it", async () => {

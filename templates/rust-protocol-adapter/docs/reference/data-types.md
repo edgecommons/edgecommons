@@ -17,6 +17,9 @@ protocol typically adds on top.
 | | `value` | The decoded value, as JSON: `number`, `boolean`, `string`, or `null` (a failed read — see below). |
 | | `quality` | Normalized [`Quality`]: `Good` \| `Bad` \| `Uncertain`. |
 | | `quality_raw` | The protocol-native status/code, kept verbatim for diagnosis. |
+| | `source_ts` | Optional ISO-8601 UTC. The **machine** timestamp — device/field-authored time, set only when the protocol supplies it. Published as `sourceTs`, never synthesized. |
+| | `capture_ts` | Optional ISO-8601 UTC. The **capture** timestamp — the moment the protocol read the value (a mediating server's stamp, e.g. an OPC UA server's). Published as the sample's `serverTs`. |
+| | `received_ts` | Optional ISO-8601 UTC. The **adapter receive** timestamp — auto-stamped by the worker at read completion when the backend leaves it `None`. |
 | [`SignalInfo`] | `id`, `name` | One entry of the **inventory** (`sb/signals`) — known from config/backend without a device round-trip. |
 | [`BrowsedSignal`] | `id`, `name`, `type_name` | One entry discovered by [`browse`] — a signal the device *offers*, whether or not it is configured. `type_name` is the device-native type string, kept verbatim (`"REAL"`, `"holding/uint16"`, whatever your protocol calls it). |
 
@@ -67,9 +70,15 @@ and which physical connection a value came from, independent of `signal.id`.
   reading emits JSON `null`.
 - There is no scale/offset or byte/word-order layer in the seam itself — build it into your
   `DeviceSession` implementation if your protocol's wire format needs it (see above).
-- This scaffold has no device-native timestamp field; every sample's `serverTs` is the adapter's own
-  read time. Add a source timestamp field to your extension of `Reading` if your protocol reports
-  one, and pass it through the `data()` facade's timestamp parameter.
+- **Timestamps — the four-slot model.** A [`Reading`] carries up to three optional ISO-8601 UTC
+  timestamps, never synthesized from one another (the fourth slot — the publish moment — is the
+  envelope header's, stamped by the library): `capture_ts` becomes the sample's `serverTs`, falling
+  back to `received_ts` when the backend sets no capture stamp (a direct client's receive moment IS
+  the capture moment); `received_ts` is auto-stamped by the worker at read completion for every
+  reading the backend did not stamp itself, and additionally rides as a per-sample `receivedTs`
+  extra only when a mediating server makes it differ from the effective `serverTs`; `source_ts`
+  rides as `sourceTs` only when the device supplied it. The simulator sets none of the three (it
+  has no device clock), so its samples' `serverTs` is the worker's receive stamp and nothing else.
 
 [`Reading`]: ../../src/device.rs
 [`SignalInfo`]: ../../src/device.rs

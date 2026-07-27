@@ -179,9 +179,11 @@ per-device uniqueness); `signal.id` remains the configured stable EdgeCommons id
 - Per-sample **`sequence`** always rides as an extra field (the shipped `Sample.extra` path),
   giving consumers exact once-only ordering across reconnects.
 
-Timestamps, honestly: every observation carries the timestamp the **agent** recorded (device or
-adapter time as relayed) — published as `sourceTs`, with the documented caveat that its clock is
-the agent/adapter chain's, not audited device time. `serverTs` is this adapter's receive time.
+Timestamps, per the SOUTHBOUND four-slot model: the observation timestamp is the **agent's
+capture stamp** — published as `serverTs`. `sourceTs` is absent (MTConnect does not distinguish a
+device-authored time from the agent/adapter capture chain). The adapter's own receive time rides
+the per-sample `receivedTs` extra — MTConnect is a mediated protocol, so capture and receive
+genuinely differ and both are published.
 
 ## 6. Quality mapping
 
@@ -298,8 +300,9 @@ platform claims still require the standard per-platform gates (ADP-9).
   resync ladder (reconnect → OUT_OF_RANGE snapshot recovery → instanceId full resync).
 - **D-MTC-5:** Signals bind by `dataItemId`; the probe tree backs `sb/browse` from cache;
   probe-model drift is surfaced, never silently remapped.
-- **D-MTC-6:** `UNAVAILABLE` is a BAD null; observation timestamps publish as `sourceTs` with the
-  agent-relayed-clock caveat; `sequence` rides per-sample extras.
+- **D-MTC-6:** `UNAVAILABLE` is a BAD null; the observation timestamp is the agent capture stamp
+  (`serverTs`), `sourceTs` is absent, adapter receive rides the `receivedTs` extra; `sequence`
+  rides per-sample extras.
 - **D-MTC-7:** `sb/write` is registered but permanently refused (`WRITE_NOT_ALLOWED`), schema-pinned
   empty allow-list, and advertised `unsupported` via command availability. No `sb/discover`.
 - **D-MTC-8:** Conditions are signals; optional `conditionBinding` degrades bound signals' quality.

@@ -50,7 +50,14 @@ export enum Quality {
   Uncertain = "UNCERTAIN",
 }
 
-/** One reading from the device. */
+/**
+ * One reading from the device.
+ *
+ * The three optional timestamps are the seam's slice of the four-slot timestamp model
+ * (SOUTHBOUND.md §2 — all ISO-8601 UTC, never synthesized from one another). A direct-client
+ * backend sets none of them: the worker stamps `receivedTs` at read completion, and the publish
+ * path (`publishReadings`) maps the slots onto the wire sample.
+ */
 export interface Reading {
   /** The canonical, stable id the rest of the fleet keys on (e.g. `ns=3;i=1001`). */
   readonly signalId: string;
@@ -60,6 +67,23 @@ export interface Reading {
   readonly quality: Quality;
   /** The protocol-native status code, kept verbatim for diagnosis. */
   readonly qualityRaw?: string;
+  /**
+   * The **machine** timestamp: device/field-authored time. Set it only when the protocol supplied
+   * it — it is passed through to the published sample verbatim and never invented.
+   */
+  readonly sourceTs?: string;
+  /**
+   * The **capture** timestamp: the moment the protocol read the value. For a protocol with a
+   * mediating server (an OPC UA server, an MTConnect agent) this is that server's stamp; a
+   * direct-client protocol leaves it absent — its receive moment IS the capture moment, and the
+   * publish path then uses `receivedTs` as the sample's `serverTs`.
+   */
+  readonly captureTs?: string;
+  /**
+   * The **adapter receive** timestamp. The worker auto-stamps it at read completion when absent,
+   * so a backend normally never sets it.
+   */
+  readonly receivedTs?: string;
 }
 
 /**

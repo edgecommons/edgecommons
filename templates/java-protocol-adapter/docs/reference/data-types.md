@@ -9,9 +9,11 @@ the sim currently exercises.
 
 ## The `Reading` shape
 
-Every value the seam hands upward is a `Device.Reading(signalId, name, value, quality, qualityRaw)`.
-`value` is a `com.google.gson.JsonElement` — whatever JSON type your protocol value naturally maps
-to; the sim uses `JsonPrimitive` (numbers) and `JsonNull`.
+Every value the seam hands upward is a
+`Device.Reading(signalId, name, value, quality, qualityRaw, sourceTs, captureTs, receivedTs)`;
+the 5-argument constructor leaves the three trailing timestamps null (the common direct-client
+form). `value` is a `com.google.gson.JsonElement` — whatever JSON type your protocol value
+naturally maps to; the sim uses `JsonPrimitive` (numbers) and `JsonNull`.
 
 | EdgeCommons JSON type | When to use it |
 |---|---|
@@ -31,6 +33,27 @@ to; the sim uses `JsonPrimitive` (numbers) and `JsonNull`.
 
 `qualityRaw` always carries the protocol's own native status string, for diagnostics that need more
 than the three normalized buckets.
+
+## Timestamps
+
+A reading carries up to three optional ISO-8601 UTC timestamps — the seam's slice of the
+four-slot model (`docs/SOUTHBOUND.md` §2). None is ever synthesized from another:
+
+| Slot | Meaning | Who sets it |
+|---|---|---|
+| `sourceTs` | The **machine** timestamp: device/field-authored time. | The backend, only when the protocol supplied it. |
+| `captureTs` | The **capture** timestamp: the moment the protocol read the value — a mediating server's stamp (OPC UA server, MTConnect agent). | The backend, only when a mediating server provides one. A direct-client protocol leaves it null: its receive moment IS the capture moment. |
+| `receivedTs` | The **adapter receive** timestamp. | The worker (`Wiring.stampReceived`), at read completion, when the backend left it null. |
+
+On publish (`Wiring.toSample` — the same mapping on the GOOD and BAD/null paths):
+
+- `captureTs` becomes the sample's `serverTs`; when absent, `receivedTs` takes its place.
+- `sourceTs` is passed through verbatim, only when present.
+- `receivedTs` rides as a per-sample `receivedTs` extra field only when it differs from the
+  effective `serverTs` — identical stamps would make the extra noise, so it is omitted.
+
+The simulator sets none of the three (a direct client), so its published samples carry
+`serverTs` = the worker's receipt stamp and no `receivedTs` extra.
 
 ## What the simulator exercises today
 

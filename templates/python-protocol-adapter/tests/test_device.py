@@ -17,6 +17,7 @@ from <<SNAKENAME>>.adapter import (
     connectivity_of,
     set_paused,
 )
+from <<SNAKENAME>>.adapter import sample_timestamps, stamp_received
 from <<SNAKENAME>>.device import (
     BrowseFailed,
     BrowseUnsupported,
@@ -24,6 +25,7 @@ from <<SNAKENAME>>.device import (
     DeviceUnavailable,
     Quality,
     ReadFailed,
+    Reading,
     ReconnectFailed,
     SimBackend,
     WriteRejected,
@@ -244,6 +246,7 @@ def test_backoff_is_bounded_by_the_cap_and_never_negative():
 class RecordingBuilder:
     def __init__(self, sink):
         self._sink = sink
+        self._sample = None
 
     def name(self, name):
         return self
@@ -252,13 +255,14 @@ class RecordingBuilder:
         return self
 
     def add_sample(self, sample):
+        self._sample = sample
         return self
 
     def signal_path(self, signal_id):
         return self
 
     def publish(self):
-        self._sink.published.append("sample")
+        self._sink.published.append(("sample", self._sample))
 
 
 class RecordingData:
@@ -366,8 +370,96 @@ def test_connect_polls_and_publishes_good_and_bad_readings_through_the_data_faca
     device._poll_tick()
     # The GOOD reading rides the sample builder; the BAD (value=None) rides the pre-built body path —
     # a failed read is published as BAD, never omitted.
-    assert "sample" in gg.published, "the GOOD reading published a sample"
-    assert any(isinstance(p, tuple) and p[0] == "body" for p in gg.published), "the BAD reading published a body"
+    assert any(p[0] == "sample" for p in gg.published), "the GOOD reading published a sample"
+    assert any(p[0] == "body" for p in gg.published), "the BAD reading published a body"
+
+
+# --- timestamps: the four-slot mapping (docs/SOUTHBOUND.md §2) ------------------------------------
+
+
+def test_the_worker_auto_stamps_received_ts_at_read_completion():
+    readings = [
+        Reading("a", None, 1.0, Quality.GOOD),
+        Reading("b", None, 2.0, Quality.GOOD, received_ts="2026-01-01T00:00:00Z"),
+    ]
+    stamp_received(readings, now="2026-02-02T00:00:00Z")
+    assert readings[0].received_ts == "2026-02-02T00:00:00Z", "a missing receive stamp is filled"
+    assert readings[1].received_ts == "2026-01-01T00:00:00Z", "a backend's own stamp survives"
+
+
+def test_a_polled_sim_sample_maps_the_receive_moment_to_server_ts():
+    # The sim sets no timestamp slots; the worker's receive stamp becomes serverTs (a direct
+    # client's receive IS capture), sourceTs is never invented, and receivedTs (== serverTs)
+    # does not ride as a redundant extra.
+    gg = FakeGg()
+    device = _device(gg)
+    device._connect_once()
+    device._poll_tick()
+    _, sample = next(p for p in gg.published if p[0] == "sample")
+    assert sample.server_ts is not None, "the auto-stamped receive moment became serverTs"
+    assert sample.source_ts is None, "sourceTs is never synthesized"
+    assert sample.extra is None, "receivedTs == effective serverTs -> no extra"
+
+
+def test_capture_ts_maps_to_server_ts_and_a_distinct_received_ts_rides_as_an_extra():
+    gg = FakeGg()
+    device = _device(gg)
+    r = Reading("temperature-1", "T", 20.0, Quality.GOOD, "OK",
+                source_ts="2026-01-01T00:00:00Z", capture_ts="2026-01-01T00:00:01Z",
+                received_ts="2026-01-01T00:00:02Z")
+    device._publish_reading(r)
+    _, sample = gg.published[0]
+    assert sample.server_ts == "2026-01-01T00:00:01Z", "capture is the serverTs"
+    assert sample.source_ts == "2026-01-01T00:00:00Z", "the machine time rides verbatim"
+    assert sample.extra == {"receivedTs": "2026-01-01T00:00:02Z"}, \
+        "a mediating server makes receive differ -> it rides as the extra"
+
+
+def test_received_ts_is_the_server_ts_fallback_and_then_not_an_extra():
+    gg = FakeGg()
+    device = _device(gg)
+    r = Reading("temperature-1", None, 20.0, Quality.GOOD, "OK",
+                received_ts="2026-01-01T00:00:02Z")
+    device._publish_reading(r)
+    _, sample = gg.published[0]
+    assert sample.server_ts == "2026-01-01T00:00:02Z", "no capture stamp -> receive IS capture"
+    assert sample.extra is None, "receivedTs == effective serverTs -> no extra"
+    assert sample.source_ts is None
+
+
+def test_an_equal_capture_and_receive_moment_omits_the_received_ts_extra():
+    assert sample_timestamps(Reading("a", None, 1.0, Quality.GOOD,
+                                     capture_ts="X", received_ts="X")) == ("X", None)
+    assert sample_timestamps(Reading("a", None, 1.0, Quality.GOOD,
+                                     capture_ts="X", received_ts="Y")) == ("X", "Y")
+    assert sample_timestamps(Reading("a", None, 1.0, Quality.GOOD)) == (None, None)
+
+
+def test_a_bad_reading_body_carries_the_same_timestamp_mapping():
+    gg = FakeGg()
+    device = _device(gg)
+    r = Reading("pressure-1", None, None, Quality.BAD, "SENSOR_FAULT",
+                source_ts="2026-01-01T00:00:00Z", capture_ts="2026-01-01T00:00:01Z",
+                received_ts="2026-01-01T00:00:02Z")
+    device._publish_reading(r)
+    _, _sid, body = gg.published[0]
+    s = body["samples"][0]
+    assert s["serverTs"] == "2026-01-01T00:00:01Z"
+    assert s["sourceTs"] == "2026-01-01T00:00:00Z"
+    assert s["receivedTs"] == "2026-01-01T00:00:02Z"
+
+
+def test_a_bad_reading_without_device_timestamps_omits_them():
+    gg = FakeGg()
+    device = _device(gg)
+    r = Reading("pressure-1", None, None, Quality.BAD, "SENSOR_FAULT",
+                received_ts="2026-01-01T00:00:02Z")
+    device._publish_reading(r)
+    _, _sid, body = gg.published[0]
+    s = body["samples"][0]
+    assert s["serverTs"] == "2026-01-01T00:00:02Z", "the receive moment is the fallback serverTs"
+    assert "sourceTs" not in s, "sourceTs is never synthesized"
+    assert "receivedTs" not in s, "receivedTs only rides when distinct from serverTs"
 
 
 def test_a_dropped_link_backs_off_and_raises_the_unreachable_alarm():

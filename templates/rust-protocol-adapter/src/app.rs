@@ -201,6 +201,42 @@ impl Health {
     }
 }
 
+// =================================================================================================
+// Timestamps — the four-slot mapping (docs/SOUTHBOUND.md §2)
+// =================================================================================================
+
+/// Auto-stamp `received_ts` at read completion: every reading the backend did not stamp itself
+/// gets the adapter's receive moment — ONE moment for the whole batch, taken when the read
+/// completed, not when each sample is published (under batching those diverge). A backend's own
+/// (earlier) receive stamp survives.
+pub fn stamp_received(readings: &mut [Reading], now: &str) {
+    for r in readings {
+        if r.received_ts.is_none() {
+            r.received_ts = Some(now.to_string());
+        }
+    }
+}
+
+/// Map a [`Reading`]'s timestamp slots onto the wire sample. Returns `(server_ts, received_extra)`:
+///
+/// * `server_ts` — the effective `serverTs`: the **capture** moment (`capture_ts`), falling back
+///   to the adapter's receive moment (`received_ts`) — for a direct-client protocol the receive
+///   moment IS the capture moment.
+/// * `received_extra` — the `receivedTs` value to ride as a per-sample extra, present ONLY when a
+///   mediating server makes the receive moment differ from the effective `serverTs`.
+///
+/// `source_ts` needs no mapping: it is published as `sourceTs` verbatim when present and is never
+/// synthesized.
+#[must_use]
+pub fn sample_timestamps(r: &Reading) -> (Option<String>, Option<String>) {
+    let server_ts = r.capture_ts.clone().or_else(|| r.received_ts.clone());
+    let received_extra = match (&server_ts, &r.received_ts) {
+        (Some(server), Some(received)) if server != received => Some(received.clone()),
+        _ => None,
+    };
+    (server_ts, received_extra)
+}
+
 /// Flip the paused flag, returning whether the state actually changed (idempotent — pausing an
 /// already-paused device is not an error). The event is emitted by the caller, which holds the
 /// `events()` facade.
@@ -391,6 +427,75 @@ mod tests {
         assert_eq!(health.connection_state.load(Ordering::Relaxed), 1);
         health.set_link(LinkState::Backoff);
         assert_eq!(health.connection_state.load(Ordering::Relaxed), 0);
+    }
+
+    // --- timestamps: the four-slot mapping (docs/SOUTHBOUND.md §2) -------------------------------
+
+    fn reading(id: &str) -> Reading {
+        Reading {
+            signal_id: id.into(),
+            name: None,
+            value: json!(1.0),
+            quality: crate::device::Quality::Good,
+            quality_raw: None,
+            source_ts: None,
+            capture_ts: None,
+            received_ts: None,
+        }
+    }
+
+    #[test]
+    fn the_worker_auto_stamps_received_ts_at_read_completion() {
+        let mut readings = vec![
+            reading("a"),
+            Reading { received_ts: Some("2026-01-01T00:00:00Z".into()), ..reading("b") },
+        ];
+        stamp_received(&mut readings, "2026-02-02T00:00:00Z");
+        assert_eq!(
+            readings[0].received_ts.as_deref(),
+            Some("2026-02-02T00:00:00Z"),
+            "a missing receive stamp is filled"
+        );
+        assert_eq!(
+            readings[1].received_ts.as_deref(),
+            Some("2026-01-01T00:00:00Z"),
+            "a backend's own stamp survives"
+        );
+    }
+
+    #[test]
+    fn capture_maps_to_server_ts_and_a_distinct_receive_moment_rides_as_the_extra() {
+        let r = Reading {
+            source_ts: Some("S".into()),
+            capture_ts: Some("C".into()),
+            received_ts: Some("R".into()),
+            ..reading("a")
+        };
+        // capture is the serverTs; a mediating server makes receive differ -> it rides as the
+        // extra. (sourceTs needs no mapping: it is published verbatim, never synthesized.)
+        assert_eq!(sample_timestamps(&r), (Some("C".into()), Some("R".into())));
+    }
+
+    #[test]
+    fn the_receive_moment_is_the_server_ts_fallback_and_then_not_an_extra() {
+        // No capture stamp: a direct client's receive moment IS the capture moment.
+        let r = Reading { received_ts: Some("R".into()), ..reading("a") };
+        assert_eq!(sample_timestamps(&r), (Some("R".into()), None));
+    }
+
+    #[test]
+    fn an_equal_capture_and_receive_moment_omits_the_received_ts_extra() {
+        let r = Reading {
+            capture_ts: Some("X".into()),
+            received_ts: Some("X".into()),
+            ..reading("a")
+        };
+        assert_eq!(sample_timestamps(&r), (Some("X".into()), None));
+    }
+
+    #[test]
+    fn a_reading_with_no_timestamp_slots_maps_to_nothing_synthesized() {
+        assert_eq!(sample_timestamps(&reading("a")), (None, None));
     }
 
     #[test]

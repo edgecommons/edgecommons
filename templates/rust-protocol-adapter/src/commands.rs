@@ -785,6 +785,9 @@ mod tests {
                                     value: json!(42.0),
                                     quality: Quality::Good,
                                     quality_raw: Some("OK".into()),
+                                    source_ts: None,
+                                    capture_ts: None,
+                                    received_ts: None,
                                 })
                                 .collect();
                             let _ = reply.send(Ok(rs));

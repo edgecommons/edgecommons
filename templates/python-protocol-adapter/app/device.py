@@ -46,7 +46,13 @@ class Quality:
 
 @dataclass
 class Reading:
-    """One reading from the device."""
+    """One reading from the device.
+
+    The three trailing timestamp slots realize the four-slot model of ``docs/SOUTHBOUND.md`` §2
+    (the fourth slot — the publish timestamp — is the envelope header's, stamped by the library).
+    All are optional ISO-8601 UTC strings, and none is ever synthesized from another: a backend
+    sets what its protocol actually knows and leaves the rest ``None``.
+    """
 
     #: The canonical, stable id the rest of the fleet keys on (e.g. ``ns=3;i=1001``).
     signal_id: str
@@ -57,6 +63,16 @@ class Reading:
     quality: str
     #: The protocol-native status code, kept verbatim for diagnosis.
     quality_raw: Optional[str] = None
+    #: The **machine** timestamp: device/field-authored time, set only when the protocol supplied
+    #: it. Never synthesized.
+    source_ts: Optional[str] = None
+    #: The **capture** timestamp: the moment the protocol read the value — a mediating server's
+    #: stamp (an OPC UA server, an MTConnect agent). A direct-client protocol leaves it ``None``:
+    #: its receive moment IS the capture moment.
+    capture_ts: Optional[str] = None
+    #: The **adapter receive** timestamp. The worker auto-stamps it at read completion for every
+    #: reading lacking it, so a backend only sets it when it has a better (earlier) receive stamp.
+    received_ts: Optional[str] = None
 
 
 @dataclass
@@ -246,6 +262,9 @@ class SimSession(DeviceSession):
     def read_signals(self) -> List[Reading]:
         self._tick += 1
         value = 20.0 + 5.0 * math.sin(self._tick / 10.0)
+        # The sim sets none of the timestamp slots: it has no device clock, and inventing one
+        # would be dishonest. The worker stamps ``received_ts`` at read completion, and that
+        # receive moment becomes the published ``serverTs`` (a direct client's receive IS capture).
         return [
             Reading(
                 signal_id="temperature-1",

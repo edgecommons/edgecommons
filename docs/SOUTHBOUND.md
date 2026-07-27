@@ -99,8 +99,17 @@ Design rules:
   parsing the body *or* the topic. The former `tags.thing` field is removed.
 - **Batching.** `samples` is an array so an adapter can coalesce multiple updates for one signal into one
   message (deadband/publish-interval driven).
-- **Timestamps** are ISO-8601 UTC. `sourceTs` (device/field) and `serverTs` (protocol server) are
-  kept distinct; both optional but at least one SHOULD be present.
+- **Timestamps — the four-slot model.** All ISO-8601 UTC, never synthesized from one another:
+  - `sourceTs` — the **machine** timestamp: device/field-authored time, present only when the
+    protocol supplied it.
+  - `serverTs` — the **capture** timestamp: the moment the protocol read the value. For a
+    protocol with a mediating server (OPC UA server, MTConnect agent), this is that server's
+    stamp; for a direct-client protocol the adapter's receive moment IS the capture moment, so
+    `serverTs` is stamped at read/frame receipt (not at publish — under batching those diverge).
+  - `receivedTs` — the **adapter receive** timestamp, carried as a per-sample extra field, only
+    when a mediating server makes it differ from capture. Direct-client adapters omit it.
+  - The envelope `header.timestamp` is the **publish** timestamp.
+  Both sample slots are optional but at least one SHOULD be present.
 - **Value typing.** `value` is JSON-native: numbers (including unsigned integers) as JSON numbers,
   booleans as JSON booleans, strings as strings, and **date/time as an ISO-8601 string**. An
   **array-valued signal is a JSON array**, each element following these same rules (and writes accept a
