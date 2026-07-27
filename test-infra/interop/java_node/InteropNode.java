@@ -48,6 +48,8 @@ import java.nio.charset.StandardCharsets;
  *   InteropNode status-request       &lt;component&gt;
  *   InteropNode state-instances-pub  &lt;component&gt;
  *   InteropNode state-instances-sub  &lt;component&gt;
+ *   InteropNode describe-responder   &lt;component&gt;
+ *   InteropNode describe-requester   &lt;component&gt;
  * Local-only MQTT transport against localhost:1883. Messages are built WITHOUT a
  * config service — the envelope legally omits {@code identity} unless an explicit
  * identity is stamped (the UNS roles), and {@code tags.thing} no longer exists.
@@ -112,6 +114,13 @@ public class InteropNode {
      * requester/subscriber can derive a peer's UNS topics from the component token alone.
      */
     static final String INTEROP_DEVICE = "interop-device";
+
+    /**
+     * The ONE custom verb every language's {@code describe-responder} registers, declared
+     * INSTANCE-scoped (DESIGN-scoped-commands §2.3), so the {@code describe} manifest advertises a
+     * non-built-in entry whose {@code scope} differs from the five scope-indifferent built-ins.
+     */
+    static final String DESCRIBE_PROBE_VERB = "sb/probe";
 
     /** The component's own command inbox topic for one verb (component scope, D-U28: no instance). */
     static String commandTopic(String component, String verb) {
@@ -1635,6 +1644,70 @@ public class InteropNode {
             System.out.println(box[0]);
             prov.close();
             System.exit(0);
+        } else if (role.equals("describe-responder")) {
+            // describe-responder <component> — a real component carrying exactly ONE custom verb,
+            // `sb/probe`, declared INSTANCE-scoped, so the built-in `describe` manifest advertises a
+            // non-built-in entry with scope "instance" beside the five "both" built-ins.
+            String componentToken = args[1];
+            Path path = writeCommandRuntimeConfig(componentToken);
+            EdgeCommons gg = null;
+            try {
+                gg = new EdgeCommons(
+                        "com.mbreissi.edgecommons.interop." + LANG + ".DescribeResponder",
+                        logRuntimeArgs(path));
+                CommandInbox inbox = gg.getCommands();
+                if (inbox == null) {
+                    throw new IllegalStateException("runtime did not expose command inbox");
+                }
+                inbox.register(DESCRIBE_PROBE_VERB, CommandScope.INSTANCE,
+                        (request, addressedInstance) -> {
+                            JsonObject probe = new JsonObject();
+                            probe.addProperty("probe", LANG);
+                            probe.addProperty("instance", addressedInstance);
+                            return probe;
+                        });
+                System.out.println("READY");
+                System.out.flush();
+                Thread.sleep(Long.MAX_VALUE);
+            } finally {
+                if (gg != null) {
+                    gg.shutdown();
+                }
+                Files.deleteIfExists(path);
+            }
+        } else if (role.equals("describe-requester")) {
+            // describe-requester <component> — PULL the peer's built-in `describe` verb over its own
+            // command inbox and print the manifest (the inbox wraps it as {"ok":true,"result":{…}}).
+            String component = args[1];
+            String topic = commandTopic(component, CommandInbox.DESCRIBE);
+            StandaloneMessagingProvider prov = provider("describereq");
+            JsonObject out = new JsonObject();
+            try {
+                JsonObject requestBody = new JsonObject();
+                requestBody.addProperty("from", LANG);
+                Message request = MessageBuilder.create(CommandInbox.DESCRIBE, "1.0")
+                        .withCommand(requestBody).build();
+                Message reply = prov.request(topic, request).get(20, TimeUnit.SECONDS);
+                JsonElement replyBody = asElement(reply.getBody());
+                JsonObject envelope = replyBody.isJsonObject() ? replyBody.getAsJsonObject() : null;
+                JsonObject result = envelope != null && envelope.has("result")
+                        && envelope.get("result").isJsonObject()
+                        ? envelope.getAsJsonObject("result") : null;
+                boolean ok = envelope != null && envelope.has("ok")
+                        && envelope.get("ok").getAsBoolean() && result != null
+                        && result.has("commands") && result.get("commands").isJsonArray()
+                        && result.has("digest");
+                out.addProperty("ok", ok);
+                out.add("reply_body", result != null ? result : replyBody);
+                System.out.println(out);
+                prov.close();
+                System.exit(ok ? 0 : 1);
+            } catch (Exception e) {
+                out.addProperty("ok", false);
+                out.addProperty("error", e.getClass().getSimpleName());
+                System.out.println(out);
+                System.exit(1);
+            }
         } else {
             System.err.println("unknown role: " + role);
             System.exit(2);

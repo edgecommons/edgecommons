@@ -52,6 +52,19 @@ Per-instance connectivity — one provider, two surfaces (pull + push):
       allowed; only publishing to one is rejected), wait for the first RUNNING keepalive
       carrying a non-empty `instances[]`, and print
       {"ok": true, "state_status": "RUNNING", "instances": [...]}.
+
+Declared verb scope on the `describe` manifest (DESIGN-scoped-commands 2.3):
+
+  python_node.py describe-responder <component>
+      Run a real component named <component> that registers exactly ONE custom verb,
+      `sb/probe`, with the INSTANCE scope - so the built-in `describe` manifest carries a
+      non-built-in entry whose scope is "instance", beside the five scope-indifferent
+      "both" built-ins. Prints READY, then runs until killed.
+
+  python_node.py describe-requester <component>
+      Pull <component>'s built-in `describe` verb over its command inbox
+      (ecv1/interop-device/<component>/cmd/describe) and print one JSON line
+      {"ok": true, "reply_body": {"commands": [...], "digest": "sha256:...", ...}}.
 """
 import json
 import os
@@ -1604,6 +1617,89 @@ def run_state_instances_sub(component_token):
         prov.disconnect()
 
 
+# --- declared verb scope on the `describe` manifest (DESIGN-scoped-commands 2.3) --------------
+#
+# The ONE custom verb every language's describe-responder registers, declared INSTANCE-scoped, so
+# the manifest advertises a non-built-in entry whose `scope` differs from the five built-ins (all
+# `both`, D-SC-3). A language that emitted the wrong token, dropped the field, or fed a different
+# byte sequence into the digest would pass its own unit tests and fail the 4x4 matrix.
+DESCRIBE_PROBE_VERB = "sb/probe"
+
+
+def run_describe_responder(component_token):
+    """Serve a real command inbox carrying exactly one custom, INSTANCE-scoped verb."""
+    path = _write_command_runtime_config(component_token)
+    gg = None
+    try:
+        gg = EdgeCommons(
+            f"com.mbreissi.edgecommons.interop.{LANG}.DescribeResponder",
+            _log_runtime_args(path),
+        )
+        inbox = gg.get_commands()
+        if inbox is None:
+            raise RuntimeError("runtime did not expose command inbox")
+
+        def probe(request, addressed_instance):
+            return {"probe": LANG, "instance": addressed_instance}
+
+        inbox.register(DESCRIBE_PROBE_VERB, CommandScope.INSTANCE, probe)
+        print("READY", flush=True)
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if gg is not None:
+            gg.shutdown()
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def run_describe_requester(component_token):
+    """Pull <component>'s built-in ``describe`` verb and print the manifest it returns."""
+    identity = _interop_identity(component_token)
+    topic = Uns(identity, False).topic(UnsClass.CMD, "describe")
+    prov = _provider("describereq")
+    reply_topic = f"interop/describe/reply/{LANG}/{uuid.uuid4().hex}"
+    replies = []
+    got = threading.Event()
+    try:
+        def on_reply(_topic, reply):
+            replies.append(reply)
+            got.set()
+
+        prov.subscribe(reply_topic, on_reply)
+        request = (
+            MessageBuilder.create("describe", "1.0")
+            .with_command({"from": LANG})
+            .with_reply_to(reply_topic)
+            .with_tags({})
+            .build()
+        )
+        correlation = request.get_correlation_id()
+        prov.publish(topic, request)
+        if not got.wait(15):
+            print(json.dumps({"ok": False, "error": "timeout"}), flush=True)
+            return 1
+        reply = replies[0]
+        body = reply.get_body()
+        result = body.get("result") if isinstance(body, dict) else None
+        ok = (
+            reply.get_correlation_id() == correlation
+            and isinstance(body, dict)
+            and body.get("ok") is True
+            and isinstance(result, dict)
+            and isinstance(result.get("commands"), list)
+            and isinstance(result.get("digest"), str)
+        )
+        print(json.dumps({"ok": bool(ok), "reply_body": result}), flush=True)
+        return 0 if ok else 1
+    finally:
+        prov.disconnect()
+
+
 if __name__ == "__main__":
     role = sys.argv[1]
     if role == "responder":
@@ -1655,6 +1751,10 @@ if __name__ == "__main__":
         run_state_instances_pub(sys.argv[2])
     elif role == "state-instances-sub":
         sys.exit(run_state_instances_sub(sys.argv[2]))
+    elif role == "describe-responder":
+        run_describe_responder(sys.argv[2])
+    elif role == "describe-requester":
+        sys.exit(run_describe_requester(sys.argv[2]))
     else:
         sys.stderr.write(f"unknown role: {role}\n")
         sys.exit(2)

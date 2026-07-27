@@ -9,6 +9,8 @@
 //!   interop-rust-node status-request      <component>
 //!   interop-rust-node state-instances-pub <component>
 //!   interop-rust-node state-instances-sub <component>
+//!   interop-rust-node describe-responder  <component>
+//!   interop-rust-node describe-requester  <component>
 //!   interop-rust-node gg-config-request <topic> <component> <output-json>
 //!   interop-rust-node gg-config-update <topic> <output-json>
 //! Local-only MQTT transport against localhost:1883. Messages are built without a
@@ -21,8 +23,8 @@ use std::time::Duration;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use edgecommons::prelude::{
-    outcome_handler, CommandError, CommandOutcome, CommandScope, EdgeCommonsBuilder,
-    InstanceConnectivity, InstanceConnectivityProvider, LogLevel, LogRecord,
+    command_handler, outcome_handler, CommandError, CommandOutcome, CommandScope,
+    EdgeCommonsBuilder, InstanceConnectivity, InstanceConnectivityProvider, LogLevel, LogRecord,
 };
 use serde_json::json;
 #[cfg(feature = "greengrass")]
@@ -47,6 +49,11 @@ const LANG: &str = "rust";
 /// The fixed thing/device name every interop node runs under. The `status` / `state` roles are
 /// addressed by component token alone, so the device must be identical in all four nodes.
 const INTEROP_DEVICE: &str = "interop-device";
+
+/// The ONE custom verb every language's `describe-responder` registers, declared INSTANCE-scoped
+/// (DESIGN-scoped-commands §2.3), so the `describe` manifest advertises a non-built-in entry whose
+/// `scope` differs from the five scope-indifferent built-ins.
+const DESCRIBE_PROBE_VERB: &str = "sb/probe";
 
 static ACCEPTANCE_MARKER_SEQUENCE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
@@ -2170,6 +2177,96 @@ async fn main() {
                         "{}",
                         json!({"ok": false, "error": "timeout waiting for a state with instances[]"})
                     );
+                    std::process::exit(1);
+                }
+            }
+        }
+        // describe-responder <component> — a real component carrying exactly ONE custom verb,
+        // `sb/probe`, declared INSTANCE-scoped, so the built-in `describe` manifest advertises a
+        // non-built-in entry with scope "instance" beside the five "both" built-ins.
+        "describe-responder" => {
+            let component_token = args[2].clone();
+            let path = write_command_runtime_config(&component_token);
+            let gg = EdgeCommonsBuilder::new(format!(
+                "com.mbreissi.edgecommons.interop.{LANG}.DescribeResponder"
+            ))
+            .args(log_runtime_args(&path))
+            .build()
+            .await
+            .expect("build describe responder");
+            let inbox = gg.commands().expect("runtime command inbox");
+            inbox
+                .register(
+                    DESCRIBE_PROBE_VERB,
+                    CommandScope::Instance,
+                    command_handler(|_request, addressed_instance| async move {
+                        Ok(Some(
+                            json!({ "probe": LANG, "instance": addressed_instance }),
+                        ))
+                    }),
+                )
+                .expect("register the instance-scoped probe verb");
+            println!("READY");
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            loop {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+        }
+        // describe-requester <component> — pull that component's built-in `describe` verb over its
+        // own command inbox and print the manifest (the inbox wraps it as {"ok":true,"result":{…}}).
+        "describe-requester" => {
+            let component_token = args[2].clone();
+            let topic = interop_uns(&component_token)
+                .topic_with_channel(UnsClass::Cmd, "describe")
+                .expect("mint the describe command topic");
+            let svc = provider("describereq").await;
+            let request = MessageBuilder::new("describe", "1.0")
+                .command(json!({ "from": LANG }))
+                .build();
+            let correlation = request.header.correlation_id.clone();
+            let fut = match svc.request(&topic, request).await {
+                Ok(fut) => fut,
+                Err(error) => {
+                    println!("{}", json!({"ok": false, "error": error.to_string()}));
+                    std::process::exit(1);
+                }
+            };
+            match tokio::time::timeout(Duration::from_secs(20), fut).await {
+                Ok(Ok(reply)) => {
+                    let correlation_match = reply.header.correlation_id == correlation;
+                    let replied_ok =
+                        reply.body.get("ok").and_then(|value| value.as_bool()) == Some(true);
+                    let result = reply.body.get("result").cloned();
+                    let well_formed = result.as_ref().is_some_and(|result| {
+                        result.get("commands").and_then(|v| v.as_array()).is_some()
+                            && result.get("digest").and_then(|v| v.as_str()).is_some()
+                    });
+                    match result {
+                        Some(result) if replied_ok && correlation_match && well_formed => {
+                            println!("{}", json!({"ok": true, "reply_body": result}));
+                        }
+                        _ => {
+                            println!(
+                                "{}",
+                                json!({
+                                    "ok": false,
+                                    "error": format!(
+                                        "unexpected describe reply (correlation_match={correlation_match}): {}",
+                                        reply.body
+                                    )
+                                })
+                            );
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                Ok(Err(error)) => {
+                    println!("{}", json!({"ok": false, "error": error.to_string()}));
+                    std::process::exit(1);
+                }
+                Err(_) => {
+                    println!("{}", json!({"ok": false, "error": "timeout"}));
                     std::process::exit(1);
                 }
             }
