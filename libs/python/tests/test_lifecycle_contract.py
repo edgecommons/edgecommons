@@ -14,7 +14,7 @@ from edgecommons import (
     ConfigurationValidationResult,
     EdgeCommonsBuilder,
 )
-from edgecommons.command_inbox import CommandInbox
+from edgecommons.command_inbox import CommandInbox, CommandScope
 from edgecommons.config.manager.config_manager import ConfigManager
 from edgecommons.config.manager.shadow_config_manager import ShadowConfigManager
 from edgecommons.config.manager.configuration_change_listener import (
@@ -354,7 +354,7 @@ def _inbox(messaging, handler):
     inbox = CommandInbox(
         _CommandConfig(), messaging, lambda: 1, lambda: True, lambda: {}
     )
-    inbox.register("work", handler)
+    inbox.register("work", CommandScope.BOTH, handler)
     return inbox
 
 
@@ -373,7 +373,7 @@ def test_command_activation_gate_preserves_pre_ack_messages_in_order():
     messaging.deliver_on_subscribe = [
         (_command_topic(), _command_message(index)) for index in range(6)
     ]
-    inbox = _inbox(messaging, lambda request: observed.append(request.get_body()["seq"]))
+    inbox = _inbox(messaging, lambda request, instance: observed.append(request.get_body()["seq"]))
 
     status = inbox.start()
     assert status.state is CommandInboxStartupState.ACTIVE
@@ -388,7 +388,7 @@ def test_command_activation_gate_drops_newest_after_strict_256_bound():
     messaging.deliver_on_subscribe = [
         (_command_topic(), _command_message(index)) for index in range(257)
     ]
-    inbox = _inbox(messaging, lambda request: observed.append(request.get_body()["seq"]))
+    inbox = _inbox(messaging, lambda request, instance: observed.append(request.get_body()["seq"]))
 
     assert inbox.start().state is CommandInboxStartupState.ACTIVE
     _wait_until(lambda: len(observed) == 256)
@@ -402,7 +402,7 @@ def test_command_activation_drain_orders_concurrent_arrival_after_retained_batch
     first_entered = threading.Event()
     release_first = threading.Event()
 
-    def handler(request):
+    def handler(request, instance):
         seq = request.get_body()["seq"]
         if seq == 1:
             first_entered.set()
@@ -427,7 +427,7 @@ def test_stop_during_ack_invalidates_generation_and_allows_clean_restart():
     messaging = _LifecycleMessaging()
     messaging.block_ack = True
     observed = []
-    inbox = _inbox(messaging, lambda request: observed.append(request.get_body()["seq"]))
+    inbox = _inbox(messaging, lambda request, instance: observed.append(request.get_body()["seq"]))
     result = []
     thread = threading.Thread(target=lambda: result.append(inbox.start(1.0)))
     thread.start()
@@ -454,7 +454,7 @@ def test_ack_failure_is_failed_sanitized_cleaned_and_retryable():
     messaging.failure = RuntimeError(
         "mqtt://user:password@host password=topsecret\ntransport down"
     )
-    inbox = _inbox(messaging, lambda request: None)
+    inbox = _inbox(messaging, lambda request, instance: None)
 
     failed = inbox.start()
     assert failed.state is CommandInboxStartupState.FAILED

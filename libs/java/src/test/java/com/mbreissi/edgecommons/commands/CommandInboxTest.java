@@ -55,6 +55,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>custom verbs register/dispatch (namespaced verbs included), cannot shadow built-ins or
  *       each other, and unregister; coded ({@link CommandException}) vs uncoded
  *       ({@code HANDLER_ERROR}) failures;</li>
+ *   <li>every registration declares a {@link CommandScope}; the inbox enforces the addressing
+ *       before dispatch ({@code BAD_ARGS}; conflict checked first) and resolves the addressed
+ *       instance ({@code topic ?? body ?? null}) for every handler form;</li>
  *   <li>unknown verbs get an {@code UNKNOWN_VERB} error reply (requests) or are ignored
  *       (fire-and-forget); no-{@code reply_to} commands run the handler without a reply;</li>
  *   <li>malformed payloads (name mismatch, headerless, null) and the delegated
@@ -446,7 +449,8 @@ class CommandInboxTest {
     @Test
     void statusCannotBeShadowedByACustomVerb() {
         assertThrows(IllegalArgumentException.class,
-                () -> inbox.register(CommandInbox.STATUS, req -> null));
+                () -> inbox.register(CommandInbox.STATUS, CommandScope.BOTH,
+                        (req, addressedInstance) -> null));
     }
 
     @Test
@@ -528,7 +532,8 @@ class CommandInboxTest {
                   ]
                 }
                 """).getAsJsonObject();
-        inbox.register("sb/browse", req -> new JsonObject());
+        inbox.register("sb/browse", CommandScope.BOTH,
+                (req, addressedInstance) -> new JsonObject());
         inbox.registerPanel(panel);
 
         inbox.start();
@@ -565,7 +570,7 @@ class CommandInboxTest {
     @Test
     void customVerbRegistersAndDispatches() {
         inbox.start(); // registration after start needs no new subscription
-        inbox.register("restart-pipeline", req -> {
+        inbox.register("restart-pipeline", CommandScope.BOTH, (req, addressedInstance) -> {
             JsonObject result = new JsonObject();
             result.addProperty("restarted", true);
             return result;
@@ -578,7 +583,8 @@ class CommandInboxTest {
 
     @Test
     void namespacedCustomVerbDispatches() {
-        inbox.register("sb/status", req -> null); // null result -> empty ack
+        inbox.register("sb/status", CommandScope.BOTH,
+                (req, addressedInstance) -> null); // null result -> empty ack
         inbox.start();
         messaging.simulateMessage(topic("sb/status"), request("sb/status"));
         JsonObject body = onlyReplyBody();
@@ -589,7 +595,7 @@ class CommandInboxTest {
 
     @Test
     void handlerCommandExceptionKeepsItsCode() {
-        inbox.register("guarded", req -> {
+        inbox.register("guarded", CommandScope.BOTH, (req, addressedInstance) -> {
             throw new CommandException("NOT_ALLOWED", "operator role required");
         });
         inbox.start();
@@ -603,7 +609,7 @@ class CommandInboxTest {
 
     @Test
     void handlerUncodedExceptionMapsToHandlerError() {
-        inbox.register("boomy", req -> {
+        inbox.register("boomy", CommandScope.BOTH, (req, addressedInstance) -> {
             throw new IllegalStateException("boom");
         });
         inbox.start();
@@ -617,23 +623,38 @@ class CommandInboxTest {
     @Test
     void registerRejectsShadowingAndInvalidVerbs() {
         assertThrows(IllegalArgumentException.class,
-                () -> inbox.register(CommandInbox.PING, req -> null),
+                () -> inbox.register(CommandInbox.PING, CommandScope.BOTH,
+                        (req, addressedInstance) -> null),
                 "a built-in verb cannot be shadowed");
         assertThrows(IllegalArgumentException.class,
-                () -> inbox.register(CommandInbox.SET_CONFIG_VERB, req -> null),
+                () -> inbox.register(CommandInbox.SET_CONFIG_VERB, CommandScope.BOTH,
+                        (req, addressedInstance) -> null),
                 "a delegated verb cannot be registered");
-        inbox.register("mine", req -> null);
-        assertThrows(IllegalArgumentException.class, () -> inbox.register("mine", req -> null),
+        inbox.register("mine", CommandScope.BOTH, (req, addressedInstance) -> null);
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.register("mine", CommandScope.BOTH,
+                        (req, addressedInstance) -> null),
                 "an already-registered verb cannot be re-registered");
-        assertThrows(UnsValidationException.class, () -> inbox.register("bad+verb", req -> null),
+        assertThrows(UnsValidationException.class,
+                () -> inbox.register("bad+verb", CommandScope.BOTH,
+                        (req, addressedInstance) -> null),
                 "verb tokens must pass the topic token rule");
-        assertThrows(UnsValidationException.class, () -> inbox.register("sb//x", req -> null),
+        assertThrows(UnsValidationException.class,
+                () -> inbox.register("sb//x", CommandScope.BOTH,
+                        (req, addressedInstance) -> null),
                 "empty namespace tokens are rejected");
+        assertThrows(NullPointerException.class,
+                () -> inbox.register("scopeless", null, (req, addressedInstance) -> null),
+                "the scope is a required registration argument");
+        assertThrows(NullPointerException.class,
+                () -> inbox.registerOutcome("scopeless", null,
+                        (req, addressedInstance) -> CommandOutcome.success(null)),
+                "the scope is required on the outcome form too");
     }
 
     @Test
     void unregisterRemovesCustomVerbsButNeverBuiltIns() {
-        inbox.register("mine", req -> null);
+        inbox.register("mine", CommandScope.BOTH, (req, addressedInstance) -> null);
         assertTrue(inbox.verbs().contains("mine"));
         inbox.unregister("mine");
         assertFalse(inbox.verbs().contains("mine"));
@@ -649,7 +670,7 @@ class CommandInboxTest {
 
     @Test
     void verbsSnapshotContainsBuiltInsAndCustoms() {
-        inbox.register("mine", req -> null);
+        inbox.register("mine", CommandScope.BOTH, (req, addressedInstance) -> null);
         assertEquals(Set.of(CommandInbox.PING, CommandInbox.RELOAD_CONFIG,
                 CommandInbox.GET_CONFIGURATION, CommandInbox.DESCRIBE, CommandInbox.STATUS, "mine"),
                 inbox.verbs());
@@ -748,13 +769,14 @@ class CommandInboxTest {
 
     @Test
     void availabilitySurfacesStateAndTrimmedReasonInDescribe() {
-        inbox.register("sb/write", req -> null);
+        inbox.register("sb/write", CommandScope.INSTANCE, (req, addressedInstance) -> null);
         inbox.setCommandAvailability("sb/write", "disabled", "  writes.allow[] is empty  ");
         inbox.start();
 
         JsonObject entry = commandEntry(describeResult().getAsJsonArray("commands"), "sb/write");
-        assertEquals(Set.of("verb", "builtIn", "availability"), entry.keySet(),
-                "the entry shape is {verb, builtIn, availability}");
+        assertEquals(List.of("verb", "builtIn", "scope", "availability"),
+                List.copyOf(entry.keySet()),
+                "the entry shape and key order is {verb, builtIn, scope, availability}");
         JsonObject availability = entry.getAsJsonObject("availability");
         assertEquals("disabled", availability.get("state").getAsString());
         assertEquals("writes.allow[] is empty", availability.get("reason").getAsString(),
@@ -775,8 +797,8 @@ class CommandInboxTest {
 
     @Test
     void availabilityEmptyReasonIsOmittedAndLongReasonIsTruncated() {
-        inbox.register("sb/write", req -> null);
-        inbox.register("sb/browse", req -> null);
+        inbox.register("sb/write", CommandScope.INSTANCE, (req, addressedInstance) -> null);
+        inbox.register("sb/browse", CommandScope.INSTANCE, (req, addressedInstance) -> null);
         inbox.setCommandAvailability("sb/write", "disabled", "   ");
         inbox.setCommandAvailability("sb/browse", "disabled",
                 "x".repeat(CommandInbox.MAX_AVAILABILITY_REASON_CHARS + 44));
@@ -793,19 +815,19 @@ class CommandInboxTest {
 
     @Test
     void availabilityAvailableRemovesTheStoredEntry() {
-        inbox.register("sb/write", req -> null);
+        inbox.register("sb/write", CommandScope.INSTANCE, (req, addressedInstance) -> null);
         inbox.setCommandAvailability("sb/write", "disabled", "maintenance");
         inbox.setCommandAvailability("sb/write", "available");
         inbox.start();
 
         JsonObject entry = commandEntry(describeResult().getAsJsonArray("commands"), "sb/write");
-        assertEquals(Set.of("verb", "builtIn"), entry.keySet(),
-                "available reverts the entry to the plain {verb, builtIn}");
+        assertEquals(List.of("verb", "builtIn", "scope"), List.copyOf(entry.keySet()),
+                "available reverts the entry to the plain {verb, builtIn, scope}");
     }
 
     @Test
     void availabilityRejectsUnknownStatesAndUnregisteredVerbs() {
-        inbox.register("sb/write", req -> null);
+        inbox.register("sb/write", CommandScope.INSTANCE, (req, addressedInstance) -> null);
         assertThrows(IllegalArgumentException.class,
                 () -> inbox.setCommandAvailability("sb/write", "paused"),
                 "the state must be exactly available/disabled/unsupported");
@@ -820,7 +842,7 @@ class CommandInboxTest {
 
     @Test
     void availabilityChangesTheDescribeDigestAndClearingRestoresIt() {
-        inbox.register("sb/write", req -> null);
+        inbox.register("sb/write", CommandScope.INSTANCE, (req, addressedInstance) -> null);
         inbox.start();
 
         String original = describeResult().get("digest").getAsString();
@@ -832,12 +854,13 @@ class CommandInboxTest {
                 "clearing availability restores the original digest");
     }
 
-    // ===================== scoped registration (the addressed instance) =====================
+    // ===================== declared verb scope (pre-dispatch enforcement) =====================
 
+    /** An INSTANCE verb resolves the topic's instance token into {@code addressedInstance}. */
     @Test
-    void scopedHandlerReceivesTheAddressedInstanceToken() {
+    void instanceVerbReceivesTheTopicInstanceToken() {
         AtomicReference<String> seen = new AtomicReference<>("unset");
-        inbox.registerScoped("sb/read", (req, addressedInstance) -> {
+        inbox.register("sb/read", CommandScope.INSTANCE, (req, addressedInstance) -> {
             seen.set(addressedInstance);
             JsonObject result = new JsonObject();
             result.addProperty("scope",
@@ -850,75 +873,354 @@ class CommandInboxTest {
                 request("sb/read"));
         assertEquals("plc7", seen.get(), "an instance-scoped topic carries its instance token");
         assertEquals("plc7", onlyReplyBody().getAsJsonObject("result").get("scope").getAsString());
-
-        messaging.clearPublishedMessages();
-        messaging.simulateMessage(componentTopic("sb/read"), request("sb/read"));
-        assertNull(seen.get(), "a component-scoped topic addresses no instance (null)");
-        assertEquals("component",
-                onlyReplyBody().getAsJsonObject("result").get("scope").getAsString());
     }
 
+    /** Component-scope delivery with a body instance: the body resolves the addressed instance. */
     @Test
-    void scopedVerbParticipatesInDescribeLikeAPlainOne() {
-        inbox.registerScoped("sb/read", (req, addressedInstance) -> null);
-        inbox.start();
-        assertVerb(describeResult().getAsJsonArray("commands"), "sb/read", false);
-        assertTrue(inbox.verbs().contains("sb/read"));
-    }
-
-    @Test
-    void scopedRegistrationSharesTheOneHandlerPerVerbRule() {
-        inbox.registerScoped("mine", (req, addressedInstance) -> null);
-        assertThrows(IllegalArgumentException.class, () -> inbox.register("mine", req -> null),
-                "a scoped verb cannot also get a plain handler");
-        assertThrows(IllegalArgumentException.class,
-                () -> inbox.registerScoped("mine", (req, addressedInstance) -> null),
-                "an already-registered scoped verb cannot be re-registered");
-        inbox.register("plain", req -> null);
-        assertThrows(IllegalArgumentException.class,
-                () -> inbox.registerScoped("plain", (req, addressedInstance) -> null),
-                "a plain verb cannot also get a scoped handler");
-        assertThrows(IllegalArgumentException.class,
-                () -> inbox.registerScoped(CommandInbox.PING, (req, addressedInstance) -> null),
-                "a built-in verb cannot be shadowed by a scoped handler");
-
-        inbox.unregister("mine");
-        assertFalse(inbox.verbs().contains("mine"), "unregister removes a scoped handler");
-    }
-
-    @Test
-    void scopedHandlerErrorsUseTheStandardReplyWrappers() {
-        inbox.registerScoped("guarded", (req, addressedInstance) -> {
-            throw new CommandException("NOT_ALLOWED", "operator role required");
+    void instanceVerbFallsBackToTheBodyInstanceField() {
+        AtomicReference<String> seen = new AtomicReference<>("unset");
+        inbox.register("sb/read", CommandScope.INSTANCE, (req, addressedInstance) -> {
+            seen.set(addressedInstance);
+            return null;
         });
         inbox.start();
-        messaging.simulateMessage(topic("guarded"), request("guarded"));
-        JsonObject body = onlyReplyBody();
-        assertFalse(body.get("ok").getAsBoolean());
-        assertEquals("NOT_ALLOWED", body.getAsJsonObject("error").get("code").getAsString(),
-                "scoped handlers share the plain handlers' coded-error semantics");
+
+        JsonObject body = new JsonObject();
+        body.addProperty("instance", "plc9");
+        Message command = MessageBuilder.create("sb/read", "1.0").withPayload(body).build();
+        command.makeRequest(REPLY_TO);
+        messaging.simulateMessage(componentTopic("sb/read"), command);
+
+        assertEquals("plc9", seen.get(),
+                "with no topic token the body's instance field resolves the addressed instance");
+        assertTrue(onlyReplyBody().get("ok").getAsBoolean());
     }
 
+    /** Neither topic nor body names an instance: {@code null} flows through to the handler. */
     @Test
-    void plainRegistrationIsUntouchedAndServesBothCmdScopes() {
+    void instanceVerbNullAddressingFlowsThroughToTheHandler() {
+        AtomicReference<String> seen = new AtomicReference<>("unset");
+        inbox.register("sb/read", CommandScope.INSTANCE, (req, addressedInstance) -> {
+            seen.set(addressedInstance);
+            return null;
+        });
+        inbox.start();
+        messaging.simulateMessage(componentTopic("sb/read"), request("sb/read"));
+        assertNull(seen.get(),
+                "the component-side default policy owns null - the library passes it through");
+        assertTrue(onlyReplyBody().get("ok").getAsBoolean(),
+                "a null addressed instance is not a library-level error");
+    }
+
+    /** BOTH: token flows through at instance scope; {@code null} means "the whole component". */
+    @Test
+    void bothVerbPassesTokenAndNullThrough() {
+        List<String> seen = new CopyOnWriteArrayList<>();
+        inbox.register("sb/pause", CommandScope.BOTH, (req, addressedInstance) -> {
+            seen.add(addressedInstance == null ? "<whole-component>" : addressedInstance);
+            return null;
+        });
+        inbox.start();
+
+        messaging.simulateMessage(topic("sb/pause"), request("sb/pause"));
+        messaging.simulateMessage(componentTopic("sb/pause"), request("sb/pause"));
+        JsonObject body = new JsonObject();
+        body.addProperty("instance", "plc2");
+        Message bodyAddressed = MessageBuilder.create("sb/pause", "1.0").withPayload(body).build();
+        bodyAddressed.makeRequest(REPLY_TO);
+        messaging.simulateMessage(componentTopic("sb/pause"), bodyAddressed);
+
+        assertEquals(List.of("main", "<whole-component>", "plc2"), seen,
+                "BOTH resolves topic ?? body ?? null, and null is meaningful");
+        assertEquals(3, messaging.getPublishedMessages().size());
+    }
+
+    /** The universal conflict rule: body vs topic conflict -> BAD_ARGS before anything else. */
+    @Test
+    void conflictingBodyInstanceIsRejectedBeforeDispatch() {
         AtomicInteger calls = new AtomicInteger();
-        inbox.register("restart-pipeline", req -> {
+        inbox.register("sb/read", CommandScope.INSTANCE, (req, addressedInstance) -> {
+            calls.incrementAndGet();
+            return null;
+        });
+        inbox.register("sb/pause", CommandScope.BOTH, (req, addressedInstance) -> {
             calls.incrementAndGet();
             return null;
         });
         inbox.start();
 
-        messaging.simulateMessage(topic("restart-pipeline"), request("restart-pipeline"));
-        messaging.simulateMessage(componentTopic("restart-pipeline"),
-                request("restart-pipeline"));
-
-        assertEquals(2, calls.get(),
-                "a plain handler still serves instance- and component-scoped deliveries");
-        assertEquals(2, messaging.getPublishedMessages().size());
-        for (MockMessagingService.PublishedMessage published : messaging.getPublishedMessages()) {
-            assertTrue(published.message.toDict().getAsJsonObject("body")
-                    .get("ok").getAsBoolean());
+        for (String verb : List.of("sb/read", "sb/pause")) {
+            messaging.clearPublishedMessages();
+            JsonObject body = new JsonObject();
+            body.addProperty("instance", "plc8");
+            Message conflicting = MessageBuilder.create(verb, "1.0").withPayload(body).build();
+            conflicting.makeRequest(REPLY_TO);
+            messaging.simulateMessage("ecv1/test-thing/TestComponent/plc7/cmd/" + verb,
+                    conflicting);
+            JsonObject reply = onlyReplyBody();
+            assertFalse(reply.get("ok").getAsBoolean());
+            assertEquals(CommandInbox.ERR_BAD_ARGS,
+                    reply.getAsJsonObject("error").get("code").getAsString());
+            assertEquals("instance in body conflicts with the addressed instance",
+                    reply.getAsJsonObject("error").get("message").getAsString());
         }
+        assertEquals(0, calls.get(), "the handler never runs on an addressing error");
+    }
+
+    /** A body instance that AGREES with the topic token is not a conflict. */
+    @Test
+    void matchingBodyInstancePassesThrough() {
+        AtomicReference<String> seen = new AtomicReference<>();
+        inbox.register("sb/read", CommandScope.INSTANCE, (req, addressedInstance) -> {
+            seen.set(addressedInstance);
+            return null;
+        });
+        inbox.start();
+        JsonObject body = new JsonObject();
+        body.addProperty("instance", "plc7");
+        Message command = MessageBuilder.create("sb/read", "1.0").withPayload(body).build();
+        command.makeRequest(REPLY_TO);
+        messaging.simulateMessage("ecv1/test-thing/TestComponent/plc7/cmd/sb/read", command);
+        assertEquals("plc7", seen.get());
+        assertTrue(onlyReplyBody().get("ok").getAsBoolean());
+    }
+
+    /** COMPONENT: instance addressing - topic or body - is rejected; the handler never runs. */
+    @Test
+    void componentVerbRejectsInstanceAddressing() {
+        AtomicInteger calls = new AtomicInteger();
+        inbox.register("sb/discover", CommandScope.COMPONENT, (req, addressedInstance) -> {
+            calls.incrementAndGet();
+            JsonObject result = new JsonObject();
+            result.addProperty("addressed",
+                    addressedInstance == null ? "component" : addressedInstance);
+            return result;
+        });
+        inbox.start();
+
+        // Topic-addressed to an instance -> BAD_ARGS.
+        messaging.simulateMessage(topic("sb/discover"), request("sb/discover"));
+        JsonObject topicReject = onlyReplyBody();
+        assertFalse(topicReject.get("ok").getAsBoolean());
+        assertEquals(CommandInbox.ERR_BAD_ARGS,
+                topicReject.getAsJsonObject("error").get("code").getAsString());
+        assertEquals("verb 'sb/discover' is component-scoped",
+                topicReject.getAsJsonObject("error").get("message").getAsString());
+        assertEquals(0, calls.get(), "the handler must not run on a topic-addressing error");
+
+        // Body-addressed -> BAD_ARGS (the same message family).
+        messaging.clearPublishedMessages();
+        JsonObject body = new JsonObject();
+        body.addProperty("instance", "plc7");
+        Message bodyAddressed = MessageBuilder.create("sb/discover", "1.0")
+                .withPayload(body).build();
+        bodyAddressed.makeRequest(REPLY_TO);
+        messaging.simulateMessage(componentTopic("sb/discover"), bodyAddressed);
+        JsonObject bodyReject = onlyReplyBody();
+        assertEquals(CommandInbox.ERR_BAD_ARGS,
+                bodyReject.getAsJsonObject("error").get("code").getAsString());
+        assertEquals("verb 'sb/discover' is component-scoped - the body must not name an instance",
+                bodyReject.getAsJsonObject("error").get("message").getAsString());
+        assertEquals(0, calls.get(), "the handler must not run on a body-addressing error");
+
+        // Component-addressed with no body instance -> dispatches with null.
+        messaging.clearPublishedMessages();
+        messaging.simulateMessage(componentTopic("sb/discover"), request("sb/discover"));
+        assertEquals(1, calls.get());
+        assertEquals("component",
+                onlyReplyBody().getAsJsonObject("result").get("addressed").getAsString());
+    }
+
+    /** The conflict rule is universal and checked first, even at a COMPONENT verb. */
+    @Test
+    void conflictWinsOverComponentScopeRejection() {
+        inbox.register("sb/discover", CommandScope.COMPONENT, (req, addressedInstance) -> null);
+        inbox.start();
+        JsonObject body = new JsonObject();
+        body.addProperty("instance", "plc8");
+        Message conflicting = MessageBuilder.create("sb/discover", "1.0")
+                .withPayload(body).build();
+        conflicting.makeRequest(REPLY_TO);
+        messaging.simulateMessage("ecv1/test-thing/TestComponent/plc7/cmd/sb/discover",
+                conflicting);
+        assertEquals("instance in body conflicts with the addressed instance",
+                onlyReplyBody().getAsJsonObject("error").get("message").getAsString(),
+                "the universal conflict check runs before the COMPONENT rejection");
+    }
+
+    /** A mis-addressed fire-and-forget command is dropped (logged), never replied to. */
+    @Test
+    void fireAndForgetAddressingErrorIsNotRepliedTo() {
+        AtomicInteger calls = new AtomicInteger();
+        inbox.register("sb/discover", CommandScope.COMPONENT, (req, addressedInstance) -> {
+            calls.incrementAndGet();
+            return null;
+        });
+        inbox.start();
+        messaging.simulateMessage(topic("sb/discover"), notification("sb/discover"));
+        assertEquals(0, calls.get());
+        assertTrue(messaging.getPublishedMessages().isEmpty(),
+                "an addressing error without reply_to mirrors coded errors: logged only");
+    }
+
+    /** A non-string body {@code instance} field is not addressing - it is ignored. */
+    @Test
+    void nonStringBodyInstanceIsIgnoredForAddressing() {
+        AtomicReference<String> seen = new AtomicReference<>("unset");
+        inbox.register("sb/discover", CommandScope.COMPONENT, (req, addressedInstance) -> {
+            seen.set(addressedInstance);
+            return null;
+        });
+        inbox.start();
+        JsonObject body = new JsonObject();
+        body.addProperty("instance", 7);
+        Message command = MessageBuilder.create("sb/discover", "1.0").withPayload(body).build();
+        command.makeRequest(REPLY_TO);
+        messaging.simulateMessage(componentTopic("sb/discover"), command);
+        assertNull(seen.get(), "a non-string instance field is not an addressing claim");
+        assertTrue(onlyReplyBody().get("ok").getAsBoolean());
+    }
+
+    /** The outcome form receives the same library-resolved addressed instance. */
+    @Test
+    void outcomeHandlerReceivesTheAddressedInstanceAndTokenStillSettles() throws Exception {
+        AtomicReference<String> seen = new AtomicReference<>("unset");
+        AtomicReference<CommandInbox.DeferredReply> tokenRef = new AtomicReference<>();
+        inbox.registerOutcome("sb/capture", CommandScope.INSTANCE,
+                (req, addressedInstance) -> {
+                    seen.set(addressedInstance);
+                    CommandInbox.DeferredReply token = inbox.defer(req, Duration.ofSeconds(2));
+                    tokenRef.set(token);
+                    token.activate();
+                    return CommandOutcome.deferred(token);
+                });
+        inbox.start();
+        messaging.simulateMessage("ecv1/test-thing/TestComponent/cam-01/cmd/sb/capture",
+                request("sb/capture"));
+
+        assertEquals("cam-01", seen.get(),
+                "the outcome form sees the topic's instance token");
+        JsonObject result = new JsonObject();
+        result.addProperty("captureId", "cap-9");
+        assertEquals(CommandInbox.SettlementResult.ACCEPTED,
+                tokenRef.get().settleSuccess(result));
+        awaitCondition(() -> tokenRef.get().state() == CommandInbox.DeferredReplyState.SETTLED,
+                "the scoped outcome token must still settle");
+        assertEquals("cap-9",
+                onlyReplyBody().getAsJsonObject("result").get("captureId").getAsString());
+        inbox.close();
+    }
+
+    /** COMPONENT enforcement guards the outcome form identically; the handler never runs. */
+    @Test
+    void outcomeFormComponentRejectionNeverInvokesTheHandler() {
+        AtomicInteger calls = new AtomicInteger();
+        inbox.registerOutcome("sb/reindex", CommandScope.COMPONENT,
+                (req, addressedInstance) -> {
+                    calls.incrementAndGet();
+                    return CommandOutcome.success(null);
+                });
+        inbox.start();
+        messaging.simulateMessage(topic("sb/reindex"), request("sb/reindex"));
+        assertEquals(0, calls.get(), "scope enforcement precedes outcome dispatch");
+        JsonObject body = onlyReplyBody();
+        assertEquals(CommandInbox.ERR_BAD_ARGS,
+                body.getAsJsonObject("error").get("code").getAsString());
+        assertEquals("verb 'sb/reindex' is component-scoped",
+                body.getAsJsonObject("error").get("message").getAsString());
+    }
+
+    /** Built-ins are scope BOTH: identical answers at either cmd scope. */
+    @Test
+    void builtInsAnswerIdenticallyOnBothCmdScopes() {
+        uptime.set(4242);
+        inbox.start();
+        messaging.simulateMessage(topic(CommandInbox.PING), request(CommandInbox.PING));
+        messaging.simulateMessage(componentTopic(CommandInbox.PING), request(CommandInbox.PING));
+        assertEquals(2, messaging.getPublishedMessages().size());
+        JsonObject first = messaging.getPublishedMessages().get(0).message.toDict()
+                .getAsJsonObject("body");
+        JsonObject second = messaging.getPublishedMessages().get(1).message.toDict()
+                .getAsJsonObject("body");
+        assertEquals(first, second,
+                "a built-in must answer identically on the component and instance topics");
+        assertTrue(first.get("ok").getAsBoolean());
+    }
+
+    /** describe advertises the declared scope, in the pinned {verb, builtIn, scope} key order. */
+    @Test
+    void describeCarriesTheDeclaredScopeInPinnedKeyOrder() {
+        inbox.register("sb/read", CommandScope.INSTANCE, (req, addressedInstance) -> null);
+        inbox.register("sb/discover", CommandScope.COMPONENT, (req, addressedInstance) -> null);
+        inbox.register("sb/pause", CommandScope.BOTH, (req, addressedInstance) -> null);
+        inbox.start();
+
+        JsonArray commands = describeResult().getAsJsonArray("commands");
+        assertEquals("instance", commandEntry(commands, "sb/read").get("scope").getAsString());
+        assertEquals("component",
+                commandEntry(commands, "sb/discover").get("scope").getAsString());
+        assertEquals("both", commandEntry(commands, "sb/pause").get("scope").getAsString());
+        assertEquals("both",
+                commandEntry(commands, CommandInbox.PING).get("scope").getAsString(),
+                "built-ins advertise scope both");
+        assertEquals(List.of("verb", "builtIn", "scope"),
+                List.copyOf(commandEntry(commands, "sb/read").keySet()),
+                "the pinned entry key order is {verb, builtIn, scope}");
+    }
+
+    /** A scope change alone changes the describe digest (the console's change signal). */
+    @Test
+    void scopeChangeAltersTheDescribeDigest() {
+        inbox.register("sb/pause", CommandScope.INSTANCE, (req, addressedInstance) -> null);
+        inbox.start();
+        String instanceScoped = describeResult().get("digest").getAsString();
+
+        inbox.unregister("sb/pause");
+        inbox.register("sb/pause", CommandScope.BOTH, (req, addressedInstance) -> null);
+        assertNotEquals(instanceScoped, describeResult().get("digest").getAsString(),
+                "widening INSTANCE -> BOTH must alter the digest");
+
+        inbox.unregister("sb/pause");
+        inbox.register("sb/pause", CommandScope.INSTANCE, (req, addressedInstance) -> null);
+        assertEquals(instanceScoped, describeResult().get("digest").getAsString(),
+                "an identical registration restores the identical digest");
+    }
+
+    /** The one-handler-per-verb rule spans both registration forms. */
+    @Test
+    void oneHandlerPerVerbSpansBothForms() {
+        inbox.register("mine", CommandScope.INSTANCE, (req, addressedInstance) -> null);
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.register("mine", CommandScope.BOTH,
+                        (req, addressedInstance) -> null),
+                "an already-registered verb cannot be re-registered, whatever the scope");
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.registerOutcome("mine", CommandScope.BOTH,
+                        (req, addressedInstance) -> CommandOutcome.success(null)),
+                "nor cross-registered through the outcome form");
+        inbox.unregister("mine");
+        assertFalse(inbox.verbs().contains("mine"), "unregister removes the handler");
+
+        inbox.registerOutcome("mine", CommandScope.BOTH,
+                (req, addressedInstance) -> CommandOutcome.success(null));
+        assertThrows(IllegalArgumentException.class,
+                () -> inbox.register("mine", CommandScope.BOTH,
+                        (req, addressedInstance) -> null),
+                "an outcome verb cannot also get an immediate handler");
+        inbox.unregister("mine");
+    }
+
+    /** Unregister clears the stored availability along with the handler. */
+    @Test
+    void unregisterClearsAvailabilityWithTheHandler() {
+        inbox.register("sb/write", CommandScope.INSTANCE, (req, addressedInstance) -> null);
+        inbox.setCommandAvailability("sb/write", "disabled", "maintenance");
+        inbox.unregister("sb/write");
+        inbox.register("sb/write", CommandScope.INSTANCE, (req, addressedInstance) -> null);
+        inbox.start();
+        JsonObject entry = commandEntry(describeResult().getAsJsonArray("commands"), "sb/write");
+        assertFalse(entry.has("availability"),
+                "a re-registered verb starts available again");
     }
 
     // ===================== unknown / fire-and-forget / malformed =====================
@@ -944,7 +1246,7 @@ class CommandInboxTest {
     @Test
     void noReplyToRunsTheHandlerWithoutReplying() {
         boolean[] ran = {false};
-        inbox.register("do-it", req -> {
+        inbox.register("do-it", CommandScope.BOTH, (req, addressedInstance) -> {
             ran[0] = true;
             return null;
         });
@@ -956,7 +1258,7 @@ class CommandInboxTest {
 
     @Test
     void fireAndForgetHandlerFailureIsLoggedOnly() {
-        inbox.register("do-it", req -> {
+        inbox.register("do-it", CommandScope.BOTH, (req, addressedInstance) -> {
             throw new CommandException("NOPE", "nope");
         });
         inbox.start();
@@ -1019,7 +1321,8 @@ class CommandInboxTest {
     void outcomeHandlersPreserveStandardImmediateWrappers() {
         JsonObject result = new JsonObject();
         result.addProperty("accepted", true);
-        inbox.registerOutcome("outcome-ok", req -> CommandOutcome.success(result));
+        inbox.registerOutcome("outcome-ok", CommandScope.BOTH,
+                (req, addressedInstance) -> CommandOutcome.success(result));
         inbox.start();
 
         messaging.simulateMessage(topic("outcome-ok"), request("outcome-ok"));
@@ -1028,8 +1331,9 @@ class CommandInboxTest {
         assertTrue(success.getAsJsonObject("result").get("accepted").getAsBoolean());
 
         messaging.clearPublishedMessages();
-        inbox.registerOutcome("outcome-error",
-                req -> CommandOutcome.error("CAMERA_BUSY", "camera is busy"));
+        inbox.registerOutcome("outcome-error", CommandScope.BOTH,
+                (req, addressedInstance) -> CommandOutcome.error("CAMERA_BUSY",
+                        "camera is busy"));
         messaging.simulateMessage(topic("outcome-error"), request("outcome-error"));
         JsonObject error = onlyReplyBody();
         assertFalse(error.get("ok").getAsBoolean());
@@ -1042,7 +1346,8 @@ class CommandInboxTest {
         // The outcome contract is "return a non-null explicit outcome". A handler that returns
         // nothing is a bug in the component, and must surface as a coded error reply rather than
         // a swallowed no-reply (which would hang the caller until its request deadline).
-        inbox.registerOutcome("outcome-null", req -> null);
+        inbox.registerOutcome("outcome-null", CommandScope.BOTH,
+                (req, addressedInstance) -> null);
         inbox.start();
         messaging.simulateMessage(topic("outcome-null"), request("outcome-null"));
         JsonObject body = onlyReplyBody();
@@ -1053,9 +1358,10 @@ class CommandInboxTest {
         // A coded failure thrown from an outcome handler keeps its code, exactly as for the
         // legacy handler surface.
         messaging.clearPublishedMessages();
-        inbox.registerOutcome("outcome-coded", req -> {
-            throw new CommandException("CAMERA_BUSY", "a capture is already running");
-        });
+        inbox.registerOutcome("outcome-coded", CommandScope.BOTH,
+                (req, addressedInstance) -> {
+                    throw new CommandException("CAMERA_BUSY", "a capture is already running");
+                });
         messaging.simulateMessage(topic("outcome-coded"), request("outcome-coded"));
         JsonObject coded = onlyReplyBody();
         assertFalse(coded.get("ok").getAsBoolean());
@@ -1096,7 +1402,7 @@ class CommandInboxTest {
         CommandInbox subject = new CommandInbox(config, brokerDown,
                 uptime::get, reloadResult::get, redactedConfig::get);
         AtomicReference<CommandInbox.DeferredReply> tokenRef = new AtomicReference<>();
-        subject.registerOutcome("shutdown", req -> {
+        subject.registerOutcome("shutdown", CommandScope.BOTH, (req, addressedInstance) -> {
             CommandInbox.DeferredReply token = subject.defer(req, Duration.ofSeconds(5));
             tokenRef.set(token);
             token.activate();
@@ -1117,13 +1423,15 @@ class CommandInboxTest {
 
     @Test
     void registerOutcomeSharesDuplicateAndUnregisterRulesWithLegacyHandlers() {
-        inbox.registerOutcome("explicit", req -> CommandOutcome.success(null));
+        inbox.registerOutcome("explicit", CommandScope.BOTH,
+                (req, addressedInstance) -> CommandOutcome.success(null));
         assertTrue(inbox.verbs().contains("explicit"));
         assertThrows(IllegalArgumentException.class,
-                () -> inbox.register("explicit", req -> null));
+                () -> inbox.register("explicit", CommandScope.BOTH,
+                        (req, addressedInstance) -> null));
         assertThrows(IllegalArgumentException.class,
-                () -> inbox.registerOutcome(CommandInbox.PING,
-                        req -> CommandOutcome.success(null)));
+                () -> inbox.registerOutcome(CommandInbox.PING, CommandScope.BOTH,
+                        (req, addressedInstance) -> CommandOutcome.success(null)));
         inbox.unregister("explicit");
         assertFalse(inbox.verbs().contains("explicit"));
     }
@@ -1131,7 +1439,7 @@ class CommandInboxTest {
     @Test
     void activatedDeferredSuppressesAutoReplyAndSettlesExactlyOnce() throws Exception {
         AtomicReference<CommandInbox.DeferredReply> tokenRef = new AtomicReference<>();
-        inbox.registerOutcome("long-capture", req -> {
+        inbox.registerOutcome("long-capture", CommandScope.BOTH, (req, addressedInstance) -> {
             CommandInbox.DeferredReply token = inbox.defer(req, Duration.ofSeconds(2));
             tokenRef.set(token);
             assertTrue(token.activate(), "durable acceptance activates the provisional token");
@@ -1171,7 +1479,7 @@ class CommandInboxTest {
     void postAcceptContinuationStartsOnlyAfterTheInboxAcceptsAnOpenToken() throws Exception {
         AtomicReference<CommandInbox.DeferredReply> tokenRef = new AtomicReference<>();
         CountDownLatch continuationStarted = new CountDownLatch(1);
-        inbox.registerOutcome("post-accept", req -> {
+        inbox.registerOutcome("post-accept", CommandScope.BOTH, (req, addressedInstance) -> {
             CommandInbox.DeferredReply token = inbox.defer(req, Duration.ofSeconds(2));
             tokenRef.set(token);
             assertTrue(token.activate());
@@ -1198,7 +1506,8 @@ class CommandInboxTest {
     @Test
     void invalidPostAcceptTokenNeverStartsItsContinuation() throws Exception {
         AtomicBoolean continuationRan = new AtomicBoolean(false);
-        inbox.registerOutcome("post-accept-invalid", req -> {
+        inbox.registerOutcome("post-accept-invalid", CommandScope.BOTH,
+                (req, addressedInstance) -> {
             CommandInbox.DeferredReply token = inbox.defer(req, Duration.ofSeconds(1));
             // Leave the token PROVISIONAL. The dispatcher must reject before scheduling.
             return CommandOutcome.deferredWithContinuation(token,
@@ -1217,7 +1526,8 @@ class CommandInboxTest {
     @Test
     void failedPostAcceptContinuationSettlesThroughTheGuardedErrorPath() throws Exception {
         AtomicReference<CommandInbox.DeferredReply> tokenRef = new AtomicReference<>();
-        inbox.registerOutcome("post-accept-failure", req -> {
+        inbox.registerOutcome("post-accept-failure", CommandScope.BOTH,
+                (req, addressedInstance) -> {
             CommandInbox.DeferredReply token = inbox.defer(req, Duration.ofSeconds(2));
             tokenRef.set(token);
             assertTrue(token.activate());
@@ -1239,7 +1549,7 @@ class CommandInboxTest {
     @Test
     void concurrentDeferredSettlersHaveOneAtomicWinner() throws Exception {
         AtomicReference<CommandInbox.DeferredReply> tokenRef = new AtomicReference<>();
-        inbox.registerOutcome("settle-race", req -> {
+        inbox.registerOutcome("settle-race", CommandScope.BOTH, (req, addressedInstance) -> {
             CommandInbox.DeferredReply token = inbox.defer(req, Duration.ofSeconds(2));
             tokenRef.set(token);
             token.activate();
@@ -1281,7 +1591,7 @@ class CommandInboxTest {
     void settlementAndExpirationRaceProduceOneTerminalStateAndAtMostOneReply()
             throws Exception {
         AtomicReference<CommandInbox.DeferredReply> tokenRef = new AtomicReference<>();
-        inbox.registerOutcome("expiry-race", req -> {
+        inbox.registerOutcome("expiry-race", CommandScope.BOTH, (req, addressedInstance) -> {
             CommandInbox.DeferredReply token = inbox.defer(req, Duration.ofMillis(100));
             tokenRef.set(token);
             token.activate();
@@ -1315,7 +1625,7 @@ class CommandInboxTest {
     @Test
     void provisionalOrForeignDeferredTokenIsRejectedAndDiscarded() {
         AtomicReference<CommandInbox.DeferredReply> tokenRef = new AtomicReference<>();
-        inbox.registerOutcome("not-activated", req -> {
+        inbox.registerOutcome("not-activated", CommandScope.BOTH, (req, addressedInstance) -> {
             CommandInbox.DeferredReply token = inbox.defer(req, Duration.ofSeconds(1));
             tokenRef.set(token);
             return CommandOutcome.deferred(token);
@@ -1357,7 +1667,7 @@ class CommandInboxTest {
     @Test
     void openDeferredTokenExpiresOnTimerWithObservableDiagnosticState() throws Exception {
         AtomicReference<CommandInbox.DeferredReply> tokenRef = new AtomicReference<>();
-        inbox.registerOutcome("expires", req -> {
+        inbox.registerOutcome("expires", CommandScope.BOTH, (req, addressedInstance) -> {
             CommandInbox.DeferredReply token = inbox.defer(req, Duration.ofMillis(40));
             tokenRef.set(token);
             token.activate();
@@ -1394,7 +1704,7 @@ class CommandInboxTest {
         CommandInbox retryInbox = new CommandInbox(config, flaky,
                 uptime::get, reloadResult::get, redactedConfig::get);
         AtomicReference<CommandInbox.DeferredReply> tokenRef = new AtomicReference<>();
-        retryInbox.registerOutcome("retry", req -> {
+        retryInbox.registerOutcome("retry", CommandScope.BOTH, (req, addressedInstance) -> {
             CommandInbox.DeferredReply token = retryInbox.defer(req, Duration.ofSeconds(2));
             tokenRef.set(token);
             token.activate();
@@ -1415,7 +1725,7 @@ class CommandInboxTest {
     @Test
     void closeAttemptsComponentStoppingThenCancelsOpenTokens() {
         AtomicReference<CommandInbox.DeferredReply> tokenRef = new AtomicReference<>();
-        inbox.registerOutcome("shutdown", req -> {
+        inbox.registerOutcome("shutdown", CommandScope.BOTH, (req, addressedInstance) -> {
             CommandInbox.DeferredReply token = inbox.defer(req, Duration.ofSeconds(2));
             tokenRef.set(token);
             token.activate();

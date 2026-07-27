@@ -19,9 +19,11 @@ from app.<<COMPONENTNAME>> import SET_GREETING, GreetingState, <<COMPONENTNAME>>
 class FakeCommands:
     def __init__(self):
         self.verbs = {}
+        self.scopes = {}
 
-    def register(self, verb, handler):
+    def register(self, verb, scope, handler):
         self.verbs[verb] = handler
+        self.scopes[verb] = scope
 
 
 class FakeGg:
@@ -122,7 +124,7 @@ def test_the_custom_verb_does_not_shadow_a_built_in():
 
 
 def test_set_greeting_replaces_the_greeting_and_reports_what_it_replaced(command_state):
-    reply = command_state.handle(FakeRequest({"greeting": "Hi"}))
+    reply = command_state.handle(FakeRequest({"greeting": "Hi"}), None)
 
     assert reply["greeting"] == "Hi"
     assert reply["previousGreeting"] != "Hi"
@@ -136,4 +138,4 @@ def test_a_malformed_command_argument_is_a_coded_error_not_a_crash(command_state
     # A typo'd argument must come back as a CODED error the caller can act on — never an
     # unhandled exception that takes the handler (and the reply) with it.
     with pytest.raises(CommandException):
-        command_state.handle(FakeRequest({"greetnig": "typo"}))
+        command_state.handle(FakeRequest({"greetnig": "typo"}), None)

@@ -190,15 +190,15 @@ class CommandsTest {
     @Test
     void instanceDefaultsToTheSoleDeviceAndUnknownOrMissingIdsError() throws Exception {
         Harness h = harness(aDevice());
-        assertEquals("plc-1", h.commander.status(json("{}")).get("id").getAsString());
-        assertEquals("NO_SUCH_INSTANCE", errCode(() -> h.commander.status(json("{\"instance\":\"nope\"}"))));
+        assertEquals("plc-1", h.commander.status(null).get("id").getAsString());
+        assertEquals("NO_SUCH_INSTANCE", errCode(() -> h.commander.status("nope")));
 
         // Two devices: a missing `instance` is BAD_ARGS.
         Commands.DeviceHandle a = handleFor(aDevice("plc-1"));
         Commands.DeviceHandle b = handleFor(aDevice("plc-2"));
         Commands.Commander multi = new Commands.Commander(List.of(a, b));
-        assertEquals("BAD_ARGS", errCode(() -> multi.status(json("{}"))));
-        assertEquals("plc-2", multi.status(json("{\"instance\":\"plc-2\"}")).get("id").getAsString());
+        assertEquals("BAD_ARGS", errCode(() -> multi.status(null)));
+        assertEquals("plc-2", multi.status("plc-2").get("id").getAsString());
     }
 
     private static Commands.DeviceHandle handleFor(DeviceConfig cfg) {
@@ -212,7 +212,7 @@ class CommandsTest {
     @Test
     void statusReportsConnectedStatePausedAndACounterSnapshot() throws Exception {
         Harness h = harness(aDevice());
-        JsonObject out = h.commander.status(json("{}"));
+        JsonObject out = h.commander.status(null);
         assertTrue(out.get("connected").getAsBoolean());
         assertEquals("ONLINE", out.get("state").getAsString());
         assertFalse(out.get("paused").getAsBoolean());
@@ -225,7 +225,7 @@ class CommandsTest {
     @Test
     void signalsListsTheInventoryWithTheWritableFlag() throws Exception {
         Harness h = harness(aDevice());
-        JsonArray sigs = h.commander.signals(json("{}")).getAsJsonArray("signals");
+        JsonArray sigs = h.commander.signals(null).getAsJsonArray("signals");
         assertEquals(2, sigs.size());
         JsonObject setpoint = findSignal(sigs, "setpoint-1");
         assertTrue(setpoint.get("writable").getAsBoolean(), "setpoint-1 is on the allow-list");
@@ -248,7 +248,7 @@ class CommandsTest {
     void readReturnsValuesByIdAndByNameAndMarksUnresolvedRefs() throws Exception {
         Harness h = harness(aDevice());
         JsonObject out = h.commander.read(json(
-                "{\"signals\":[{\"signalId\":\"temperature-1\"},{\"name\":\"Setpoint\"},{\"name\":\"ghost\"}]}"));
+                "{\"signals\":[{\"signalId\":\"temperature-1\"},{\"name\":\"Setpoint\"},{\"name\":\"ghost\"}]}"), null);
         JsonArray reads = out.getAsJsonArray("reads");
         assertEquals("temperature-1", reads.get(0).getAsJsonObject().getAsJsonObject("signal").get("id").getAsString());
         assertEquals("GOOD", reads.get(0).getAsJsonObject().get("quality").getAsString());
@@ -262,12 +262,12 @@ class CommandsTest {
     @Test
     void readWithoutASignalsArrayIsBadArgsAndALinkErrorIsReadFailed() {
         Harness h = harness(aDevice());
-        assertEquals("BAD_ARGS", errCode(() -> h.commander.read(json("{}"))));
+        assertEquals("BAD_ARGS", errCode(() -> h.commander.read(json("{}"), null)));
 
         Harness h2 = harness(aDevice());
         h2.control.readOk = false;
         assertEquals("READ_FAILED", errCode(
-                () -> h2.commander.read(json("{\"signals\":[{\"signalId\":\"temperature-1\"}]}"))));
+                () -> h2.commander.read(json("{\"signals\":[{\"signalId\":\"temperature-1\"}]}"), null)));
     }
 
     // --- sb/write: allow-list BEFORE any device I/O (the security guarantee) -----------------------
@@ -277,7 +277,7 @@ class CommandsTest {
         Harness h = harness(aDevice());
         // temperature-1 is NOT on the allow-list.
         assertEquals("WRITE_NOT_ALLOWED", errCode(() -> h.commander.write(
-                json("{\"writes\":[{\"signalId\":\"temperature-1\",\"value\":1}]}"))));
+                json("{\"writes\":[{\"signalId\":\"temperature-1\",\"value\":1}]}"), null)));
         assertTrue(h.control.writes.isEmpty(), "the refused write must never reach the device");
         assertEquals(0, h.health.takeWriteErrors(),
                 "an allow-list refusal is a policy error, not a device write error");
@@ -287,13 +287,13 @@ class CommandsTest {
     void anAllowListedWriteIsConfirmedAndBatchesMixResults() throws Exception {
         Harness h = harness(aDevice());
         // A single allowed write (single-object shorthand).
-        JsonObject out = h.commander.write(json("{\"signalId\":\"setpoint-1\",\"value\":42}"));
+        JsonObject out = h.commander.write(json("{\"signalId\":\"setpoint-1\",\"value\":42}"), null);
         assertEquals(1, out.get("written").getAsInt());
         assertEquals(1, h.control.writes.size(), "the allowed write reached the device");
 
         // A batch: one allowed (written), one refused (never sent).
         JsonObject out2 = h.commander.write(json(
-                "{\"writes\":[{\"signalId\":\"setpoint-1\",\"value\":7},{\"signalId\":\"temperature-1\",\"value\":8}]}"));
+                "{\"writes\":[{\"signalId\":\"setpoint-1\",\"value\":7},{\"signalId\":\"temperature-1\",\"value\":8}]}"), null);
         assertEquals(1, out2.get("written").getAsInt(), "only the allow-listed entry is written");
         JsonArray results = out2.getAsJsonArray("results");
         long okCount = countWhere(results, r -> r.has("ok") && r.get("ok").getAsBoolean());
@@ -320,7 +320,7 @@ class CommandsTest {
         Harness h = harness(aDevice());
         h.control.writeOk = false;
         assertEquals("WRITE_FAILED",
-                errCode(() -> h.commander.write(json("{\"signalId\":\"setpoint-1\",\"value\":42}"))));
+                errCode(() -> h.commander.write(json("{\"signalId\":\"setpoint-1\",\"value\":42}"), null)));
         assertEquals(1, h.health.takeWriteErrors(), "the device rejection feeds the writeErrors counter");
     }
 
@@ -328,27 +328,27 @@ class CommandsTest {
     void writeErrorsCountsOnlyDevicePathFailures() throws Exception {
         // A successful write counts nothing.
         Harness h = harness(aDevice());
-        h.commander.write(json("{\"signalId\":\"setpoint-1\",\"value\":42}"));
+        h.commander.write(json("{\"signalId\":\"setpoint-1\",\"value\":42}"), null);
         assertEquals(0, h.health.takeWriteErrors());
 
         // Unresolved refs and missing values are caller errors — no increment.
         h.commander.write(json(
                 "{\"writes\":[{\"name\":\"ghost\",\"value\":1},{\"signalId\":\"setpoint-1\"},"
-                        + "{\"signalId\":\"setpoint-1\",\"value\":2}]}"));
+                        + "{\"signalId\":\"setpoint-1\",\"value\":2}]}"), null);
         assertEquals(0, h.health.takeWriteErrors());
 
         // A gone device loop mid-write IS a device-path failure.
         Harness gone = harness(aDevice());
         gone.control.unavailable = true;
         assertEquals("DEVICE_UNAVAILABLE",
-                errCode(() -> gone.commander.write(json("{\"signalId\":\"setpoint-1\",\"value\":42}"))));
+                errCode(() -> gone.commander.write(json("{\"signalId\":\"setpoint-1\",\"value\":42}"), null)));
         assertEquals(1, gone.health.takeWriteErrors());
     }
 
     @Test
     void aWriteWithNoWritesOrValueIsBadArgs() {
         Harness h = harness(aDevice());
-        assertEquals("BAD_ARGS", errCode(() -> h.commander.write(json("{}"))));
+        assertEquals("BAD_ARGS", errCode(() -> h.commander.write(json("{}"), null)));
     }
 
     // --- sb/browse ---------------------------------------------------------------------------------
@@ -356,18 +356,18 @@ class CommandsTest {
     @Test
     void browseReturnsAPageOrTheRightErrorCode() throws Exception {
         Harness h = harness(aDevice());
-        JsonObject out = h.commander.browse(json("{}"));
+        JsonObject out = h.commander.browse(json("{}"), null);
         assertEquals(1, out.getAsJsonArray("entries").size());
         assertEquals("temperature-1",
                 out.getAsJsonArray("entries").get(0).getAsJsonObject().get("id").getAsString());
 
         Harness u = harness(aDevice());
         u.control.browse = Browse.UNSUPPORTED;
-        assertEquals("BROWSE_UNSUPPORTED", errCode(() -> u.commander.browse(json("{}"))));
+        assertEquals("BROWSE_UNSUPPORTED", errCode(() -> u.commander.browse(json("{}"), null)));
 
         Harness f = harness(aDevice());
         f.control.browse = Browse.FAILED;
-        assertEquals("BROWSE_FAILED", errCode(() -> f.commander.browse(json("{}"))));
+        assertEquals("BROWSE_FAILED", errCode(() -> f.commander.browse(json("{}"), null)));
     }
 
     // --- sb/browse: the hierarchical panel mode ----------------------------------------------------
@@ -375,7 +375,7 @@ class CommandsTest {
     @Test
     void hierarchicalRootAnswersTheDeviceNodeOverTheSameInventory() throws Exception {
         Harness h = harness(aDevice());
-        JsonObject out = h.commander.browse(json("{\"ref\":\"root\"}"));
+        JsonObject out = h.commander.browse(json("{\"ref\":\"root\"}"), null);
 
         assertEquals("hierarchical", out.get("mode").getAsString());
         assertEquals(1, out.get("refCount").getAsInt());
@@ -400,7 +400,7 @@ class CommandsTest {
     @Test
     void hierarchicalSignalRefIsAKnownLeafAndAnUnknownRefIsBadArgs() throws Exception {
         Harness h = harness(aDevice());
-        JsonObject out = h.commander.browse(json("{\"ref\":\"temperature-1\"}"));
+        JsonObject out = h.commander.browse(json("{\"ref\":\"temperature-1\"}"), null);
         JsonObject root = out.getAsJsonObject("root");
         assertEquals("temperature-1", root.get("nodeId").getAsString());
         assertEquals("signal", root.get("nodeClass").getAsString());
@@ -409,33 +409,33 @@ class CommandsTest {
         assertEquals(0, out.get("refCount").getAsInt());
         assertFalse(out.get("truncated").getAsBoolean());
 
-        assertEquals("BAD_ARGS", errCode(() -> h.commander.browse(json("{\"ref\":\"ghost\"}"))));
+        assertEquals("BAD_ARGS", errCode(() -> h.commander.browse(json("{\"ref\":\"ghost\"}"), null)));
     }
 
     @Test
     void mixingHierarchicalAndPagedArgsIsBadArgs() {
         Harness h = harness(aDevice());
         assertEquals("BAD_ARGS",
-                errCode(() -> h.commander.browse(json("{\"ref\":\"root\",\"cursor\":\"x\"}"))));
+                errCode(() -> h.commander.browse(json("{\"ref\":\"root\",\"cursor\":\"x\"}"), null)));
         assertEquals("BAD_ARGS",
-                errCode(() -> h.commander.browse(json("{\"depth\":2,\"max\":10}"))));
+                errCode(() -> h.commander.browse(json("{\"depth\":2,\"max\":10}"), null)));
         // The hierarchical companions without `ref` are also refused: nothing to anchor the tree on.
-        assertEquals("BAD_ARGS", errCode(() -> h.commander.browse(json("{\"depth\":2}"))));
+        assertEquals("BAD_ARGS", errCode(() -> h.commander.browse(json("{\"depth\":2}"), null)));
     }
 
     @Test
     void hierarchicalDepthAndMaxRefsAreBoundedAndTruncationIsReported() throws Exception {
         // depth clamps into 1..4; maxRefs into 1..1000.
         Harness h = harness(aDevice());
-        assertEquals(4, h.commander.browse(json("{\"ref\":\"root\",\"depth\":99}"))
+        assertEquals(4, h.commander.browse(json("{\"ref\":\"root\",\"depth\":99}"), null)
                 .get("depth").getAsInt());
-        assertEquals(1, h.commander.browse(json("{\"ref\":\"root\",\"depth\":0}"))
+        assertEquals(1, h.commander.browse(json("{\"ref\":\"root\",\"depth\":0}"), null)
                 .get("depth").getAsInt());
 
         // Three browsable signals, maxRefs 2 -> two refs, truncated.
         Harness many = harness(aDevice());
         many.control.browse = Browse.MANY;
-        JsonObject out = many.commander.browse(json("{\"ref\":\"root\",\"maxRefs\":2}"));
+        JsonObject out = many.commander.browse(json("{\"ref\":\"root\",\"maxRefs\":2}"), null);
         assertEquals(2, out.getAsJsonObject("root").getAsJsonArray("refs").size());
         assertEquals(2, out.get("refCount").getAsInt());
         assertTrue(out.get("truncated").getAsBoolean());
@@ -445,11 +445,11 @@ class CommandsTest {
     void hierarchicalBrowseMapsTheBrowseErrorCodesLikeThePagedMode() {
         Harness u = harness(aDevice());
         u.control.browse = Browse.UNSUPPORTED;
-        assertEquals("BROWSE_UNSUPPORTED", errCode(() -> u.commander.browse(json("{\"ref\":\"root\"}"))));
+        assertEquals("BROWSE_UNSUPPORTED", errCode(() -> u.commander.browse(json("{\"ref\":\"root\"}"), null)));
 
         Harness f = harness(aDevice());
         f.control.browse = Browse.FAILED;
-        assertEquals("BROWSE_FAILED", errCode(() -> f.commander.browse(json("{\"ref\":\"root\"}"))));
+        assertEquals("BROWSE_FAILED", errCode(() -> f.commander.browse(json("{\"ref\":\"root\"}"), null)));
     }
 
     // --- pause / resume / repoll -------------------------------------------------------------------
@@ -459,25 +459,25 @@ class CommandsTest {
         Harness h = harness(aDevice());
 
         // repoll works while running.
-        assertEquals(2, h.commander.repoll(json("{}")).get("polled").getAsInt());
+        assertEquals(2, h.commander.repoll(null).get("polled").getAsInt());
 
-        JsonObject out = h.commander.pause(json("{}"));
+        JsonObject out = h.commander.pause(null);
         assertTrue(out.get("paused").getAsBoolean());
         assertTrue(out.get("changed").getAsBoolean());
         assertTrue(h.health.isPaused());
 
         // repoll is refused while paused, with the dedicated PAUSED code.
-        assertEquals("PAUSED", errCode(() -> h.commander.repoll(json("{}"))));
+        assertEquals("PAUSED", errCode(() -> h.commander.repoll(null)));
 
         // pausing again is idempotent.
-        assertFalse(h.commander.pause(json("{}")).get("changed").getAsBoolean());
+        assertFalse(h.commander.pause(null).get("changed").getAsBoolean());
 
         // resume clears it and repoll works again.
-        JsonObject resumed = h.commander.resume(json("{}"));
+        JsonObject resumed = h.commander.resume(null);
         assertFalse(resumed.get("paused").getAsBoolean());
         assertTrue(resumed.get("changed").getAsBoolean());
         assertFalse(h.health.isPaused());
-        assertEquals(2, h.commander.repoll(json("{}")).get("polled").getAsInt());
+        assertEquals(2, h.commander.repoll(null).get("polled").getAsInt());
     }
 
     // --- reconnect ---------------------------------------------------------------------------------
@@ -485,18 +485,18 @@ class CommandsTest {
     @Test
     void reconnectConfirmsOrReportsReconnectFailed() throws Exception {
         Harness h = harness(aDevice());
-        assertTrue(h.commander.reconnect(json("{}")).get("connected").getAsBoolean());
+        assertTrue(h.commander.reconnect(null).get("connected").getAsBoolean());
 
         Harness f = harness(aDevice());
         f.control.reconnectOk = false;
-        assertEquals("RECONNECT_FAILED", errCode(() -> f.commander.reconnect(json("{}"))));
+        assertEquals("RECONNECT_FAILED", errCode(() -> f.commander.reconnect(null)));
     }
 
     @Test
     void deviceUnavailableWhenTheTaskIsGone() {
         Harness h = harness(aDevice());
         h.control.unavailable = true;
-        assertEquals("DEVICE_UNAVAILABLE", errCode(() -> h.commander.reconnect(json("{}"))));
+        assertEquals("DEVICE_UNAVAILABLE", errCode(() -> h.commander.reconnect(null)));
     }
 
     // --- panels ------------------------------------------------------------------------------------

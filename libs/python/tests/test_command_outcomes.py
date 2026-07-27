@@ -11,6 +11,7 @@ from edgecommons.command_inbox import (
     CommandException,
     CommandInbox,
     CommandOutcome,
+    CommandScope,
     Deferred,
     DeferredReplyState,
     ImmediateError,
@@ -127,7 +128,7 @@ def _wait_until(predicate, timeout=2.0):
 def test_immediate_outcomes_use_standard_reply_shapes(outcome, expected):
     inbox, messaging = _inbox()
     try:
-        inbox.register_outcome("capture", lambda request: outcome)
+        inbox.register_outcome("capture", CommandScope.BOTH, lambda request, instance: outcome)
         messaging.deliver(_topic("capture"), _request("capture"))
         assert messaging.published[0][1].get_body() == expected
     finally:
@@ -137,21 +138,21 @@ def test_immediate_outcomes_use_standard_reply_shapes(outcome, expected):
 def test_outcome_registration_is_mutually_exclusive_with_legacy_handlers():
     inbox, _ = _inbox()
     try:
-        inbox.register_outcome("capture", lambda request: CommandOutcome.success())
+        inbox.register_outcome("capture", CommandScope.BOTH, lambda request, instance: CommandOutcome.success())
         assert "capture" in inbox.verbs()
         with pytest.raises(ValueError, match="already registered"):
-            inbox.register("capture", lambda request: None)
+            inbox.register("capture", CommandScope.BOTH, lambda request, instance: None)
         inbox.unregister("capture")
-        inbox.register("capture", lambda request: None)
+        inbox.register("capture", CommandScope.BOTH, lambda request, instance: None)
         with pytest.raises(ValueError, match="already registered"):
-            inbox.register_outcome("capture", lambda request: CommandOutcome.success())
+            inbox.register_outcome("capture", CommandScope.BOTH, lambda request, instance: CommandOutcome.success())
         inbox.unregister("capture")
         assert "capture" not in inbox.verbs()
 
         with pytest.raises(ValueError, match="must not be None"):
-            inbox.register_outcome(None, lambda request: CommandOutcome.success())
+            inbox.register_outcome(None, CommandScope.BOTH, lambda request, instance: CommandOutcome.success())
         with pytest.raises(ValueError, match="must not be None"):
-            inbox.register_outcome("capture", None)
+            inbox.register_outcome("capture", CommandScope.BOTH, None)
     finally:
         inbox.close()
 
@@ -159,14 +160,14 @@ def test_outcome_registration_is_mutually_exclusive_with_legacy_handlers():
 @pytest.mark.parametrize(
     "handler",
     [
-        lambda request: ImmediateSuccess("not-a-dict"),
-        lambda request: object(),
+        lambda request, instance: ImmediateSuccess("not-a-dict"),
+        lambda request, instance: object(),
     ],
 )
 def test_invalid_outcomes_are_handler_errors(handler):
     inbox, messaging = _inbox()
     try:
-        inbox.register_outcome("capture", handler)
+        inbox.register_outcome("capture", CommandScope.BOTH, handler)
         messaging.deliver(_topic("capture"), _request("capture"))
         body = messaging.published[0][1].get_body()
         assert body["ok"] is False
@@ -186,11 +187,11 @@ def test_invalid_outcomes_are_handler_errors(handler):
 def test_outcome_handler_exceptions_keep_coded_vs_generic_mapping(exception, code):
     inbox, messaging = _inbox()
 
-    def fail(request):
+    def fail(request, instance):
         raise exception
 
     try:
-        inbox.register_outcome("capture", fail)
+        inbox.register_outcome("capture", CommandScope.BOTH, fail)
         messaging.deliver(_topic("capture"), _request("capture"))
         assert messaging.published[0][1].get_body()["error"]["code"] == code
         messaging.published.clear()
@@ -212,7 +213,7 @@ def test_deferred_success_is_confirmed_once_and_then_terminal():
     inbox, messaging = _inbox()
     issued = []
 
-    def defer_capture(request):
+    def defer_capture(request, instance):
         token = inbox.defer(request, 1)
         assert token.state() is DeferredReplyState.PROVISIONAL
         assert token.activate() is True
@@ -221,7 +222,7 @@ def test_deferred_success_is_confirmed_once_and_then_terminal():
         return CommandOutcome.deferred(token)
 
     try:
-        inbox.register_outcome("capture", defer_capture)
+        inbox.register_outcome("capture", CommandScope.BOTH, defer_capture)
         request = _request("capture")
         messaging.deliver(_topic("capture"), request)
         assert messaging.published == []
@@ -244,12 +245,72 @@ def test_deferred_success_is_confirmed_once_and_then_terminal():
         inbox.close()
 
 
+def test_a_deferred_token_still_settles_for_an_instance_addressed_delivery():
+    """Outcome-form parity for the declared scope (D-SC-1): the deferred handler sees
+    the addressed instance and the token settles exactly as before."""
+    inbox, messaging = _inbox()
+    issued = []
+    seen = []
+
+    def defer_capture(request, addressed_instance):
+        seen.append(addressed_instance)
+        token = inbox.defer(request, 1)
+        assert token.activate() is True
+        issued.append(token)
+        return CommandOutcome.deferred(token)
+
+    try:
+        inbox.register_outcome("capture", CommandScope.INSTANCE, defer_capture)
+        messaging.deliver(
+            "ecv1/test-thing/TestComponent/cam-9/cmd/capture", _request("capture")
+        )
+        assert seen == ["cam-9"], "the deferred form receives the topic's instance token"
+        assert messaging.published == []
+        token = issued[0]
+        assert token.settle_success({"imageId": "one"}) is SettlementResult.ACCEPTED
+        _wait_until(lambda: token.state() is DeferredReplyState.SETTLED)
+        assert messaging.published[0][1].get_body() == {
+            "ok": True,
+            "result": {"imageId": "one"},
+        }
+    finally:
+        inbox.close()
+
+
+def test_a_component_scoped_outcome_verb_is_refused_before_any_token_is_issued():
+    """The addressing error short-circuits the whole deferred path: no handler call,
+    no provisional token, no reply-registry capacity consumed."""
+    inbox, messaging = _inbox()
+    calls = []
+
+    def defer_capture(request, addressed_instance):
+        calls.append(addressed_instance)
+        token = inbox.defer(request, 1)
+        assert token.activate() is True
+        return CommandOutcome.deferred(token)
+
+    try:
+        inbox.register_outcome("capture", CommandScope.COMPONENT, defer_capture)
+        messaging.deliver(
+            "ecv1/test-thing/TestComponent/cam-9/cmd/capture", _request("capture")
+        )
+        assert calls == []
+        body = messaging.published[0][1].get_body()
+        assert body["ok"] is False
+        assert body["error"]["code"] == CommandInbox.ERR_BAD_ARGS
+        assert body["error"]["message"] == "verb 'capture' is component-scoped"
+        snapshot = inbox.deferred_snapshot()
+        assert snapshot.provisioned == 0 and snapshot.active == 0
+    finally:
+        inbox.close()
+
+
 def test_post_accept_continuation_starts_after_open_token_acceptance():
     inbox, messaging = _inbox()
     started = threading.Event()
     issued = []
 
-    def defer_capture(request):
+    def defer_capture(request, instance):
         token = inbox.defer(request, 1)
         assert token.activate() is True
         issued.append(token)
@@ -261,7 +322,7 @@ def test_post_accept_continuation_starts_after_open_token_acceptance():
         return CommandOutcome.deferred_with_continuation(token, continuation)
 
     try:
-        inbox.register_outcome("capture", defer_capture)
+        inbox.register_outcome("capture", CommandScope.BOTH, defer_capture)
         messaging.deliver(_topic("capture"), _request("capture"))
 
         assert started.wait(1), "the inbox-owned continuation should start"
@@ -278,13 +339,13 @@ def test_invalid_post_accept_token_never_starts_its_continuation():
     inbox, messaging = _inbox()
     started = threading.Event()
 
-    def invalid_defer(request):
+    def invalid_defer(request, instance):
         token = inbox.defer(request, 1)
         # Intentionally leave the token PROVISIONAL.
         return CommandOutcome.deferred_with_continuation(token, started.set)
 
     try:
-        inbox.register_outcome("capture", invalid_defer)
+        inbox.register_outcome("capture", CommandScope.BOTH, invalid_defer)
         messaging.deliver(_topic("capture"), _request("capture"))
 
         assert not started.wait(0.05)
@@ -297,7 +358,7 @@ def test_failed_post_accept_continuation_settles_through_guarded_error_path():
     inbox, messaging = _inbox()
     issued = []
 
-    def defer_capture(request):
+    def defer_capture(request, instance):
         token = inbox.defer(request, 1)
         assert token.activate() is True
         issued.append(token)
@@ -308,7 +369,7 @@ def test_failed_post_accept_continuation_settles_through_guarded_error_path():
         return CommandOutcome.deferred_with_continuation(token, failure)
 
     try:
-        inbox.register_outcome("capture", defer_capture)
+        inbox.register_outcome("capture", CommandScope.BOTH, defer_capture)
         messaging.deliver(_topic("capture"), _request("capture"))
 
         _wait_until(lambda: issued[0].state() is DeferredReplyState.SETTLED)
@@ -322,14 +383,14 @@ def test_deferred_error_retries_confirmation_then_settles():
     messaging.confirmed_failures = 1
     issued = []
 
-    def defer_capture(request):
+    def defer_capture(request, instance):
         token = inbox.defer(request, 1)
         token.activate()
         issued.append(token)
         return CommandOutcome.deferred(token)
 
     try:
-        inbox.register_outcome("capture", defer_capture)
+        inbox.register_outcome("capture", CommandScope.BOTH, defer_capture)
         messaging.deliver(_topic("capture"), _request("capture"))
         token = issued[0]
         with pytest.raises(ValueError, match="non-empty"):
@@ -365,13 +426,13 @@ def test_unactivated_deferred_outcome_is_rejected_and_frees_capacity():
     inbox, messaging = _inbox()
     issued = []
 
-    def invalid_defer(request):
+    def invalid_defer(request, instance):
         token = inbox.defer(request, 1)
         issued.append(token)
         return CommandOutcome.deferred(token)
 
     try:
-        inbox.register_outcome("capture", invalid_defer)
+        inbox.register_outcome("capture", CommandScope.BOTH, invalid_defer)
         messaging.deliver(_topic("capture"), _request("capture"))
         assert issued[0].state() is DeferredReplyState.DISCARDED
         body = messaging.published[0][1].get_body()

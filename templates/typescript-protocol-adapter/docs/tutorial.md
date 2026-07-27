@@ -52,8 +52,10 @@ mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/metric/#' -v   # southbound_he
 
 ## 5. Read a signal on demand
 
-The `sb/*` command surface rides the library's command inbox
-(`ecv1/{device}/{component}/cmd/{verb}`). Set `header.name` to the verb and `header.reply_to` to a
+The `sb/*` command surface rides the library's command inbox. Every verb acts on one device, so
+address it on that device's own topic — `ecv1/{device}/{component}/{instance}/cmd/{verb}` — or, as
+below with a single device configured, on the component topic
+`ecv1/{device}/{component}/cmd/{verb}`. Set `header.name` to the verb and `header.reply_to` to a
 topic you subscribe:
 
 ```

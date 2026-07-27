@@ -82,6 +82,16 @@ deliberately not redeclared here. See `docs/reference/configuration.md` and
 - **Writes are allow-listed** by stable `signal.id`, checked before any device I/O. An empty
   `writes.allow` means read-only, which is the correct default for anything touching a control
   system.
+- **Command scope is declared, and the library owns addressing.** Every verb registers with a
+  `CommandScope` (all nine `sb/*`/lifecycle verbs here are `INSTANCE`) and every handler is handed
+  the resolved `addressedInstance`. Do not re-implement topic/body instance parsing, conflict
+  detection, or the `instance`-vs-topic precedence in the component — the inbox does it before
+  dispatch and answers `BAD_ARGS` itself. What stays here is the part that needs *this component's
+  configuration*: the sole-device default and `NO_SUCH_INSTANCE`, both in `Commander.resolve`.
+- **The keepalive reports instance state from the single state model.** Each
+  `InstanceConnectivity` entry carries `state` (`CONNECTING`/`ONLINE`/`BACKOFF`/`PAUSED`) via
+  `withState`, read from the same `Health` that answers `sb/status`. Never add a second bookkeeping
+  path for it — a paused device must never look merely stale to a fleet view.
 - **Builders are the construction path** — `MetricBuilder`, `MessageBuilder`, the `data()`/`events()`
   facades — not raw constructors, for new code you add.
 

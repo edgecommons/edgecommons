@@ -2,7 +2,7 @@ import argparse
 import logging
 import sys
 
-from edgecommons import EdgeCommonsBuilder
+from edgecommons import EdgeCommonsBuilder, CommandScope
 from app.<<COMPONENTNAME>> import <<COMPONENTNAME>>, GreetingState, SET_GREETING
 
 logger = logging.getLogger("main")
@@ -24,7 +24,9 @@ def main():
         # Install component handlers before MQTT SUBACK / Greengrass subscription
         # acknowledgement can make the command inbox ACTIVE.
         .configure_commands(
-            lambda inbox: inbox.register(SET_GREETING, command_state.handle)
+            lambda inbox: inbox.register(
+                SET_GREETING, CommandScope.BOTH, command_state.handle
+            )
         )
         .build()
     )

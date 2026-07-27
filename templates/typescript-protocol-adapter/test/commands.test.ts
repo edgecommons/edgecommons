@@ -194,9 +194,9 @@ afterEach(async () => {
 describe("instance routing (D-EIP-13)", () => {
   it("defaults to the sole device, and unknown or missing ids error", async () => {
     live = harness(aDevice());
-    const out = await live.commander.status({});
+    const out = await live.commander.status(undefined);
     expect(out.id).toBe("plc-1");
-    expect(await code(live.commander.status({ instance: "nope" }))).toBe("NO_SUCH_INSTANCE");
+    expect(await code(live.commander.status("nope"))).toBe("NO_SUCH_INSTANCE");
 
     // Two devices: a missing `instance` is BAD_ARGS. status() reads only health, so unstarted
     // control channels are fine here.
@@ -207,8 +207,8 @@ describe("instance routing (D-EIP-13)", () => {
     };
     const b = { ...aDevice(), id: "plc-2" };
     const multi = new Commander([mk(aDevice()), mk(b)]);
-    expect(await code(multi.status({}))).toBe("BAD_ARGS");
-    expect((await multi.status({ instance: "plc-2" })).id).toBe("plc-2");
+    expect(await code(multi.status(undefined))).toBe("BAD_ARGS");
+    expect((await multi.status("plc-2")).id).toBe("plc-2");
   });
 });
 
@@ -217,7 +217,7 @@ describe("instance routing (D-EIP-13)", () => {
 describe("sb/status", () => {
   it("reports connected, state, paused, and a counter snapshot", async () => {
     live = harness(aDevice());
-    const out = await live.commander.status({});
+    const out = await live.commander.status(undefined);
     expect(out.connected).toBe(true);
     expect(out.state).toBe("ONLINE");
     expect(out.paused).toBe(false);
@@ -231,7 +231,7 @@ describe("sb/status", () => {
 describe("sb/signals", () => {
   it("lists the inventory with the writable flag", async () => {
     live = harness(aDevice());
-    const out = await live.commander.signals({});
+    const out = await live.commander.signals(undefined);
     const sigs = out.signals as Array<Record<string, unknown>>;
     expect(sigs).toHaveLength(2);
     expect(sigs.find((s) => s.id === "setpoint-1")?.writable).toBe(true); // on the allow-list
@@ -246,7 +246,7 @@ describe("sb/read", () => {
     live = harness(aDevice());
     const out = await live.commander.read({
       signals: [{ signalId: "temperature-1" }, { name: "Setpoint" }, { name: "ghost" }],
-    });
+    }, undefined);
     const reads = out.reads as Array<Record<string, unknown>>;
     expect((reads[0].signal as Record<string, unknown>).id).toBe("temperature-1");
     expect(reads[0].quality).toBe("GOOD");
@@ -257,10 +257,10 @@ describe("sb/read", () => {
 
   it("is BAD_ARGS without a signals array, and READ_FAILED on a link error", async () => {
     live = harness(aDevice());
-    expect(await code(live.commander.read({}))).toBe("BAD_ARGS");
+    expect(await code(live.commander.read({}, undefined))).toBe("BAD_ARGS");
 
     live = harness(aDevice(), { readOk: false });
-    expect(await code(live.commander.read({ signals: [{ signalId: "temperature-1" }] }))).toBe("READ_FAILED");
+    expect(await code(live.commander.read({ signals: [{ signalId: "temperature-1" }] }, undefined))).toBe("READ_FAILED");
   });
 });
 
@@ -270,7 +270,7 @@ describe("sb/write", () => {
   it("never lets a refused write reach the device", async () => {
     live = harness(aDevice());
     // temperature-1 is NOT on the allow-list.
-    expect(await code(live.commander.write({ writes: [{ signalId: "temperature-1", value: 1 }] }))).toBe(
+    expect(await code(live.commander.write({ writes: [{ signalId: "temperature-1", value: 1 }] }, undefined))).toBe(
       "WRITE_NOT_ALLOWED",
     );
     expect(live.writes).toHaveLength(0); // the refused write must never reach the device
@@ -280,7 +280,7 @@ describe("sb/write", () => {
   it("confirms an allow-listed write and mixes batch results", async () => {
     live = harness(aDevice());
     // A single allowed write (single-object shorthand).
-    let out = await live.commander.write({ signalId: "setpoint-1", value: 42 });
+    let out = await live.commander.write({ signalId: "setpoint-1", value: 42 }, undefined);
     expect(out.written).toBe(1);
     expect(live.writes).toHaveLength(1); // the allowed write reached the device
 
@@ -290,7 +290,7 @@ describe("sb/write", () => {
         { signalId: "setpoint-1", value: 7 },
         { signalId: "temperature-1", value: 8 },
       ],
-    });
+    }, undefined);
     expect(out.written).toBe(1); // only the allow-listed entry is written
     const results = out.results as Array<Record<string, unknown>>;
     expect(results.filter((r) => r.ok === true)).toHaveLength(1);
@@ -301,17 +301,17 @@ describe("sb/write", () => {
 
   it("is WRITE_FAILED when the device rejects the write, and counts a write error", async () => {
     live = harness(aDevice(), { writeOk: false });
-    expect(await code(live.commander.write({ signalId: "setpoint-1", value: 42 }))).toBe("WRITE_FAILED");
+    expect(await code(live.commander.write({ signalId: "setpoint-1", value: 42 }, undefined))).toBe("WRITE_FAILED");
     expect(live.health.writeErrors).toBe(1); // the device rejection feeds the writeErrors counter
   });
 
   it("counts writeErrors only for device-path failures", async () => {
     // A successful write counts nothing; neither do caller errors (unresolved ref, missing value).
     live = harness(aDevice());
-    await live.commander.write({ signalId: "setpoint-1", value: 42 });
+    await live.commander.write({ signalId: "setpoint-1", value: 42 }, undefined);
     await live.commander.write({
       writes: [{ name: "ghost", value: 1 }, { signalId: "setpoint-1" }, { signalId: "setpoint-1", value: 2 }],
-    });
+    }, undefined);
     expect(live.health.writeErrors).toBe(0);
     await live.stop();
 
@@ -322,13 +322,13 @@ describe("sb/write", () => {
     control.close();
     const handle: DeviceHandle = { cfg, control, health, dm: makeDm(cfg, health), signals: simSignals() };
     const commander = new Commander([handle]);
-    expect(await code(commander.write({ signalId: "setpoint-1", value: 42 }))).toBe("DEVICE_UNAVAILABLE");
+    expect(await code(commander.write({ signalId: "setpoint-1", value: 42 }, undefined))).toBe("DEVICE_UNAVAILABLE");
     expect(health.writeErrors).toBe(1);
   });
 
   it("is BAD_ARGS with no writes or value", async () => {
     live = harness(aDevice());
-    expect(await code(live.commander.write({}))).toBe("BAD_ARGS");
+    expect(await code(live.commander.write({}, undefined))).toBe("BAD_ARGS");
   });
 });
 
@@ -337,18 +337,18 @@ describe("sb/write", () => {
 describe("sb/browse", () => {
   it("returns a page or the right error code", async () => {
     live = harness(aDevice());
-    const out = await live.commander.browse({});
+    const out = await live.commander.browse({}, undefined);
     const entries = out.entries as Array<Record<string, unknown>>;
     expect(entries).toHaveLength(1);
     expect(entries[0].id).toBe("temperature-1");
     await live.stop();
 
     live = harness(aDevice(), { browse: "unsupported" });
-    expect(await code(live.commander.browse({}))).toBe("BROWSE_UNSUPPORTED");
+    expect(await code(live.commander.browse({}, undefined))).toBe("BROWSE_UNSUPPORTED");
     await live.stop();
 
     live = harness(aDevice(), { browse: "failed" });
-    expect(await code(live.commander.browse({}))).toBe("BROWSE_FAILED");
+    expect(await code(live.commander.browse({}, undefined))).toBe("BROWSE_FAILED");
   });
 });
 
@@ -357,7 +357,7 @@ describe("sb/browse", () => {
 describe("sb/browse (hierarchical)", () => {
   it("answers the device node for ref root over the same inventory", async () => {
     live = harness(aDevice());
-    const out = await live.commander.browse({ ref: "root" });
+    const out = await live.commander.browse({ ref: "root" }, undefined);
 
     expect(out.mode).toBe("hierarchical");
     expect(out.refCount).toBe(1);
@@ -381,7 +381,7 @@ describe("sb/browse (hierarchical)", () => {
 
   it("answers a signal ref as a known leaf, and an unknown ref is BAD_ARGS", async () => {
     live = harness(aDevice());
-    const out = await live.commander.browse({ ref: "temperature-1" });
+    const out = await live.commander.browse({ ref: "temperature-1" }, undefined);
     const root = out.root as Record<string, unknown>;
     expect(root.nodeId).toBe("temperature-1");
     expect(root.nodeClass).toBe("signal");
@@ -390,27 +390,27 @@ describe("sb/browse (hierarchical)", () => {
     expect(out.refCount).toBe(0);
     expect(out.truncated).toBe(false);
 
-    expect(await code(live.commander.browse({ ref: "ghost" }))).toBe("BAD_ARGS");
+    expect(await code(live.commander.browse({ ref: "ghost" }, undefined))).toBe("BAD_ARGS");
   });
 
   it("refuses mixing hierarchical and paged args", async () => {
     live = harness(aDevice());
-    expect(await code(live.commander.browse({ ref: "root", cursor: "x" }))).toBe("BAD_ARGS");
-    expect(await code(live.commander.browse({ depth: 2, max: 10 }))).toBe("BAD_ARGS");
+    expect(await code(live.commander.browse({ ref: "root", cursor: "x" }, undefined))).toBe("BAD_ARGS");
+    expect(await code(live.commander.browse({ depth: 2, max: 10 }, undefined))).toBe("BAD_ARGS");
     // The hierarchical companions without `ref` are also refused: nothing to anchor the tree on.
-    expect(await code(live.commander.browse({ depth: 2 }))).toBe("BAD_ARGS");
+    expect(await code(live.commander.browse({ depth: 2 }, undefined))).toBe("BAD_ARGS");
   });
 
   it("bounds depth and maxRefs and reports truncation", async () => {
     // depth clamps into 1..4; maxRefs into 1..1000.
     live = harness(aDevice());
-    expect((await live.commander.browse({ ref: "root", depth: 99 })).depth).toBe(4);
-    expect((await live.commander.browse({ ref: "root", depth: 0 })).depth).toBe(1);
+    expect((await live.commander.browse({ ref: "root", depth: 99 }, undefined)).depth).toBe(4);
+    expect((await live.commander.browse({ ref: "root", depth: 0 }, undefined)).depth).toBe(1);
     await live.stop();
 
     // Three browsable signals, maxRefs 2 -> two refs, truncated.
     live = harness(aDevice(), { browse: "many" });
-    const out = await live.commander.browse({ ref: "root", maxRefs: 2 });
+    const out = await live.commander.browse({ ref: "root", maxRefs: 2 }, undefined);
     expect(((out.root as Record<string, unknown>).refs as unknown[]).length).toBe(2);
     expect(out.refCount).toBe(2);
     expect(out.truncated).toBe(true);
@@ -418,11 +418,11 @@ describe("sb/browse (hierarchical)", () => {
 
   it("maps the browse error codes like the paged mode", async () => {
     live = harness(aDevice(), { browse: "unsupported" });
-    expect(await code(live.commander.browse({ ref: "root" }))).toBe("BROWSE_UNSUPPORTED");
+    expect(await code(live.commander.browse({ ref: "root" }, undefined))).toBe("BROWSE_UNSUPPORTED");
     await live.stop();
 
     live = harness(aDevice(), { browse: "failed" });
-    expect(await code(live.commander.browse({ ref: "root" }))).toBe("BROWSE_FAILED");
+    expect(await code(live.commander.browse({ ref: "root" }, undefined))).toBe("BROWSE_FAILED");
   });
 });
 
@@ -433,25 +433,25 @@ describe("pause / resume / repoll", () => {
     live = harness(aDevice());
 
     // repoll works while running.
-    expect((await live.commander.repoll({})).polled).toBe(2);
+    expect((await live.commander.repoll(undefined)).polled).toBe(2);
 
-    let out = await live.commander.pause({});
+    let out = await live.commander.pause(undefined);
     expect(out.paused).toBe(true);
     expect(out.changed).toBe(true);
     expect(live.health.isPaused()).toBe(true);
 
     // repoll is refused while paused, with the dedicated PAUSED code.
-    expect(await code(live.commander.repoll({}))).toBe("PAUSED");
+    expect(await code(live.commander.repoll(undefined))).toBe("PAUSED");
 
     // pausing again is idempotent.
-    expect((await live.commander.pause({})).changed).toBe(false);
+    expect((await live.commander.pause(undefined)).changed).toBe(false);
 
     // resume clears it and repoll works again.
-    out = await live.commander.resume({});
+    out = await live.commander.resume(undefined);
     expect(out.paused).toBe(false);
     expect(out.changed).toBe(true);
     expect(live.health.isPaused()).toBe(false);
-    expect((await live.commander.repoll({})).polled).toBe(2);
+    expect((await live.commander.repoll(undefined)).polled).toBe(2);
   });
 });
 
@@ -460,11 +460,11 @@ describe("pause / resume / repoll", () => {
 describe("reconnect", () => {
   it("confirms or reports RECONNECT_FAILED", async () => {
     live = harness(aDevice());
-    expect((await live.commander.reconnect({})).connected).toBe(true);
+    expect((await live.commander.reconnect(undefined)).connected).toBe(true);
     await live.stop();
 
     live = harness(aDevice(), { reconnectOk: false });
-    expect(await code(live.commander.reconnect({}))).toBe("RECONNECT_FAILED");
+    expect(await code(live.commander.reconnect(undefined))).toBe("RECONNECT_FAILED");
   });
 
   it("is DEVICE_UNAVAILABLE when the loop is gone", async () => {
@@ -475,7 +475,7 @@ describe("reconnect", () => {
     control.close();
     const handle: DeviceHandle = { cfg, control, health, dm: makeDm(cfg, health), signals: simSignals() };
     const commander = new Commander([handle]);
-    expect(await code(commander.reconnect({}))).toBe("DEVICE_UNAVAILABLE");
+    expect(await code(commander.reconnect(undefined))).toBe("DEVICE_UNAVAILABLE");
   });
 });
 
@@ -561,13 +561,19 @@ describe("panels", () => {
 });
 
 describe("registerAll", () => {
-  it("wires every sb/* verb and the three panels onto the command inbox", () => {
+  it("wires every sb/* verb instance-scoped, plus the three panels, onto the command inbox", () => {
     // The runtime calls this once at startup. It must register the whole `sb/*` family (nothing
-    // dropped, nothing renamed — those are wire contracts) plus the console panels.
+    // dropped, nothing renamed — those are wire contracts) plus the console panels. The declared
+    // scope is part of that contract: it decides which addressing the library accepts, and the
+    // console reads it back out of `describe` to decide whether to offer a device selector.
     const registered: string[] = [];
+    const scopes: string[] = [];
     const registeredPanels: unknown[] = [];
     const inbox = {
-      register: (name: string) => registered.push(name),
+      register: (name: string, scope: string) => {
+        registered.push(name);
+        scopes.push(scope);
+      },
       registerPanel: (p: unknown) => registeredPanels.push(p),
     } as unknown as CommandInbox;
 
@@ -594,6 +600,7 @@ describe("registerAll", () => {
       "reconnect",
       "repoll",
     ]);
+    expect(scopes).toEqual(Array(9).fill("instance"));
     expect(registeredPanels).toHaveLength(3);
   });
 });

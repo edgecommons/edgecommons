@@ -56,8 +56,10 @@ counter-pair convention already used by the two worked families, and keep dimens
 
 **Goal:** exercise `sb/read`/`sb/write` from your own client, not `mosquitto_pub`.
 
-Both are request/reply on `ecv1/{device}/<<BINNAME>>/cmd/sb/{verb}`. With an EdgeCommons client, use
-its `request()` API, which sets `header.name`, `reply_to`, and `correlation_id` for you. See
+Both are request/reply on `ecv1/{device}/<<BINNAME>>/{instance}/cmd/sb/{verb}` — or on the component
+topic `ecv1/{device}/<<BINNAME>>/cmd/sb/{verb}` with the device named by a body `"instance"` field.
+With an EdgeCommons client, use its `request()` API, which sets `header.name`, `reply_to`, and
+`correlation_id` for you. See
 [Reference — Messaging Interface](reference/messaging-interface.md#the-command-surface) for the exact
 request/reply shapes.
 
@@ -71,7 +73,9 @@ request/reply shapes.
   `staleSignals`, `reconnects`, `writeErrors`, `signalsSubscribed`, dimensioned by `instance`.
   Routes to wherever `metricEmission.target` sends it.
 - **State keepalive** — subscribe `ecv1/+/+/+/state`; the RUNNING keepalive's `instances[]` carries
-  one `{instance, connected, detail}` entry per configured device.
+  one `{instance, connected, state, detail}` entry per configured device, where `state` is
+  `CONNECTING`/`ONLINE`/`BACKOFF`/`PAUSED` — so a paused device is visible as paused instead of
+  looking like a stalled one.
 - **`sb/status`** — a pull for one device's `connected`/`state`/`paused`/`endpoint` plus its
   connection counters — the same data the keepalive pushes, on demand.
 - **Events** — `device-connected` / `device-unreachable` (raise/clear pair) ride `evt/info/…` and

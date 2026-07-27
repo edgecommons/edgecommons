@@ -67,7 +67,10 @@ pub fn configure_commands(
 ) -> edgecommons::Result<()> {
     commands.register(
         SET_GREETING,
-        command_handler(move |request| {
+        // BOTH: this demo verb is scope-indifferent (D-SC-3 use 1) - it acts on the
+        // component's one piece of in-memory state regardless of addressing.
+        CommandScope::Both,
+        command_handler(move |request, _addressed_instance| {
             let greeting = Arc::clone(&greeting);
             // The verb's pure logic (validate the body, swap the state) lives in
             // `crate::commands::apply_set_greeting`, where it is unit-tested; this closure is just

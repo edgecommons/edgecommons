@@ -71,7 +71,8 @@ own write allow-list:
 ```
 
 One device going offline never disturbs another — each has its own connect/backoff loop. With more
-than one device configured, every `sb/*` command **requires** `instance` in its body (see
+than one device configured, every `sb/*` command **must name its device** — either on the topic
+(`ecv1/{device}/<<BINNAME>>/device-2/cmd/sb/read`) or with `instance` in its body (see
 [explanation.md](explanation.md#instance-routing)).
 
 ## Allow a signal to be written

@@ -152,6 +152,11 @@ impl RecordingMessaging {
         self.replied.lock().unwrap().clone()
     }
 
+    /// Drops the recorded replies so a test can assert on the next exchange in isolation.
+    pub fn clear_replies(&self) {
+        self.replied.lock().unwrap().clear();
+    }
+
     /// Make the next (and every subsequent) `reply`/`reply_northbound` call fail instead of
     /// recording — simulates a broker/publish failure so tests can assert it is swallowed.
     pub fn set_fail_reply(&self, fail: bool) {

@@ -3,6 +3,7 @@ package <<PACKAGE>>;
 import com.mbreissi.edgecommons.EdgeCommons;
 import com.mbreissi.edgecommons.EdgeCommonsBuilder;
 import com.mbreissi.edgecommons.commands.CommandException;
+import com.mbreissi.edgecommons.commands.CommandScope;
 import com.mbreissi.edgecommons.config.ConfigManager;
 import com.mbreissi.edgecommons.facades.DataFacade;
 import com.mbreissi.edgecommons.facades.EventsFacade;
@@ -106,8 +107,10 @@ public class <<COMPONENTNAME>>
                 .withArgs(args)
                 .initialReady(false)
                 // Install component verbs before the command-inbox subscription can become ACTIVE.
+                // BOTH: this demo verb is scope-indifferent (D-SC-3 use 1) - it acts on the
+                // component's one piece of in-memory state regardless of addressing.
                 .configureCommands(inbox -> inbox.register(
-                        SET_GREETING, greeting::apply))
+                        SET_GREETING, CommandScope.BOTH, greeting::apply))
                 .build();
         configManager = edgeCommons.getConfigManager();
         messaging = edgeCommons.getMessaging();
@@ -269,7 +272,7 @@ final class Greeting {
      * handler): publish {@code {"header":{"name":"set-greeting","version":"1.0"},"body":
      * {"greeting":"Hi from mqttx"}}} to {@code ecv1/{device}/{component}/main/cmd/set-greeting}.
      */
-    JsonObject apply(Message request) throws CommandException {
+    JsonObject apply(Message request, String addressedInstance) throws CommandException {
         // Pattern-matching instanceof (JEP 394, Java 16+) — fine on this template's Java 25 target.
         if (!(request.getBody() instanceof JsonObject body) || !body.has("greeting")
                 || !body.get("greeting").isJsonPrimitive()) {

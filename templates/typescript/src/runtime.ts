@@ -12,6 +12,7 @@
 import {
   Config,
   ConfigurationChangeListener,
+  CommandScopes,
   DataFacade,
   EdgeCommons,
   EventsFacade,
@@ -131,7 +132,9 @@ export class App {
     // (src/app.ts, unit-tested); here we only apply its result to our in-memory state.
     const commands = gg.commands();
     if (commands) {
-      commands.register(SET_GREETING, (request: Message) => {
+      // BOTH: this demo verb is scope-indifferent (D-SC-3 use 1) - it acts on the
+      // component's one piece of in-memory state regardless of addressing.
+      commands.register(SET_GREETING, CommandScopes.Both, (request: Message, _addressedInstance) => {
         const change = applyGreeting(request.body, this.greeting);
         this.greeting = change.greeting;
         return change;

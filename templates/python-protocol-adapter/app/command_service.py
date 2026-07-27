@@ -8,9 +8,14 @@ surface.
 
 ## Conventions every verb follows
 
-* **Instance routing (D-EIP-13):** ``body.instance`` is optional iff exactly one device is
-  configured; with two or more, a missing id is ``BAD_ARGS`` and an unknown id is
-  ``NO_SUCH_INSTANCE``.
+* **Instance addressing — the library resolves it, this module only looks the device up.** Every
+  verb declares :class:`~edgecommons.command_inbox.CommandScope` ``INSTANCE``. Before a handler
+  runs, the inbox resolves the delivery's addressing: the topic's instance token
+  (``ecv1/{device}/{component}/{instance}/cmd/{verb}``) is authoritative, a body ``instance`` that
+  disagrees with it is refused with ``BAD_ARGS``, and the handler is handed the resolved
+  ``addressed_instance``. What is left here is the part that needs *this component's configuration*:
+  an unknown id is ``NO_SUCH_INSTANCE``, and ``None`` (a component-addressed delivery that named no
+  instance) resolves to the sole configured device — with two or more it is ``BAD_ARGS``.
 * **Standardized error codes:** ``BAD_ARGS``, ``NO_SUCH_INSTANCE``, ``WRITE_NOT_ALLOWED``,
   ``WRITE_FAILED``, ``DEVICE_UNAVAILABLE``, ``READ_FAILED``, ``RECONNECT_FAILED``,
   ``BROWSE_UNSUPPORTED``, ``BROWSE_FAILED``, ``PAUSED``.
@@ -29,7 +34,7 @@ Three panels (``overview``, ``signals``, ``diagnostics``) are registered via
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from edgecommons.command_inbox import CommandException
+from edgecommons.command_inbox import CommandException, CommandScope
 
 from .device import (
     BrowsedSignal,
@@ -152,11 +157,15 @@ class Commander:
         self._ids = [h.cfg.id for h in handles]
         self._devices = {h.cfg.id: h for h in handles}
 
-    def _resolve(self, body: Dict[str, Any]) -> DeviceHandle:
-        """Route to the addressed device (D-EIP-13): ``body.instance`` optional iff exactly one
-        device is configured; with two or more a missing/unknown id is ``BAD_ARGS`` /
-        ``NO_SUCH_INSTANCE``."""
-        instance = body.get("instance")
+    def _resolve(self, instance: Optional[str]) -> DeviceHandle:
+        """Map the library-resolved ``addressed_instance`` onto a configured device.
+
+        The addressing itself (topic token vs body ``instance``, and the conflict between them) was
+        settled by the inbox before this ran. Only the configuration-dependent half lives here: an
+        instance this component does not have is ``NO_SUCH_INSTANCE``, and ``None`` — a
+        component-addressed delivery that named no instance — resolves to the sole configured
+        device, or is ``BAD_ARGS`` when there are two or more.
+        """
         if instance is not None:
             device = self._devices.get(instance)
             if device is None:
@@ -185,8 +194,8 @@ class Commander:
 
     # --- sb/status ---------------------------------------------------------------------------------
 
-    def status(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        h = self._resolve(body)
+    def status(self, instance: Optional[str]) -> Dict[str, Any]:
+        h = self._resolve(instance)
         started = time.monotonic()
         connected = h.health.online()
         paused = h.health.is_paused()
@@ -205,8 +214,8 @@ class Commander:
 
     # --- sb/signals (the configured inventory, no device I/O) --------------------------------------
 
-    def signals(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        h = self._resolve(body)
+    def signals(self, instance: Optional[str]) -> Dict[str, Any]:
+        h = self._resolve(instance)
         started = time.monotonic()
         signals = [{"id": s.id, "name": s.name, "writable": h.cfg.permits(s.id)} for s in h.signals]
         h.dm.record_command("sb/signals", True, _ms(started))
@@ -214,8 +223,8 @@ class Commander:
 
     # --- sb/read (on-demand read of named signals) ------------------------------------------------
 
-    def read(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        h = self._resolve(body)
+    def read(self, instance: Optional[str], body: Dict[str, Any]) -> Dict[str, Any]:
+        h = self._resolve(instance)
         started = time.monotonic()
         refs = body.get("signals")
         if not isinstance(refs, list):
@@ -258,8 +267,8 @@ class Commander:
 
     # --- sb/write (§2.2 batch shape; allow-list BEFORE any device I/O; confirmed) ------------------
 
-    def write(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        h = self._resolve(body)
+    def write(self, instance: Optional[str], body: Dict[str, Any]) -> Dict[str, Any]:
+        h = self._resolve(instance)
         started = time.monotonic()
         entries = _write_entries(body)
 
@@ -315,8 +324,8 @@ class Commander:
 
     # --- sb/browse (paged address-space discovery + the hierarchical panel mode) ------------------
 
-    def browse(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        h = self._resolve(body)
+    def browse(self, instance: Optional[str], body: Dict[str, Any]) -> Dict[str, Any]:
+        h = self._resolve(instance)
         started = time.monotonic()
         # The two request forms are mutually exclusive: `ref`/`depth`/`maxRefs` select the
         # hierarchical panel mode, `cursor`/`max` the paged one — and the hierarchical-only
@@ -433,8 +442,8 @@ class Commander:
 
     # --- sb/pause + sb/resume (idempotent {paused, changed}) --------------------------------------
 
-    def pause(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        h = self._resolve(body)
+    def pause(self, instance: Optional[str]) -> Dict[str, Any]:
+        h = self._resolve(instance)
         started = time.monotonic()
         try:
             changed = h.control.pause()
@@ -444,8 +453,8 @@ class Commander:
         h.dm.record_command("sb/pause", True, _ms(started))
         return {"id": h.cfg.id, "paused": True, "changed": changed}
 
-    def resume(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        h = self._resolve(body)
+    def resume(self, instance: Optional[str]) -> Dict[str, Any]:
+        h = self._resolve(instance)
         started = time.monotonic()
         try:
             changed = h.control.resume()
@@ -457,8 +466,8 @@ class Commander:
 
     # --- reconnect ---------------------------------------------------------------------------------
 
-    def reconnect(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        h = self._resolve(body)
+    def reconnect(self, instance: Optional[str]) -> Dict[str, Any]:
+        h = self._resolve(instance)
         started = time.monotonic()
         try:
             h.control.reconnect()
@@ -473,8 +482,8 @@ class Commander:
 
     # --- repoll (refused with PAUSED while paused) ------------------------------------------------
 
-    def repoll(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        h = self._resolve(body)
+    def repoll(self, instance: Optional[str]) -> Dict[str, Any]:
+        h = self._resolve(instance)
         started = time.monotonic()
         if h.health.is_paused():
             h.dm.record_command("repoll", False, _ms(started))
@@ -507,21 +516,27 @@ def _body(request) -> Dict[str, Any]:
 def register_all(commands, handles: List[DeviceHandle]) -> None:
     """Register every ``sb/*`` verb + the three edge-console panels on the command inbox.
 
-    ``commands`` is the ``gg.get_commands()`` facade (``CommandInbox``). Handlers return the verb
-    result object (wrapped by the inbox as ``{"ok": true, "result": …}``) or raise
+    ``commands`` is the ``gg.get_commands()`` facade (``CommandInbox``). Every verb declares
+    :attr:`~edgecommons.command_inbox.CommandScope.INSTANCE`: it acts on one device, so the inbox
+    resolves the delivery's addressing (topic token, then body ``instance``, conflict refused with
+    ``BAD_ARGS``) and hands each handler the resolved ``addressed_instance``. Handlers return the
+    verb result object (wrapped by the inbox as ``{"ok": true, "result": …}``) or raise
     :class:`~edgecommons.command_inbox.CommandException` for a coded error reply.
     """
     commander = Commander(handles)
+    # Every verb acts on ONE device, so every verb is instance-scoped. `inst` is what the inbox
+    # resolved; no handler here reads `body.instance`.
+    INSTANCE = CommandScope.INSTANCE
 
-    commands.register("sb/status", lambda req: commander.status(_body(req)))
-    commands.register("sb/read", lambda req: commander.read(_body(req)))
-    commands.register("sb/write", lambda req: commander.write(_body(req)))
-    commands.register("sb/signals", lambda req: commander.signals(_body(req)))
-    commands.register("sb/browse", lambda req: commander.browse(_body(req)))
-    commands.register("sb/pause", lambda req: commander.pause(_body(req)))
-    commands.register("sb/resume", lambda req: commander.resume(_body(req)))
-    commands.register("reconnect", lambda req: commander.reconnect(_body(req)))
-    commands.register("repoll", lambda req: commander.repoll(_body(req)))
+    commands.register("sb/status", INSTANCE, lambda req, inst: commander.status(inst))
+    commands.register("sb/read", INSTANCE, lambda req, inst: commander.read(inst, _body(req)))
+    commands.register("sb/write", INSTANCE, lambda req, inst: commander.write(inst, _body(req)))
+    commands.register("sb/signals", INSTANCE, lambda req, inst: commander.signals(inst))
+    commands.register("sb/browse", INSTANCE, lambda req, inst: commander.browse(inst, _body(req)))
+    commands.register("sb/pause", INSTANCE, lambda req, inst: commander.pause(inst))
+    commands.register("sb/resume", INSTANCE, lambda req, inst: commander.resume(inst))
+    commands.register("reconnect", INSTANCE, lambda req, inst: commander.reconnect(inst))
+    commands.register("repoll", INSTANCE, lambda req, inst: commander.repoll(inst))
 
     for panel in panels():
         commands.register_panel(panel)

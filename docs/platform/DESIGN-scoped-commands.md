@@ -1,6 +1,14 @@
 # DESIGN — Scoped command handlers with declared verb scope
 
-Status: **accepted direction (2026-07-27); targets the next breaking core release (0.5.0). Not built.**
+Status: **accepted direction (2026-07-27), targeting the breaking core release 0.5.0. Phase 1
+implemented**: all four core libraries (Java canonical, Python, Rust, TypeScript) carry the
+`CommandScope` type, the two-form `register`/`registerOutcome` registration surface, pre-dispatch
+addressing enforcement, and the `describe` `scope` field, each with its own test suite; the
+`ping`/`describe`/`get-configuration`/`status` built-ins register `BOTH`. The generated service/
+processor/sink templates, the four cross-language interop nodes, and the example skeletons are
+migrated to the new signature. Remaining rollout (templates' nine-verb `protocol-adapter` family,
+the shipping component repos' `sb/*` verbs, and the edge-console `describe` scope rendering) follows
+per §3 steps 2-4.
 
 Supersedes issue #82's original additive proposal (a fourth `registerScopedOutcome` variant): the
 accepted direction is the breaking model — every handler always receives the addressing, and every
@@ -40,19 +48,26 @@ envelope — the camera class of gap becomes structurally impossible.
 
 `scope` is required at registration: **`COMPONENT` | `INSTANCE` | `BOTH`**.
 
-Library enforcement happens **before dispatch** (the handler never runs on an addressing error):
+Library enforcement happens **before dispatch** (the handler never runs on an addressing error).
+The library owns **addressing only** — extracting the delivery topic's instance token and the
+body's `instance` field, and the conflict/rejection rules below. It does **not** know the
+component's configuration, so it never itself decides "the lone configured instance" or "this name
+doesn't exist" — that split is spelled out in the `INSTANCE` bullet below and pinned as D-SC-4:
 
-- `COMPONENT`: an instance-addressed delivery → automatic `BAD_ARGS`
-  ("`<verb>` is component-scoped"). A `body.instance` field is likewise rejected.
-- `INSTANCE`: topic instance authoritative. Component-scoped delivery is accepted only when the
-  body names an instance **or** the legacy optional-iff-one rule resolves it; otherwise
-  `BAD_ARGS`. A body conflicting with the topic token → `BAD_ARGS` (conflict checked before
-  existence). The resolved instance is what the handler receives as `addressedInstance` —
-  §2.2 resolution moves INTO the library; adapters stop re-implementing it.
-- `BOTH`: both deliveries are valid; only the universal rule applies (topic token authoritative;
-  conflicting body → `BAD_ARGS`). `addressedInstance` carries the topic token or the body-named
-  instance when only the body names one; `null` means "addressed to the whole component" — a
-  distinct, meaningful signal for the first time.
+- **Universal, every scope:** a topic instance token and a `body.instance` field that are both
+  present and different → `BAD_ARGS` ("instance in body conflicts with the addressed instance"),
+  checked **before** anything else.
+- `COMPONENT`: an instance-addressed delivery (topic token, or a `body.instance` field) →
+  automatic `BAD_ARGS` ("`<verb>` is component-scoped"). The handler's `addressedInstance` is
+  always `null`/`None`/`undefined`.
+- `INSTANCE`: the handler receives `addressedInstance = topic ?? body ?? null`. A `null` value
+  reaches the handler — the library does not reject it. It is the component's own default/
+  unknown-instance policy (the legacy optional-iff-one default, `NO_SUCH_INSTANCE` for a name it
+  does not recognize) that decides what a `null`/unresolved instance means, because that decision
+  needs configuration knowledge the library does not have.
+- `BOTH`: the same resolution as `INSTANCE` (`topic ?? body ?? null`), but `null` carries its own
+  meaning here — "addressed to the whole component" — a distinct, meaningful signal for the first
+  time, not an error or a default to be resolved.
 
 `BOTH` has two intended uses, both first-class:
 
@@ -106,8 +121,13 @@ Breaking for every registered handler in all four languages. One coordinated wav
   by the library before dispatch and advertised in `describe`.
 - **D-SC-3:** `BOTH` is first-class with two sanctioned uses (scope-indifferent, dual-semantics);
   `null` addressing at a `BOTH` verb means "the whole component".
-- **D-SC-4:** §2.2 topic-authoritative resolution (conflict → `BAD_ARGS`, checked before
-  existence) moves into the library; adapters stop re-implementing it.
+- **D-SC-4:** The library owns **addressing** — topic/body instance extraction, conflict-first
+  `BAD_ARGS` (checked before anything else), and `COMPONENT`-scope rejection of any instance
+  addressing. The legacy optional-iff-one default and `NO_SUCH_INSTANCE` for an unresolved/unknown
+  instance need configuration knowledge the library does not have, so they **remain
+  component-side**, applied by the handler on a `null`/unknown `addressedInstance`. Adapters delete
+  their own topic/body/conflict-detection logic but keep the default-resolution and existence
+  check.
 - **D-SC-5:** Widening a verb's declared scope is additive; narrowing is a per-verb breaking
   change.
 - **D-SC-6:** Ships only in a breaking release (0.5.0) as one coordinated wave; 0.4.x keeps the

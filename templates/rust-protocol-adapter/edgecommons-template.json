@@ -82,6 +82,9 @@
     "tests/live_sim.rs": [
       "SNAKENAME"
     ],
+    "tests/scoped_delivery.rs": [
+      "SNAKENAME"
+    ],
     "AGENTS.md": [
       "BINNAME",
       "COMPONENTFULLNAME",

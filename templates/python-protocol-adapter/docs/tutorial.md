@@ -56,7 +56,7 @@ subscribe app/r  →  {"ok":true,"result":{"id":"device-1","signals":[
   {"id":"pressure-1","name":"Line pressure","writable":false}]}}
 ```
 
-`instance` is omitted from both bodies because exactly one device is configured — see
+Neither the topic nor the body names an instance, because exactly one device is configured — see
 [explanation.md](explanation.md#instance-routing).
 
 ## 5. Read a signal on demand

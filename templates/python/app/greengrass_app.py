@@ -4,7 +4,7 @@ import threading
 import time
 from abc import ABC
 
-from edgecommons.command_inbox import CommandException
+from edgecommons.command_inbox import CommandException, CommandScope
 from edgecommons.config.manager.configuration_change_listener import (
     ConfigurationChangeListener,
 )
@@ -30,7 +30,9 @@ class GreetingState:
         self._value = "Hello from <<COMPONENTNAME>>"
         self._lock = threading.Lock()
 
-    def handle(self, request) -> dict:
+    def handle(self, request, addressed_instance) -> dict:
+        # BOTH: this demo verb is scope-indifferent (D-SC-3 use 1) - addressed_instance is
+        # ignored, the verb acts on the component's one piece of in-memory state either way.
         body = request.get_body()
         if not isinstance(body, dict) or not isinstance(body.get("greeting"), str):
             raise CommandException("BAD_ARGS", 'expected a JSON body {"greeting": "<text>"}')

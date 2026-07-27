@@ -21,7 +21,9 @@
 //! brokers, so console→component request/reply works transparently over the site bus); a `cmd`
 //! without `reply_to` is fire-and-forget (the handler runs, no reply). Obtain the facade via
 //! [`crate::EdgeCommons::commands`] and register custom verbs with [`CommandInbox::register`] —
-//! or [`CommandInbox::register_scoped`] when the handler needs the topic's addressed instance.
+//! or [`CommandInbox::register_outcome`] when the handler settles its reply later. Every
+//! registration declares the verb's [`CommandScope`], and **every** handler receives the
+//! delivery's addressed instance: no registration form is blind to the addressing (D-SC-1).
 //!
 //! ## Normative behavior (mirrored by the Java/Python/TS inboxes; pinned by
 //! `uns-test-vectors/commands.json`)
@@ -50,6 +52,15 @@
 //!   conventions that use a different header name on a `cmd` topic). Unlike the Java canonical,
 //!   Rust's dispatcher always hands the handler a parsed [`Message`] (there is no "null message"
 //!   case), so no separate null check is needed.
+//! - **Declared verb scope** — every verb declares a [`CommandScope`] at registration and the
+//!   inbox enforces the addressing **before dispatch** (D-SC-2/D-SC-4), so a handler never runs
+//!   on an addressing error: a body `instance` conflicting with the topic's addressed instance is
+//!   [`ERR_BAD_ARGS`] (checked first, for every scope); a [`CommandScope::Component`] verb
+//!   rejects an instance-addressed delivery and a body `instance` with the same code; a
+//!   [`CommandScope::Instance`] or [`CommandScope::Both`] verb receives
+//!   `topic instance ?? body instance ?? None`. Resolving `None` against the component's
+//!   configured instances (the optional-iff-one default, `NO_SUCH_INSTANCE`) stays with the
+//!   component — the library owns addressing, not configuration.
 //! - **Delegated verbs** — [`SET_CONFIG_VERB`] is owned by the `CONFIG_COMPONENT` config
 //!   source's own subscription on the same inbox path; the inbox always ignores it (DEBUG) so
 //!   the two subscribers never double-handle.
@@ -138,6 +149,11 @@ pub const ERR_INVALID_DEFERRED_TOKEN: &str = "INVALID_DEFERRED_TOKEN";
 pub const POST_ACCEPT_CONTINUATION_CAPACITY: usize = 256;
 /// Error code: command/deferred acceptance raced component shutdown.
 pub const ERR_COMPONENT_STOPPING: &str = "COMPONENT_STOPPING";
+/// Error code: the delivery's addressing violates the verb's declared [`CommandScope`] — an
+/// instance-addressed [`CommandScope::Component`] verb, a body `instance` on a
+/// [`CommandScope::Component`] verb, or a body `instance` that conflicts with the topic's
+/// addressed instance. Library-owned and pre-dispatch: the handler never runs.
+pub const ERR_BAD_ARGS: &str = "BAD_ARGS";
 
 /// The `set-config` push verb — delegated: the `CONFIG_COMPONENT` config source maintains its
 /// own subscription for it on the same inbox path, so the inbox must never dispatch or
@@ -169,6 +185,53 @@ pub const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(10);
 /// Strict maximum retained between subscription acknowledgement and ACTIVE dispatch.
 pub const MAX_PENDING_STARTUP_DELIVERIES: usize = 256;
 const MAX_START_ERROR_CHARS: usize = 256;
+
+/// A verb's declared **addressing scope** (D-SC-2), required at registration and advertised in
+/// the [`DESCRIBE`] payload as the lowercase [`CommandScope::as_str`] token.
+///
+/// The inbox enforces the scope before dispatch, so a handler never runs on an addressing error:
+///
+/// | Variant | Instance-addressed delivery | Component-addressed delivery |
+/// |---|---|---|
+/// | [`Component`](CommandScope::Component) | [`ERR_BAD_ARGS`] | handler runs, `addressed_instance = None` |
+/// | [`Instance`](CommandScope::Instance) | handler runs with the topic's token | handler runs with the body's `instance`, else `None` |
+/// | [`Both`](CommandScope::Both) | handler runs with the topic's token | handler runs with the body's `instance`, else `None` (= "the whole component") |
+///
+/// Widening a verb (`Instance` → `Both`) is additive; narrowing breaks that verb's contract
+/// (D-SC-5). Because the scope is a Rust enum, an unknown scope value cannot be constructed —
+/// the "reject unknown scope at registration" rule other languages enforce at runtime is a
+/// compile-time property here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandScope {
+    /// The verb addresses the component as a whole; an instance-addressed delivery (or a body
+    /// naming an instance) is refused with [`ERR_BAD_ARGS`]. The handler always receives `None`.
+    Component,
+    /// The verb addresses one instance. The handler receives the topic's instance token, or the
+    /// body's `instance` when the delivery is component-addressed, or `None` when neither names
+    /// one — the component resolves `None` against its configuration.
+    Instance,
+    /// Both deliveries are meaningful: `None` means "the whole component" — either because the
+    /// verb is scope-indifferent (the built-ins answer identically) or because it has explicit
+    /// component-wide semantics (D-SC-3).
+    Both,
+}
+
+impl CommandScope {
+    /// The lowercase wire token emitted in [`DESCRIBE`]: `"component"`, `"instance"`, `"both"`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Component => "component",
+            Self::Instance => "instance",
+            Self::Both => "both",
+        }
+    }
+}
+
+impl std::fmt::Display for CommandScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Observable command-plane lifecycle state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,7 +299,8 @@ impl std::fmt::Display for CommandError {
 impl std::error::Error for CommandError {}
 
 /// A command-verb handler (DESIGN-uns §9.5): invoked by the [`CommandInbox`] for every
-/// well-formed `cmd` envelope whose verb matches the registration.
+/// well-formed `cmd` envelope whose verb matches the registration and whose addressing satisfies
+/// the verb's declared [`CommandScope`].
 ///
 /// The `Ok` value is the verb-specific **result object**, wrapped by the inbox into the success
 /// reply body `{"ok": true, "result": <value>}` and published to the request's `header.reply_to`
@@ -251,48 +315,11 @@ impl std::error::Error for CommandError {}
 pub trait CommandHandler: Send + Sync + 'static {
     /// Handles one command request. `request` is the full request envelope (body = the verb's
     /// arguments object; the requester's `identity`/`tags`, when present, are informational).
-    async fn handle(&self, request: Message) -> std::result::Result<Option<Value>, CommandError>;
-}
-
-/// Adapts an async closure into a [`CommandHandler`].
-struct FnCommandHandler<F>(F);
-
-#[async_trait]
-impl<F, Fut> CommandHandler for FnCommandHandler<F>
-where
-    F: Fn(Message) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = std::result::Result<Option<Value>, CommandError>> + Send + 'static,
-{
-    async fn handle(&self, request: Message) -> std::result::Result<Option<Value>, CommandError> {
-        (self.0)(request).await
-    }
-}
-
-/// Wrap an async closure as a [`CommandHandler`] for [`CommandInbox::register`].
-///
-/// # Examples
-/// ```
-/// use edgecommons::commands::command_handler;
-/// use serde_json::json;
-/// let _h = command_handler(|_request| async move { Ok(Some(json!({ "restarted": true }))) });
-/// ```
-pub fn command_handler<F, Fut>(f: F) -> Arc<dyn CommandHandler>
-where
-    F: Fn(Message) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = std::result::Result<Option<Value>, CommandError>> + Send + 'static,
-{
-    Arc::new(FnCommandHandler(f))
-}
-
-/// A scope-aware command-verb handler ([`CommandInbox::register_scoped`]): identical to
-/// [`CommandHandler`] plus the **addressed instance** — the `{instance}` token of the delivery
-/// topic (D-U28: `ecv1/{device}/{component}/{instance}/cmd/{verb}`), or `None` for a
-/// component-scoped delivery (`ecv1/{device}/{component}/cmd/{verb}`). Result/reply/error
-/// semantics are exactly [`CommandHandler`]'s.
-#[async_trait]
-pub trait ScopedCommandHandler: Send + Sync + 'static {
-    /// Handles one command request. `addressed_instance` is the topic's instance token, or
-    /// `None` when the command was addressed to the component as a whole.
+    ///
+    /// `addressed_instance` is the resolved addressing (D-SC-1): the delivery topic's
+    /// `{instance}` token (D-U28: `ecv1/{device}/{component}/{instance}/cmd/{verb}`), else the
+    /// request body's `instance` field, else `None`. A [`CommandScope::Component`] verb always
+    /// receives `None`; at a [`CommandScope::Both`] verb `None` means "the whole component".
     async fn handle(
         &self,
         request: Message,
@@ -300,11 +327,11 @@ pub trait ScopedCommandHandler: Send + Sync + 'static {
     ) -> std::result::Result<Option<Value>, CommandError>;
 }
 
-/// Adapts an async closure into a [`ScopedCommandHandler`].
-struct FnScopedCommandHandler<F>(F);
+/// Adapts an async closure into a [`CommandHandler`].
+struct FnCommandHandler<F>(F);
 
 #[async_trait]
-impl<F, Fut> ScopedCommandHandler for FnScopedCommandHandler<F>
+impl<F, Fut> CommandHandler for FnCommandHandler<F>
 where
     F: Fn(Message, Option<String>) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = std::result::Result<Option<Value>, CommandError>> + Send + 'static,
@@ -318,27 +345,27 @@ where
     }
 }
 
-/// Wrap an async closure as a [`ScopedCommandHandler`] for [`CommandInbox::register_scoped`].
+/// Wrap an async closure as a [`CommandHandler`] for [`CommandInbox::register`].
 ///
 /// # Examples
 /// ```
-/// use edgecommons::commands::scoped_command_handler;
+/// use edgecommons::commands::command_handler;
 /// use serde_json::json;
-/// let _h = scoped_command_handler(|_request, addressed_instance| async move {
-///     Ok(Some(json!({ "instance": addressed_instance })))
+/// let _h = command_handler(|_request, addressed_instance| async move {
+///     Ok(Some(json!({ "restarted": true, "instance": addressed_instance })))
 /// });
 /// ```
-pub fn scoped_command_handler<F, Fut>(f: F) -> Arc<dyn ScopedCommandHandler>
+pub fn command_handler<F, Fut>(f: F) -> Arc<dyn CommandHandler>
 where
     F: Fn(Message, Option<String>) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = std::result::Result<Option<Value>, CommandError>> + Send + 'static,
 {
-    Arc::new(FnScopedCommandHandler(f))
+    Arc::new(FnCommandHandler(f))
 }
 
 /// The explicit outcome of a long- or short-running command handler.
 ///
-/// This is parallel to, and does not change, the legacy [`CommandHandler`] result contract.
+/// This is the deferred-capable counterpart of the [`CommandHandler`] result contract.
 #[non_exhaustive]
 pub enum CommandOutcome {
     /// Send the ordinary success wrapper immediately (`None` means an empty result object).
@@ -404,10 +431,19 @@ pub type PostAcceptContinuation =
 /// The inbox supplies a clone of its bounded [`DeferredReplyRegistry`] for provisional token
 /// creation. The handler must durably accept its application work, call
 /// [`DeferredReplyToken::activate`], then return [`CommandOutcome::Deferred`].
+///
+/// Like [`CommandHandler`], it always receives the resolved `addressed_instance` (D-SC-1) — the
+/// deferred form is never blind to the addressing.
 #[async_trait]
 pub trait OutcomeCommandHandler: Send + Sync + 'static {
-    /// Handle one request and select immediate or deferred settlement.
-    async fn handle(&self, request: Message, deferred: DeferredReplyRegistry) -> CommandOutcome;
+    /// Handle one request and select immediate or deferred settlement. `addressed_instance` is
+    /// resolved exactly as for [`CommandHandler::handle`].
+    async fn handle(
+        &self,
+        request: Message,
+        deferred: DeferredReplyRegistry,
+        addressed_instance: Option<String>,
+    ) -> CommandOutcome;
 }
 
 /// Adapts an async closure into an [`OutcomeCommandHandler`].
@@ -416,37 +452,51 @@ struct FnOutcomeCommandHandler<F>(F);
 #[async_trait]
 impl<F, Fut> OutcomeCommandHandler for FnOutcomeCommandHandler<F>
 where
-    F: Fn(Message, DeferredReplyRegistry) -> Fut + Send + Sync + 'static,
+    F: Fn(Message, DeferredReplyRegistry, Option<String>) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = CommandOutcome> + Send + 'static,
 {
-    async fn handle(&self, request: Message, deferred: DeferredReplyRegistry) -> CommandOutcome {
-        (self.0)(request, deferred).await
+    async fn handle(
+        &self,
+        request: Message,
+        deferred: DeferredReplyRegistry,
+        addressed_instance: Option<String>,
+    ) -> CommandOutcome {
+        (self.0)(request, deferred, addressed_instance).await
     }
 }
 
 /// Wrap an async closure for [`CommandInbox::register_outcome`].
+///
+/// # Examples
+/// ```
+/// use edgecommons::commands::{CommandOutcome, outcome_handler};
+/// let _h = outcome_handler(|_request, _deferred, _addressed_instance| async move {
+///     CommandOutcome::ImmediateSuccess(None)
+/// });
+/// ```
 pub fn outcome_handler<F, Fut>(f: F) -> Arc<dyn OutcomeCommandHandler>
 where
-    F: Fn(Message, DeferredReplyRegistry) -> Fut + Send + Sync + 'static,
+    F: Fn(Message, DeferredReplyRegistry, Option<String>) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = CommandOutcome> + Send + 'static,
 {
     Arc::new(FnOutcomeCommandHandler(f))
 }
 
-/// One out-of-band re-fetch-and-apply action (the [`RELOAD_CONFIG`] verb's action): re-invokes
-/// the active config source's `load()`, validates, and — only on success — atomically applies the
-/// new snapshot and notifies listeners (production: [`crate::apply_reloaded_config`] over the
-/// source captured at build time). Returns `true` on success. An infallible, best-effort async
-/// callback — failures are logged internally, mirroring [`crate::uns::RepublishAction`].
-pub(crate) type ReloadAction =
-    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync>;
+/// One out-of-band re-fetch-and-apply action — the [`RELOAD_CONFIG`] verb's action: re-invoke the
+/// active config source's `load()`, validate, and — only on success — atomically apply the new
+/// snapshot and notify listeners. Returns `true` on success. Infallible and best-effort by
+/// contract: failures are logged internally rather than surfaced here.
+///
+/// `EdgeCommonsBuilder::build` wires the production action over the config source captured at
+/// build time; a caller constructing an inbox directly through [`CommandInbox::new`] supplies its
+/// own (a closure returning a fixed `bool` is enough to exercise both reply paths).
+pub type ReloadAction = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync>;
 
 /// The [`STATUS`] verb's source: one sample of the component's per-instance connectivity
 /// (production: [`crate::heartbeat::Heartbeat::sample_instance_connectivity`], i.e. the very same
 /// provider the `state` keepalive pushes, so the pulled answer and the pushed one cannot diverge).
 /// Best-effort by contract — it never fails; an empty vec omits the reply's `instances[]` section.
-pub(crate) type InstanceConnectivitySource =
-    Arc<dyn Fn() -> Vec<InstanceConnectivity> + Send + Sync>;
+pub type InstanceConnectivitySource = Arc<dyn Fn() -> Vec<InstanceConnectivity> + Send + Sync>;
 
 /// Lifecycle flags + the resolved inbox topic, behind one lock (no `.await` ever happens while
 /// holding it) — mirrors [`crate::uns::RepublishListener`]'s `Inner`.
@@ -489,11 +539,13 @@ pub struct CommandInbox {
     config: Arc<ArcSwap<Config>>,
     /// verb → handler; built-ins seeded at construction, custom verbs via [`Self::register`].
     handlers: Mutex<HashMap<String, Arc<dyn CommandHandler>>>,
-    /// verb → explicit outcome handler; kept separate so the legacy handler trait is untouched.
+    /// verb → explicit outcome handler; kept in its own map so the two handler traits stay
+    /// independent while sharing one verb namespace.
     outcome_handlers: Mutex<HashMap<String, Arc<dyn OutcomeCommandHandler>>>,
-    /// verb → scope-aware handler ([`Self::register_scoped`]); kept separate so the legacy
-    /// handler trait is untouched.
-    scoped_handlers: Mutex<HashMap<String, Arc<dyn ScopedCommandHandler>>>,
+    /// verb → declared [`CommandScope`], for every registered verb of either form (built-ins are
+    /// seeded [`CommandScope::Both`]). Read by pre-dispatch enforcement and by [`DESCRIBE`];
+    /// maintained under [`Self::registration`] alongside the handler maps.
+    scopes: Mutex<HashMap<String, CommandScope>>,
     /// verb → stored non-available availability entry (`{state, reason?}`), surfaced by
     /// [`DESCRIBE`]; maintained via [`Self::set_command_availability`].
     availability: Mutex<HashMap<String, Value>>,
@@ -511,24 +563,66 @@ pub struct CommandInbox {
 }
 
 impl CommandInbox {
-    /// Creates the inbox and registers the built-in verbs. The verb *actions* are injected
-    /// seams so the built-ins unit-test deterministically; `EdgeCommonsBuilder::build` wires the
-    /// real ones.
+    /// Creates an inbox over an explicit messaging service and configuration snapshot, and
+    /// registers the built-in verbs — **the construction seam** for component code and component
+    /// tests, mirroring the publicly constructible Java/Python/TypeScript inboxes.
     ///
-    /// - `uptime_secs` — the [`PING`] uptime source (production: the heartbeat's monotonic
-    ///   uptime, [`crate::heartbeat::Heartbeat::uptime_secs`]).
+    /// A component obtained through the runtime never calls this: `EdgeCommonsBuilder::build`
+    /// constructs the inbox and hands it out through [`crate::EdgeCommons::commands`], already
+    /// wired to the live config, the real reload path, and the heartbeat's connectivity provider.
+    /// Call this to drive a *real* inbox directly — a component test that publishes onto a fake
+    /// or in-process transport and asserts on the dispatched verbs and replies gets the genuine
+    /// dispatch, scope-enforcement, describe, and deferred-reply behavior rather than a stand-in.
+    /// The returned inbox still needs [`Self::start`] before it dispatches.
+    ///
+    /// The verb *actions* are injected seams, so every built-in answers deterministically:
+    ///
+    /// - `uptime_secs` — the [`PING`] uptime source (production: the
+    ///   [heartbeat](crate::heartbeat::Heartbeat)'s monotonic uptime).
     /// - `reload_action` — the [`RELOAD_CONFIG`] action (production: re-fetch + re-apply from the
     ///   active config source, sharing the same apply path a watched hot-reload uses).
     /// - `redacted_config` — the [`GET_CONFIGURATION`] source: the current redacted effective
-    ///   config, or `None` when unavailable (production: [`crate::config::effective::redact`]
-    ///   over the live config snapshot — always `Some` once `build()` has succeeded; kept
-    ///   optional for parity with the Java canonical's mock/test bring-up case and so
-    ///   [`ERR_NO_CONFIG`] is directly testable).
-    /// - `instance_connectivity` — the [`STATUS`] source (see [`InstanceConnectivitySource`]).
-    #[cfg(test)]
-    pub(crate) fn new(
+    ///   config, or `None` when unavailable (production: the redaction over the live config
+    ///   snapshot — always `Some` once `build()` has succeeded; `None` is what produces
+    ///   [`ERR_NO_CONFIG`]).
+    /// - `instance_connectivity` — the [`STATUS`] source (see [`InstanceConnectivitySource`]);
+    ///   `Arc::new(Vec::new)` for a component with no instances.
+    ///
+    /// `config` is the snapshot the inbox stamps onto every reply and reports through
+    /// [`DESCRIBE`]. An inbox built here reads that one snapshot; the runtime-built inbox instead
+    /// follows the live configuration across reloads.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use edgecommons::commands::{CommandInbox, CommandScope, command_handler};
+    /// use edgecommons::config::model::Config;
+    /// use edgecommons::messaging::MessagingService;
+    /// use serde_json::json;
+    ///
+    /// # fn example(messaging: Arc<dyn MessagingService>) -> edgecommons::error::Result<()> {
+    /// let config = Arc::new(Config::from_value("my-adapter", "gw-01", json!({}))?);
+    /// let inbox = CommandInbox::new(
+    ///     messaging,
+    ///     config,
+    ///     Arc::new(|| 0),
+    ///     Arc::new(|| Box::pin(async { true })),
+    ///     Arc::new(|| Some(json!({}))),
+    ///     Arc::new(Vec::new),
+    /// );
+    /// inbox.register(
+    ///     "sb/read",
+    ///     CommandScope::Instance,
+    ///     command_handler(|_request, addressed_instance| async move {
+    ///         Ok(Some(json!({ "instance": addressed_instance })))
+    ///     }),
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn new(
         messaging: Arc<dyn MessagingService>,
-        config: Arc<ArcSwap<Config>>,
+        config: Arc<Config>,
         uptime_secs: Arc<dyn Fn() -> u64 + Send + Sync>,
         reload_action: ReloadAction,
         redacted_config: Arc<dyn Fn() -> Option<Value> + Send + Sync>,
@@ -536,7 +630,7 @@ impl CommandInbox {
     ) -> Arc<CommandInbox> {
         Self::new_with_startup_observer(
             messaging,
-            config,
+            Arc::new(ArcSwap::from(config)),
             uptime_secs,
             reload_action,
             redacted_config,
@@ -555,13 +649,20 @@ impl CommandInbox {
         startup_observer: StartupObserver,
     ) -> Arc<CommandInbox> {
         let mut handlers: HashMap<String, Arc<dyn CommandHandler>> = HashMap::new();
+        // D-SC-3 use 1: the built-ins are scope-indifferent - they declare `Both` and ignore the
+        // addressed instance, so an instance-addressed `ping` answers exactly as a
+        // component-addressed one.
+        let scopes: HashMap<String, CommandScope> = BUILT_IN_VERBS
+            .iter()
+            .map(|verb| ((*verb).to_string(), CommandScope::Both))
+            .collect();
 
         // ping -> the state keepalive's RUNNING body shape: proves the component is not just
         // alive (the keepalive does that) but RESPONSIVE to addressed commands.
         let ping_uptime_secs = uptime_secs.clone();
         handlers.insert(
             PING.to_string(),
-            command_handler(move |_request| {
+            command_handler(move |_request, _addressed_instance| {
                 let uptime_secs = ping_uptime_secs.clone();
                 async move {
                     Ok(Some(
@@ -576,7 +677,7 @@ impl CommandInbox {
         // section, so a plain service answers exactly as ping does.
         handlers.insert(
             STATUS.to_string(),
-            command_handler(move |_request| {
+            command_handler(move |_request, _addressed_instance| {
                 let uptime_secs = uptime_secs.clone();
                 let instance_connectivity = instance_connectivity.clone();
                 async move {
@@ -604,7 +705,7 @@ impl CommandInbox {
         // so a successful reload also re-announces the cfg push as a side effect).
         handlers.insert(
             RELOAD_CONFIG.to_string(),
-            command_handler(move |_request| {
+            command_handler(move |_request, _addressed_instance| {
                 let reload_action = reload_action.clone();
                 async move {
                     if (reload_action)().await {
@@ -623,7 +724,7 @@ impl CommandInbox {
         // get-configuration (Flow B) -> the cfg class's body shape, as a reply.
         handlers.insert(
             GET_CONFIGURATION.to_string(),
-            command_handler(move |_request| {
+            command_handler(move |_request, _addressed_instance| {
                 let redacted_config = redacted_config.clone();
                 async move {
                     match (redacted_config)() {
@@ -644,7 +745,7 @@ impl CommandInbox {
             config,
             handlers: Mutex::new(handlers),
             outcome_handlers: Mutex::new(HashMap::new()),
-            scoped_handlers: Mutex::new(HashMap::new()),
+            scopes: Mutex::new(scopes),
             availability: Mutex::new(HashMap::new()),
             registration: Mutex::new(()),
             panels: Mutex::new(Vec::new()),
@@ -658,7 +759,7 @@ impl CommandInbox {
         let weak = Arc::downgrade(&inbox);
         inbox.handlers.lock().unwrap().insert(
             DESCRIBE.to_string(),
-            command_handler(move |_request| {
+            command_handler(move |_request, _addressed_instance| {
                 let weak = weak.clone();
                 async move {
                     Ok(Some(match weak.upgrade() {
@@ -672,125 +773,96 @@ impl CommandInbox {
         inbox
     }
 
+    /// Rejects a verb name that may not be registered at all: an invalid §2.2 token, a built-in
+    /// ([`BUILT_IN_VERBS`]), or a delegated verb ([`DELEGATED_VERBS`]). Shared by both
+    /// registration forms so they refuse identically.
+    fn check_registrable(verb: &str) -> Result<()> {
+        for token in verb.split('/') {
+            crate::uns::check_token(token, "verb token")?;
+        }
+        if BUILT_IN_VERBS.contains(&verb) {
+            return Err(EdgeCommonsError::Command(format!(
+                "verb '{verb}' is a built-in verb and cannot be shadowed"
+            )));
+        }
+        if DELEGATED_VERBS.contains(&verb) {
+            return Err(EdgeCommonsError::Command(format!(
+                "verb '{verb}' is owned by another library subsystem and cannot be registered"
+            )));
+        }
+        Ok(())
+    }
+
     /// Registers a custom verb handler — the minimal `commands()` registration seam. The verb is
     /// one or more `/`-separated channel tokens (`"restart-pipeline"`, `"sb/status"`), each
     /// validated against the §2.2 token rule. Registration is allowed before or after
     /// [`Self::start`] (the inbox is a single wildcard subscription — no per-verb subscribe).
     ///
+    /// `scope` declares the verb's addressing (D-SC-2) and is enforced before dispatch, so the
+    /// handler never runs on an addressing error — see [`CommandScope`]. The handler always
+    /// receives the resolved addressed instance.
+    ///
     /// **Precedence:** no shadowing, ever — registering a built-in, a delegated
     /// ([`DELEGATED_VERBS`]) or an already-registered verb errors. Replace a custom handler by
-    /// [`Self::unregister`] first.
+    /// [`Self::unregister`] first; the two registration forms share one verb namespace.
     ///
     /// # Errors
     /// [`EdgeCommonsError::UnsValidation`] when a verb token violates the §2.2 token rule;
     /// [`EdgeCommonsError::Command`] when the verb is built-in/delegated/already registered.
-    pub fn register(&self, verb: &str, handler: Arc<dyn CommandHandler>) -> Result<()> {
-        for token in verb.split('/') {
-            crate::uns::check_token(token, "verb token")?;
-        }
-        if BUILT_IN_VERBS.contains(&verb) {
-            return Err(EdgeCommonsError::Command(format!(
-                "verb '{verb}' is a built-in verb and cannot be shadowed"
-            )));
-        }
-        if DELEGATED_VERBS.contains(&verb) {
-            return Err(EdgeCommonsError::Command(format!(
-                "verb '{verb}' is owned by another library subsystem and cannot be registered"
-            )));
-        }
+    pub fn register(
+        &self,
+        verb: &str,
+        scope: CommandScope,
+        handler: Arc<dyn CommandHandler>,
+    ) -> Result<()> {
+        Self::check_registrable(verb)?;
         let _registration = self.registration.lock().map_err(|_| {
             EdgeCommonsError::Command("command registration lock is poisoned".to_string())
         })?;
         let mut handlers = self.handlers.lock().unwrap();
-        if handlers.contains_key(verb)
-            || self.outcome_handlers.lock().unwrap().contains_key(verb)
-            || self.scoped_handlers.lock().unwrap().contains_key(verb)
-        {
+        if handlers.contains_key(verb) || self.outcome_handlers.lock().unwrap().contains_key(verb) {
             return Err(EdgeCommonsError::Command(format!(
                 "verb '{verb}' is already registered - unregister it first to replace the handler"
             )));
         }
         handlers.insert(verb.to_string(), handler);
-        tracing::debug!(verb, "command verb registered");
+        self.scopes.lock().unwrap().insert(verb.to_string(), scope);
+        tracing::debug!(verb, scope = scope.as_str(), "command verb registered");
         Ok(())
     }
 
-    /// Registers a scope-aware verb handler that also receives the **addressed instance** — the
-    /// delivery topic's `{instance}` token (D-U28), or `None` for a component-scoped command.
-    /// Everything else — verb validation, namespaced verbs, the one-handler-per-verb rule,
-    /// duplicate-registration errors, [`DESCRIBE`] participation, and reply/error handling — is
-    /// identical to [`Self::register`].
+    /// Registers an explicit immediate/deferred outcome handler for `verb` at `scope`.
+    ///
+    /// Verb validation, namespaced verbs, precedence, replacement, [`DESCRIBE`] participation,
+    /// and scope enforcement are identical to [`Self::register`]; only the settlement contract
+    /// differs (the handler returns a [`CommandOutcome`] and may settle its reply later).
     ///
     /// # Errors
     /// [`EdgeCommonsError::UnsValidation`] when a verb token violates the §2.2 token rule;
     /// [`EdgeCommonsError::Command`] when the verb is built-in/delegated/already registered.
-    pub fn register_scoped(&self, verb: &str, handler: Arc<dyn ScopedCommandHandler>) -> Result<()> {
-        for token in verb.split('/') {
-            crate::uns::check_token(token, "verb token")?;
-        }
-        if BUILT_IN_VERBS.contains(&verb) {
-            return Err(EdgeCommonsError::Command(format!(
-                "verb '{verb}' is a built-in verb and cannot be shadowed"
-            )));
-        }
-        if DELEGATED_VERBS.contains(&verb) {
-            return Err(EdgeCommonsError::Command(format!(
-                "verb '{verb}' is owned by another library subsystem and cannot be registered"
-            )));
-        }
-        let _registration = self.registration.lock().map_err(|_| {
-            EdgeCommonsError::Command("command registration lock is poisoned".to_string())
-        })?;
-        let mut scoped_handlers = self.scoped_handlers.lock().unwrap();
-        if scoped_handlers.contains_key(verb)
-            || self.handlers.lock().unwrap().contains_key(verb)
-            || self.outcome_handlers.lock().unwrap().contains_key(verb)
-        {
-            return Err(EdgeCommonsError::Command(format!(
-                "verb '{verb}' is already registered - unregister it first to replace the handler"
-            )));
-        }
-        scoped_handlers.insert(verb.to_string(), handler);
-        tracing::debug!(verb, "scoped command verb registered");
-        Ok(())
-    }
-
-    /// Registers an explicit immediate/deferred outcome handler.
-    ///
-    /// Validation, namespaced verbs, precedence, and replacement rules are identical to
-    /// [`Self::register`]. The legacy [`CommandHandler`] path remains unchanged and separate.
     pub fn register_outcome(
         &self,
         verb: &str,
+        scope: CommandScope,
         handler: Arc<dyn OutcomeCommandHandler>,
     ) -> Result<()> {
-        for token in verb.split('/') {
-            crate::uns::check_token(token, "verb token")?;
-        }
-        if BUILT_IN_VERBS.contains(&verb) {
-            return Err(EdgeCommonsError::Command(format!(
-                "verb '{verb}' is a built-in verb and cannot be shadowed"
-            )));
-        }
-        if DELEGATED_VERBS.contains(&verb) {
-            return Err(EdgeCommonsError::Command(format!(
-                "verb '{verb}' is owned by another library subsystem and cannot be registered"
-            )));
-        }
+        Self::check_registrable(verb)?;
         let _registration = self.registration.lock().map_err(|_| {
             EdgeCommonsError::Command("command registration lock is poisoned".to_string())
         })?;
         let mut outcome_handlers = self.outcome_handlers.lock().unwrap();
-        if outcome_handlers.contains_key(verb)
-            || self.handlers.lock().unwrap().contains_key(verb)
-            || self.scoped_handlers.lock().unwrap().contains_key(verb)
-        {
+        if outcome_handlers.contains_key(verb) || self.handlers.lock().unwrap().contains_key(verb) {
             return Err(EdgeCommonsError::Command(format!(
                 "verb '{verb}' is already registered - unregister it first to replace the handler"
             )));
         }
         outcome_handlers.insert(verb.to_string(), handler);
-        tracing::debug!(verb, "outcome command verb registered");
+        self.scopes.lock().unwrap().insert(verb.to_string(), scope);
+        tracing::debug!(
+            verb,
+            scope = scope.as_str(),
+            "outcome command verb registered"
+        );
         Ok(())
     }
 
@@ -823,12 +895,12 @@ impl CommandInbox {
             EdgeCommonsError::Command("command registration lock is poisoned".to_string())
         })?;
         let removed = self.handlers.lock().unwrap().remove(verb).is_some()
-            || self.outcome_handlers.lock().unwrap().remove(verb).is_some()
-            || self.scoped_handlers.lock().unwrap().remove(verb).is_some();
+            || self.outcome_handlers.lock().unwrap().remove(verb).is_some();
         if removed {
-            // An unregistered verb's availability entry must not resurface on a later
-            // re-registration of the same verb name.
+            // Neither an unregistered verb's availability entry nor its declared scope may
+            // resurface on a later re-registration of the same verb name.
             self.availability.lock().unwrap().remove(verb);
+            self.scopes.lock().unwrap().remove(verb);
             tracing::debug!(verb, "command verb unregistered");
         }
         Ok(())
@@ -839,7 +911,6 @@ impl CommandInbox {
         let mut verbs: std::collections::HashSet<String> =
             self.handlers.lock().unwrap().keys().cloned().collect();
         verbs.extend(self.outcome_handlers.lock().unwrap().keys().cloned());
-        verbs.extend(self.scoped_handlers.lock().unwrap().keys().cloned());
         verbs
     }
 
@@ -997,17 +1068,29 @@ impl CommandInbox {
         let mut verbs: Vec<String> = self.verbs().into_iter().collect();
         verbs.sort();
         let availability = self.availability.lock().unwrap().clone();
+        let scopes = self.scopes.lock().unwrap().clone();
         let commands = verbs
             .into_iter()
             .map(|verb| {
                 let built_in = BUILT_IN_VERBS.contains(&verb.as_str());
-                // {verb, builtIn, availability?}: the availability member is present only for a
-                // verb with a stored non-available state.
+                let scope = scopes
+                    .get(&verb)
+                    .copied()
+                    .unwrap_or(CommandScope::Both)
+                    .as_str();
+                // {verb, builtIn, scope, availability?} (D-SC-2): `scope` is always present; the
+                // availability member only for a verb with a stored non-available state. Rust's
+                // `serde_json::Value` serializes object keys alphabetically rather than in the
+                // canonical declaration order - digest-neutral, since `descriptor_digest`
+                // canonicalizes key order itself (the established convention for this payload).
                 match availability.get(&verb) {
-                    Some(entry) => {
-                        json!({ "verb": verb, "builtIn": built_in, "availability": entry })
-                    }
-                    None => json!({ "verb": verb, "builtIn": built_in }),
+                    Some(entry) => json!({
+                        "verb": verb,
+                        "builtIn": built_in,
+                        "scope": scope,
+                        "availability": entry,
+                    }),
+                    None => json!({ "verb": verb, "builtIn": built_in, "scope": scope }),
                 }
             })
             .collect();
@@ -1355,16 +1438,19 @@ impl CommandInbox {
             return;
         }
         let verb = verb.to_string();
-        let addressed_instance = self.addressed_instance(&topic[..marker]);
-        Self::dispatch(self, verb, message, addressed_instance).await;
+        let topic_instance = self.topic_instance(&topic[..marker]);
+        Self::dispatch(self, verb, message, topic_instance).await;
     }
 
-    /// The delivery topic's addressed instance (D-U28), derived from the stored component-scope
+    /// The delivery topic's instance token (D-U28), derived from the stored component-scope
     /// filter prefix (the same `/cmd/` marker logic both subscriptions share — identity is never
     /// re-derived from config a second way): a `…/{component}` prefix → component scope →
     /// `None`; a `…/{component}/{instance}` prefix → `Some(instance)`. A malformed prefix
     /// (impossible through the subscribed filters) is treated as component scope.
-    fn addressed_instance(&self, topic_prefix: &str) -> Option<String> {
+    ///
+    /// This is the raw topic token; [`resolve_addressed_instance`] turns it (plus the body's
+    /// `instance`, plus the verb's [`CommandScope`]) into what the handler receives.
+    fn topic_instance(&self, topic_prefix: &str) -> Option<String> {
         let component_prefix = {
             let inner = self.inner.lock().unwrap();
             inner
@@ -1383,13 +1469,14 @@ impl CommandInbox {
     }
 
     /// Dispatches a well-formed request to its handler and replies (when `reply_to` is set).
-    /// `addressed_instance` is the delivery topic's instance token (`None` for component scope),
-    /// forwarded only to [`ScopedCommandHandler`]s.
+    /// `topic_instance` is the delivery topic's instance token (`None` for a component-scope
+    /// delivery); the verb's declared [`CommandScope`] turns it into the `addressed_instance`
+    /// both handler forms receive, or into a pre-dispatch [`ERR_BAD_ARGS`] reply.
     async fn dispatch(
         inbox: Arc<Self>,
         verb: String,
         request: Message,
-        addressed_instance: Option<String>,
+        topic_instance: Option<String>,
     ) {
         let wants_reply = request
             .header
@@ -1398,8 +1485,7 @@ impl CommandInbox {
             .is_some_and(|s| !s.is_empty());
         let handler = { inbox.handlers.lock().unwrap().get(&verb).cloned() };
         let outcome_handler = { inbox.outcome_handlers.lock().unwrap().get(&verb).cloned() };
-        let scoped_handler = { inbox.scoped_handlers.lock().unwrap().get(&verb).cloned() };
-        if handler.is_none() && outcome_handler.is_none() && scoped_handler.is_none() {
+        if handler.is_none() && outcome_handler.is_none() {
             if wants_reply {
                 tracing::debug!(
                     verb,
@@ -1422,10 +1508,42 @@ impl CommandInbox {
             return;
         }
 
+        // D-SC-2/D-SC-4: addressing is enforced here, before any handler runs. A rejected
+        // delivery replies with the same coded-error path a handler error uses (and, without a
+        // `reply_to`, is logged only).
+        let scope = {
+            inbox
+                .scopes
+                .lock()
+                .unwrap()
+                .get(&verb)
+                .copied()
+                .unwrap_or(CommandScope::Both)
+        };
+        let addressed_instance = match resolve_addressed_instance(
+            &verb,
+            scope,
+            topic_instance,
+            &request,
+        ) {
+            Ok(addressed_instance) => addressed_instance,
+            Err(error) => {
+                if wants_reply {
+                    tracing::debug!(verb, scope = scope.as_str(), code = %error.code, "addressing rejected before dispatch; sending error reply");
+                    inbox
+                        .send_reply(&request, &verb, error_body(&error.code, error.message))
+                        .await;
+                } else {
+                    tracing::warn!(verb, scope = scope.as_str(), code = %error.code, message = %error.message, "fire-and-forget command rejected by scope enforcement");
+                }
+                return;
+            }
+        };
+
         if let Some(handler) = handler {
-            // Legacy path, intentionally unchanged: one clone for handler ownership, immediate
-            // best-effort reply, and fire-and-forget result discard.
-            match handler.handle(request.clone()).await {
+            // Immediate path: one clone for handler ownership, immediate best-effort reply, and
+            // fire-and-forget result discard.
+            match handler.handle(request.clone(), addressed_instance).await {
                 Ok(result) => {
                     if wants_reply {
                         let body =
@@ -1446,37 +1564,11 @@ impl CommandInbox {
             return;
         }
 
-        if let Some(scoped_handler) = scoped_handler {
-            // The scoped path mirrors the legacy path exactly, plus the addressed instance.
-            match scoped_handler
-                .handle(request.clone(), addressed_instance)
-                .await
-            {
-                Ok(result) => {
-                    if wants_reply {
-                        let body =
-                            json!({ "ok": true, "result": result.unwrap_or_else(|| json!({})) });
-                        inbox.send_reply(&request, &verb, body).await;
-                    }
-                }
-                Err(e) => {
-                    if wants_reply {
-                        inbox
-                            .send_reply(&request, &verb, error_body(&e.code, e.message))
-                            .await;
-                    } else {
-                        tracing::warn!(verb, code = %e.code, message = %e.message, "fire-and-forget scoped verb failed");
-                    }
-                }
-            }
-            return;
-        }
-
         let Some(outcome_handler) = outcome_handler else {
             return;
         };
         let outcome = outcome_handler
-            .handle(request.clone(), inbox.deferred.clone())
+            .handle(request.clone(), inbox.deferred.clone(), addressed_instance)
             .await;
         match outcome {
             CommandOutcome::ImmediateSuccess(result) => {
@@ -1657,6 +1749,67 @@ fn sanitize_start_error(error: &str) -> String {
     regex::Regex::new(r"://[^/@ ]+@")
         .map(|pattern| pattern.replace_all(&redacted, "://***@").into_owned())
         .unwrap_or(redacted)
+}
+
+/// Library-owned pre-dispatch addressing resolution (D-SC-4): what the handler receives, or the
+/// coded error that replaces the dispatch entirely.
+///
+/// `topic_instance` is the delivery topic's `{instance}` token (`None` for a component-scope
+/// delivery) and the body instance is `body.instance` when the body is an object carrying a
+/// string under that key.
+///
+/// 1. **Conflict first, for every scope**: a body instance that disagrees with the topic's token
+///    is [`ERR_BAD_ARGS`] — checked before scope rules and before any instance-existence check
+///    the component may perform.
+/// 2. [`CommandScope::Component`]: either token present is [`ERR_BAD_ARGS`]; otherwise `None`.
+/// 3. [`CommandScope::Instance`] / [`CommandScope::Both`]: the topic's token wins, else the
+///    body's, else `None`.
+///
+/// The library owns *addressing* only. Resolving `None` against the component's configuration
+/// (the optional-iff-one-configured-instance default) and rejecting an unknown instance
+/// (`NO_SUCH_INSTANCE`) need configuration knowledge the library does not have, and stay with
+/// the component.
+fn resolve_addressed_instance(
+    verb: &str,
+    scope: CommandScope,
+    topic_instance: Option<String>,
+    request: &Message,
+) -> std::result::Result<Option<String>, CommandError> {
+    let body_instance = request
+        .body
+        .as_object()
+        .and_then(|body| body.get("instance"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    match (topic_instance.as_deref(), body_instance.as_deref()) {
+        (Some(topic), Some(body)) if topic != body => {
+            return Err(CommandError::new(
+                ERR_BAD_ARGS,
+                "instance in body conflicts with the addressed instance",
+            ));
+        }
+        _ => {}
+    }
+    match scope {
+        CommandScope::Component => {
+            if topic_instance.is_some() {
+                Err(CommandError::new(
+                    ERR_BAD_ARGS,
+                    format!("verb '{verb}' is component-scoped"),
+                ))
+            } else if body_instance.is_some() {
+                Err(CommandError::new(
+                    ERR_BAD_ARGS,
+                    format!(
+                        "verb '{verb}' is component-scoped - the body must not name an instance"
+                    ),
+                ))
+            } else {
+                Ok(None)
+            }
+        }
+        CommandScope::Instance | CommandScope::Both => Ok(topic_instance.or(body_instance)),
+    }
 }
 
 /// The error reply body `{"ok": false, "error": {"code", "message"}}`.
@@ -1874,14 +2027,18 @@ mod tests {
         ])
     }
 
-    fn test_config() -> Arc<ArcSwap<Config>> {
-        Arc::new(ArcSwap::from_pointee(
-            Config::from_value("TestComponent", "test-thing", json!({})).unwrap(),
-        ))
+    fn test_config() -> Arc<Config> {
+        Arc::new(Config::from_value("TestComponent", "test-thing", json!({})).unwrap())
     }
 
+    /// The instance-addressed delivery topic for `verb` (instance `main`, D-U28).
     fn topic(verb: &str) -> String {
         format!("ecv1/test-thing/TestComponent/main/cmd/{verb}")
+    }
+
+    /// The component-addressed delivery topic for `verb` (no instance slot, D-U28).
+    fn component_topic(verb: &str) -> String {
+        format!("ecv1/test-thing/TestComponent/cmd/{verb}")
     }
 
     /// A well-formed request for a verb: `header.name` = verb, pinned `reply_to`.
@@ -1890,6 +2047,89 @@ mod tests {
             .payload(json!({}))
             .reply_to(REPLY_TO)
             .build()
+    }
+
+    /// A well-formed request whose body carries the verb's arguments (e.g. `{"instance": …}`).
+    fn request_with_body(verb: &str, body: Value) -> Message {
+        MessageBuilder::new(verb, "1.0")
+            .payload(body)
+            .reply_to(REPLY_TO)
+            .build()
+    }
+
+    /// A fire-and-forget command whose body carries the verb's arguments.
+    fn notification_with_body(verb: &str, body: Value) -> Message {
+        MessageBuilder::new(verb, "1.0").payload(body).build()
+    }
+
+    /// Records every `addressed_instance` a handler was invoked with.
+    #[derive(Clone, Default)]
+    struct SeenInstances(Arc<Mutex<Vec<Option<String>>>>);
+
+    impl SeenInstances {
+        fn record(&self, addressed_instance: &Option<String>) {
+            self.0.lock().unwrap().push(addressed_instance.clone());
+        }
+
+        fn taken(&self) -> Vec<Option<String>> {
+            std::mem::take(&mut *self.0.lock().unwrap())
+        }
+
+        fn never_invoked(&self) -> bool {
+            self.0.lock().unwrap().is_empty()
+        }
+    }
+
+    /// An immediate handler that records its addressing and echoes it back as the result.
+    fn recording_handler(seen: &SeenInstances) -> Arc<dyn CommandHandler> {
+        let seen = seen.clone();
+        command_handler(move |_request, addressed_instance| {
+            let seen = seen.clone();
+            async move {
+                seen.record(&addressed_instance);
+                Ok(Some(json!({ "instance": addressed_instance })))
+            }
+        })
+    }
+
+    /// A deferred (outcome) handler that records its addressing and settles the token with it,
+    /// proving the deferred form is never blind to the addressing (D-SC-1).
+    fn recording_outcome_handler(seen: &SeenInstances) -> Arc<dyn OutcomeCommandHandler> {
+        let seen = seen.clone();
+        outcome_handler(move |request, deferred, addressed_instance| {
+            let seen = seen.clone();
+            async move {
+                seen.record(&addressed_instance);
+                let token = match deferred.defer(&request, Duration::from_secs(2)) {
+                    Ok(token) => token,
+                    Err(error) => return CommandOutcome::ImmediateError(error),
+                };
+                if let Err(error) = token.activate() {
+                    return CommandOutcome::ImmediateError(CommandError::handler_error(error));
+                }
+                let settlement = token.clone();
+                CommandOutcome::deferred_with_continuation(token, async move {
+                    settlement
+                        .settle_success(Some(json!({ "instance": addressed_instance })))
+                        .await
+                        .map_err(CommandError::handler_error)
+                })
+            }
+        })
+    }
+
+    /// Awaits the first recorded reply (the deferred form settles on an inbox-owned task).
+    async fn await_one_reply(messaging: &RecordingMessaging) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if !messaging.replies().is_empty() {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("a reply should be recorded");
     }
 
     /// A well-formed fire-and-forget command (no `reply_to`).
@@ -2131,8 +2371,11 @@ mod tests {
         let f = fixture();
         assert!(BUILT_IN_VERBS.contains(&STATUS));
         assert!(matches!(
-            f.inbox
-                .register(STATUS, command_handler(|_r| async move { Ok(None) })),
+            f.inbox.register(
+                STATUS,
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) })
+            ),
             Err(EdgeCommonsError::Command(_))
         ));
         assert!(matches!(
@@ -2222,7 +2465,11 @@ mod tests {
     async fn describe_includes_built_ins_custom_verbs_panels_and_digest() {
         let f = fixture();
         f.inbox
-            .register("sb/browse", command_handler(|_r| async move { Ok(None) }))
+            .register(
+                "sb/browse",
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) }),
+            )
             .unwrap();
         let panel = json!({
             "id": "address-space",
@@ -2335,10 +2582,13 @@ mod tests {
             f.inbox.set_command_availability(PING, "broken", None),
             Err(EdgeCommonsError::Command(_))
         ));
-        assert!(matches!(
-            f.inbox.set_command_availability(PING, "DISABLED", None),
-            Err(EdgeCommonsError::Command(_)),
-        ), "the state tokens are exact - no case folding");
+        assert!(
+            matches!(
+                f.inbox.set_command_availability(PING, "DISABLED", None),
+                Err(EdgeCommonsError::Command(_)),
+            ),
+            "the state tokens are exact - no case folding"
+        );
         assert!(matches!(
             f.inbox
                 .set_command_availability("no-such-verb", AVAILABILITY_DISABLED, None),
@@ -2358,17 +2608,27 @@ mod tests {
     fn availability_surfaces_in_describe_and_the_digest_tracks_it() {
         let f = fixture();
         f.inbox
-            .register("sb/write", command_handler(|_r| async move { Ok(None) }))
+            .register(
+                "sb/write",
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) }),
+            )
             .unwrap();
         let baseline = f.inbox.describe();
         let baseline_digest = baseline["digest"].clone();
         assert!(
-            command_entry(&baseline, "sb/write").get("availability").is_none(),
+            command_entry(&baseline, "sb/write")
+                .get("availability")
+                .is_none(),
             "no stored state -> the plain {{verb, builtIn}} entry"
         );
 
         f.inbox
-            .set_command_availability("sb/write", AVAILABILITY_DISABLED, Some("writes.allow[] is empty"))
+            .set_command_availability(
+                "sb/write",
+                AVAILABILITY_DISABLED,
+                Some("writes.allow[] is empty"),
+            )
             .unwrap();
         let disabled = f.inbox.describe();
         assert_eq!(
@@ -2376,6 +2636,7 @@ mod tests {
             json!({
                 "verb": "sb/write",
                 "builtIn": false,
+                "scope": "both",
                 "availability": { "state": "disabled", "reason": "writes.allow[] is empty" }
             })
         );
@@ -2389,7 +2650,9 @@ mod tests {
             .unwrap();
         let restored = f.inbox.describe();
         assert!(
-            command_entry(&restored, "sb/write").get("availability").is_none(),
+            command_entry(&restored, "sb/write")
+                .get("availability")
+                .is_none(),
             "'available' removes the stored entry"
         );
         assert_eq!(
@@ -2402,7 +2665,11 @@ mod tests {
     fn availability_reason_is_trimmed_truncated_and_omitted_when_empty() {
         let f = fixture();
         f.inbox
-            .register("sb/write", command_handler(|_r| async move { Ok(None) }))
+            .register(
+                "sb/write",
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) }),
+            )
             .unwrap();
 
         // Blank-only reasons are omitted entirely.
@@ -2417,87 +2684,370 @@ mod tests {
         // Reasons are trimmed and truncated to the 256-char cap.
         let long = "x".repeat(MAX_AVAILABILITY_REASON_CHARS + 44);
         f.inbox
-            .set_command_availability("sb/write", AVAILABILITY_DISABLED, Some(&format!("  {long}  ")))
+            .set_command_availability(
+                "sb/write",
+                AVAILABILITY_DISABLED,
+                Some(&format!("  {long}  ")),
+            )
             .unwrap();
         let reason = command_entry(&f.inbox.describe(), "sb/write")["availability"]["reason"]
             .as_str()
             .unwrap()
             .to_string();
         assert_eq!(reason.chars().count(), MAX_AVAILABILITY_REASON_CHARS);
-        assert!(reason.starts_with('x') && reason.ends_with('x'), "trimmed before truncation");
+        assert!(
+            reason.starts_with('x') && reason.ends_with('x'),
+            "trimmed before truncation"
+        );
     }
 
     #[test]
     fn unregister_drops_the_verb_availability_entry() {
         let f = fixture();
         f.inbox
-            .register("sb/write", command_handler(|_r| async move { Ok(None) }))
+            .register(
+                "sb/write",
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) }),
+            )
             .unwrap();
         f.inbox
             .set_command_availability("sb/write", AVAILABILITY_DISABLED, None)
             .unwrap();
         f.inbox.unregister("sb/write").unwrap();
         f.inbox
-            .register("sb/write", command_handler(|_r| async move { Ok(None) }))
+            .register(
+                "sb/write",
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) }),
+            )
             .unwrap();
         assert!(
-            command_entry(&f.inbox.describe(), "sb/write").get("availability").is_none(),
+            command_entry(&f.inbox.describe(), "sb/write")
+                .get("availability")
+                .is_none(),
             "a stale availability entry must not resurface on re-registration"
         );
     }
 
-    // ===================== scoped registration (the addressed instance) =====================
+    // ============ declared verb scope + library-owned addressing (D-SC-1..4) ============
 
+    /// Both registration forms share ONE verb namespace, refuse built-in/delegated/invalid verbs
+    /// identically, and are cleared by `unregister`.
+    ///
+    /// The spec's "reject an unknown scope value at registration" rule needs no runtime check
+    /// here: [`CommandScope`] is a Rust enum, so an unknown scope cannot even be written.
     #[tokio::test]
-    async fn scoped_handler_receives_the_addressed_instance() {
+    async fn both_registration_forms_share_one_verb_namespace() {
         let f = fixture();
-        let seen: Arc<Mutex<Vec<Option<String>>>> = Arc::new(Mutex::new(Vec::new()));
-        let seen_handler = seen.clone();
+        // Built-in / delegated / malformed verbs are rejected for either form.
+        for scope in [
+            CommandScope::Component,
+            CommandScope::Instance,
+            CommandScope::Both,
+        ] {
+            assert!(matches!(
+                f.inbox.register(
+                    PING,
+                    scope,
+                    command_handler(|_r, _i| async move { Ok(None) })
+                ),
+                Err(EdgeCommonsError::Command(_))
+            ));
+            assert!(matches!(
+                f.inbox.register_outcome(
+                    SET_CONFIG_VERB,
+                    scope,
+                    outcome_handler(
+                        |_r, _d, _i| async move { CommandOutcome::ImmediateSuccess(None) }
+                    )
+                ),
+                Err(EdgeCommonsError::Command(_))
+            ));
+            assert!(matches!(
+                f.inbox.register(
+                    "bad+verb",
+                    scope,
+                    command_handler(|_r, _i| async move { Ok(None) })
+                ),
+                Err(EdgeCommonsError::UnsValidation { .. })
+            ));
+        }
+
+        // One verb namespace across the immediate and the deferred form, both directions.
         f.inbox
-            .register_scoped(
-                "sb/read",
-                scoped_command_handler(move |_request, addressed_instance| {
-                    let seen = seen_handler.clone();
-                    async move {
-                        seen.lock().unwrap().push(addressed_instance.clone());
-                        Ok(Some(json!({ "instance": addressed_instance })))
-                    }
-                }),
+            .register(
+                "plain",
+                CommandScope::Instance,
+                command_handler(|_r, _i| async move { Ok(None) }),
+            )
+            .unwrap();
+        assert!(matches!(
+            f.inbox.register_outcome(
+                "plain",
+                CommandScope::Instance,
+                outcome_handler(|_r, _d, _i| async move { CommandOutcome::ImmediateSuccess(None) })
+            ),
+            Err(EdgeCommonsError::Command(_))
+        ));
+        f.inbox
+            .register_outcome(
+                "deferred",
+                CommandScope::Component,
+                outcome_handler(|_r, _d, _i| async move { CommandOutcome::ImmediateSuccess(None) }),
+            )
+            .unwrap();
+        assert!(matches!(
+            f.inbox.register(
+                "deferred",
+                CommandScope::Component,
+                command_handler(|_r, _i| async move { Ok(None) })
+            ),
+            Err(EdgeCommonsError::Command(_))
+        ));
+
+        // Both forms participate in verbs()/describe() identically...
+        assert!(f.inbox.verbs().contains("plain"));
+        assert!(f.inbox.verbs().contains("deferred"));
+        assert_eq!(
+            command_entry(&f.inbox.describe(), "deferred"),
+            json!({ "verb": "deferred", "builtIn": false, "scope": "component" })
+        );
+
+        // ...and unregister() clears the handler AND the declared scope, so a later
+        // re-registration at a different scope is honored rather than shadowed.
+        f.inbox.unregister("deferred").unwrap();
+        assert!(!f.inbox.verbs().contains("deferred"));
+        f.inbox
+            .register(
+                "deferred",
+                CommandScope::Both,
+                command_handler(|_r, _i| async move { Ok(None) }),
+            )
+            .unwrap();
+        assert_eq!(
+            command_entry(&f.inbox.describe(), "deferred")["scope"],
+            "both"
+        );
+    }
+
+    /// COMPONENT: an instance-addressed delivery is refused BEFORE dispatch — the handler never
+    /// runs — and the reply is the library's coded `BAD_ARGS`.
+    #[tokio::test]
+    async fn component_scope_rejects_an_instance_addressed_delivery() {
+        let f = fixture();
+        let seen = SeenInstances::default();
+        f.inbox
+            .register(
+                "sb/discover",
+                CommandScope::Component,
+                recording_handler(&seen),
             )
             .unwrap();
         f.inbox.clone().start().await;
 
-        // Instance-scoped topic -> the token; component-scoped topic -> None (D-U28).
         f.messaging
-            .simulate_message(&topic("sb/read"), request("sb/read"))
+            .simulate_message(&topic("sb/discover"), request("sb/discover"))
             .await;
-        f.messaging
-            .simulate_message("ecv1/test-thing/TestComponent/cmd/sb/read", request("sb/read"))
-            .await;
-        assert_eq!(*seen.lock().unwrap(), vec![Some("main".to_string()), None]);
-        let replies = f.messaging.replies();
-        assert_eq!(replies.len(), 2);
-        assert_eq!(replies[0].1.body["result"]["instance"], "main");
-        assert_eq!(replies[1].1.body["result"]["instance"], json!(null));
 
-        // A malformed prefix (unreachable through the subscribed filters) is component scope.
+        let body = only_reply_body(&f.messaging);
+        assert!(!body["ok"].as_bool().unwrap());
+        assert_eq!(body["error"]["code"], ERR_BAD_ARGS);
         assert_eq!(
-            f.inbox.addressed_instance("ecv1/test-thing/TestComponent/a/b"),
-            None
+            body["error"]["message"],
+            "verb 'sb/discover' is component-scoped"
         );
-        assert_eq!(
-            f.inbox.addressed_instance("ecv1/other-thing/OtherComponent"),
-            None
+        assert!(
+            seen.never_invoked(),
+            "the handler must never run on an addressing error"
         );
     }
 
+    /// COMPONENT: a `body.instance` is refused the same way (same code, same message family).
     #[tokio::test]
-    async fn scoped_handler_error_keeps_its_code() {
+    async fn component_scope_rejects_a_body_instance() {
+        let f = fixture();
+        let seen = SeenInstances::default();
+        f.inbox
+            .register(
+                "sb/discover",
+                CommandScope::Component,
+                recording_handler(&seen),
+            )
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(
+                &component_topic("sb/discover"),
+                request_with_body("sb/discover", json!({ "instance": "kep1" })),
+            )
+            .await;
+
+        let body = only_reply_body(&f.messaging);
+        assert_eq!(body["error"]["code"], ERR_BAD_ARGS);
+        assert_eq!(
+            body["error"]["message"],
+            "verb 'sb/discover' is component-scoped - the body must not name an instance"
+        );
+        assert!(seen.never_invoked());
+    }
+
+    /// COMPONENT: a component-addressed delivery with no instance anywhere reaches the handler
+    /// with `None`.
+    #[tokio::test]
+    async fn component_scope_dispatches_a_component_addressed_delivery() {
+        let f = fixture();
+        let seen = SeenInstances::default();
+        f.inbox
+            .register(
+                "sb/discover",
+                CommandScope::Component,
+                recording_handler(&seen),
+            )
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(&component_topic("sb/discover"), request("sb/discover"))
+            .await;
+
+        assert_eq!(seen.taken(), vec![None]);
+        assert_eq!(
+            only_reply_body(&f.messaging)["result"]["instance"],
+            json!(null)
+        );
+    }
+
+    /// The universal conflict rule: a body instance disagreeing with the topic's token is
+    /// `BAD_ARGS` at EVERY scope, checked before the scope rules and before the component could
+    /// ever check instance existence.
+    #[tokio::test]
+    async fn a_conflicting_body_instance_is_rejected_before_anything_else() {
+        for scope in [
+            CommandScope::Instance,
+            CommandScope::Both,
+            CommandScope::Component,
+        ] {
+            let f = fixture();
+            let seen = SeenInstances::default();
+            f.inbox
+                .register("sb/read", scope, recording_handler(&seen))
+                .unwrap();
+            f.inbox.clone().start().await;
+
+            f.messaging
+                .simulate_message(
+                    &topic("sb/read"),
+                    request_with_body("sb/read", json!({ "instance": "other" })),
+                )
+                .await;
+
+            let body = only_reply_body(&f.messaging);
+            assert_eq!(body["error"]["code"], ERR_BAD_ARGS, "scope {scope}");
+            assert_eq!(
+                body["error"]["message"], "instance in body conflicts with the addressed instance",
+                "scope {scope}: the conflict message wins even at COMPONENT scope, where the \
+                 delivery would otherwise be refused as component-scoped"
+            );
+            assert!(seen.never_invoked(), "scope {scope}");
+        }
+    }
+
+    /// A body instance that AGREES with the topic's token is not a conflict.
+    #[tokio::test]
+    async fn an_agreeing_body_instance_is_not_a_conflict() {
+        let f = fixture();
+        let seen = SeenInstances::default();
+        f.inbox
+            .register("sb/read", CommandScope::Instance, recording_handler(&seen))
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(
+                &topic("sb/read"),
+                request_with_body("sb/read", json!({ "instance": "main" })),
+            )
+            .await;
+
+        assert_eq!(seen.taken(), vec![Some("main".to_string())]);
+        assert_eq!(only_reply_body(&f.messaging)["result"]["instance"], "main");
+    }
+
+    /// INSTANCE resolution: topic-only, body-only, and neither (`None` reaches the handler — the
+    /// component owns the optional-iff-one default and `NO_SUCH_INSTANCE`).
+    #[tokio::test]
+    async fn instance_scope_resolves_topic_then_body_then_none() {
+        let f = fixture();
+        let seen = SeenInstances::default();
+        f.inbox
+            .register("sb/read", CommandScope::Instance, recording_handler(&seen))
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        // topic-only
+        f.messaging
+            .simulate_message(&topic("sb/read"), request("sb/read"))
+            .await;
+        // body-only (component-addressed delivery naming the instance in the body)
+        f.messaging
+            .simulate_message(
+                &component_topic("sb/read"),
+                request_with_body("sb/read", json!({ "instance": "kep1" })),
+            )
+            .await;
+        // neither
+        f.messaging
+            .simulate_message(&component_topic("sb/read"), request("sb/read"))
+            .await;
+
+        assert_eq!(
+            seen.taken(),
+            vec![Some("main".to_string()), Some("kep1".to_string()), None]
+        );
+        let replies = f.messaging.replies();
+        assert_eq!(replies.len(), 3);
+        assert_eq!(replies[0].1.body["result"]["instance"], "main");
+        assert_eq!(replies[1].1.body["result"]["instance"], "kep1");
+        assert_eq!(replies[2].1.body["result"]["instance"], json!(null));
+    }
+
+    /// BOTH: the same resolution, and `None` is a meaningful signal ("the whole component"),
+    /// never an error (D-SC-3).
+    #[tokio::test]
+    async fn both_scope_passes_the_whole_component_signal_through() {
+        let f = fixture();
+        let seen = SeenInstances::default();
+        f.inbox
+            .register("sb/pause", CommandScope::Both, recording_handler(&seen))
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(&component_topic("sb/pause"), request("sb/pause"))
+            .await;
+        f.messaging
+            .simulate_message(&topic("sb/pause"), request("sb/pause"))
+            .await;
+
+        assert_eq!(seen.taken(), vec![None, Some("main".to_string())]);
+        let replies = f.messaging.replies();
+        assert_eq!(replies.len(), 2);
+        assert_eq!(replies[0].1.body["result"]["instance"], json!(null));
+        assert_eq!(replies[1].1.body["result"]["instance"], "main");
+    }
+
+    /// A handler's own coded error still rides the normal reply path (the addressing enforcement
+    /// sits in front of it, it does not replace it).
+    #[tokio::test]
+    async fn an_instance_scoped_handler_error_keeps_its_code() {
         let f = fixture();
         f.inbox
-            .register_scoped(
+            .register(
                 "sb/read",
-                scoped_command_handler(|_request, _addressed_instance| async move {
+                CommandScope::Instance,
+                command_handler(|_request, _addressed_instance| async move {
                     Err(CommandError::new("NOT_ALLOWED", "operator role required"))
                 }),
             )
@@ -2511,72 +3061,302 @@ mod tests {
         assert_eq!(body["error"]["code"], "NOT_ALLOWED");
     }
 
+    /// A fire-and-forget delivery rejected by scope enforcement is logged only — never replied
+    /// to — and still never reaches the handler.
     #[tokio::test]
-    async fn register_scoped_shares_the_one_handler_per_verb_namespace() {
+    async fn a_rejected_fire_and_forget_delivery_is_not_replied_to() {
         let f = fixture();
-        // Built-in / delegated verbs are rejected exactly as for register().
-        assert!(matches!(
-            f.inbox.register_scoped(
-                PING,
-                scoped_command_handler(|_r, _i| async move { Ok(None) })
-            ),
-            Err(EdgeCommonsError::Command(_))
-        ));
-        assert!(matches!(
-            f.inbox.register_scoped(
-                SET_CONFIG_VERB,
-                scoped_command_handler(|_r, _i| async move { Ok(None) })
-            ),
-            Err(EdgeCommonsError::Command(_))
-        ));
-        assert!(matches!(
-            f.inbox.register_scoped(
-                "bad+verb",
-                scoped_command_handler(|_r, _i| async move { Ok(None) })
-            ),
-            Err(EdgeCommonsError::UnsValidation { .. })
-        ));
-
-        // One verb namespace across plain, outcome, and scoped registration.
+        let seen = SeenInstances::default();
         f.inbox
-            .register("plain", command_handler(|_r| async move { Ok(None) }))
-            .unwrap();
-        assert!(matches!(
-            f.inbox.register_scoped(
-                "plain",
-                scoped_command_handler(|_r, _i| async move { Ok(None) })
-            ),
-            Err(EdgeCommonsError::Command(_))
-        ));
-        f.inbox
-            .register_scoped(
-                "scoped",
-                scoped_command_handler(|_r, _i| async move { Ok(None) }),
+            .register(
+                "sb/discover",
+                CommandScope::Component,
+                recording_handler(&seen),
             )
             .unwrap();
-        assert!(matches!(
-            f.inbox
-                .register("scoped", command_handler(|_r| async move { Ok(None) })),
-            Err(EdgeCommonsError::Command(_))
-        ));
-        assert!(matches!(
-            f.inbox.register_outcome(
-                "scoped",
-                outcome_handler(|_r, _d| async move { CommandOutcome::ImmediateSuccess(None) })
-            ),
-            Err(EdgeCommonsError::Command(_))
-        ));
+        f.inbox.clone().start().await;
 
-        // Scoped verbs participate in verbs()/describe() identically to register().
-        assert!(f.inbox.verbs().contains("scoped"));
+        f.messaging
+            .simulate_message(&topic("sb/discover"), notification("sb/discover"))
+            .await;
+        f.messaging
+            .simulate_message(
+                &component_topic("sb/discover"),
+                notification_with_body("sb/discover", json!({ "instance": "kep1" })),
+            )
+            .await;
+
+        assert!(seen.never_invoked());
+        assert!(f.messaging.replies().is_empty());
+    }
+
+    // ---- outcome-form parity: the deferred form sees the same addressing and still settles ----
+
+    #[tokio::test]
+    async fn the_outcome_form_receives_the_addressed_instance_and_still_settles() {
+        let f = fixture();
+        let seen = SeenInstances::default();
+        f.inbox
+            .register_outcome(
+                "sb/capture",
+                CommandScope::Instance,
+                recording_outcome_handler(&seen),
+            )
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(&topic("sb/capture"), request("sb/capture"))
+            .await;
+        await_one_reply(&f.messaging).await;
+        assert_eq!(seen.taken(), vec![Some("main".to_string())]);
         assert_eq!(
-            command_entry(&f.inbox.describe(), "scoped"),
-            json!({ "verb": "scoped", "builtIn": false })
+            only_reply_body(&f.messaging),
+            json!({ "ok": true, "result": { "instance": "main" } }),
+            "the deferred token still settles, carrying the addressing (D-CAM-29 closed)"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_outcome_form_resolves_a_body_instance_and_null_through() {
+        let f = fixture();
+        let seen = SeenInstances::default();
+        f.inbox
+            .register_outcome(
+                "sb/capture",
+                CommandScope::Both,
+                recording_outcome_handler(&seen),
+            )
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(
+                &component_topic("sb/capture"),
+                request_with_body("sb/capture", json!({ "instance": "cam-2" })),
+            )
+            .await;
+        await_one_reply(&f.messaging).await;
+        assert_eq!(seen.taken(), vec![Some("cam-2".to_string())]);
+        assert_eq!(
+            f.messaging.replies()[0].1.body["result"]["instance"],
+            "cam-2"
         );
 
-        // ...and unregister() removes them.
-        f.inbox.unregister("scoped").unwrap();
-        assert!(!f.inbox.verbs().contains("scoped"));
+        f.messaging.clear_replies();
+        f.messaging
+            .simulate_message(&component_topic("sb/capture"), request("sb/capture"))
+            .await;
+        await_one_reply(&f.messaging).await;
+        assert_eq!(seen.taken(), vec![None]);
+        assert_eq!(
+            f.messaging.replies()[0].1.body["result"]["instance"],
+            json!(null)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_outcome_form_enforces_scope_before_the_handler_runs() {
+        let f = fixture();
+        let seen = SeenInstances::default();
+        f.inbox
+            .register_outcome(
+                "sb/discover",
+                CommandScope::Component,
+                recording_outcome_handler(&seen),
+            )
+            .unwrap();
+        f.inbox.clone().start().await;
+
+        f.messaging
+            .simulate_message(&topic("sb/discover"), request("sb/discover"))
+            .await;
+        f.messaging
+            .simulate_message(
+                &topic("sb/discover"),
+                request_with_body("sb/discover", json!({ "instance": "other" })),
+            )
+            .await;
+
+        let replies = f.messaging.replies();
+        assert_eq!(replies.len(), 2);
+        assert_eq!(replies[0].1.body["error"]["code"], ERR_BAD_ARGS);
+        assert_eq!(
+            replies[0].1.body["error"]["message"],
+            "verb 'sb/discover' is component-scoped"
+        );
+        assert_eq!(replies[1].1.body["error"]["code"], ERR_BAD_ARGS);
+        assert_eq!(
+            replies[1].1.body["error"]["message"],
+            "instance in body conflicts with the addressed instance"
+        );
+        assert!(
+            seen.never_invoked(),
+            "no deferred token may even be created on an addressing error"
+        );
+    }
+
+    // ---- built-ins are scope-indifferent (D-SC-3 use 1) ----
+
+    /// Every built-in declares `both` and answers identically on the instance-addressed and the
+    /// component-addressed topic — including when the body names an instance.
+    #[tokio::test]
+    async fn built_ins_answer_identically_at_either_scope() {
+        let f = fixture();
+        f.uptime.store(5, Ordering::SeqCst);
+        f.inbox.clone().start().await;
+
+        for verb in [PING, STATUS, GET_CONFIGURATION] {
+            f.messaging.clear_replies();
+            f.messaging
+                .simulate_message(&topic(verb), request(verb))
+                .await;
+            f.messaging
+                .simulate_message(&component_topic(verb), request(verb))
+                .await;
+            f.messaging
+                .simulate_message(
+                    &component_topic(verb),
+                    request_with_body(verb, json!({ "instance": "kep1" })),
+                )
+                .await;
+            let replies = f.messaging.replies();
+            assert_eq!(replies.len(), 3, "verb {verb}");
+            assert_eq!(
+                replies[0].1.body, replies[1].1.body,
+                "verb {verb}: instance- and component-addressed answers must be identical"
+            );
+            assert_eq!(
+                replies[0].1.body, replies[2].1.body,
+                "verb {verb}: a body instance changes nothing at a `both` verb"
+            );
+            assert!(replies[0].1.body["ok"].as_bool().unwrap(), "verb {verb}");
+        }
+
+        for verb in BUILT_IN_VERBS {
+            assert_eq!(
+                command_entry(&f.inbox.describe(), verb)["scope"],
+                "both",
+                "built-in {verb} must declare the `both` scope"
+            );
+        }
+    }
+
+    // ---- describe: the scope field and its digest ----
+
+    #[test]
+    fn describe_entries_carry_the_declared_scope_in_key_order() {
+        let f = fixture();
+        f.inbox
+            .register(
+                "sb/read",
+                CommandScope::Instance,
+                command_handler(|_r, _i| async move { Ok(None) }),
+            )
+            .unwrap();
+        f.inbox
+            .register_outcome(
+                "sb/discover",
+                CommandScope::Component,
+                outcome_handler(|_r, _d, _i| async move { CommandOutcome::ImmediateSuccess(None) }),
+            )
+            .unwrap();
+        let describe = f.inbox.describe();
+
+        assert_eq!(
+            command_entry(&describe, "sb/read"),
+            json!({ "verb": "sb/read", "builtIn": false, "scope": "instance" })
+        );
+        assert_eq!(
+            command_entry(&describe, "sb/discover"),
+            json!({ "verb": "sb/discover", "builtIn": false, "scope": "component" })
+        );
+        assert_eq!(
+            command_entry(&describe, PING),
+            json!({ "verb": PING, "builtIn": true, "scope": "both" })
+        );
+
+        // The entry carries exactly {verb, builtIn, scope} until availability is stored. Rust's
+        // `serde_json::Value` keeps object keys alphabetically, so the SERIALIZED order is
+        // builtIn/scope/verb rather than the canonical declaration order - digest-neutral,
+        // because `descriptor_digest` canonicalizes key order itself.
+        let entry = command_entry(&describe, "sb/read");
+        let keys: Vec<&str> = entry
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys, vec!["builtIn", "scope", "verb"]);
+
+        f.inbox
+            .set_command_availability("sb/read", AVAILABILITY_DISABLED, Some("no signals"))
+            .unwrap();
+        assert_eq!(
+            command_entry(&f.inbox.describe(), "sb/read"),
+            json!({
+                "verb": "sb/read",
+                "builtIn": false,
+                "scope": "instance",
+                "availability": { "state": "disabled", "reason": "no signals" }
+            }),
+            "scope and availability coexist - they are orthogonal (§2.4)"
+        );
+    }
+
+    /// The scope participates in the describe digest, so a console re-fetches when a verb's
+    /// scope changes (widening `instance` -> `both`).
+    #[test]
+    fn describe_digest_changes_when_a_verb_scope_changes() {
+        let f = fixture();
+        f.inbox
+            .register(
+                "sb/pause",
+                CommandScope::Instance,
+                command_handler(|_r, _i| async move { Ok(None) }),
+            )
+            .unwrap();
+        let narrow = f.inbox.describe();
+
+        f.inbox.unregister("sb/pause").unwrap();
+        f.inbox
+            .register(
+                "sb/pause",
+                CommandScope::Both,
+                command_handler(|_r, _i| async move { Ok(None) }),
+            )
+            .unwrap();
+        let widened = f.inbox.describe();
+
+        assert_eq!(command_entry(&narrow, "sb/pause")["scope"], "instance");
+        assert_eq!(command_entry(&widened, "sb/pause")["scope"], "both");
+        assert_ne!(
+            narrow["digest"], widened["digest"],
+            "the digest must change when a verb's declared scope changes"
+        );
+    }
+
+    #[test]
+    fn command_scope_renders_the_lowercase_wire_token() {
+        assert_eq!(CommandScope::Component.as_str(), "component");
+        assert_eq!(CommandScope::Instance.as_str(), "instance");
+        assert_eq!(CommandScope::Both.as_str(), "both");
+        assert_eq!(CommandScope::Instance.to_string(), "instance");
+    }
+
+    /// A malformed topic prefix (unreachable through the subscribed filters) is component scope.
+    #[tokio::test]
+    async fn a_malformed_topic_prefix_is_component_scope() {
+        let f = fixture();
+        f.inbox.clone().start().await;
+        assert_eq!(
+            f.inbox.topic_instance("ecv1/test-thing/TestComponent/a/b"),
+            None
+        );
+        assert_eq!(
+            f.inbox.topic_instance("ecv1/other-thing/OtherComponent"),
+            None
+        );
     }
 
     // ===================== custom verbs (the registration seam) =====================
@@ -2588,7 +3368,10 @@ mod tests {
         f.inbox
             .register(
                 "restart-pipeline",
-                command_handler(|_req| async move { Ok(Some(json!({ "restarted": true }))) }),
+                CommandScope::Both,
+                command_handler(|_req, _addressed_instance| async move {
+                    Ok(Some(json!({ "restarted": true })))
+                }),
             )
             .unwrap();
         f.messaging
@@ -2603,7 +3386,11 @@ mod tests {
     async fn namespaced_custom_verb_dispatches() {
         let f = fixture();
         f.inbox
-            .register("sb/status", command_handler(|_req| async move { Ok(None) }))
+            .register(
+                "sb/status",
+                CommandScope::Both,
+                command_handler(|_req, _addressed_instance| async move { Ok(None) }),
+            )
             .unwrap();
         f.inbox.clone().start().await;
         f.messaging
@@ -2624,7 +3411,8 @@ mod tests {
         f.inbox
             .register(
                 "guarded",
-                command_handler(|_req| async move {
+                CommandScope::Both,
+                command_handler(|_req, _addressed_instance| async move {
                     Err(CommandError::new("NOT_ALLOWED", "operator role required"))
                 }),
             )
@@ -2645,7 +3433,10 @@ mod tests {
         f.inbox
             .register(
                 "boomy",
-                command_handler(|_req| async move { Err(CommandError::handler_error("boom")) }),
+                CommandScope::Both,
+                command_handler(|_req, _addressed_instance| async move {
+                    Err(CommandError::handler_error("boom"))
+                }),
             )
             .unwrap();
         f.inbox.clone().start().await;
@@ -2661,33 +3452,50 @@ mod tests {
     async fn register_rejects_shadowing_and_invalid_verbs() {
         let f = fixture();
         assert!(matches!(
-            f.inbox
-                .register(PING, command_handler(|_r| async move { Ok(None) })),
+            f.inbox.register(
+                PING,
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) })
+            ),
             Err(EdgeCommonsError::Command(_))
         ));
         assert!(matches!(
             f.inbox.register(
                 SET_CONFIG_VERB,
-                command_handler(|_r| async move { Ok(None) })
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) })
             ),
             Err(EdgeCommonsError::Command(_))
         ));
         f.inbox
-            .register("mine", command_handler(|_r| async move { Ok(None) }))
+            .register(
+                "mine",
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) }),
+            )
             .unwrap();
         assert!(matches!(
-            f.inbox
-                .register("mine", command_handler(|_r| async move { Ok(None) })),
+            f.inbox.register(
+                "mine",
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) })
+            ),
             Err(EdgeCommonsError::Command(_))
         ));
         assert!(matches!(
-            f.inbox
-                .register("bad+verb", command_handler(|_r| async move { Ok(None) })),
+            f.inbox.register(
+                "bad+verb",
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) })
+            ),
             Err(EdgeCommonsError::UnsValidation { .. })
         ));
         assert!(matches!(
-            f.inbox
-                .register("sb//x", command_handler(|_r| async move { Ok(None) })),
+            f.inbox.register(
+                "sb//x",
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) })
+            ),
             Err(EdgeCommonsError::UnsValidation { .. })
         ));
     }
@@ -2732,7 +3540,11 @@ mod tests {
     async fn unregister_removes_custom_verbs_but_never_built_ins() {
         let f = fixture();
         f.inbox
-            .register("mine", command_handler(|_r| async move { Ok(None) }))
+            .register(
+                "mine",
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) }),
+            )
             .unwrap();
         assert!(f.inbox.verbs().contains("mine"));
         f.inbox.unregister("mine").unwrap();
@@ -2758,7 +3570,11 @@ mod tests {
     async fn verbs_snapshot_contains_built_ins_and_customs() {
         let f = fixture();
         f.inbox
-            .register("mine", command_handler(|_r| async move { Ok(None) }))
+            .register(
+                "mine",
+                CommandScope::Both,
+                command_handler(|_r, _addressed_instance| async move { Ok(None) }),
+            )
             .unwrap();
         assert_eq!(
             f.inbox.verbs(),
@@ -2781,7 +3597,8 @@ mod tests {
         f.inbox
             .register_outcome(
                 "sb/status",
-                outcome_handler(|_request, _deferred| async move {
+                CommandScope::Both,
+                outcome_handler(|_request, _deferred, _addressed_instance| async move {
                     CommandOutcome::ImmediateSuccess(Some(json!({ "online": true })))
                 }),
             )
@@ -2790,10 +3607,11 @@ mod tests {
             f.inbox
                 .register(
                     "sb/status",
-                    command_handler(|_request| async move { Ok(None) })
+                    CommandScope::Both,
+                    command_handler(|_request, _addressed_instance| async move { Ok(None) })
                 )
                 .is_err(),
-            "legacy and outcome handlers share one no-shadowing verb namespace"
+            "the immediate and outcome forms share one no-shadowing verb namespace"
         );
         f.inbox.clone().start().await;
 
@@ -2843,7 +3661,8 @@ mod tests {
         f.inbox
             .register_outcome(
                 "sb/capture",
-                outcome_handler(move |request, deferred| {
+                CommandScope::Both,
+                outcome_handler(move |request, deferred, _addressed_instance| {
                     let token_slot = token_slot_handler.clone();
                     async move {
                         let token = match deferred.defer(&request, Duration::from_secs(2)) {
@@ -2892,7 +3711,8 @@ mod tests {
         f.inbox
             .register_outcome(
                 "sb/capture",
-                outcome_handler(move |request, deferred| {
+                CommandScope::Both,
+                outcome_handler(move |request, deferred, _addressed_instance| {
                     let started_tx = started_tx_handler.clone();
                     async move {
                         let token = match deferred.defer(&request, Duration::from_secs(2)) {
@@ -2954,7 +3774,8 @@ mod tests {
         f.inbox
             .register_outcome(
                 "sb/capture",
-                outcome_handler(move |request, deferred| {
+                CommandScope::Both,
+                outcome_handler(move |request, deferred, _addressed_instance| {
                     let ran = ran_handler.clone();
                     async move {
                         let token = match deferred.defer(&request, Duration::from_secs(2)) {
@@ -2991,7 +3812,8 @@ mod tests {
         f.inbox
             .register_outcome(
                 "sb/capture",
-                outcome_handler(|request, deferred| async move {
+                CommandScope::Both,
+                outcome_handler(|request, deferred, _addressed_instance| async move {
                     let token = match deferred.defer(&request, Duration::from_secs(2)) {
                         Ok(token) => token,
                         Err(error) => return CommandOutcome::ImmediateError(error),
@@ -3037,7 +3859,8 @@ mod tests {
         f.inbox
             .register_outcome(
                 "sb/capture",
-                outcome_handler(|request, deferred| async move {
+                CommandScope::Both,
+                outcome_handler(|request, deferred, _addressed_instance| async move {
                     let token = deferred.defer(&request, Duration::from_secs(1)).unwrap();
                     CommandOutcome::Deferred(token)
                 }),
@@ -3067,7 +3890,8 @@ mod tests {
         f.inbox
             .register_outcome(
                 "sb/capture",
-                outcome_handler(move |_request, _deferred| {
+                CommandScope::Both,
+                outcome_handler(move |_request, _deferred, _addressed_instance| {
                     let returned = returned.clone();
                     async move { CommandOutcome::Deferred(returned) }
                 }),
@@ -3218,7 +4042,8 @@ mod tests {
         f.inbox
             .register(
                 "do-it",
-                command_handler(move |_req| {
+                CommandScope::Both,
+                command_handler(move |_req, _addressed_instance| {
                     let ran_handler = ran_handler.clone();
                     async move {
                         ran_handler.store(true, Ordering::SeqCst);
@@ -3244,7 +4069,10 @@ mod tests {
         f.inbox
             .register(
                 "do-it",
-                command_handler(|_req| async move { Err(CommandError::new("NOPE", "nope")) }),
+                CommandScope::Both,
+                command_handler(|_req, _addressed_instance| async move {
+                    Err(CommandError::new("NOPE", "nope"))
+                }),
             )
             .unwrap();
         f.inbox.clone().start().await;
@@ -3316,7 +4144,8 @@ mod tests {
         f.inbox
             .register(
                 "capture",
-                command_handler(move |request| {
+                CommandScope::Both,
+                command_handler(move |request, _addressed_instance| {
                     let observed = observed_handler.clone();
                     async move {
                         observed
@@ -3379,7 +4208,8 @@ mod tests {
         f.inbox
             .register(
                 "capture",
-                command_handler(move |request| {
+                CommandScope::Both,
+                command_handler(move |request, _addressed_instance| {
                     let observed = observed_handler.clone();
                     async move {
                         observed
@@ -3517,12 +4347,12 @@ mod vector_tests {
     /// The vectors pin an instance-scoped component (`main`); config resolution is component
     /// scope by D-U28, so the identity is rebound to `main` (mirroring the Java loader's
     /// `MockConfigurationService.setComponentIdentity`).
-    fn vector_config() -> Arc<ArcSwap<Config>> {
-        Arc::new(ArcSwap::from_pointee(
+    fn vector_config() -> Arc<Config> {
+        Arc::new(
             Config::from_value("opcua-adapter", "gw-01", json!({}))
                 .unwrap()
                 .with_instance_for_test("main"),
-        ))
+        )
     }
 
     /// Rebuilds a vector `request` object into a live [`Message`] (pinned uuid/timestamp/

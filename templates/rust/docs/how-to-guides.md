@@ -41,7 +41,7 @@ later ends), so a fleet consumer sees both the raise and the clear on the same c
 
 ## Add your own command verb
 
-Register additional verbs with `gg.commands().register(name, command_handler(...))`, or install them
+Register additional verbs with `gg.commands().register(name, scope, command_handler(...))`, or install them
 before the inbox goes active via `EdgeCommonsBuilder::configure_commands` (as `set-greeting` does in
 `src/main.rs`/`src/app.rs`, so state exists before the first request can arrive). Return
 `Err(CommandError::new(CODE, message))` for a bad request rather than panicking — a malformed

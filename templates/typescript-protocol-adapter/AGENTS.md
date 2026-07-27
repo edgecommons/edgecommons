@@ -53,3 +53,17 @@ design-fidelity contract, the platform/transport model, the UNS grammar, and the
 In short: kebab crate/bin/artifact naming, the `data()`/`events()`/`commands()` facades instead of
 hand-built topics, quality on every sample, and no direct publish to the reserved `state`/`metric`/
 `cfg`/`log` classes.
+
+Two invariants this scaffold in particular depends on:
+
+- **Command scope is declared, and the library owns addressing.** Every verb registers with a
+  `CommandScope` (all nine `sb/*`/lifecycle verbs here are `CommandScopes.Instance`) and every
+  handler is handed the resolved `addressedInstance`. Do not re-implement topic/body instance
+  parsing, conflict detection, or the topic-wins precedence in the component — the inbox does it
+  before dispatch and answers `BAD_ARGS` itself. What stays here is the part that needs *this
+  component's configuration*: the sole-device default and `NO_SUCH_INSTANCE`, both in
+  `Commander.resolve`.
+- **The keepalive reports instance state from the single state model.** Each `InstanceConnectivity`
+  entry carries `state` (`CONNECTING`/`ONLINE`/`BACKOFF`/`PAUSED`) via `withState`, read from the
+  same `Health` that answers `sb/status`. Never add a second bookkeeping path for it — a paused
+  device must never look merely stale to a fleet view.

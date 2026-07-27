@@ -348,7 +348,8 @@ export class EdgeCommons {
 
   /**
    * The command-inbox facade — the minimal `gg.commands()` surface (DESIGN-uns §9.5): register
-   * custom command verbs with `commands().register(verb, handler)`; the built-in verbs (`ping`,
+   * custom command verbs with `commands().register(verb, scope, handler)`, declaring each verb's
+   * addressing scope (`"component"`, `"instance"`, or `"both"`); the built-in verbs (`ping`,
    * `describe`, `reload-config`, `get-configuration`, `status`) are registered by the library and
    * cannot be shadowed. `status` answers with the same per-instance connectivity sample the `state`
    * keepalive pushes — supply it once through {@link setInstanceConnectivityProvider}.
@@ -867,8 +868,8 @@ export class EdgeCommonsBuilder {
       // ecv1/{device}/{component}/cmd/# and ecv1/{device}/{component}/+/cmd/#) on the primary connection and dispatch cmd
       // envelopes by verb - built-ins ping / describe / reload-config / get-configuration /
       // status answer the console out of the box; apps add custom verbs via
-      // gg.commands().register(). Always on (no config surface); best-effort start (a failure
-      // disables the inbox only).
+      // gg.commands().register(verb, scope, handler). Always on (no config surface);
+      // best-effort start (a failure disables the inbox only).
       // A component that uses the pre-start command configurator has declared that command
       // handlers are part of its serving contract (the camera adapter does). Preserve the
       // established readiness behavior for older components that only use the optional

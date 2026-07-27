@@ -94,7 +94,7 @@ class EdgeCommons:
         # instance-scope ecv1/{device}/{component}/+/cmd/# (D-U28) on the primary
         # connection and dispatches cmd envelopes by verb - built-ins ping /
         # reload-config / get-configuration answer the console out of the box; apps add
-        # custom verbs via get_commands().register().
+        # custom verbs via get_commands().register(verb, scope, handler).
         self._command_inbox = None
         # The component-identity-bound UNS topic builder (component scope, no instance
         # token - D-U28), lazily bound on first uns() from the resolved component
@@ -245,7 +245,8 @@ class EdgeCommons:
             # ecv1/{device}/{component}/+/cmd/# (any instance, D-U28) - on the primary
             # connection and dispatch cmd envelopes by verb - built-ins ping / status / describe /
             # reload-config / get-configuration answer the console out of the box; apps
-            # add custom verbs via get_commands().register(). Always on (no config
+            # add custom verbs via get_commands().register(verb, scope, handler).
+            # Always on (no config
             # surface); best-effort start (a failure disables the inbox only).
             from edgecommons.command_inbox import CommandInbox
             self._command_inbox = CommandInbox(
@@ -788,9 +789,11 @@ class EdgeCommons:
         """
         Get the command-inbox facade — the minimal ``commands()`` surface
         (DESIGN-uns §9.5): register custom command verbs with
-        ``get_commands().register(verb, handler)``; the built-in verbs (``ping``,
-        ``reload-config``, ``get-configuration``) are registered by the library and
-        cannot be shadowed. Mirrors Java's ``getCommands()`` / Rust's/TS's
+        ``get_commands().register(verb, scope, handler)`` - every verb declares its
+        :class:`~edgecommons.command_inbox.CommandScope` and every handler receives
+        the addressed instance. The built-in verbs (``ping``, ``status``,
+        ``describe``, ``reload-config``, ``get-configuration``) are registered by the
+        library, declare ``BOTH``, and cannot be shadowed. Mirrors Java's ``getCommands()`` / Rust's/TS's
         ``gg.commands()``. ``None`` on a mock/subclass bring-up that never ran
         ``__init__``.
 

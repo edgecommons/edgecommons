@@ -47,7 +47,7 @@ class <<COMPONENTNAME>>Test {
     void setGreetingSwapsTheValueAndReportsThePrevious() throws CommandException {
         Greeting g = new Greeting("first");
 
-        JsonObject reply = g.apply(body(greeting("second")));
+        JsonObject reply = g.apply(body(greeting("second")), null);
 
         assertEquals("first", reply.get("previousGreeting").getAsString(),
                 "the reply echoes what it replaced, so a console sees the effect");
@@ -73,7 +73,7 @@ class <<COMPONENTNAME>>Test {
 
     private static String codeOf(Greeting g, Message request) {
         try {
-            g.apply(request);
+            g.apply(request, null);
         } catch (CommandException e) {
             return e.getCode();
         }

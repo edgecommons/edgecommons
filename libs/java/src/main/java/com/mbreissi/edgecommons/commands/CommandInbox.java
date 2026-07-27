@@ -71,7 +71,7 @@ import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
  * {@code reply_to} across brokers, so console→component request/reply works transparently over
  * the site bus); a {@code cmd} without {@code reply_to} is fire-and-forget (the handler runs, no
  * reply). Obtain the facade via {@code EdgeCommons.getCommands()} and register custom verbs with
- * {@link #register(String, CommandHandler)}.
+ * {@link #register(String, CommandScope, CommandHandler)}.
  *
  * <p><b>Normative behavior (mirrored by the Python/Rust/TS inboxes; pinned by
  * {@code uns-test-vectors/commands.json}):</b>
@@ -101,6 +101,13 @@ import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
  *   <li><b>Delegated verbs</b> — {@value #SET_CONFIG_VERB} is owned by the
  *       {@code CONFIG_COMPONENT} config source's own subscription on the same inbox path; the
  *       inbox always ignores it (DEBUG) so the two subscribers never double-handle.</li>
+ *   <li><b>Declared verb scope</b> — every registration declares a {@link CommandScope}
+ *       (COMPONENT/INSTANCE/BOTH), enforced by the inbox <b>before dispatch</b>: a body
+ *       {@code instance} conflicting with the topic's instance token, or any instance addressing
+ *       at a COMPONENT verb, is rejected with a coded {@value #ERR_BAD_ARGS} reply and the
+ *       handler never runs. Handlers receive the resolved <b>addressed instance</b>
+ *       ({@code topic ?? body ?? null}); built-ins are BOTH and answer identically at either
+ *       scope.</li>
  *   <li><b>Handler errors</b> — a {@link CommandException} keeps its code; any other exception
  *       maps to {@value #ERR_HANDLER_ERROR}. Fire-and-forget failures are logged only.</li>
  *   <li><b>No config surface</b> — always on; core plumbing, not a feature toggle.</li>
@@ -158,6 +165,9 @@ public final class CommandInbox implements AutoCloseable {
 
     /** Error code: the handler threw an uncoded exception. */
     public static final String ERR_HANDLER_ERROR = "HANDLER_ERROR";
+
+    /** Error code: the request's addressing violates the verb's declared {@link CommandScope}. */
+    public static final String ERR_BAD_ARGS = "BAD_ARGS";
 
     /** Error code: {@value #RELOAD_CONFIG} could not re-fetch or the document was rejected. */
     public static final String ERR_RELOAD_FAILED = "RELOAD_FAILED";
@@ -218,12 +228,8 @@ public final class CommandInbox implements AutoCloseable {
 
     private final ConfigManager configManager;
     private final MessagingClient messagingClient;
-    /** verb → handler; built-ins seeded at construction, custom verbs via {@link #register}. */
-    private final Map<String, CommandHandler> handlers = new ConcurrentHashMap<>();
-    /** verb → explicit-outcome handler; custom verbs via {@link #registerOutcome}. */
-    private final Map<String, OutcomeCommandHandler> outcomeHandlers = new ConcurrentHashMap<>();
-    /** verb → scope-aware handler; custom verbs via {@link #registerScoped}. */
-    private final Map<String, ScopedCommandHandler> scopedHandlers = new ConcurrentHashMap<>();
+    /** verb → registration (declared scope + exactly one handler form); built-ins seeded at construction. */
+    private final Map<String, Registration> registrations = new ConcurrentHashMap<>();
     /** verb → stored non-available availability ({@code {state, reason?}}); see {@link #setCommandAvailability}. */
     private final Map<String, JsonObject> availability = new ConcurrentHashMap<>();
     /** panel id → descriptor; custom panels via {@link #registerPanel(JsonObject)}. */
@@ -242,6 +248,15 @@ public final class CommandInbox implements AutoCloseable {
     /** Guarded by this inbox's monitor; non-null only while one generation activates/drains. */
     private ActivationGate activationGate;
     private volatile boolean closed = false;
+
+    /** One registered verb: its declared {@link CommandScope} plus exactly one handler form. */
+    private record Registration(CommandScope scope, CommandHandler handler,
+                                OutcomeCommandHandler outcomeHandler) { }
+
+    /** A built-in registration: scope BOTH (D-SC-3 use 1), identical answer at either scope. */
+    private static Registration builtIn(CommandHandler handler) {
+        return new Registration(CommandScope.BOTH, handler, null);
+    }
 
     private record PendingDelivery(String topic, Message message) { }
 
@@ -465,16 +480,16 @@ public final class CommandInbox implements AutoCloseable {
 
         // ping -> the state keepalive's RUNNING body shape: proves the component is not just
         // alive (the keepalive does that) but RESPONSIVE to addressed commands.
-        handlers.put(PING, request -> {
+        registrations.put(PING, builtIn((request, addressedInstance) -> {
             JsonObject result = new JsonObject();
             result.addProperty("status", "RUNNING");
             result.addProperty("uptimeSecs", uptimeSecs.getAsLong());
             return result;
-        });
+        }));
         // status -> ping's per-instance superset. Same body, plus the instances[] the state keepalive
         // pushes, from the same provider. A component with no instances omits the section, so a plain
         // service answers exactly as ping does.
-        handlers.put(STATUS, request -> {
+        registrations.put(STATUS, builtIn((request, addressedInstance) -> {
             JsonObject result = new JsonObject();
             result.addProperty("status", "RUNNING");
             result.addProperty("uptimeSecs", uptimeSecs.getAsLong());
@@ -491,10 +506,10 @@ public final class CommandInbox implements AutoCloseable {
                 }
             }
             return result;
-        });
+        }));
         // reload-config -> re-fetch from the active config source and re-apply (listeners fire,
         // so a successful reload also re-announces the cfg push as a side effect).
-        handlers.put(RELOAD_CONFIG, request -> {
+        registrations.put(RELOAD_CONFIG, builtIn((request, addressedInstance) -> {
             if (!configReload.getAsBoolean()) {
                 throw new CommandException(ERR_RELOAD_FAILED, "the configuration could not be"
                         + " re-fetched from the active config source or the document was"
@@ -503,9 +518,9 @@ public final class CommandInbox implements AutoCloseable {
             JsonObject result = new JsonObject();
             result.addProperty("reloaded", true);
             return result;
-        });
+        }));
         // get-configuration (Flow B) -> the cfg class's body shape, as a reply.
-        handlers.put(GET_CONFIGURATION, request -> {
+        registrations.put(GET_CONFIGURATION, builtIn((request, addressedInstance) -> {
             JsonObject config = redactedConfig.get();
             if (config == null) {
                 throw new CommandException(ERR_NO_CONFIG,
@@ -514,86 +529,69 @@ public final class CommandInbox implements AutoCloseable {
             JsonObject result = new JsonObject();
             result.add("config", config);
             return result;
-        });
+        }));
         // describe -> descriptor-discovery manifest for console component-detail panels.
-        handlers.put(DESCRIBE, request -> describe());
+        registrations.put(DESCRIBE, builtIn((request, addressedInstance) -> describe()));
     }
 
     /**
-     * Registers a custom verb handler — the minimal {@code commands()} registration seam. The
+     * Registers an immediate-reply verb handler — the {@code commands()} registration seam. The
      * verb is one or more {@code /}-separated channel tokens ({@code "restart-pipeline"},
-     * {@code "sb/status"}), each validated against the §2.2 token rule. Registration is allowed
-     * before or after {@link #start()} (the inbox is a single wildcard subscription — no
-     * per-verb subscribe).
+     * {@code "sb/status"}), each validated against the §2.2 token rule; {@code scope} declares
+     * which {@code cmd} addressing the verb accepts ({@link CommandScope}), enforced by the inbox
+     * before dispatch and advertised in {@value #DESCRIBE}. The handler always receives the
+     * library-resolved <b>addressed instance</b>. Registration is allowed before or after
+     * {@link #start()} (the inbox is a single wildcard subscription — no per-verb subscribe).
      *
      * <p><b>Precedence:</b> no shadowing, ever — registering a {@linkplain #BUILT_IN_VERBS
      * built-in}, a {@linkplain #DELEGATED_VERBS delegated} or an already-registered verb throws.
      * Replace a custom handler by {@link #unregister(String)} first.
      *
      * @param verb    the verb (the {@code cmd} channel, {@code /}-namespaces allowed)
+     * @param scope   the verb's declared scope, enforced before dispatch
      * @param handler the handler to dispatch it to
      * @throws IllegalArgumentException when the verb is built-in/delegated/already registered
      * @throws com.mbreissi.edgecommons.uns.UnsValidationException when a verb token violates the
      *                                                           §2.2 token rule
      */
-    public synchronized void register(String verb, CommandHandler handler) {
+    public synchronized void register(String verb, CommandScope scope, CommandHandler handler) {
         Objects.requireNonNull(verb, "verb must not be null");
+        Objects.requireNonNull(scope, "scope must not be null");
         Objects.requireNonNull(handler, "handler must not be null");
         validateCustomVerbRegistration(verb);
-        if (handlers.putIfAbsent(verb, handler) != null) {
+        if (registrations.putIfAbsent(verb, new Registration(scope, handler, null)) != null) {
             throw new IllegalArgumentException("verb '" + verb + "' is already registered -"
                     + " unregister it first to replace the handler");
         }
-        LOGGER.debug("Command verb '{}' registered", verb);
+        LOGGER.debug("Command verb '{}' registered ({})", verb, scope);
     }
 
     /**
-     * Registers an explicit-outcome handler without changing the legacy {@link #register} API.
-     * Immediate outcomes use the same wrappers as legacy handlers; a valid activated deferred
-     * token suppresses the automatic reply.
+     * Registers an explicit-outcome handler — the deferred-capable registration form. Immediate
+     * outcomes use the same wrappers as immediate handlers; a valid activated deferred token
+     * suppresses the automatic reply. {@code scope} declares which {@code cmd} addressing the
+     * verb accepts, enforced before dispatch exactly as for
+     * {@link #register(String, CommandScope, CommandHandler)}, and the handler always receives
+     * the library-resolved addressed instance.
      */
-    public synchronized void registerOutcome(String verb, OutcomeCommandHandler handler) {
+    public synchronized void registerOutcome(String verb, CommandScope scope,
+                                             OutcomeCommandHandler handler) {
         Objects.requireNonNull(verb, "verb must not be null");
+        Objects.requireNonNull(scope, "scope must not be null");
         Objects.requireNonNull(handler, "handler must not be null");
         validateCustomVerbRegistration(verb);
-        if (outcomeHandlers.putIfAbsent(verb, handler) != null) {
+        if (registrations.putIfAbsent(verb, new Registration(scope, null, handler)) != null) {
             throw new IllegalArgumentException("verb '" + verb + "' is already registered -"
                     + " unregister it first to replace the handler");
         }
-        LOGGER.debug("Outcome command verb '{}' registered", verb);
-    }
-
-    /**
-     * Registers a scope-aware handler ({@link ScopedCommandHandler}) — the same registration seam
-     * as {@link #register}, but the handler additionally receives the <b>addressed instance</b>:
-     * the delivery topic's {@code {instance}} token for an instance-scoped command, or
-     * {@code null} for a component-scoped one (D‑U28). The token is parsed against the inbox's
-     * own subscribed filters, never re-derived from config. A verb has EITHER a plain or a scoped
-     * handler (the one-handler-per-verb rule and duplicate-registration errors are shared), and a
-     * scoped verb participates in {@code describe} identically to a plain one.
-     *
-     * @param verb    the verb (the {@code cmd} channel, {@code /}-namespaces allowed)
-     * @param handler the scope-aware handler to dispatch it to
-     * @throws IllegalArgumentException when the verb is built-in/delegated/already registered
-     * @throws com.mbreissi.edgecommons.uns.UnsValidationException when a verb token violates the
-     *                                                           §2.2 token rule
-     */
-    public synchronized void registerScoped(String verb, ScopedCommandHandler handler) {
-        Objects.requireNonNull(verb, "verb must not be null");
-        Objects.requireNonNull(handler, "handler must not be null");
-        validateCustomVerbRegistration(verb);
-        if (scopedHandlers.putIfAbsent(verb, handler) != null) {
-            throw new IllegalArgumentException("verb '" + verb + "' is already registered -"
-                    + " unregister it first to replace the handler");
-        }
-        LOGGER.debug("Scoped command verb '{}' registered", verb);
+        LOGGER.debug("Outcome command verb '{}' registered ({})", verb, scope);
     }
 
     /**
      * Declares a registered verb's <b>availability</b> for {@value #DESCRIBE} consumers (a
      * console greys a {@code disabled} verb, hides an {@code unsupported} one). {@code available}
      * removes any stored declaration — the verb's describe entry reverts to the plain
-     * {@code {verb, builtIn}}; {@code disabled}/{@code unsupported} store
+     * {@code {verb, builtIn, scope}}; {@code disabled}/{@code unsupported} store
      * {@code {state, reason?}}, surfaced on the entry as {@code "availability"} (the describe
      * digest changes with it). The reason is caller-provided operator text — trimmed, truncated
      * to {@value #MAX_AVAILABILITY_REASON_CHARS} chars, omitted when empty.
@@ -611,8 +609,7 @@ public final class CommandInbox implements AutoCloseable {
             throw new IllegalArgumentException("availability state '" + state + "' is not one of "
                     + "available/disabled/unsupported");
         }
-        if (!handlers.containsKey(verb) && !outcomeHandlers.containsKey(verb)
-                && !scopedHandlers.containsKey(verb)) {
+        if (!registrations.containsKey(verb)) {
             throw new IllegalArgumentException("verb '" + verb + "' is not registered - command"
                     + " availability applies to registered verbs only");
         }
@@ -647,8 +644,7 @@ public final class CommandInbox implements AutoCloseable {
             throw new IllegalArgumentException("verb '" + verb + "' is owned by another library"
                     + " subsystem and cannot be registered");
         }
-        if (handlers.containsKey(verb) || outcomeHandlers.containsKey(verb)
-                || scopedHandlers.containsKey(verb)) {
+        if (registrations.containsKey(verb)) {
             throw new IllegalArgumentException("verb '" + verb + "' is already registered -"
                     + " unregister it first to replace the handler");
         }
@@ -667,8 +663,7 @@ public final class CommandInbox implements AutoCloseable {
             throw new IllegalArgumentException("verb '" + verb + "' is a built-in verb and"
                     + " cannot be unregistered");
         }
-        if (handlers.remove(verb) != null || outcomeHandlers.remove(verb) != null
-                || scopedHandlers.remove(verb) != null) {
+        if (registrations.remove(verb) != null) {
             availability.remove(verb);  // a re-registered verb starts available again
             LOGGER.debug("Command verb '{}' unregistered", verb);
         }
@@ -676,11 +671,7 @@ public final class CommandInbox implements AutoCloseable {
 
     /** The currently registered verbs (built-ins + custom) — a snapshot copy. */
     public Set<String> verbs() {
-        Set<String> verbs = ConcurrentHashMap.newKeySet();
-        verbs.addAll(handlers.keySet());
-        verbs.addAll(outcomeHandlers.keySet());
-        verbs.addAll(scopedHandlers.keySet());
-        return Set.copyOf(verbs);
+        return Set.copyOf(registrations.keySet());
     }
 
     /**
@@ -840,10 +831,13 @@ public final class CommandInbox implements AutoCloseable {
         }
 
         JsonArray commands = new JsonArray();
-        verbs().stream().sorted().forEach(verb -> {
+        Map<String, Registration> registered = Map.copyOf(registrations);
+        registered.keySet().stream().sorted().forEach(verb -> {
+            // The pinned entry shape and key order: {verb, builtIn, scope, availability?}.
             JsonObject entry = new JsonObject();
             entry.addProperty("verb", verb);
             entry.addProperty("builtIn", BUILT_IN_VERBS.contains(verb));
+            entry.addProperty("scope", registered.get(verb).scope().wireName());
             JsonObject declared = availability.get(verb);
             if (declared != null) {
                 entry.add("availability", declared.deepCopy());
@@ -1228,14 +1222,14 @@ public final class CommandInbox implements AutoCloseable {
                         + " equal the topic verb)", topic);
                 return;
             }
-            dispatch(verb, message, addressedInstance(topic, cmdMarker, prefix));
+            dispatch(verb, message, topicInstanceToken(topic, cmdMarker, prefix));
         } catch (Exception e) {
             LOGGER.debug("Ignoring malformed cmd payload on '{}': {}", topic, e.toString());
         }
     }
 
     /**
-     * The delivery topic's addressed instance (D‑U28), parsed against the inbox's own subscribed
+     * The delivery topic's instance token (D‑U28), parsed against the inbox's own subscribed
      * filters (never re-derived from config): the segments before the {@code /cmd/} marker are
      * either the component head ({@code ecv1/{device}/{component}} → component scope,
      * {@code null}) or the head plus exactly one {@code {instance}} token → that token. A
@@ -1244,7 +1238,7 @@ public final class CommandInbox implements AutoCloseable {
      * @param prefix the instance-scope filter minus the trailing {@code #}
      *               ({@code ecv1/{device}/{component}/+/cmd/})
      */
-    private static String addressedInstance(String topic, int cmdMarker, String prefix) {
+    private static String topicInstanceToken(String topic, int cmdMarker, String prefix) {
         String instanceSlot = "/+/cmd/";
         if (prefix == null || !prefix.endsWith(instanceSlot)) {
             return null;
@@ -1265,19 +1259,22 @@ public final class CommandInbox implements AutoCloseable {
         return null;    // malformed -> component scope
     }
 
-    /** Dispatches a well-formed request to its handler and replies (when {@code reply_to} set). */
-    private void dispatch(String verb, Message request, String addressedInstance) {
+    /**
+     * Dispatches a well-formed request to its handler and replies (when {@code reply_to} set),
+     * after enforcing the verb's declared {@link CommandScope} (D-SC-2/D-SC-4). The library owns
+     * the <b>addressing</b>: it extracts the topic's instance token and the body's
+     * {@code instance} field, rejects a conflict ({@value #ERR_BAD_ARGS}, checked before
+     * everything else), rejects instance addressing at a COMPONENT verb, and hands the handler
+     * the resolved addressed instance ({@code topic ?? body ?? null} for INSTANCE/BOTH). A
+     * {@code null} flows through to the handler — the "optional iff exactly one configured
+     * instance" default and unknown-instance rejection are component-side policy, applied by the
+     * handler on a {@code null}/unknown addressed instance.
+     */
+    private void dispatch(String verb, Message request, String topicInstance) {
         boolean wantsReply = request.getHeader().getReplyTo() != null
                 && !request.getHeader().getReplyTo().isEmpty();
-        OutcomeCommandHandler outcomeHandler = outcomeHandlers.get(verb);
-        CommandHandler handler = handlers.get(verb);
-        ScopedCommandHandler scopedHandler = scopedHandlers.get(verb);
-        if (handler == null && scopedHandler != null) {
-            // A scoped handler is a plain handler that also sees the addressed instance; adapting
-            // here keeps the reply/error handling below literally identical for both.
-            handler = req -> scopedHandler.handle(req, addressedInstance);
-        }
-        if (handler == null && outcomeHandler == null) {
+        Registration registration = registrations.get(verb);
+        if (registration == null) {
             if (wantsReply) {
                 LOGGER.debug("Unknown verb '{}' - sending {} error reply", verb, ERR_UNKNOWN_VERB);
                 sendReply(request, verb, errorBody(ERR_UNKNOWN_VERB,
@@ -1288,14 +1285,41 @@ public final class CommandInbox implements AutoCloseable {
             return;
         }
 
-        if (outcomeHandler != null) {
-            dispatchOutcome(verb, request, wantsReply, outcomeHandler);
+        // Library-owned addressing enforcement: the handler never runs on an addressing error.
+        String bodyInstance = bodyInstance(request);
+        if (topicInstance != null && bodyInstance != null
+                && !topicInstance.equals(bodyInstance)) {
+            // The universal rule (all scopes), checked BEFORE everything else.
+            rejectAddressing(verb, request, wantsReply,
+                    "instance in body conflicts with the addressed instance");
+            return;
+        }
+        final String addressedInstance;
+        if (registration.scope() == CommandScope.COMPONENT) {
+            if (topicInstance != null) {
+                rejectAddressing(verb, request, wantsReply,
+                        "verb '" + verb + "' is component-scoped");
+                return;
+            }
+            if (bodyInstance != null) {
+                rejectAddressing(verb, request, wantsReply, "verb '" + verb
+                        + "' is component-scoped - the body must not name an instance");
+                return;
+            }
+            addressedInstance = null;
+        } else {
+            addressedInstance = topicInstance != null ? topicInstance : bodyInstance;
+        }
+
+        if (registration.outcomeHandler() != null) {
+            dispatchOutcome(verb, request, wantsReply, registration.outcomeHandler(),
+                    addressedInstance);
             return;
         }
 
         JsonObject result;
         try {
-            result = handler.handle(request);
+            result = registration.handler().handle(request, addressedInstance);
         } catch (CommandException e) {
             if (wantsReply) {
                 sendReply(request, verb, errorBody(e.getCode(), e.getMessage()));
@@ -1317,11 +1341,33 @@ public final class CommandInbox implements AutoCloseable {
         }
     }
 
+    /** The body's {@code instance} field when the body is an object with a string field, else null. */
+    private static String bodyInstance(Message request) {
+        if (request.getBody() instanceof JsonObject body
+                && body.has("instance")
+                && body.get("instance").isJsonPrimitive()
+                && body.get("instance").getAsJsonPrimitive().isString()) {
+            return body.get("instance").getAsString();
+        }
+        return null;
+    }
+
+    /** Scope-enforcement rejection: a coded {@value #ERR_BAD_ARGS} reply, mirroring coded handler errors. */
+    private void rejectAddressing(String verb, Message request, boolean wantsReply,
+                                  String message) {
+        if (wantsReply) {
+            sendReply(request, verb, errorBody(ERR_BAD_ARGS, message));
+        } else {
+            LOGGER.warn("Fire-and-forget verb '{}' rejected ({}): {}",
+                    verb, ERR_BAD_ARGS, message);
+        }
+    }
+
     private void dispatchOutcome(String verb, Message request, boolean wantsReply,
-                                 OutcomeCommandHandler handler) {
+                                 OutcomeCommandHandler handler, String addressedInstance) {
         final CommandOutcome outcome;
         try {
-            outcome = handler.handle(request);
+            outcome = handler.handle(request, addressedInstance);
             if (outcome == null) {
                 throw new IllegalStateException("outcome handler returned null");
             }

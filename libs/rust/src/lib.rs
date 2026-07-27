@@ -335,7 +335,8 @@ impl EdgeCommons {
     }
 
     /// The command-inbox facade (DESIGN-uns §9.5, slice S2 — the minimal `commands()` facade):
-    /// register custom command verbs with `gg.commands().register(verb, handler)`. The built-in
+    /// register custom command verbs with `gg.commands().register(verb, scope, handler)`, where
+    /// `scope` is the verb's [`commands::CommandScope`] (D-SC-2). The built-in
     /// verbs (`ping`, `reload-config`, `get-configuration`) are registered by the library and
     /// cannot be shadowed. `None` only when no messaging transport was wired (which the builder
     /// never leaves unset in practice — every supported transport either wires messaging or fails
@@ -1621,9 +1622,9 @@ pub mod prelude {
     pub use crate::cli::{ConfigSourceSpec, ParsedArgs};
     pub use crate::commands::{
         CommandError, CommandHandler, CommandInbox, CommandInboxStartupState,
-        CommandInboxStartupStatus, CommandOutcome, DeferredReplyRegistry, DeferredReplyToken,
-        OutcomeCommandHandler, POST_ACCEPT_CONTINUATION_CAPACITY, PostAcceptContinuation,
-        command_handler, outcome_handler,
+        CommandInboxStartupStatus, CommandOutcome, CommandScope, DeferredReplyRegistry,
+        DeferredReplyToken, OutcomeCommandHandler, POST_ACCEPT_CONTINUATION_CAPACITY,
+        PostAcceptContinuation, command_handler, outcome_handler,
     };
     pub use crate::config::model::Config;
     pub use crate::config::{
@@ -1917,7 +1918,11 @@ mod reload_tests {
             .configuration_validation_timeout(Duration::from_secs(3))
             .unwrap()
             .configure_commands(|inbox| {
-                inbox.register("capture", commands::command_handler(|_| async { Ok(None) }))
+                inbox.register(
+                    "capture",
+                    commands::CommandScope::Instance,
+                    commands::command_handler(|_, _| async { Ok(None) }),
+                )
             });
 
         assert!(!builder.initial_ready);

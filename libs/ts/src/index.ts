@@ -152,13 +152,14 @@ export {
   CommandInboxState,
   CommandException,
   CommandOutcomes,
+  CommandScopes,
   DeferredReply,
   DeferredReplyState,
   SettlementResult,
 } from "./commands";
 export type {
   CommandHandler,
-  ScopedCommandHandler,
+  CommandScope,
   CommandAvailabilityState,
   CommandResult,
   OutcomeCommandHandler,

@@ -80,18 +80,21 @@ adapter registers the full generic southbound family (`src/commands.ts`):
 
 | Verb | Topic | Body |
 |---|---|---|
-| `sb/status` | `ecv1/{device}/{component}/cmd/sb/status` | `{"instance"?: "device-1"}` |
-| `sb/read` | `ecv1/{device}/{component}/cmd/sb/read` | `{"signals": [{"signalId": "temperature-1"}]}` |
-| `sb/write` | `ecv1/{device}/{component}/cmd/sb/write` | `{"writes": [{"signalId": "temperature-1", "value": 42}]}` |
-| `sb/signals` | `ecv1/{device}/{component}/cmd/sb/signals` | `{}` |
-| `sb/browse` | `ecv1/{device}/{component}/cmd/sb/browse` | `{"cursor"?: "...", "max"?: 200}` or `{"ref": "root", "depth"?: 1, "maxRefs"?: 200}` |
-| `sb/pause` / `sb/resume` | `ecv1/{device}/{component}/cmd/sb/{pause,resume}` | `{}` |
-| `reconnect` / `repoll` | `ecv1/{device}/{component}/cmd/{reconnect,repoll}` | `{}` |
+| `sb/status` | `ecv1/{device}/{component}/{instance}/cmd/sb/status` | `{}` |
+| `sb/read` | `ecv1/{device}/{component}/{instance}/cmd/sb/read` | `{"signals": [{"signalId": "temperature-1"}]}` |
+| `sb/write` | `ecv1/{device}/{component}/{instance}/cmd/sb/write` | `{"writes": [{"signalId": "temperature-1", "value": 42}]}` |
+| `sb/signals` | `ecv1/{device}/{component}/{instance}/cmd/sb/signals` | `{}` |
+| `sb/browse` | `ecv1/{device}/{component}/{instance}/cmd/sb/browse` | `{"cursor"?: "...", "max"?: 200}` or `{"ref": "root", "depth"?: 1, "maxRefs"?: 200}` |
+| `sb/pause` / `sb/resume` | `ecv1/{device}/{component}/{instance}/cmd/sb/{pause,resume}` | `{}` |
+| `reconnect` / `repoll` | `ecv1/{device}/{component}/{instance}/cmd/{reconnect,repoll}` | `{}` |
 
-The scope rides an `instance` body field rather than a topic segment (required once two or more
-devices are configured), so one inbox serves every device this adapter owns. A write is refused
-with `WRITE_NOT_ALLOWED` unless its `signalId` is on that instance's `writes.allow` list — which is
-**empty by default**, making a fresh adapter read-only. Full payload shapes and error codes:
+All nine verbs are registered with the scope `instance`: one inbox serves every device this adapter
+owns, and each command names its device either on the topic (above) or with an `"instance"` body
+field on the component topic `ecv1/{device}/{component}/cmd/{verb}`. The library resolves the two,
+refuses a body that names a different device than the topic, and — with exactly one device
+configured — lets the command name none at all. A write is refused with `WRITE_NOT_ALLOWED` unless
+its `signalId` is on that instance's `writes.allow` list — which is **empty by default**, making a
+fresh adapter read-only. Full payload shapes and error codes:
 [docs/reference/messaging-interface.md](docs/reference/messaging-interface.md).
 
 ## Configuration

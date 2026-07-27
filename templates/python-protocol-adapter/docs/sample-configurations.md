@@ -70,5 +70,6 @@ refused — see the [tutorial](tutorial.md#6-try-a-write-and-see-it-refused).
 ## Adding a second device
 
 Add another entry to `component.instances[]` with its own `id`, `adapter`, `connection`, and
-`writes.allow`. Once more than one device is configured, every `sb/*` command **must** include
-`instance` in its body — see [explanation.md](explanation.md#instance-routing).
+`writes.allow`. Once more than one device is configured, every `sb/*` command **must name its
+device** — either on the topic (`…/{instance}/cmd/{verb}`) or with `instance` in its body — see
+[explanation.md](explanation.md#instance-routing).

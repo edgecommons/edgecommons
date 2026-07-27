@@ -51,8 +51,17 @@ hardware; a real deployment implements the device seam for its protocol.
   `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, `reconnects`, `writeErrors`,
   `signalsSubscribed`. Do not rename or drop one without updating `metrics.py`'s `HEALTH_MEASURES`,
   the metrics test, and `docs/reference/metrics.md` together.
-- **Instance routing** (D-EIP-13): `body.instance` optional iff exactly one device is configured;
-  otherwise a missing id is `BAD_ARGS`, an unknown id is `NO_SUCH_INSTANCE`.
+- **Instance addressing belongs to the library; this component only looks the device up.** All nine
+  `sb/*` verbs register with `CommandScope.INSTANCE`, and the inbox resolves the delivery's
+  addressing before a handler runs (topic instance token authoritative, body `instance` folded in,
+  a conflict between them refused with `BAD_ARGS`). `Commander._resolve` therefore takes the
+  resolved `addressed_instance` and does only the configuration-dependent half: unknown instance ->
+  `NO_SUCH_INSTANCE`, `None` -> the sole configured device, or `BAD_ARGS` with two or more. Do not
+  reintroduce a `body.get("instance")` read here — two addressing rules is one too many.
+- **The keepalive reports instance state** (D-SC-7): `connectivity_of` stamps the same
+  `CONNECTING`/`ONLINE`/`BACKOFF`/`PAUSED` token that answers `sb/status` onto the `state` keepalive's
+  `instances[]` entries via `with_state`. One state model, every surface — never a second bookkeeping
+  path.
 
 ## Validation expectations
 

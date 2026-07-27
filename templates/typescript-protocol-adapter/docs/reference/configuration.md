@@ -28,7 +28,7 @@ defaults — the scaffold reads only `pollIntervalMs` as a fallback per instance
 
 | Key | Type | Required | Default | Definition |
 |-----|------|----------|---------|-----------|
-| `id` | string | yes | — | Stable instance id. The `{instance}` token of this device's topics and the `instance` field every `sb/*` command resolves against. |
+| `id` | string | yes | — | Stable instance id. The `{instance}` token of this device's topics — including the `cmd` topic that addresses it — and the value an `sb/*` command's `instance` body field resolves against. |
 | `adapter` | string | no | `"sim"` | Which backend `backendFor()` resolves. Add your protocol's kind as you implement it. |
 | `connection` | object | yes | — | Deliberately open (`additionalProperties: true`) — every protocol needs different keys. `endpoint` is the one field every backend can rely on. |
 | `pollIntervalMs` | number | no | `5000` | How often the device loop reads and publishes, in milliseconds. |

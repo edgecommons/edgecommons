@@ -8,8 +8,15 @@
  *
  * ## Conventions every verb follows
  *
- * * **Instance routing (D-EIP-13):** `body.instance` is optional iff exactly one device is
- *   configured; with two or more, a missing id is `BAD_ARGS` and an unknown id is `NO_SUCH_INSTANCE`.
+ * * **Every verb is `instance`-scoped:** it acts on exactly one device. The **library** owns the
+ *   addressing — it takes the delivery topic's `{instance}` token, falls back to the request body's
+ *   `instance` field, and refuses a body that conflicts with the topic (`BAD_ARGS`) *before* the
+ *   handler runs. This module never parses addressing; each handler is handed the resolved
+ *   `addressedInstance`.
+ * * **Component-side instance policy (D-EIP-13):** what the library cannot know is this component's
+ *   configuration, so an `undefined` addressed instance resolves to the sole configured device when
+ *   there is exactly one and is `BAD_ARGS` otherwise, and an instance naming no configured device is
+ *   `NO_SUCH_INSTANCE` — see {@link Commander.resolve}.
  * * **Standardized error codes:** `BAD_ARGS`, `NO_SUCH_INSTANCE`, `WRITE_NOT_ALLOWED`,
  *   `WRITE_FAILED`, `DEVICE_UNAVAILABLE`, `READ_FAILED`, `RECONNECT_FAILED`, `BROWSE_UNSUPPORTED`,
  *   `BROWSE_FAILED`, `PAUSED`.
@@ -24,7 +31,7 @@
  * Three panels (`overview`, `signals`, `diagnostics`) are registered via `commands.registerPanel`
  * for the edge-console descriptor surface — each `scope: "instance"`, `order` 10/20/30.
  */
-import { CommandException, CommandInbox, Message } from "@edgecommons/edgecommons";
+import { CommandException, CommandInbox, CommandScopes, Message } from "@edgecommons/edgecommons";
 
 import type {
   BrowseOutcome,
@@ -57,21 +64,28 @@ export interface DeviceHandle {
 /**
  * Register every `sb/*` verb + the three edge-console panels on the inbox.
  *
+ * All nine verbs declare {@link CommandScopes.Instance}: each acts on one device, so the inbox
+ * resolves the addressed instance (topic token, else the body's `instance` field) and refuses a
+ * conflicting body before dispatch. Every handler is handed that resolved instance and passes it
+ * straight to the {@link Commander} — no verb reads `body.instance`.
+ *
  * @throws Error / UnsValidationError when a verb/panel name clashes or a token is invalid.
  */
 export function registerAll(commands: CommandInbox, handles: DeviceHandle[]): void {
   const commander = new Commander(handles);
 
-  commands.register("sb/status", (req) => commander.status(req.body));
-  commands.register("sb/read", (req) => commander.read(req.body));
-  commands.register("sb/write", (req) => commander.write(req.body));
-  commands.register("sb/signals", (req) => commander.signals(req.body));
-  commands.register("sb/browse", (req) => commander.browse(req.body));
+  commands.register("sb/status", CommandScopes.Instance, (_req, instance) => commander.status(instance));
+  commands.register("sb/read", CommandScopes.Instance, (req, instance) => commander.read(req.body, instance));
+  commands.register("sb/write", CommandScopes.Instance, (req, instance) => commander.write(req.body, instance));
+  commands.register("sb/signals", CommandScopes.Instance, (_req, instance) => commander.signals(instance));
+  commands.register("sb/browse", CommandScopes.Instance, (req, instance) => commander.browse(req.body, instance));
   // `sb/pause` additionally carries the requester identity path (for the emitted event's `by`).
-  commands.register("sb/pause", (req: Message) => commander.pause(req.body, req.identity?.path));
-  commands.register("sb/resume", (req) => commander.resume(req.body));
-  commands.register("reconnect", (req) => commander.reconnect(req.body));
-  commands.register("repoll", (req) => commander.repoll(req.body));
+  commands.register("sb/pause", CommandScopes.Instance, (req: Message, instance) =>
+    commander.pause(instance, req.identity?.path),
+  );
+  commands.register("sb/resume", CommandScopes.Instance, (_req, instance) => commander.resume(instance));
+  commands.register("reconnect", CommandScopes.Instance, (_req, instance) => commander.reconnect(instance));
+  commands.register("repoll", CommandScopes.Instance, (_req, instance) => commander.repoll(instance));
 
   for (const panel of panels()) commands.registerPanel(panel);
 }
@@ -180,15 +194,17 @@ export class Commander {
   }
 
   /**
-   * Route to the addressed device (D-EIP-13): `body.instance` optional iff exactly one device is
-   * configured; with two or more a missing/unknown id is `BAD_ARGS` / `NO_SUCH_INSTANCE`.
+   * Route to the addressed device — the component-side half of the addressing contract (D-EIP-13).
+   * The library has already resolved `addressedInstance` from the delivery topic or the body and
+   * rejected any conflict between the two; what is left needs *this component's configuration*,
+   * which the library does not have: an instance that names no configured device is
+   * `NO_SUCH_INSTANCE`, and no named instance at all resolves to the sole configured device when
+   * there is exactly one, else `BAD_ARGS`.
    */
-  private resolve(body: unknown): DeviceHandle {
-    const o = asObject(body);
-    const instance = o.instance;
-    if (typeof instance === "string") {
-      const h = this.devices.get(instance);
-      if (!h) throw new CommandException("NO_SUCH_INSTANCE", `no configured device \`${instance}\``);
+  private resolve(addressedInstance: string | undefined): DeviceHandle {
+    if (addressedInstance !== undefined) {
+      const h = this.devices.get(addressedInstance);
+      if (!h) throw new CommandException("NO_SUCH_INSTANCE", `no configured device \`${addressedInstance}\``);
       return h;
     }
     if (this.ids.length === 1) return this.devices.get(this.ids[0]) as DeviceHandle;
@@ -197,8 +213,8 @@ export class Commander {
 
   // --- sb/status ---------------------------------------------------------------------------------
 
-  async status(body: unknown): Promise<Reply> {
-    const h = this.resolve(body);
+  async status(addressedInstance: string | undefined): Promise<Reply> {
+    const h = this.resolve(addressedInstance);
     const started = Date.now();
     const link = h.health.link();
     const connected = link === "ONLINE";
@@ -219,8 +235,8 @@ export class Commander {
 
   // --- sb/signals (the configured inventory, no device I/O) --------------------------------------
 
-  async signals(body: unknown): Promise<Reply> {
-    const h = this.resolve(body);
+  async signals(addressedInstance: string | undefined): Promise<Reply> {
+    const h = this.resolve(addressedInstance);
     const started = Date.now();
     const signals = h.signals.map((s) => ({
       id: s.id,
@@ -233,8 +249,8 @@ export class Commander {
 
   // --- sb/read (on-demand read of named signals) ------------------------------------------------
 
-  async read(body: unknown): Promise<Reply> {
-    const h = this.resolve(body);
+  async read(body: unknown, addressedInstance: string | undefined): Promise<Reply> {
+    const h = this.resolve(addressedInstance);
     const started = Date.now();
     const refs = asObject(body).signals;
     if (!Array.isArray(refs)) {
@@ -271,8 +287,8 @@ export class Commander {
 
   // --- sb/write (§2.2 batch shape; allow-list BEFORE any device I/O; confirmed) ------------------
 
-  async write(body: unknown): Promise<Reply> {
-    const h = this.resolve(body);
+  async write(body: unknown, addressedInstance: string | undefined): Promise<Reply> {
+    const h = this.resolve(addressedInstance);
     const started = Date.now();
     const entries = writeEntries(body);
 
@@ -338,8 +354,8 @@ export class Commander {
 
   // --- sb/browse (paged address-space discovery + the hierarchical panel mode) ------------------
 
-  async browse(body: unknown): Promise<Reply> {
-    const h = this.resolve(body);
+  async browse(body: unknown, addressedInstance: string | undefined): Promise<Reply> {
+    const h = this.resolve(addressedInstance);
     const started = Date.now();
     const o = asObject(body);
     // Presence of `ref` (or its companions `depth`/`maxRefs`) selects the hierarchical panel mode;
@@ -444,16 +460,16 @@ export class Commander {
 
   // --- sb/pause + sb/resume (idempotent {paused, changed}) --------------------------------------
 
-  async pause(body: unknown, _by?: string): Promise<Reply> {
-    const h = this.resolve(body);
+  async pause(addressedInstance: string | undefined, _by?: string): Promise<Reply> {
+    const h = this.resolve(addressedInstance);
     const started = Date.now();
     const changed = await send<boolean>(h, (reply) => ({ kind: "pause", reply }));
     h.dm.recordCommand("sb/pause", true, ms(started));
     return { id: h.cfg.id, paused: true, changed };
   }
 
-  async resume(body: unknown): Promise<Reply> {
-    const h = this.resolve(body);
+  async resume(addressedInstance: string | undefined): Promise<Reply> {
+    const h = this.resolve(addressedInstance);
     const started = Date.now();
     const changed = await send<boolean>(h, (reply) => ({ kind: "resume", reply }));
     h.dm.recordCommand("sb/resume", true, ms(started));
@@ -462,8 +478,8 @@ export class Commander {
 
   // --- reconnect ---------------------------------------------------------------------------------
 
-  async reconnect(body: unknown): Promise<Reply> {
-    const h = this.resolve(body);
+  async reconnect(addressedInstance: string | undefined): Promise<Reply> {
+    const h = this.resolve(addressedInstance);
     const started = Date.now();
     const outcome = await send<ReconnectOutcome>(h, (reply) => ({ kind: "reconnect", reply }));
     if (outcome.ok) {
@@ -476,8 +492,8 @@ export class Commander {
 
   // --- repoll (refused with PAUSED while paused) ------------------------------------------------
 
-  async repoll(body: unknown): Promise<Reply> {
-    const h = this.resolve(body);
+  async repoll(addressedInstance: string | undefined): Promise<Reply> {
+    const h = this.resolve(addressedInstance);
     const started = Date.now();
     if (h.health.isPaused()) {
       h.dm.recordCommand("repoll", false, ms(started));

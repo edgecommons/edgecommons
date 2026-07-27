@@ -99,8 +99,9 @@ MessagingClient.reply(requestMessage, replyMessage);
 
 #### Explicit command outcomes and deferred replies
 
-`CommandInbox.register(...)` remains the legacy synchronous `JsonObject` handler API.
-`registerOutcome(...)` adds the tagged `CommandOutcome` path:
+`CommandInbox.register(verb, scope, handler)` is the immediate synchronous `JsonObject`
+handler API. `registerOutcome(verb, scope, handler)` is the tagged `CommandOutcome` path (both
+forms declare a `CommandScope` and receive the addressed instance — see the next section):
 
 - `ImmediateSuccess(result)` sends the normal `{ "ok": true, "result": ... }` wrapper;
 - `ImmediateError(code, message)` sends the normal coded error wrapper; and
@@ -112,7 +113,8 @@ failure. The application retains only the opaque handle, not the received reques
 `reply_to`.
 
 ```java
-commands.registerOutcome("sb/capture", request -> {
+commands.registerOutcome("sb/capture", CommandScope.INSTANCE,
+        (request, addressedInstance) -> {
     CommandInbox.DeferredReply deferred =
             commands.defer(request, Duration.ofSeconds(95));
     try {
@@ -139,26 +141,45 @@ is rejected before provisioning with `REPLY_REQUIRED`. Shutdown attempts a `COMP
 reply for each open token while messaging is still available, then marks it
 `CANCELLED_ON_SHUTDOWN`.
 
-#### Scoped command handlers (the addressed instance)
+#### Declared verb scope (the addressed instance)
 
 The inbox subscribes both cmd scopes: the instance-scoped
 `ecv1/{device}/{component}/{instance}/cmd/{verb}` and the component-scoped
-`ecv1/{device}/{component}/cmd/{verb}`. `registerScoped(verb, handler)` registers a
-`ScopedCommandHandler` that receives everything a plain handler receives plus the **addressed
-instance** — the delivery topic's `{instance}` token, or `null` for a component-scoped delivery.
-The token is parsed against the inbox's own subscribed filters, never re-derived from config.
+`ecv1/{device}/{component}/cmd/{verb}`. Every registration declares the verb's scope —
+`CommandScope.COMPONENT`, `INSTANCE`, or `BOTH` — and every handler receives the **addressed
+instance** as its second parameter: the delivery topic's `{instance}` token, else the body's
+string `instance` field, or `null`. The topic token is parsed against the inbox's own subscribed
+filters, never re-derived from config.
+
+The inbox enforces the declared scope before dispatch — the handler never runs on an addressing
+error, and the reply is a coded `BAD_ARGS` error (a fire-and-forget violation is logged only):
+
+- **All scopes:** a body `instance` conflicting with the topic's instance token is rejected
+  (`instance in body conflicts with the addressed instance`) — checked before everything else.
+- **`COMPONENT`:** any instance addressing is rejected — a topic-addressed instance
+  (`verb '<verb>' is component-scoped`) or a body-named instance (`verb '<verb>' is
+  component-scoped - the body must not name an instance`). The handler always receives `null`.
+- **`INSTANCE`:** the handler receives `topic ?? body ?? null`. A `null` reaches the handler —
+  the component applies its own default policy (for example "optional iff exactly one configured
+  instance") and its unknown-instance rejection.
+- **`BOTH`:** the same resolution, and `null` is meaningful — the command addresses the whole
+  component.
 
 ```java
-commands.registerScoped("sb/read", (request, addressedInstance) -> {
-    // addressedInstance == null  -> component scope (ecv1/{device}/{component}/cmd/sb/read)
-    // addressedInstance == "plc7" -> ecv1/{device}/{component}/plc7/cmd/sb/read
+commands.register("sb/read", CommandScope.INSTANCE, (request, addressedInstance) -> {
+    // addressedInstance == "plc7": ecv1/{device}/{component}/plc7/cmd/sb/read, or a
+    // component-scope delivery whose body carries {"instance": "plc7"}.
+    // addressedInstance == null: no instance named anywhere - apply the component default.
     return readSignals(addressedInstance, request.getPayload());
 });
+commands.register("sb/discover", CommandScope.COMPONENT,
+        (request, addressedInstance) -> discover());   // addressedInstance is always null
 ```
 
-A verb has either a plain or a scoped handler (the same one-handler-per-verb rule and
-duplicate-registration errors apply), scoped verbs participate in `describe` identically, and the
-reply/error wrappers are the same.
+`describe` advertises each verb's scope (`"scope": "component" | "instance" | "both"`), the
+one-handler-per-verb rule and duplicate-registration errors span both registration forms, and
+the reply/error wrappers are identical for every scope. Built-in verbs are `BOTH` and answer
+identically at either scope.
 
 #### Command availability
 
@@ -167,7 +188,7 @@ reply/error wrappers are the same.
 exactly `available`, `disabled`, or `unsupported`; the verb must already be registered — anything
 else is an `IllegalArgumentException`. `available` removes the stored declaration; the other two
 store `{state, reason?}`, surfaced on the verb's `describe` command entry as
-`"availability": {"state": ..., "reason": ...}` (the entry shape is `{verb, builtIn,
+`"availability": {"state": ..., "reason": ...}` (the entry shape is `{verb, builtIn, scope,
 availability?}`, and the describe digest changes with it). The reason is trimmed, truncated to 256
 characters, and omitted when empty.
 

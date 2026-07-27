@@ -13,6 +13,7 @@ from edgecommons.command_inbox import (
     CommandException,
     CommandInbox,
     CommandOutcome,
+    CommandScope,
     Deferred,
     DeferredReplyState,
     ImmediateError,
@@ -148,9 +149,9 @@ def _wait_until(predicate, timeout=2.0):
 
 def test_outcome_handlers_are_additive_and_keep_standard_wrappers():
     inbox, messaging = _inbox()
-    inbox.register("legacy", lambda _request: {"legacy": True})
-    inbox.register_outcome("ok", lambda _request: ImmediateSuccess({"v": 1}))
-    inbox.register_outcome("bad", lambda _request: ImmediateError("NO_CAMERA", "gone"))
+    inbox.register("legacy", CommandScope.BOTH, lambda _request, _instance: {"legacy": True})
+    inbox.register_outcome("ok", CommandScope.BOTH, lambda _request, _instance: ImmediateSuccess({"v": 1}))
+    inbox.register_outcome("bad", CommandScope.BOTH, lambda _request, _instance: ImmediateError("NO_CAMERA", "gone"))
     inbox.start()
 
     messaging.deliver(_topic("legacy"), _request("legacy"))
@@ -174,13 +175,13 @@ def test_deferred_reply_retries_same_uuid_and_exact_bytes_until_confirmed():
     inbox, messaging = _inbox(_Messaging(confirmed_failures=2))
     captured = {}
 
-    def handler(request):
+    def handler(request, instance):
         token = inbox.defer(request, 1.0)
         captured["token"] = token
         assert token.activate()
         return Deferred(token)
 
-    inbox.register_outcome("sb/capture", handler)
+    inbox.register_outcome("sb/capture", CommandScope.BOTH, handler)
     inbox.start()
     request = _request()
     messaging.deliver(_topic(), request)
@@ -255,7 +256,7 @@ def test_unactivated_or_wrong_request_token_is_rejected_as_handler_error():
     inbox, messaging = _inbox()
     original = _request()
     token = inbox.defer(original, 1.0)
-    inbox.register_outcome("sb/capture", lambda _request: Deferred(token))
+    inbox.register_outcome("sb/capture", CommandScope.BOTH, lambda _request, _instance: Deferred(token))
     inbox.start()
 
     messaging.deliver(_topic(), original)
@@ -367,16 +368,25 @@ def test_deferred_validation_factories_and_failure_edges(monkeypatch):
 
 def test_outcome_handler_failure_and_invalid_result_paths():
     inbox, messaging = _inbox()
-    inbox.register_outcome("bad-result", lambda _request: ImmediateSuccess([]))
-    inbox.register_outcome("none", lambda _request: None)
+    inbox.register_outcome(
+        "bad-result", CommandScope.BOTH, lambda _request, _instance: ImmediateSuccess([])
+    )
+    inbox.register_outcome("none", CommandScope.BOTH, lambda _request, _instance: None)
     inbox.register_outcome(
         "coded",
-        lambda _request: (_ for _ in ()).throw(CommandException("CODED", "known")),
+        CommandScope.BOTH,
+        lambda _request, _instance: (_ for _ in ()).throw(
+            CommandException("CODED", "known")
+        ),
     )
     inbox.register_outcome(
-        "boom", lambda _request: (_ for _ in ()).throw(RuntimeError("boom"))
+        "boom",
+        CommandScope.BOTH,
+        lambda _request, _instance: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-    inbox.register_outcome("notify-error", lambda _request: ImmediateError("NOPE"))
+    inbox.register_outcome(
+        "notify-error", CommandScope.BOTH, lambda _request, _instance: ImmediateError("NOPE")
+    )
     inbox.start()
 
     for verb in ("bad-result", "none", "coded", "boom"):

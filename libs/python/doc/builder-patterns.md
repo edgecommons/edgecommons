@@ -34,7 +34,7 @@ edgecommons = EdgeCommonsBuilder.create("com.example.MyComponent") \
     .initial_ready(False) \
     .configuration_validator("application", validate_candidate) \
     .configuration_validation_timeout(5.0) \
-    .configure_commands(lambda inbox: inbox.register("capture", capture)) \
+    .configure_commands(lambda inbox: inbox.register("capture", CommandScope.INSTANCE, capture)) \
     .build()
 ```
 

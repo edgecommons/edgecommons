@@ -953,15 +953,16 @@ class UnsTestVectorsGeneratorTest {
                         + "\"component\":{\"hier\":[{\"level\":\"device\",\"value\":\"gw-01\"}],"
                         + "\"path\":\"gw-01\",\"component\":\"opcua-adapter\",\"instance\":\"main\"},"
                         + "\"commands\":["
-                        + "{\"verb\":\"describe\",\"builtIn\":true},"
-                        + "{\"verb\":\"get-configuration\",\"builtIn\":true},"
-                        + "{\"verb\":\"ping\",\"builtIn\":true},"
-                        + "{\"verb\":\"reload-config\",\"builtIn\":true},"
-                        + "{\"verb\":\"status\",\"builtIn\":true}],"
+                        + "{\"verb\":\"describe\",\"builtIn\":true,\"scope\":\"both\"},"
+                        + "{\"verb\":\"get-configuration\",\"builtIn\":true,"
+                        + "\"scope\":\"both\"},"
+                        + "{\"verb\":\"ping\",\"builtIn\":true,\"scope\":\"both\"},"
+                        + "{\"verb\":\"reload-config\",\"builtIn\":true,\"scope\":\"both\"},"
+                        + "{\"verb\":\"status\",\"builtIn\":true,\"scope\":\"both\"}],"
                         + "\"panels\":{\"schemaVersion\":\"edgecommons.panels.v2\","
                         + "\"provider\":\"opcua-adapter\",\"renderer\":\"descriptor\","
                         + "\"views\":[]},"
-                        + "\"digest\":\"sha256:e2910a393362ef102d5ca9d612d6f4fe9dd545106084baca3c3340e1c4fab95d\"}}")));
+                        + "\"digest\":\"sha256:3c4aa2a3848cd69631e51081738d754505ee9613c7778169de791d6930864c94\"}}")));
         verbs.add(commandCase(com.mbreissi.edgecommons.commands.CommandInbox.RELOAD_CONFIG,
                 com.mbreissi.edgecommons.commands.CommandInbox.RELOAD_CONFIG, 2,
                 body("{}"),

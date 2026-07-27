@@ -68,7 +68,7 @@ from edgecommons.messaging.qos import Qos
 from edgecommons.messaging.message import _binary_marker
 from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.messaging.identity import MessageIdentity
-from edgecommons.command_inbox import CommandOutcome
+from edgecommons.command_inbox import CommandOutcome, CommandScope
 from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
 from edgecommons.uns import Uns, UnsClass
 from edgecommons import EdgeCommons, LogRecord
@@ -450,7 +450,7 @@ def run_deferred_responder(component_token):
         if inbox is None:
             raise RuntimeError("runtime did not expose command inbox")
 
-        def deferred_handler(request):
+        def deferred_handler(request, addressed_instance=None):
             token = inbox.defer(request, 4)
             try:
                 acceptance_marker = _write_durable_acceptance_marker()
@@ -473,7 +473,7 @@ def run_deferred_responder(component_token):
 
             return CommandOutcome.deferred_with_continuation(token, settle_after_acceptance)
 
-        inbox.register_outcome("deferred", deferred_handler)
+        inbox.register_outcome("deferred", CommandScope.BOTH, deferred_handler)
         print("READY", flush=True)
         while True:
             time.sleep(1)
@@ -947,7 +947,7 @@ def run_gg_p1_matrix(run_id, langs_csv, _unused=None):
         if inbox is None:
             raise RuntimeError("runtime did not expose command inbox")
 
-        def deferred_handler(request):
+        def deferred_handler(request, addressed_instance=None):
             token = inbox.defer(request, 4)
             request_body = request.get_body()
             try:
@@ -972,7 +972,7 @@ def run_gg_p1_matrix(run_id, langs_csv, _unused=None):
 
             return CommandOutcome.deferred_with_continuation(token, settle_after_acceptance)
 
-        inbox.register_outcome("deferred", deferred_handler)
+        inbox.register_outcome("deferred", CommandScope.BOTH, deferred_handler)
         provider.subscribe(
             f"edgecommons/interop/p1/{run_id}/confirmed/+/{actor}",
             confirmed_handler,

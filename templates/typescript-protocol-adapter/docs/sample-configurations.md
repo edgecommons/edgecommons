@@ -71,9 +71,10 @@ The component loads **one JSON document** from `-c/--config`. The top level may 
 }
 ```
 
-With two instances, every `sb/*` command needs a body `instance` field (`BAD_ARGS` if missing,
-`NO_SUCH_INSTANCE` if unknown). `device-2` additionally accepts writes to `temperature-1` — the
-allow-list is per instance, so `device-1` stays read-only regardless.
+With two instances, every `sb/*` command has to name its device — on the topic
+(`ecv1/{device}/{component}/{instance}/cmd/{verb}`) or with a body `instance` field (`BAD_ARGS` if
+neither names one, `NO_SUCH_INSTANCE` if unknown). `device-2` additionally accepts writes to
+`temperature-1` — the allow-list is per instance, so `device-1` stays read-only regardless.
 
 ---
 

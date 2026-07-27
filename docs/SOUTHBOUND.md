@@ -229,13 +229,22 @@ against a browsed address space). For the command surface (§2.2), a Modbus `<si
 > 2026-07-02, `opcua-adapter@5dbb789`) on its legacy topics as a reference implementation of the
 > *behavior*.
 >
-> **Instance addressing and routing.** The library command inbox subscribes **both** D‑U28 command
-> scopes and exposes the topic-addressed instance token to handlers registered through the scoped
-> registration form (`registerScoped` / `register_scoped`): `null`/`None` for a component-scoped
-> delivery, the `{instance}` token otherwise. An adapter routes on the request's `body.instance`
-> (optional iff exactly one instance is configured) and SHOULD treat a topic-addressed instance as
-> authoritative: when both are present and disagree, refuse with `BAD_ARGS`; when only the topic
-> token is present, route by it.
+> **Instance addressing and routing.** Every `sb/*` verb registration (`register`/`registerOutcome`)
+> declares a `CommandScope` (`COMPONENT` / `INSTANCE` / `BOTH`): the instance-targeted verbs
+> (`sb/browse`, `sb/read`, `sb/write`, `sb/subscribe-preview`, `sb/pause`, `sb/resume`, `reconnect`,
+> `repoll`, …) declare `INSTANCE`; a component/fleet-wide verb (e.g. a router that never resolves to
+> one instance) declares `COMPONENT`. The library command inbox subscribes **both** D‑U28 command
+> scopes and owns **addressing** ahead of dispatch: it extracts the topic's `{instance}` token and
+> the body's `instance` field, rejects a conflict between the two with `BAD_ARGS` (checked before
+> anything else, for every scope), rejects any instance addressing — topic or body — at a
+> `COMPONENT` verb, and hands the handler the resolved `addressedInstance` (the topic token, else
+> the body-named instance, else `null`/`None`/`undefined`) — **the handler never runs on an
+> addressing error.** What the library cannot know is the adapter's own configuration, so two
+> policies remain adapter-side, applied by the handler when `addressedInstance` is absent: the
+> legacy **optional-iff-one** default (route to the sole configured instance) and
+> **`NO_SUCH_INSTANCE`** for an instance name the adapter does not recognize. Adapters therefore
+> delete their own topic-parsing/conflict-detection logic and keep only the configured-default
+> resolution and the existence check.
 
 Beyond streaming subscriptions, an adapter exposes an on-demand command surface as **built-in `cmd`
 verbs on its UNS inbox**, family-namespaced under `sb/` and addressed per **D‑U28** — instance-scoped to
@@ -248,7 +257,8 @@ ecv1/{device}/{component}[/{instance}]?/cmd/sb/{verb}
 
 (the `cmd` class is the one class whose identity path names the **recipient** — the instance when
 present, else the component; the verbs are registered through the `commands()` facade and advertised in
-`describe`):
+`describe`, each entry `{verb, builtIn, scope, availability?}` in that key order, `scope` the
+lowercase declared value):
 
 | Verb (`cmd/sb/…`) | Kind | Purpose |
 |---|---|---|
