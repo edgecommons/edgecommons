@@ -119,7 +119,9 @@ pub struct Reading {
     pub signal_id: String, pub name: Option<String>,
     pub value: Option<serde_json::Value>,     // None + explicit BAD for UNAVAILABLE
     pub quality: Quality, pub quality_raw: Option<String>,
-    pub source_ts: Option<String>,            // observation timestamp (agent-relayed)
+    pub source_ts: Option<String>,            // machine ts — absent for MTConnect
+    pub capture_ts: Option<String>,           // observation timestamp (agent capture stamp)
+    pub received_ts: Option<String>,          // adapter receive (auto-stamped by the worker)
     pub extra: Option<serde_json::Map<String, Value>>, // sequence, resetTriggered, …
 }
 ```
@@ -128,8 +130,11 @@ Publish path (in `device.rs`, replacing the template's `_publish_reading` equiva
 `Sample` via the core facade — `Sample::null_value()` **with `quality: Bad` and
 `quality_raw: "UNAVAILABLE"`** for unavailable observations (the shipped facade gates only the
 null *permission* on `explicit_null`; quality is free), ordinary `Sample::new(v)` otherwise; attach
-`extra` entries (`sequence` always; `resetTriggered`/`duration`/`nativeCode` when present) via the
-shipped `Sample::extra`; set `source_ts` verbatim. Simulator, scheduled publisher, `sb/read`, and
+`extra` entries (`sequence` always; `resetTriggered`/`duration`/`nativeCode` when present, plus
+`receivedTs` per the four-slot model — MTConnect is mediated, so receive differs from capture) via
+the shipped `Sample::extra`; map the observation timestamp to `serverTs` (capture); `sourceTs`
+stays absent. This matches the post-timestamps template seam (three optional slots) rather than
+widening it locally. Simulator, scheduled publisher, `sb/read`, and
 tests move together with this extension (contract rule: command reads must not stay lossy).
 
 ## 5. Acquisition state machine (`sequence.rs` + `stream.rs`)
