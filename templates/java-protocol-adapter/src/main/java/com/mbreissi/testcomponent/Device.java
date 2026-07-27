@@ -65,8 +65,39 @@ public final class Device {
         UNCERTAIN
     }
 
-    /** One reading from the device. */
-    record Reading(String signalId, String name, JsonElement value, Quality quality, String qualityRaw) {
+    /**
+     * One reading from the device.
+     *
+     * <p>The three trailing timestamps are the seam's slice of the four-slot timestamp model
+     * (SOUTHBOUND.md §2 — all ISO-8601 UTC, never synthesized from one another):
+     * <ul>
+     *   <li>{@code sourceTs} — the <b>machine</b> timestamp: device/field-authored time. Set it only
+     *       when the protocol supplied it; it is passed through to the published sample verbatim and
+     *       never invented.</li>
+     *   <li>{@code captureTs} — the <b>capture</b> timestamp: the moment the protocol read the value.
+     *       For a protocol with a mediating server (an OPC UA server, an MTConnect agent) this is that
+     *       server's stamp. A direct-client protocol leaves it null — its receive moment IS the
+     *       capture moment, and the publish path then uses {@code receivedTs} as the sample's
+     *       {@code serverTs}.</li>
+     *   <li>{@code receivedTs} — the <b>adapter receive</b> timestamp. The worker auto-stamps it at
+     *       read completion when the backend left it null, so a backend normally never sets it.</li>
+     * </ul>
+     * The 5-argument constructor is the common direct-client form: all three timestamps null, the
+     * worker stamps receipt, and the publish path does the rest.
+     */
+    record Reading(String signalId, String name, JsonElement value, Quality quality, String qualityRaw,
+                   String sourceTs, String captureTs, String receivedTs) {
+
+        /** A reading with no protocol-supplied timestamps (the common direct-client form). */
+        Reading(String signalId, String name, JsonElement value, Quality quality, String qualityRaw) {
+            this(signalId, name, value, quality, qualityRaw, null, null, null);
+        }
+
+        /** A copy of this reading with {@code receivedTs} set (used by the worker's auto-stamp). */
+        Reading withReceivedTs(String receivedTs) {
+            return new Reading(signalId, name, value, quality, qualityRaw, sourceTs, captureTs,
+                    receivedTs);
+        }
     }
 
     /**

@@ -58,15 +58,25 @@ The reply body is `{"ok": true, "result": <verb result>}` on success or
 
 Published through the library's `data()` facade (`gg.instance(id).data()`), which constructs the
 body, sanitizes the channel, mints the topic, and stamps identity — `src/app.ts` only ever calls
-`.signal(id).name(n).device(...).addSample(v, {quality, qualityRaw}).publish()`.
+`.signal(id).name(n).device(...).addSample(v, {quality, qualityRaw, sourceTs, serverTs, extra}).publish()`.
 
 ```jsonc
 "body": {
   "device": { "adapter": "sim", "instance": "device-1", "endpoint": "sim://device-1" },
   "signal": { "id": "temperature-1", "name": "Ambient temperature" },
-  "samples": [ { "value": 21.4, "quality": "GOOD", "qualityRaw": "OK", "serverTs": "2026-07-19T00:00:00Z" } ]
+  "samples": [ { "value": 21.4, "quality": "GOOD", "qualityRaw": "OK",
+                 "serverTs": "2026-07-19T00:00:00Z",          // capture; here = adapter receipt
+                 "sourceTs": "2026-07-18T23:59:58Z",          // machine time, only when supplied
+                 "receivedTs": "2026-07-19T00:00:02Z" } ]     // extra, only when != serverTs
 }
 ```
+
+Per-sample timestamps follow the four-slot model (`docs/SOUTHBOUND.md` §2), identically on the
+GOOD and BAD/null paths: the reading's `captureTs` becomes `serverTs` (falling back to the
+worker's auto-stamped `receivedTs` when the protocol has no mediating server — a direct client's
+receive moment IS the capture moment); `sourceTs` appears only when the protocol supplied it,
+never synthesized; and `receivedTs` rides as an additive extra only when it differs from the
+effective `serverTs`. The simulator is a direct client, so its samples carry only `serverTs`.
 
 Published every poll — the scaffold has no deadband/onChange filter (add one in `src/app.ts` if
 your protocol needs it, following `modbus-adapter`'s pattern).

@@ -30,6 +30,11 @@ class DeviceTest {
         assertEquals(2, readings.size());
         assertEquals("temperature-1", readings.get(0).signalId());
         assertEquals(Device.Quality.GOOD, readings.get(0).quality());
+        // A direct-client backend supplies no protocol timestamps: sourceTs/captureTs stay absent
+        // (the worker stamps receivedTs at read completion; the publish path does the rest).
+        assertEquals(null, readings.get(0).sourceTs());
+        assertEquals(null, readings.get(0).captureTs());
+        assertEquals(null, readings.get(0).receivedTs());
     }
 
     @Test

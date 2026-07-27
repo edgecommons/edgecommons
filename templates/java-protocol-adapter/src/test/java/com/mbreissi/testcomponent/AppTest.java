@@ -152,4 +152,88 @@ class <<COMPONENTNAME>>Test {
         assertEquals(Wiring.DEFAULT_STALE_SIGNAL_SECS,
                 Wiring.readStaleSignalSecs(configWithGlobal(null, true)));
     }
+
+    // --- the four-slot timestamp model (SOUTHBOUND.md §2: Wiring.stampReceived / Wiring.toSample) ---
+
+    private static Device.Reading reading(String sourceTs, String captureTs, String receivedTs) {
+        return new Device.Reading("temperature-1", "Ambient temperature",
+                new com.google.gson.JsonPrimitive(21.5), Device.Quality.GOOD, "OK",
+                sourceTs, captureTs, receivedTs);
+    }
+
+    @Test
+    void receivedTsIsAutoStampedAtReadCompletionOnlyWhenAbsent() {
+        Device.Reading unstamped = reading(null, null, null);
+        Device.Reading preStamped = reading(null, null, "2026-07-27T09:00:00Z");
+
+        java.util.List<Device.Reading> out = Wiring.stampReceived(
+                java.util.List.of(unstamped, preStamped), "2026-07-27T10:00:00Z");
+
+        assertEquals("2026-07-27T10:00:00Z", out.get(0).receivedTs(), "absent -> stamped with now");
+        assertEquals("2026-07-27T09:00:00Z", out.get(1).receivedTs(),
+                "a backend-supplied receipt stamp is never overwritten");
+        // The other slots are untouched by stamping: receipt is never promoted to capture or source.
+        assertEquals(null, out.get(0).sourceTs());
+        assertEquals(null, out.get(0).captureTs());
+    }
+
+    @Test
+    void captureTsBecomesTheSampleServerTs() {
+        // A protocol with a mediating server: its capture stamp is the sample's serverTs.
+        var sample = Wiring.toSample(reading(null, "2026-07-27T10:00:00Z", "2026-07-27T10:00:00Z"));
+        assertEquals("2026-07-27T10:00:00Z", sample.serverTs());
+    }
+
+    @Test
+    void receivedTsIsTheServerTsFallbackWhenCaptureIsAbsent() {
+        // A direct-client protocol: the adapter's receive moment IS the capture moment.
+        var sample = Wiring.toSample(reading(null, null, "2026-07-27T10:00:00Z"));
+        assertEquals("2026-07-27T10:00:00Z", sample.serverTs());
+        assertEquals(null, sample.extra(), "receivedTs equals the effective serverTs -> no extra");
+    }
+
+    @Test
+    void receivedTsRidesAsAnExtraOnlyWhenItDiffersFromTheEffectiveServerTs() {
+        // A mediating server made capture and receipt two different moments: both are information.
+        var distinct = Wiring.toSample(reading(null, "2026-07-27T10:00:00Z", "2026-07-27T10:00:02Z"));
+        assertEquals("2026-07-27T10:00:00Z", distinct.serverTs());
+        assertEquals("2026-07-27T10:00:02Z", distinct.extra().get("receivedTs"));
+
+        // Identical stamps: the extra would be noise, so it is omitted.
+        var same = Wiring.toSample(reading(null, "2026-07-27T10:00:00Z", "2026-07-27T10:00:00Z"));
+        assertEquals(null, same.extra());
+    }
+
+    @Test
+    void sourceTsIsPassedThroughVerbatimAndNeverSynthesized() {
+        // Present: through verbatim.
+        assertEquals("2026-07-27T09:59:58Z",
+                Wiring.toSample(reading("2026-07-27T09:59:58Z", null, "2026-07-27T10:00:00Z"))
+                        .sourceTs());
+        // Absent: stays absent — a machine timestamp the device never authored must not be invented.
+        assertEquals(null, Wiring.toSample(reading(null, null, "2026-07-27T10:00:00Z")).sourceTs());
+    }
+
+    @Test
+    void aBadNullReadingCarriesTheSameTimestampFields() {
+        // The BAD/null publish path is the same mapping — a failed read is timestamped like a good one.
+        Device.Reading bad = new Device.Reading("pressure-1", "Line pressure",
+                com.google.gson.JsonNull.INSTANCE, Device.Quality.BAD, "SENSOR_FAULT",
+                null, "2026-07-27T10:00:00Z", "2026-07-27T10:00:02Z");
+        var sample = Wiring.toSample(bad);
+        assertEquals(com.mbreissi.edgecommons.facades.Quality.BAD, sample.quality());
+        assertEquals("2026-07-27T10:00:00Z", sample.serverTs());
+        assertEquals("2026-07-27T10:00:02Z", sample.extra().get("receivedTs"));
+        assertEquals(null, sample.sourceTs());
+    }
+
+    @Test
+    void theFiveArgReadingConstructorLeavesAllTimestampsAbsent() {
+        // The compat form every direct-client backend (and the simulator) uses.
+        Device.Reading r = new Device.Reading("temperature-1", "Ambient temperature",
+                new com.google.gson.JsonPrimitive(21.5), Device.Quality.GOOD, "OK");
+        assertEquals(null, r.sourceTs());
+        assertEquals(null, r.captureTs());
+        assertEquals(null, r.receivedTs());
+    }
 }

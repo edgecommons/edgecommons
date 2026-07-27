@@ -380,12 +380,34 @@ export function toLibQuality(q: Quality): LibQuality {
 }
 
 /**
+ * Auto-stamp the adapter-receive timestamp: every reading whose `receivedTs` is absent gets
+ * `nowIso` (the read-completion moment); a backend-supplied `receivedTs` is kept. Called by the
+ * worker ({@link pollOnce}) right after `readSignals()` resolves.
+ */
+export function stampReceived(
+  readings: readonly Reading[],
+  nowIso: string = new Date().toISOString(),
+): Reading[] {
+  return readings.map((r) => (r.receivedTs === undefined ? { ...r, receivedTs: nowIso } : r));
+}
+
+/**
  * Publish one poll's readings as `SouthboundSignalUpdate`s, returning the count published.
  *
  * The `data()` facade builds the body, mints the topic, and stamps identity. Do not hand-build any
  * of the three. **Every reading is published, including a failed one** — a `BAD` sample says "I
  * could not read this", and silence says nothing at all. When a {@link DeviceMetrics} is passed,
  * each successful publish feeds the staleness tracker.
+ *
+ * Timestamps follow the four-slot model (SOUTHBOUND.md §2), identically on the GOOD and BAD/null
+ * paths:
+ *
+ * * `captureTs` → the sample's `serverTs`; when absent, `receivedTs` takes its place — a direct
+ *   client's receive moment IS the capture moment.
+ * * `sourceTs` → passed through verbatim, only when present. Never synthesized.
+ * * `receivedTs` → a per-sample `receivedTs` extra, only when it differs from the effective
+ *   `serverTs` (a mediating server made capture and receipt two different moments); identical
+ *   stamps would make the extra noise, so it is omitted.
  */
 export async function publishReadings(
   data: DataFacade,
@@ -399,9 +421,20 @@ export async function publishReadings(
     try {
       const signal = data.signal(r.signalId);
       if (r.name !== undefined) signal.name(r.name);
+      const serverTs = r.captureTs ?? r.receivedTs;
+      const extra =
+        r.receivedTs !== undefined && r.receivedTs !== serverTs
+          ? { receivedTs: r.receivedTs }
+          : undefined;
       await signal
         .device(adapter, device.id, device.connection.endpoint)
-        .addSample(r.value, { quality: toLibQuality(r.quality), qualityRaw: r.qualityRaw })
+        .addSample(r.value, {
+          quality: toLibQuality(r.quality),
+          qualityRaw: r.qualityRaw,
+          sourceTs: r.sourceTs,
+          serverTs,
+          extra,
+        })
         .publish();
       published += 1;
       dm?.onSignalUpdate(r.signalId, Date.now());
@@ -425,7 +458,8 @@ export async function pollOnce(
   const started = Date.now();
   let readings: Reading[];
   try {
-    readings = await session.readSignals();
+    // Auto-stamp receivedTs at read completion (only where the backend left it absent).
+    readings = stampReceived(await session.readSignals());
   } catch (e) {
     logger.warn(`read failed instance=${cfg.id}; reconnecting: ${String(e)}`);
     health.readErrors += 1;

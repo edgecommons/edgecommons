@@ -15,6 +15,9 @@ describes the seam (`<<SNAKENAME>>/device.py`), not any specific protocol's wire
 | | `value` | The decoded value — `None` when the read failed and there is nothing to report. |
 | | `quality` | One of `Quality.GOOD` / `Quality.BAD` / `Quality.UNCERTAIN`. |
 | | `quality_raw` | The protocol-native status code, kept verbatim for diagnosis. |
+| | `source_ts` | Optional ISO-8601 UTC. The **machine** timestamp — device/field-authored time, set only when the protocol supplies it. Published as `sourceTs`, never synthesized. |
+| | `capture_ts` | Optional ISO-8601 UTC. The **capture** timestamp — the moment the protocol read the value (a mediating server's stamp, e.g. an OPC UA server's). Published as the sample's `serverTs`. |
+| | `received_ts` | Optional ISO-8601 UTC. The **adapter receive** timestamp — auto-stamped by the worker at read completion when the backend leaves it `None`. |
 | `SignalInfo` | `id`, `name` | One entry of the `sb/signals` inventory — known from config/backend **without a device round-trip**. |
 | `BrowsedSignal` | `id`, `name`, `type_name` | One entry discovered by `browse()` — a signal the device *offers*, whether or not it is configured. `type_name` is the device-native type, kept verbatim (e.g. `"REAL"`, `"holding/uint16"`). |
 | `BrowsePage` | `entries`, `next_cursor` | One page of a `browse()` enumeration; `next_cursor` is set while more pages remain. |
@@ -31,13 +34,33 @@ The protocol's own status code always survives in `quality_raw`, verbatim, for d
 normalized token is what a consumer gates logic on; the raw code is what an operator reads in a log
 or a diagnostics panel.
 
+## Timestamps — the four-slot model
+
+A `Reading` carries up to three timestamps, mapped onto the published sample per the southbound
+contract (all ISO-8601 UTC, never synthesized from one another; the fourth slot — the publish
+moment — is the envelope header's, stamped by the library):
+
+- `capture_ts` becomes the sample's **`serverTs`**. When the backend sets no capture stamp, the
+  adapter's receive moment (`received_ts`) is the `serverTs` — for a direct-client protocol the
+  receive moment IS the capture moment.
+- `received_ts` is auto-stamped by the worker at read completion (one moment for the whole batch,
+  not per publish) for every reading the backend did not stamp itself. It additionally rides as a
+  per-sample **`receivedTs`** extra ONLY when a mediating server makes it differ from the
+  effective `serverTs`.
+- `source_ts` becomes **`sourceTs`** only when the device supplied it. The adapter never invents a
+  machine timestamp.
+
+The bundled simulator sets none of the three — it has no device clock, and inventing one would be
+dishonest — so its published samples carry the worker's receive stamp as `serverTs` and nothing
+else.
+
 ## Why a failed read still publishes
 
 A signal that silently stops updating is indistinguishable from one that simply isn't changing. So
 `_publish_reading` (`adapter.py`) treats `value is None` as information, not an omission: it
-publishes a `BAD` sample with the exception/fault text in `qualityRaw`, through the pre-built-body
-path (the `data()` facade's `samples[]`/`add_sample` shape cannot express "no value at all"). The
-bundled simulator demonstrates this on every run — `pressure-1` always publishes `BAD`/
+publishes a `BAD` sample with the exception/fault text in `qualityRaw`, through the `data()`
+facade's pre-built-body path — carrying the same quality and timestamp fields as a valued sample.
+The bundled simulator demonstrates this on every run — `pressure-1` always publishes `BAD`/
 `SENSOR_FAULT` alongside `temperature-1`'s healthy `GOOD` reading.
 
 ## The simulated backend's signals

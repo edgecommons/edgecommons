@@ -38,6 +38,27 @@ should describe:
   quality codes should mark a synthesized `GOOD` distinctly (e.g. `qualityRaw: "unspecified"`) so a
   consumer can tell it apart from a device-reported one.
 
+## Timestamps
+
+A `Reading` (`src/device.ts`) carries up to three optional ISO-8601 UTC timestamps — the seam's
+slice of the four-slot model (`docs/SOUTHBOUND.md` §2). None is ever synthesized from another:
+
+| Slot | Meaning | Who sets it |
+|---|---|---|
+| `sourceTs` | The **machine** timestamp: device/field-authored time. | The backend, only when the protocol supplied it. |
+| `captureTs` | The **capture** timestamp: the moment the protocol read the value — a mediating server's stamp (OPC UA server, MTConnect agent). | The backend, only when a mediating server provides one. A direct-client protocol leaves it absent: its receive moment IS the capture moment. |
+| `receivedTs` | The **adapter receive** timestamp. | The worker (`stampReceived` in `src/app.ts`), at read completion, when the backend left it absent. |
+
+On publish (`publishReadings` — the same mapping on the GOOD and BAD/null paths):
+
+- `captureTs` becomes the sample's `serverTs`; when absent, `receivedTs` takes its place.
+- `sourceTs` is passed through verbatim, only when present.
+- `receivedTs` rides as a per-sample `receivedTs` extra field only when it differs from the
+  effective `serverTs` — identical stamps would make the extra noise, so it is omitted.
+
+The simulator sets none of the three (a direct client), so its published samples carry
+`serverTs` = the worker's receipt stamp and no `receivedTs` extra.
+
 ## Identity: `signal.id` vs `signal.name` vs the protocol address
 
 `Reading.signalId` is the **stable, canonical id** the rest of the fleet keys on — it must not

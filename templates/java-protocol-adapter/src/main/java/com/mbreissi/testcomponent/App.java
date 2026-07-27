@@ -19,6 +19,7 @@ import com.google.gson.JsonPrimitive;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -329,22 +330,20 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
             }
         }
 
-        /** One poll: read, publish each reading, record latencies + staleness. */
+        /** One poll: read, stamp receipt, publish each reading, record latencies + staleness. */
         private long pollOnce(Device.DeviceSession s) throws Device.DeviceException {
             long started = System.nanoTime();
-            List<Device.Reading> readings = s.readSignals();
+            // Auto-stamp receivedTs at read completion (only where the backend left it absent).
+            List<Device.Reading> readings =
+                    Wiring.stampReceived(s.readSignals(), Instant.now().toString());
             health.setPollLatencyMs(msSince(started));
 
             long publishStarted = System.nanoTime();
             long published = 0;
             for (Device.Reading r : readings) {
-                com.mbreissi.edgecommons.facades.Quality quality = switch (r.quality()) {
-                    case GOOD -> com.mbreissi.edgecommons.facades.Quality.GOOD;
-                    case BAD -> com.mbreissi.edgecommons.facades.Quality.BAD;
-                    case UNCERTAIN -> com.mbreissi.edgecommons.facades.Quality.UNCERTAIN;
-                };
-                SignalUpdate.Sample sample =
-                        new SignalUpdate.Sample(r.value(), quality, r.qualityRaw(), null, null);
+                // The reading-to-sample timestamp mapping (capture -> serverTs, receivedTs extra
+                // only when distinct, sourceTs verbatim) lives in Wiring.toSample.
+                SignalUpdate.Sample sample = Wiring.toSample(r);
                 SignalUpdate.Builder b = data.signal(r.signalId());
                 if (r.name() != null) {
                     b = b.name(r.name());
@@ -757,6 +756,48 @@ final class Wiring {
      */
     static boolean setPaused(Health health, boolean paused) {
         return health.pausedFlag().getAndSet(paused) != paused;
+    }
+
+    /**
+     * Auto-stamp the adapter-receive timestamp: every reading whose {@code receivedTs} is absent
+     * gets {@code nowIso} (the read-completion moment); a backend-supplied {@code receivedTs} is
+     * kept. Called by the worker right after {@code readSignals()} returns.
+     */
+    static List<Device.Reading> stampReceived(List<Device.Reading> readings, String nowIso) {
+        List<Device.Reading> out = new ArrayList<>(readings.size());
+        for (Device.Reading r : readings) {
+            out.add(r.receivedTs() == null ? r.withReceivedTs(nowIso) : r);
+        }
+        return out;
+    }
+
+    /**
+     * Map one reading onto the published sample — the four-slot timestamp model (SOUTHBOUND.md §2)
+     * plus the quality normalization. Every publish path (GOOD, BAD/null, UNCERTAIN) goes through
+     * this one function, so a failed read carries exactly the same timestamp fields as a good one:
+     * <ul>
+     *   <li>{@code captureTs} → the sample's {@code serverTs}. When the protocol has no mediating
+     *       server, {@code captureTs} is absent and {@code receivedTs} takes its place — a direct
+     *       client's receive moment IS the capture moment.</li>
+     *   <li>{@code sourceTs} → passed through verbatim, only when present. Never synthesized.</li>
+     *   <li>{@code receivedTs} → a per-sample {@code receivedTs} extra, only when it differs from
+     *       the effective {@code serverTs} (i.e. a mediating server made capture and receipt two
+     *       different moments). When they coincide the extra would be noise, so it is omitted.</li>
+     * </ul>
+     */
+    static SignalUpdate.Sample toSample(Device.Reading r) {
+        com.mbreissi.edgecommons.facades.Quality quality = switch (r.quality()) {
+            case GOOD -> com.mbreissi.edgecommons.facades.Quality.GOOD;
+            case BAD -> com.mbreissi.edgecommons.facades.Quality.BAD;
+            case UNCERTAIN -> com.mbreissi.edgecommons.facades.Quality.UNCERTAIN;
+        };
+        String serverTs = r.captureTs() != null ? r.captureTs() : r.receivedTs();
+        SignalUpdate.Sample sample =
+                new SignalUpdate.Sample(r.value(), quality, r.qualityRaw(), r.sourceTs(), serverTs);
+        if (r.receivedTs() != null && !r.receivedTs().equals(serverTs)) {
+            sample = sample.withExtra("receivedTs", r.receivedTs());
+        }
+        return sample;
     }
 
     /** Reads {@code component.global.healthThresholds.staleSignalSecs}, defaulting when unset/malformed. */

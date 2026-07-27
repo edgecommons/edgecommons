@@ -96,8 +96,20 @@ body, sanitizes the channel, mints the topic, and stamps identity:
 }
 ```
 
+The sample's `serverTs` is the **capture** moment: the seam's `capture_ts` when the backend
+supplies one, else the worker's read-completion receive stamp (a direct client's receive moment IS
+the capture moment). A device-authored `source_ts` rides as `sourceTs` only when present — never
+synthesized — and when a mediating server makes the adapter's receive moment differ from the
+effective `serverTs`, it rides as a per-sample `receivedTs` extra:
+
+```jsonc
+"samples": [ { "value": 21.7, "quality": "GOOD", "qualityRaw": "OK",
+               "sourceTs": "2026-07-19T00:00:00.1Z", "serverTs": "2026-07-19T00:00:00.4Z",
+               "receivedTs": "2026-07-19T00:00:00.9Z" } ]
+```
+
 A failed read (no value at all, e.g. `pressure-1` in the simulator) rides the pre-built-body path
-instead of `add_sample`, since the facade's `samples[]` cannot express "no value":
+instead of `add_sample`, carrying the same quality and timestamp fields:
 
 ```jsonc
 "body": {

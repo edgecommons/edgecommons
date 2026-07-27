@@ -23,7 +23,8 @@ use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::app::{
-    connectivity_of, set_paused, Backoff, DeviceConfig, DeviceControl, Health, LinkState,
+    connectivity_of, sample_timestamps, set_paused, stamp_received, Backoff, DeviceConfig,
+    DeviceControl, Health, LinkState,
 };
 use crate::device::{BrowseError, DeviceBackend, Quality, SimBackend};
 use crate::metrics::DeviceMetrics;
@@ -396,7 +397,7 @@ async fn poll_once(
 ) -> std::result::Result<u64, ()> {
     let backend_adapter = cfg.adapter.clone();
     let started = Instant::now();
-    let readings = match session.read_signals().await {
+    let mut readings = match session.read_signals().await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(instance = %cfg.id, error = %e, "read failed; reconnecting");
@@ -404,6 +405,9 @@ async fn poll_once(
             return Err(());
         }
     };
+    // The read just completed: this is the adapter's receive moment for the whole batch
+    // (docs/SOUTHBOUND.md §2) — stamped here, not at publish, so batching cannot skew it.
+    stamp_received(&mut readings, &now_iso());
     let latency = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     health.poll_latency_ms.store(latency, Ordering::Relaxed);
 
@@ -420,6 +424,18 @@ async fn poll_once(
         let mut sample = Sample::with_quality(r.value.clone(), quality);
         if let Some(raw) = &r.quality_raw {
             sample = sample.quality_raw(raw);
+        }
+        // The four-slot mapping (docs/SOUTHBOUND.md §2): capture -> serverTs (falling back to the
+        // receive moment — a direct client's receive IS capture); sourceTs only when the device
+        // supplied it (never synthesized); receivedTs as a per-sample extra only when a mediating
+        // server makes it differ from the effective serverTs.
+        let (server_ts, received_extra) = sample_timestamps(&r);
+        sample.source_ts = r.source_ts.clone();
+        if let Some(ts) = server_ts {
+            sample = sample.server_ts(ts);
+        }
+        if let Some(received) = received_extra {
+            sample = sample.extra("receivedTs", received);
         }
 
         let mut signal = data.signal(&r.signal_id);
@@ -508,6 +524,12 @@ async fn serve_while_down(
             _ = tokio::time::sleep(remaining) => return DownOutcome::Elapsed,
         }
     }
+}
+
+/// The adapter's receive-moment stamp: ISO-8601 UTC "now", from the library's own clock (the same
+/// one the facades use to default `serverTs`).
+fn now_iso() -> String {
+    (edgecommons::facades::system_clock())()
 }
 
 fn rand01() -> f64 {

@@ -75,6 +75,18 @@ An omitted `quality` defaults to `GOOD` with `qualityRaw: "unspecified"` (a synt
 marker); a failed read (the simulator's `pressure-1`) publishes an explicit `BAD` with the native
 fault text as `qualityRaw` and `value: null`.
 
+The sample's `serverTs` is the **capture** moment: the seam's `capture_ts` when the backend
+supplies one, else the worker's read-completion receive stamp (a direct client's receive moment IS
+the capture moment). A device-authored `source_ts` rides as `sourceTs` only when present — never
+synthesized — and when a mediating server makes the adapter's receive moment differ from the
+effective `serverTs`, it rides as a per-sample `receivedTs` extra:
+
+```jsonc
+"samples": [ { "value": 21.7, "quality": "GOOD", "qualityRaw": "OK",
+               "sourceTs": "2026-07-19T00:00:00.1Z", "serverTs": "2026-07-19T00:00:00.4Z",
+               "receivedTs": "2026-07-19T00:00:00.9Z" } ]
+```
+
 ### `sb/write` (command)
 
 ```jsonc

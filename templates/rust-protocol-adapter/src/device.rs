@@ -26,6 +26,11 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 /// One reading from the device.
+///
+/// The three trailing timestamp slots realize the four-slot model of `docs/SOUTHBOUND.md` §2 (the
+/// fourth slot — the publish timestamp — is the envelope header's, stamped by the library). All
+/// are optional ISO-8601 UTC strings, and none is ever synthesized from another: a backend sets
+/// what its protocol actually knows and leaves the rest `None`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reading {
     /// The canonical, stable id the rest of the fleet keys on (e.g. `ns=3;i=1001`).
@@ -36,6 +41,16 @@ pub struct Reading {
     pub quality: Quality,
     /// The protocol-native status code, kept verbatim for diagnosis.
     pub quality_raw: Option<String>,
+    /// The **machine** timestamp: device/field-authored time, set only when the protocol supplied
+    /// it. Never synthesized.
+    pub source_ts: Option<String>,
+    /// The **capture** timestamp: the moment the protocol read the value — a mediating server's
+    /// stamp (an OPC UA server, an MTConnect agent). A direct-client protocol leaves it `None`:
+    /// its receive moment IS the capture moment.
+    pub capture_ts: Option<String>,
+    /// The **adapter receive** timestamp. The worker auto-stamps it at read completion for every
+    /// reading lacking it, so a backend only sets it when it has a better (earlier) receive stamp.
+    pub received_ts: Option<String>,
 }
 
 /// Normalized quality. The protocol's own status code goes in `quality_raw`.
@@ -248,6 +263,9 @@ impl DeviceSession for SimSession {
     async fn read_signals(&mut self) -> Result<Vec<Reading>> {
         self.tick += 1;
         let value = 20.0 + 5.0 * ((self.tick as f64) / 10.0).sin();
+        // The sim sets none of the timestamp slots: it has no device clock, and inventing one
+        // would be dishonest. The worker stamps `received_ts` at read completion, and that
+        // receive moment becomes the published `serverTs` (a direct client's receive IS capture).
         Ok(vec![
             Reading {
                 signal_id: "temperature-1".into(),
@@ -255,6 +273,9 @@ impl DeviceSession for SimSession {
                 value: serde_json::json!(value),
                 quality: Quality::Good,
                 quality_raw: Some("OK".into()),
+                source_ts: None,
+                capture_ts: None,
+                received_ts: None,
             },
             // A signal the simulated device cannot currently read. It is published as BAD rather
             // than omitted, because "I could not read this" is information and silence is not.
@@ -264,6 +285,9 @@ impl DeviceSession for SimSession {
                 value: serde_json::Value::Null,
                 quality: Quality::Bad,
                 quality_raw: Some("SENSOR_FAULT".into()),
+                source_ts: None,
+                capture_ts: None,
+                received_ts: None,
             },
         ])
     }
@@ -311,6 +335,11 @@ mod tests {
         assert_eq!(readings.len(), 2);
         assert_eq!(readings[0].signal_id, "temperature-1");
         assert_eq!(readings[0].quality, Quality::Good);
+        // No device clock -> no timestamp slots. The worker stamps `received_ts` at read
+        // completion; a backend only fills what its protocol actually knows.
+        assert!(readings[0].source_ts.is_none());
+        assert!(readings[0].capture_ts.is_none());
+        assert!(readings[0].received_ts.is_none());
     }
 
     #[tokio::test]

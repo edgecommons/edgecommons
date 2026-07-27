@@ -277,6 +277,42 @@ class _LinkLost(Exception):
 
 
 # =================================================================================================
+# Timestamps — the four-slot mapping (docs/SOUTHBOUND.md §2)
+# =================================================================================================
+
+
+def stamp_received(readings, now: Optional[str] = None) -> None:
+    """Auto-stamp ``received_ts`` at read completion: every reading the backend did not stamp
+    itself gets the adapter's receive moment — ONE moment for the whole batch, taken when the read
+    completed, not when each sample is published (under batching those diverge). A backend's own
+    (earlier) receive stamp survives."""
+    if now is None:
+        now = format_instant(datetime.now(timezone.utc))
+    for r in readings:
+        if r.received_ts is None:
+            r.received_ts = now
+
+
+def sample_timestamps(r) -> "tuple[Optional[str], Optional[str]]":
+    """Map a :class:`~.device.Reading`'s timestamp slots onto the wire sample. Returns
+    ``(server_ts, received_extra)``:
+
+    * ``server_ts`` — the effective ``serverTs``: the **capture** moment (``capture_ts``), falling
+      back to the adapter's receive moment (``received_ts``) — for a direct-client protocol the
+      receive moment IS the capture moment.
+    * ``received_extra`` — the ``receivedTs`` value to ride as a per-sample extra, present ONLY
+      when a mediating server makes the receive moment differ from the effective ``serverTs``.
+
+    ``source_ts`` needs no mapping: it is published as ``sourceTs`` verbatim when present and is
+    never synthesized."""
+    server_ts = r.capture_ts if r.capture_ts is not None else r.received_ts
+    received_extra = (
+        r.received_ts if (r.received_ts is not None and r.received_ts != server_ts) else None
+    )
+    return server_ts, received_extra
+
+
+# =================================================================================================
 # The device worker + control seam
 # =================================================================================================
 
@@ -416,6 +452,9 @@ class Device:
             logger.warning("[%s] read failed; reconnecting: %s", self._cfg.id, e)
             self._health.incr_read_error()
             raise _LinkLost()
+        # The read just completed: this is the adapter's receive moment for the whole batch
+        # (docs/SOUTHBOUND.md §2) — stamped here, not at publish, so batching cannot skew it.
+        stamp_received(readings)
         self._health.set_poll_latency((time.monotonic() - started) * 1000.0)
 
         publish_started = time.monotonic()
@@ -432,16 +471,27 @@ class Device:
 
     def _publish_reading(self, r) -> None:
         """Publish one reading as a ``SouthboundSignalUpdate`` through the ``data()`` facade — which
-        builds the body, mints the topic, and stamps identity. A failed read carries no value at
-        all, which the facade's ``samples[]`` cannot express, so it rides the pre-built-body path."""
+        builds the body, mints the topic, and stamps identity. The reading's timestamp slots map
+        per docs/SOUTHBOUND.md §2 (:func:`sample_timestamps`): ``capture_ts`` -> ``serverTs``
+        (falling back to ``received_ts``), ``source_ts`` -> ``sourceTs`` only when the device
+        supplied it (never synthesized), and ``received_ts`` -> a ``receivedTs`` extra only when it
+        differs from the effective ``serverTs``. A failed read carries no value at all; it rides
+        the pre-built-body path, carrying the same fields."""
         wire_quality = _WIRE_QUALITY.get(r.quality, WireQuality.GOOD)
+        server_ts, received_extra = sample_timestamps(r)
         if r.value is not None:
             builder = self._data.signal(r.signal_id)
             if r.name is not None:
                 builder = builder.name(r.name)
             builder = builder.device(adapter=self._cfg.adapter, instance=self._cfg.id,
                                      endpoint=self._cfg.endpoint)
-            builder.add_sample(Sample(r.value, wire_quality, r.quality_raw)).signal_path(r.signal_id).publish()
+            sample = Sample(
+                r.value, wire_quality, r.quality_raw,
+                source_ts=r.source_ts,
+                server_ts=server_ts,
+                extra={"receivedTs": received_extra} if received_extra is not None else None,
+            )
+            builder.add_sample(sample).signal_path(r.signal_id).publish()
         else:
             body = {
                 "device": {"adapter": self._cfg.adapter, "instance": self._cfg.id,
@@ -451,7 +501,10 @@ class Device:
                     "value": None,
                     "quality": wire_quality.wire(),
                     "qualityRaw": r.quality_raw if r.quality_raw is not None else "unspecified",
-                    "serverTs": format_instant(datetime.now(timezone.utc)),
+                    **({"sourceTs": r.source_ts} if r.source_ts is not None else {}),
+                    "serverTs": server_ts if server_ts is not None
+                    else format_instant(datetime.now(timezone.utc)),
+                    **({"receivedTs": received_extra} if received_extra is not None else {}),
                 }],
             }
             self._data.publish_body(r.signal_id, body)

@@ -79,9 +79,18 @@ Error codes: `BAD_ARGS`, `NO_SUCH_INSTANCE`, `WRITE_NOT_ALLOWED`, `WRITE_FAILED`
   "device": { "adapter": "sim", "instance": "device-1", "endpoint": "sim://device-1" },
   "signal": { "id": "temperature-1", "name": "Ambient temperature" },
   "samples": [ { "value": 21.3, "quality": "GOOD", "qualityRaw": "OK",
-                 "sourceTs": null, "serverTs": "2026-07-19T12:00:00Z" } ]
+                 "serverTs": "2026-07-19T12:00:00Z",          // capture; here = adapter receipt
+                 "sourceTs": "2026-07-19T11:59:58Z",          // machine time, only when supplied
+                 "receivedTs": "2026-07-19T12:00:02Z" } ]     // extra, only when != serverTs
 }
 ```
+
+Per-sample timestamps follow the four-slot model (`docs/SOUTHBOUND.md` §2), identically on the
+GOOD and BAD/null paths: the reading's `captureTs` becomes `serverTs` (falling back to the
+worker's auto-stamped `receivedTs` when the protocol has no mediating server — a direct client's
+receive moment IS the capture moment); `sourceTs` appears only when the protocol supplied it,
+never synthesized; and `receivedTs` rides as an additive extra only when it differs from the
+effective `serverTs`. The simulator is a direct client, so its samples carry only `serverTs`.
 
 ### `sb/read`
 
