@@ -112,8 +112,11 @@ policy, a slave address). Everything else in `config.schema.json` is closed, so 
 
 The adapter serves the generic southbound `sb/*` family on its `commands()` inbox (SOUTHBOUND.md
 §2.2): `sb/status`, `sb/read`, `sb/write`, `sb/signals`, `sb/browse`, `sb/pause`, `sb/resume`,
-`reconnect`, `repoll`. Requests route by an optional `body.instance` — required only when more than
-one device is configured. Every session-touching verb is handed to the device's own task over a
+`reconnect`, `repoll`. All nine declare scope `instance`, so the library resolves the addressing —
+the topic's instance token (`…/{instance}/cmd/{verb}`), else a body `instance`, a conflict between
+them refused with `BAD_ARGS` — and this module maps the resolved instance onto a configured device
+(unnamed means the sole one; required once more than one is configured). Every session-touching verb
+is handed to the device's own task over a
 control channel and confirmed through the reply that rides it, so the inbox never touches a live
 connection. The same module registers three edge-console panels — `overview`, `signals`,
 `diagnostics` — an adapter-overview summary with lifecycle bindings, a signal grid bound to

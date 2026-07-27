@@ -25,6 +25,7 @@ import {
   MessageBodyCase,
   MessageIdentity,
   CommandOutcomes,
+  CommandScopes,
   DefaultMessagingService,
   IpcMessagingProvider,
   StandaloneMqttProvider,
@@ -238,7 +239,7 @@ async function runDeferredResponder(componentToken: string): Promise<never> {
     gg = await new EdgeCommonsBuilder(`com.mbreissi.edgecommons.interop.${LANG}.DeferredResponder`)
       .args(logRuntimeArgs(path))
       .configureCommands((inbox) => {
-        inbox.registerOutcome("deferred", (request) => {
+        inbox.registerOutcome("deferred", CommandScopes.Both, (request, _addressedInstance) => {
           const token = inbox.defer(request, 4_000);
           let acceptanceMarker: string;
           try {
@@ -736,7 +737,7 @@ async function runGgP1Matrix(runId: string, langsCsv: string): Promise<number> {
     gg = await new EdgeCommonsBuilder(`com.mbreissi.edgecommons.interop.${LANG}.P1Responder`)
       .args(ggLogRuntimeArgs(path))
       .configureCommands((inbox) => {
-        inbox.registerOutcome("deferred", (request) => {
+        inbox.registerOutcome("deferred", CommandScopes.Both, (request, _addressedInstance) => {
           const token = inbox.defer(request, 4_000);
           const requestBody = request.getBody() as Record<string, unknown>;
           let acceptanceMarker: string;

@@ -25,13 +25,13 @@ to `reply_to` with the same `correlation_id`.
 |-------|---------|-----------|-------|-------|
 | `data` | `SouthboundSignalUpdate` | adapter → bus | `ecv1/{device}/{component}/{instance}/data/{signal}` | — |
 | `evt` | `evt` | adapter → bus | `ecv1/{device}/{component}/{instance}/evt/{severity}/{type}` | — |
-| `cmd` | `sb/status` | bus → adapter | `ecv1/{device}/{component}/cmd/sb/status` | `{ok,result}` |
-| `cmd` | `sb/read` | bus → adapter | `ecv1/{device}/{component}/cmd/sb/read` | `{ok,result}` |
-| `cmd` | `sb/write` | bus → adapter | `ecv1/{device}/{component}/cmd/sb/write` | `{ok,result}` |
-| `cmd` | `sb/signals` | bus → adapter | `ecv1/{device}/{component}/cmd/sb/signals` | `{ok,result}` |
-| `cmd` | `sb/browse` | bus → adapter | `ecv1/{device}/{component}/cmd/sb/browse` | `{ok,result}` |
-| `cmd` | `sb/pause` / `sb/resume` | bus → adapter | `ecv1/{device}/{component}/cmd/sb/{pause,resume}` | `{ok,result}` |
-| `cmd` | `reconnect` / `repoll` | bus → adapter | `ecv1/{device}/{component}/cmd/{reconnect,repoll}` | `{ok,result}` |
+| `cmd` | `sb/status` | bus → adapter | `ecv1/{device}/{component}/{instance}/cmd/sb/status` | `{ok,result}` |
+| `cmd` | `sb/read` | bus → adapter | `ecv1/{device}/{component}/{instance}/cmd/sb/read` | `{ok,result}` |
+| `cmd` | `sb/write` | bus → adapter | `ecv1/{device}/{component}/{instance}/cmd/sb/write` | `{ok,result}` |
+| `cmd` | `sb/signals` | bus → adapter | `ecv1/{device}/{component}/{instance}/cmd/sb/signals` | `{ok,result}` |
+| `cmd` | `sb/browse` | bus → adapter | `ecv1/{device}/{component}/{instance}/cmd/sb/browse` | `{ok,result}` |
+| `cmd` | `sb/pause` / `sb/resume` | bus → adapter | `ecv1/{device}/{component}/{instance}/cmd/sb/{pause,resume}` | `{ok,result}` |
+| `cmd` | `reconnect` / `repoll` | bus → adapter | `ecv1/{device}/{component}/{instance}/cmd/{reconnect,repoll}` | `{ok,result}` |
 | `metric` | `southbound_health`, `<<COMPONENTNAME>>Connection`, `<<COMPONENTNAME>>Command` | adapter → bus (auto) | `ecv1/{device}/{component}/metric/{metricName}` | — |
 | `state` | keepalive | adapter → bus (auto) | `ecv1/{device}/{component}/state` | — |
 
@@ -44,13 +44,36 @@ and `cmd` replies via the command inbox.
 ## The command inbox
 
 Every `sb/*` verb plus `reconnect`/`repoll` is registered on the shared command inbox
-(`src/commands.ts`'s `registerAll`) alongside the library's built-ins (`ping`, `reload-config`,
-`get-configuration`). A request's **verb** is `header.name`; with two or more configured devices, a
-body `instance` field selects which one (`BAD_ARGS` if missing, `NO_SUCH_INSTANCE` if unknown).
+(`src/commands.ts`'s `registerAll`) alongside the library's built-ins (`ping`, `status`, `describe`,
+`reload-config`, `get-configuration`). A request's **verb** is `header.name`.
 The reply body is `{"ok": true, "result": <verb result>}` on success or
 `{"ok": false, "error": {"code", "message"}}` on failure. Error codes:
 `BAD_ARGS`, `NO_SUCH_INSTANCE`, `WRITE_NOT_ALLOWED`, `WRITE_FAILED`, `DEVICE_UNAVAILABLE`,
 `READ_FAILED`, `RECONNECT_FAILED`, `BROWSE_UNSUPPORTED`, `BROWSE_FAILED`, `PAUSED`.
+
+### Scope and addressing
+
+| Verb | Scope |
+|------|-------|
+| `sb/status`, `sb/read`, `sb/write`, `sb/signals`, `sb/browse` | `instance` |
+| `sb/pause`, `sb/resume`, `reconnect`, `repoll` | `instance` |
+| `ping`, `status`, `describe`, `reload-config`, `get-configuration` (library) | `both` |
+
+An `instance`-scoped verb acts on exactly one configured device. Address it either way — the library
+resolves both, and refuses a request that addresses two devices at once:
+
+- **On the topic:** `ecv1/{device}/{component}/{instance}/cmd/{verb}` names the device directly.
+- **In the body:** an `"instance"` field on a command sent to the component topic
+  `ecv1/{device}/{component}/cmd/{verb}`.
+- **Both:** the topic wins, and a body naming a *different* device is `BAD_ARGS`
+  ("instance in body conflicts with the addressed instance") — checked before the device is looked
+  up, so the verb never runs.
+- **Neither:** with exactly one device configured the command applies to it; with two or more it is
+  `BAD_ARGS`. An instance that names no configured device is `NO_SUCH_INSTANCE`.
+
+A `both`-scoped verb answers identically on either topic. Each verb's scope is published in the
+`describe` reply (`commands[].scope`), which is how the edge-console decides whether to offer a
+device selector.
 
 ## Data plane
 
@@ -181,8 +204,13 @@ so the topic and body can never disagree.
 
 The library's heartbeat publishes the `state` keepalive every `heartbeat.intervalSecs` (default
 5s). The RUNNING keepalive's `instances[]` array carries one entry per configured device —
-`{instance, connected, state, attributes: {adapter, paused}}` — the same sample `sb/status`
+`{instance, connected, state, detail, attributes: {adapter, paused}}` — the same sample `sb/status`
 answers on demand (one provider, two surfaces; see [../explanation.md](../explanation.md)).
+
+`state` is this adapter's own vocabulary — `CONNECTING`, `ONLINE`, `BACKOFF`, or `PAUSED` — read
+from the same per-device state that answers `sb/status`, so a fleet view and a status reply cannot
+disagree. A deliberately paused device reads `PAUSED` while `connected` stays truthful; a link that
+breaks while paused reads `BACKOFF`.
 
 ## CLI
 

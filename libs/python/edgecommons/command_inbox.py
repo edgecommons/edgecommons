@@ -56,10 +56,19 @@ contract is pinned by ``uns-test-vectors/commands.json``.
 - **Handler errors** — a :class:`CommandException` keeps its code; any other
   exception maps to :data:`ERR_HANDLER_ERROR`. Fire-and-forget failures are logged
   only.
-- **Deferred handlers** — :meth:`CommandInbox.register_outcome` adds explicit
-  :class:`ImmediateSuccess`, :class:`ImmediateError`, and :class:`Deferred` outcomes
-  without changing legacy handlers. The inbox owns the bounded, timed, guarded reply
+- **Deferred handlers** — :meth:`CommandInbox.register_outcome` registers a handler
+  that returns an explicit :class:`ImmediateSuccess`, :class:`ImmediateError`, or
+  :class:`Deferred` outcome. The inbox owns the bounded, timed, guarded reply
   registry and an opaque :class:`DeferredReply` settles at most once.
+- **Declared verb scope** — every registration declares a :class:`CommandScope`
+  (``COMPONENT`` | ``INSTANCE`` | ``BOTH``) and every handler receives the
+  ``addressed_instance`` beside the request. The inbox enforces the addressing
+  **before dispatch**, so a handler never runs on an addressing error: an
+  ``instance`` field in the body that disagrees with the topic's instance token is
+  :data:`ERR_BAD_ARGS` (checked first, for every scope); a ``COMPONENT`` verb
+  addressed to an instance - by topic or by body - is :data:`ERR_BAD_ARGS`;
+  ``INSTANCE`` and ``BOTH`` verbs receive the topic token, else the body-named
+  instance, else ``None``. ``None`` at a ``BOTH`` verb means "the whole component".
 - **No config surface** — always on; core plumbing, not a feature toggle.
 
 Lifecycle: constructed and :meth:`CommandInbox.start` started by the ``EdgeCommons``
@@ -141,6 +150,12 @@ ERR_UNKNOWN_VERB = "UNKNOWN_VERB"
 #: Error code: the handler threw an uncoded exception.
 ERR_HANDLER_ERROR = "HANDLER_ERROR"
 
+#: Error code: the request's addressing is invalid for the verb's declared
+#: :class:`CommandScope` - an instance-addressed ``COMPONENT`` verb, or a body
+#: ``instance`` that conflicts with the topic's instance token. The library replies
+#: it before dispatch, so the handler never runs.
+ERR_BAD_ARGS = "BAD_ARGS"
+
 #: Error code: RELOAD_CONFIG could not re-fetch or the document was rejected.
 ERR_RELOAD_FAILED = "RELOAD_FAILED"
 
@@ -196,6 +211,30 @@ AVAILABILITY_STATES = frozenset({"available", "disabled", "unsupported"})
 MAX_AVAILABILITY_REASON_CHARS = 256
 
 
+class CommandScope(str, Enum):
+    """The addressing a verb accepts, declared at registration (D-SC-2).
+
+    - :data:`COMPONENT` - the verb answers for the component as a whole. An
+      instance-addressed delivery (topic token or body ``instance``) is refused with
+      :data:`ERR_BAD_ARGS` before the handler runs.
+    - :data:`INSTANCE` - the verb acts on one instance. The handler receives the
+      topic's instance token, else the body-named instance, else ``None`` (the
+      component resolves ``None`` against its own configuration - e.g. the
+      optional-iff-one default - because that needs configuration knowledge the
+      library does not have).
+    - :data:`BOTH` - both deliveries are meaningful. ``None`` means "addressed to the
+      whole component"; a token means "addressed to that instance". Scope-indifferent
+      verbs (the built-ins) simply ignore the parameter.
+
+    Widening a verb from ``INSTANCE`` to ``BOTH`` is additive; narrowing is a
+    breaking change to that verb's contract (D-SC-5).
+    """
+
+    COMPONENT = "component"
+    INSTANCE = "instance"
+    BOTH = "both"
+
+
 class CommandInboxStartupState(str, Enum):
     """Observable lifecycle state of the command plane."""
 
@@ -221,22 +260,17 @@ class _ActivationGate:
     retained: int = 0
     draining: bool = False
 
-#: A command-verb handler: ``(request: Message) -> Optional[dict]``. The return value
-#: is the verb-specific result object, wrapped by the inbox into the success reply
-#: body; ``None`` yields an empty result (a plain acknowledgement). Raise
+#: A command-verb handler:
+#: ``(request: Message, addressed_instance: Optional[str]) -> Optional[dict]``. The
+#: return value is the verb-specific result object, wrapped by the inbox into the
+#: success reply body; ``None`` yields an empty result (a plain acknowledgement).
+#: ``addressed_instance`` is the instance the command was addressed to - the topic's
+#: instance token (``ecv1/{device}/{component}/{instance}/cmd/{verb}``, D-U28), else
+#: the body's ``instance`` field, else ``None`` for a component-scoped delivery. Raise
 #: :class:`CommandException` for a coded error reply; any other exception becomes
 #: :data:`ERR_HANDLER_ERROR`. Handlers run synchronously on the messaging delivery
 #: thread - keep them fast, or hand off internally.
-CommandHandler = Callable[["Message"], Optional[dict]]
-
-#: A scope-aware command-verb handler:
-#: ``(request: Message, addressed_instance: Optional[str]) -> Optional[dict]``.
-#: ``addressed_instance`` is the instance token the command was addressed to
-#: (``ecv1/{device}/{component}/{instance}/cmd/{verb}``), or ``None`` for a
-#: component-scoped delivery (``ecv1/{device}/{component}/cmd/{verb}``, D-U28).
-#: Everything else - result wrapping, :class:`CommandException` mapping,
-#: fire-and-forget behavior - is identical to :data:`CommandHandler`.
-ScopedCommandHandler = Callable[["Message", Optional[str]], Optional[dict]]
+CommandHandler = Callable[["Message", Optional[str]], Optional[dict]]
 
 
 class CommandOutcome:
@@ -306,7 +340,13 @@ class Deferred(CommandOutcome):
             raise ValueError("post-accept continuation must be callable")
 
 
-OutcomeCommandHandler = Callable[["Message"], CommandOutcome]
+#: A deferred/explicit-outcome command-verb handler:
+#: ``(request: Message, addressed_instance: Optional[str]) -> CommandOutcome``. Like
+#: every registration form it receives the library-resolved ``addressed_instance``
+#: (D-SC-1); the token semantics are unchanged - the handler provisions its own
+#: :class:`DeferredReply` through :meth:`CommandInbox.defer`, activates it, and
+#: returns the tagged :class:`CommandOutcome`.
+OutcomeCommandHandler = Callable[["Message", Optional[str]], CommandOutcome]
 
 
 class DeferredReplyState(Enum):
@@ -432,6 +472,7 @@ class CommandInbox:
     CMD_MESSAGE_VERSION = CMD_MESSAGE_VERSION
     ERR_UNKNOWN_VERB = ERR_UNKNOWN_VERB
     ERR_HANDLER_ERROR = ERR_HANDLER_ERROR
+    ERR_BAD_ARGS = ERR_BAD_ARGS
     ERR_RELOAD_FAILED = ERR_RELOAD_FAILED
     ERR_NO_CONFIG = ERR_NO_CONFIG
     ERR_REPLY_REQUIRED = ERR_REPLY_REQUIRED
@@ -502,7 +543,8 @@ class CommandInbox:
         # verb -> handler; built-ins seeded here, custom verbs via register().
         self._handlers: Dict[str, CommandHandler] = {}
         self._outcome_handlers: Dict[str, OutcomeCommandHandler] = {}
-        self._scoped_handlers: Dict[str, ScopedCommandHandler] = {}
+        # verb -> the declared CommandScope the inbox enforces before dispatch.
+        self._scopes: Dict[str, CommandScope] = {}
         self._panels: Dict[str, dict] = {}
         # verb -> {"state": ..., "reason"?: ...} for the describe() availability
         # surface; only non-"available" states are stored.
@@ -511,13 +553,13 @@ class CommandInbox:
         # ping -> the state keepalive's RUNNING body shape: proves the component is
         # not just alive (the keepalive does that) but RESPONSIVE to addressed
         # commands.
-        def _ping(request):
+        def _ping(request, addressed_instance):
             return {"status": "RUNNING", "uptimeSecs": uptime_secs()}
 
         # status -> ping's per-instance superset. Same body, plus the instances[] the
         # state keepalive pushes, from the same provider. A component with no instances
         # omits the section, so a plain service answers exactly as ping does.
-        def _status(request):
+        def _status(request, addressed_instance):
             result = {"status": "RUNNING", "uptimeSecs": uptime_secs()}
             conns = instance_connectivity()
             if conns:
@@ -529,7 +571,7 @@ class CommandInbox:
         # reload-config -> re-fetch from the active config source and re-apply
         # (listeners fire, so a successful reload also re-announces the cfg push as
         # a side effect).
-        def _reload_config(request):
+        def _reload_config(request, addressed_instance):
             if not config_reload():
                 raise CommandException(
                     ERR_RELOAD_FAILED,
@@ -539,14 +581,20 @@ class CommandInbox:
                 )
             return {"reloaded": True}
 
-        def _describe(request):
+        def _describe(request, addressed_instance):
             with self._lock:
                 availability = {
                     verb: dict(entry) for verb, entry in self._availability.items()
                 }
+                scopes = dict(self._scopes)
             commands = []
             for verb in sorted(self.verbs()):
-                entry = {"verb": verb, "builtIn": verb in BUILT_IN_VERBS}
+                # The pinned key order is {verb, builtIn, scope, availability?}.
+                entry = {
+                    "verb": verb,
+                    "builtIn": verb in BUILT_IN_VERBS,
+                    "scope": scopes.get(verb, CommandScope.BOTH).value,
+                }
                 if verb in availability:
                     entry["availability"] = availability[verb]
                 commands.append(entry)
@@ -563,7 +611,7 @@ class CommandInbox:
             return manifest
 
         # get-configuration (Flow B) -> the cfg class's body shape, as a reply.
-        def _get_configuration(request):
+        def _get_configuration(request, addressed_instance):
             config = redacted_config()
             if config is None:
                 raise CommandException(
@@ -576,6 +624,10 @@ class CommandInbox:
         self._handlers[DESCRIBE] = _describe
         self._handlers[RELOAD_CONFIG] = _reload_config
         self._handlers[GET_CONFIGURATION] = _get_configuration
+        # The built-ins are scope-indifferent (D-SC-3): they answer identically on the
+        # component-scope and the instance-scope inbox and ignore the parameter.
+        for _built_in in BUILT_IN_VERBS:
+            self._scopes[_built_in] = CommandScope.BOTH
 
         # The instance-scoped inbox filter (".../+/cmd/#", D-U28); None until start()
         # builds it.
@@ -624,25 +676,38 @@ class CommandInbox:
         self._activation_gate: Optional[_ActivationGate] = None
         self._closed = False
 
-    def register(self, verb: str, handler: CommandHandler) -> None:
+    def register(
+        self, verb: str, scope: "CommandScope", handler: CommandHandler
+    ) -> None:
         """Registers a custom verb handler - the minimal ``commands()`` registration
         seam. The verb is one or more ``/``-separated channel tokens
         (``"restart-pipeline"``, ``"sb/status"``), each validated against the §2.2
         token rule. Registration is allowed before or after :meth:`start` (the inbox
         is a single wildcard subscription - no per-verb subscribe).
 
+        The handler is ``handler(request, addressed_instance)``: every handler sees
+        the delivery's addressing (D-SC-1). ``addressed_instance`` is the topic's
+        instance token (``.../{instance}/cmd/{verb}``), else the body's ``instance``
+        field, else ``None``. The declared ``scope`` is enforced by the inbox
+        **before** the handler runs (see :class:`CommandScope`) and is advertised on
+        the verb's ``describe`` entry.
+
         **Precedence:** no shadowing, ever - registering a :data:`BUILT_IN_VERBS`
         built-in, a :data:`DELEGATED_VERBS` delegated verb, or an already-registered
         verb raises. Replace a custom handler by :meth:`unregister` first.
 
         :param verb: the verb (the ``cmd`` channel, ``/``-namespaces allowed)
+        :param scope: the verb's declared :class:`CommandScope` (the enum member, not
+            its string value)
         :param handler: the handler to dispatch it to
-        :raises ValueError: when the verb is built-in/delegated/already registered
+        :raises ValueError: when the scope is not a :class:`CommandScope`, or the verb
+            is built-in/delegated/already registered
         :raises edgecommons.uns.UnsValidationError: when a verb token violates the
             §2.2 token rule
         """
         if verb is None:
             raise ValueError("verb must not be None")
+        _check_scope(scope)
         if handler is None:
             raise ValueError("handler must not be None")
         for token in verb.split("/"):
@@ -650,16 +715,31 @@ class CommandInbox:
         with self._lock:
             self._validate_custom_verb_registration(verb)
             self._handlers[verb] = handler
-        logger.debug("Command verb '%s' registered", verb)
+            self._scopes[verb] = scope
+        logger.debug("Command verb '%s' registered (scope=%s)", verb, scope.value)
 
-    def register_outcome(self, verb: str, handler: OutcomeCommandHandler) -> None:
-        """Registers a handler that returns an explicit :class:`CommandOutcome`.
+    def register_outcome(
+        self, verb: str, scope: "CommandScope", handler: OutcomeCommandHandler
+    ) -> None:
+        """Registers a handler that returns an explicit :class:`CommandOutcome`:
+        ``handler(request, addressed_instance)``.
 
-        This is additive: legacy :meth:`register` handlers keep their original
-        ``dict``/``None`` and exception behavior.
+        Identical to :meth:`register` in verb validation, scope declaration and
+        enforcement, one-handler-per-verb precedence, and ``describe`` participation;
+        it differs only in what the handler returns - :class:`ImmediateSuccess`,
+        :class:`ImmediateError`, or :class:`Deferred`.
+
+        :param verb: the verb (the ``cmd`` channel, ``/``-namespaces allowed)
+        :param scope: the verb's declared :class:`CommandScope`
+        :param handler: the outcome handler to dispatch it to
+        :raises ValueError: when the scope is not a :class:`CommandScope`, or the verb
+            is built-in/delegated/already registered
+        :raises edgecommons.uns.UnsValidationError: when a verb token violates the
+            §2.2 token rule
         """
         if verb is None:
             raise ValueError("verb must not be None")
+        _check_scope(scope)
         if handler is None:
             raise ValueError("handler must not be None")
         for token in verb.split("/"):
@@ -667,36 +747,10 @@ class CommandInbox:
         with self._lock:
             self._validate_custom_verb_registration(verb)
             self._outcome_handlers[verb] = handler
-        logger.debug("Outcome command verb '%s' registered", verb)
-
-    def register_scoped(self, verb: str, handler: ScopedCommandHandler) -> None:
-        """Registers a scope-aware custom verb handler that receives the addressed
-        instance beside the request: ``handler(request, addressed_instance)`` where
-        ``addressed_instance`` is the topic's instance token
-        (``.../{instance}/cmd/{verb}``), or ``None`` for a component-scoped delivery
-        (``.../cmd/{verb}``, D-U28).
-
-        Everything else matches :meth:`register`: the same one-handler-per-verb rule
-        (a verb has EITHER a plain or a scoped handler), the same shadowing/duplicate
-        errors, the same reply/error handling, and identical participation in
-        ``describe()``.
-
-        :param verb: the verb (the ``cmd`` channel, ``/``-namespaces allowed)
-        :param handler: the scoped handler to dispatch it to
-        :raises ValueError: when the verb is built-in/delegated/already registered
-        :raises edgecommons.uns.UnsValidationError: when a verb token violates the
-            §2.2 token rule
-        """
-        if verb is None:
-            raise ValueError("verb must not be None")
-        if handler is None:
-            raise ValueError("handler must not be None")
-        for token in verb.split("/"):
-            Uns.check_token(token, "verb token")
-        with self._lock:
-            self._validate_custom_verb_registration(verb)
-            self._scoped_handlers[verb] = handler
-        logger.debug("Scoped command verb '%s' registered", verb)
+            self._scopes[verb] = scope
+        logger.debug(
+            "Outcome command verb '%s' registered (scope=%s)", verb, scope.value
+        )
 
     def set_command_availability(
         self, verb: str, state: str, reason: Optional[str] = None
@@ -726,11 +780,7 @@ class CommandInbox:
                 f" 'unsupported' - got {state!r}"
             )
         with self._lock:
-            if (
-                verb not in self._handlers
-                and verb not in self._outcome_handlers
-                and verb not in self._scoped_handlers
-            ):
+            if verb not in self._handlers and verb not in self._outcome_handlers:
                 raise ValueError(
                     f"verb '{verb}' is not registered on this component"
                 )
@@ -755,11 +805,7 @@ class CommandInbox:
                 f"verb '{verb}' is owned by another library subsystem and cannot"
                 " be registered"
             )
-        if (
-            verb in self._handlers
-            or verb in self._outcome_handlers
-            or verb in self._scoped_handlers
-        ):
+        if verb in self._handlers or verb in self._outcome_handlers:
             raise ValueError(
                 f"verb '{verb}' is already registered - unregister it first to"
                 " replace the handler"
@@ -780,19 +826,15 @@ class CommandInbox:
         with self._lock:
             removed = self._handlers.pop(verb, None)
             outcome_removed = self._outcome_handlers.pop(verb, None)
-            scoped_removed = self._scoped_handlers.pop(verb, None)
+            self._scopes.pop(verb, None)
             self._availability.pop(verb, None)
-        if removed is not None or outcome_removed is not None or scoped_removed is not None:
+        if removed is not None or outcome_removed is not None:
             logger.debug("Command verb '%s' unregistered", verb)
 
     def verbs(self) -> Set[str]:
         """The currently registered verbs (built-ins + custom) - a snapshot copy."""
         with self._lock:
-            return (
-                set(self._handlers.keys())
-                | set(self._outcome_handlers.keys())
-                | set(self._scoped_handlers.keys())
-            )
+            return set(self._handlers.keys()) | set(self._outcome_handlers.keys())
 
     def register_panel(self, panel: Mapping[str, Any]) -> None:
         """Registers a descriptor panel view for the built-in ``describe`` verb.
@@ -1554,12 +1596,7 @@ class CommandInbox:
         with self._lock:
             handler = self._handlers.get(verb)
             outcome_handler = self._outcome_handlers.get(verb)
-            scoped_handler = self._scoped_handlers.get(verb)
-        if scoped_handler is not None:
-            # A scoped handler is a plain handler that also receives the addressed
-            # instance - the reply/error path is byte-for-byte the plain one.
-            def handler(req, _scoped=scoped_handler, _inst=addressed_instance):
-                return _scoped(req, _inst)
+            scope = self._scopes.get(verb, CommandScope.BOTH)
         if handler is None and outcome_handler is None:
             if wants_reply:
                 logger.debug(
@@ -1576,11 +1613,20 @@ class CommandInbox:
             else:
                 logger.debug("Ignoring unknown fire-and-forget verb '%s'", verb)
             return
+        # D-SC-2/D-SC-4: the library owns the addressing. A rejected delivery has
+        # already been answered - the handler never runs.
+        accepted, resolved_instance = self._resolve_addressing(
+            verb, request, addressed_instance, scope, wants_reply
+        )
+        if not accepted:
+            return
         if outcome_handler is not None:
-            self._dispatch_outcome(verb, request, outcome_handler, wants_reply)
+            self._dispatch_outcome(
+                verb, request, outcome_handler, wants_reply, resolved_instance
+            )
             return
         try:
-            result = handler(request)
+            result = handler(request, resolved_instance)
         except CommandException as e:
             if wants_reply:
                 self._send_reply(request, verb, _error_body(e.code, e.message))
@@ -1599,15 +1645,83 @@ class CommandInbox:
             body = {"ok": True, "result": result if result is not None else {}}
             self._send_reply(request, verb, body)
 
+    def _resolve_addressing(
+        self,
+        verb: str,
+        request: "Message",
+        topic_instance: Optional[str],
+        scope: "CommandScope",
+        wants_reply: bool,
+    ) -> Tuple[bool, Optional[str]]:
+        """The library-owned pre-dispatch addressing rule (D-SC-2/D-SC-4).
+
+        Returns ``(accepted, addressed_instance)``. When ``accepted`` is ``False`` the
+        delivery has already been refused with :data:`ERR_BAD_ARGS` (or logged, for a
+        fire-and-forget command) and must not reach the handler.
+
+        The topic's instance token is authoritative and a conflicting body ``instance``
+        is refused **first**, for every scope. Resolving a ``None`` addressed instance
+        against the component's configured instances - the optional-iff-one default,
+        or ``NO_SUCH_INSTANCE`` for an unknown one - needs configuration knowledge the
+        library does not have and stays with the component.
+        """
+        body_instance = _body_instance(request)
+        if (
+            topic_instance is not None
+            and body_instance is not None
+            and topic_instance != body_instance
+        ):
+            self._addressing_error(
+                verb,
+                request,
+                wants_reply,
+                "instance in body conflicts with the addressed instance",
+            )
+            return False, None
+        if scope is CommandScope.COMPONENT:
+            if topic_instance is not None:
+                self._addressing_error(
+                    verb, request, wants_reply, f"verb '{verb}' is component-scoped"
+                )
+                return False, None
+            if body_instance is not None:
+                self._addressing_error(
+                    verb,
+                    request,
+                    wants_reply,
+                    f"verb '{verb}' is component-scoped - the body must not"
+                    " name an instance",
+                )
+                return False, None
+            return True, None
+        return True, topic_instance if topic_instance is not None else body_instance
+
+    def _addressing_error(
+        self, verb: str, request: "Message", wants_reply: bool, message: str
+    ) -> None:
+        """Refuses a delivery whose addressing violates the verb's declared scope,
+        through the same coded-error reply path a handler's ``CommandException``
+        takes (so a fire-and-forget command is logged, never replied to)."""
+        if wants_reply:
+            self._send_reply(request, verb, _error_body(ERR_BAD_ARGS, message))
+        else:
+            logger.warning(
+                "Fire-and-forget verb '%s' refused (%s): %s",
+                verb,
+                ERR_BAD_ARGS,
+                message,
+            )
+
     def _dispatch_outcome(
         self,
         verb: str,
         request: "Message",
         handler: OutcomeCommandHandler,
         wants_reply: bool,
+        addressed_instance: Optional[str] = None,
     ) -> None:
         try:
-            outcome = handler(request)
+            outcome = handler(request, addressed_instance)
         except CommandException as exc:
             if wants_reply:
                 self._send_reply(request, verb, _error_body(exc.code, exc.message))
@@ -1888,6 +2002,34 @@ def _sanitize_start_error(error: object) -> str:
         value,
     )
     return re.sub(r"://[^/@ ]+@", "://***@", value)
+
+
+def _check_scope(scope: object) -> "CommandScope":
+    """Validates a declared verb scope. Only the :class:`CommandScope` enum itself is
+    accepted - a bare ``"instance"`` string is a typo waiting to become an unenforced
+    verb, so it fails fast at registration (D-SC-2: unknown scope values are rejected
+    at registration and never emitted)."""
+    if not isinstance(scope, CommandScope):
+        raise ValueError(
+            "scope must be a CommandScope (COMPONENT, INSTANCE, or BOTH) - got"
+            f" {scope!r}"
+        )
+    return scope
+
+
+def _body_instance(request: "Message") -> Optional[str]:
+    """The instance named by the request body (``body.instance``), or ``None`` when the
+    body is not an object, carries no ``instance``, or carries a non-string/blank one."""
+    try:
+        body = request.get_body()
+    except Exception:  # noqa: BLE001 - a hostile body never breaks addressing
+        return None
+    if not isinstance(body, Mapping):
+        return None
+    value = body.get("instance")
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
 
 
 def _error_body(code: str, message: Optional[str]) -> dict:

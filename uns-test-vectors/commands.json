@@ -111,23 +111,28 @@
             "commands": [
               {
                 "verb": "describe",
-                "builtIn": true
+                "builtIn": true,
+                "scope": "both"
               },
               {
                 "verb": "get-configuration",
-                "builtIn": true
+                "builtIn": true,
+                "scope": "both"
               },
               {
                 "verb": "ping",
-                "builtIn": true
+                "builtIn": true,
+                "scope": "both"
               },
               {
                 "verb": "reload-config",
-                "builtIn": true
+                "builtIn": true,
+                "scope": "both"
               },
               {
                 "verb": "status",
-                "builtIn": true
+                "builtIn": true,
+                "scope": "both"
               }
             ],
             "panels": {
@@ -136,7 +141,7 @@
               "renderer": "descriptor",
               "views": []
             },
-            "digest": "sha256:e2910a393362ef102d5ca9d612d6f4fe9dd545106084baca3c3340e1c4fab95d"
+            "digest": "sha256:3c4aa2a3848cd69631e51081738d754505ee9613c7778169de791d6930864c94"
           }
         }
       }

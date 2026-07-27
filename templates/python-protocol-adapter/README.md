@@ -35,8 +35,10 @@ The package is `<<SNAKENAME>>/` (like `modbus_adapter/`), one file per concern:
 ## The command surface (`sb/*`)
 
 Every verb is served on the library command inbox
-(`ecv1/{device}/{component}[/{instance}]/cmd/sb/{verb}`) and routes to the addressed device by the
-request body's `instance` (optional when exactly one device is configured):
+(`ecv1/{device}/{component}[/{instance}]/cmd/sb/{verb}`) and declares scope `instance`: the library
+resolves the addressing (the topic's instance token, else a body `instance`, a conflict between them
+refused with `BAD_ARGS`) and the adapter routes to that device — naming no instance is allowed only
+when exactly one device is configured:
 
 | Verb | What it does |
 |---|---|

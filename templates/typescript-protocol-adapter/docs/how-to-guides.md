@@ -42,8 +42,10 @@ and metrics emitter, so one device being down never disturbs another:
 ]
 ```
 
-With two or more devices, every `sb/*` command needs a body `instance` field naming which one
-(`BAD_ARGS` if it's missing, `NO_SUCH_INSTANCE` if it names an unconfigured one).
+With two or more devices, every `sb/*` command has to name which one — either on the topic
+(`ecv1/{device}/{component}/{instance}/cmd/{verb}`) or with a body `instance` field. Naming none is
+`BAD_ARGS`, naming an unconfigured device is `NO_SUCH_INSTANCE`, and a body that disagrees with the
+topic is `BAD_ARGS`.
 
 ---
 

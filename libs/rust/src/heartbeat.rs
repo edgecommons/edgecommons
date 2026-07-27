@@ -135,10 +135,11 @@ impl InstanceConnectivity {
     /// Optional members are omitted rather than emitted null, so the common two-field case stays
     /// small on a keepalive that ships every 5 seconds per component.
     ///
-    /// Crate-private: it serializes the state body's `instances[]` (here) and the built-in
-    /// [`status`](crate::commands::STATUS) verb's reply ([`crate::commands::CommandInbox`]) — one
-    /// element shape, both surfaces.
-    pub(crate) fn to_json(&self) -> Value {
+    /// One element shape, two surfaces: it serializes the `state` keepalive body's `instances[]`
+    /// (here) and the built-in [`status`](crate::commands::STATUS) verb's reply
+    /// ([`crate::commands::CommandInbox`]), so a push and a pull can never disagree. Public so a
+    /// component can assert the exact published element against its own expectation.
+    pub fn to_json(&self) -> Value {
         let mut o = Map::new();
         o.insert("instance".to_string(), json!(self.instance));
         o.insert("connected".to_string(), json!(self.connected));

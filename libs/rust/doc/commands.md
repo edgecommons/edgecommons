@@ -19,7 +19,7 @@ gate. The 257th and later delivery is dropped newest. Runtime readiness requires
 let gg = EdgeCommonsBuilder::new("com.example.Camera")
     .initial_ready(false)
     .configure_commands(|commands| {
-        commands.register("sb/status", command_handler(|_| async { Ok(None) }))
+        commands.register("sb/status", CommandScope::Instance, command_handler(|_, _| async { Ok(None) }))
     })
     .build()
     .await?;
@@ -28,52 +28,70 @@ assert_eq!(gg.commands().unwrap().startup_status().state, CommandInboxStartupSta
 gg.set_ready(true);
 ```
 
-## Legacy handlers remain unchanged
+## Immediate handlers
 
-Existing `CommandHandler`, `command_handler`, and `CommandInbox::register` behavior is unchanged. A legacy
-handler returns `Result<Option<Value>, CommandError>` and the inbox immediately produces the standard
-success or error wrapper. Fire-and-forget commands still run and discard their result.
+`CommandInbox::register` takes the verb, its `CommandScope`, and a `CommandHandler`. The handler
+receives the request and the **addressed instance**, returns `Result<Option<Value>, CommandError>`,
+and the inbox immediately produces the standard success or error wrapper. Fire-and-forget commands
+run and discard their result.
 
 ```rust
-use edgecommons::commands::command_handler;
+use edgecommons::commands::{CommandScope, command_handler};
 use serde_json::json;
 
-commands.register("sb/status", command_handler(|_request| async move {
-    Ok(Some(json!({ "online": true })))
+commands.register("sb/status", CommandScope::Instance, command_handler(|_request, addressed_instance| async move {
+    // addressed_instance: Option<String> - Some("press12"), or None when nothing named an instance.
+    Ok(Some(json!({ "instance": addressed_instance, "online": true })))
 }))?;
 ```
 
-## Scoped registration: the addressed instance
+Both registration forms share one verb namespace. Built-in verbs (`ping`, `describe`,
+`reload-config`, `get-configuration`, `status`) and delegated verbs (`set-config`) cannot be
+shadowed, a verb may be registered once, and `unregister` clears the handler, the declared scope,
+and any stored availability.
 
-`register_scoped` registers a handler that also receives the **addressed instance** — the delivery
-topic's `{instance}` token (`ecv1/{device}/{component}/{instance}/cmd/{verb}`), or `None` when the
-command was addressed to the component as a whole (`ecv1/{device}/{component}/cmd/{verb}`). Verb
-validation, the one-handler-per-verb rule, duplicate-registration errors, `describe` participation,
-and reply/error semantics are identical to `register`.
+## Declared verb scope
 
-```rust
-use edgecommons::commands::scoped_command_handler;
-use serde_json::json;
+Every verb declares a `CommandScope`, and the inbox enforces the addressing **before dispatch** —
+the handler never runs on an addressing error. The `addressed_instance` a handler receives is the
+delivery topic's `{instance}` token (`ecv1/{device}/{component}/{instance}/cmd/{verb}`), else the
+request body's `instance` field, else `None`.
 
-commands.register_scoped("sb/read", scoped_command_handler(|_request, addressed_instance| async move {
-    // addressed_instance: Option<String> - Some("press12") or None for component scope.
-    Ok(Some(json!({ "instance": addressed_instance })))
-}))?;
-```
+| Scope | Instance-addressed delivery | Component-addressed delivery |
+|---|---|---|
+| `CommandScope::Component` | `BAD_ARGS`, `"verb '<verb>' is component-scoped"` | the handler runs with `None` |
+| `CommandScope::Instance` | the handler runs with the topic's token | the handler runs with the body's `instance`, else `None` |
+| `CommandScope::Both` | the handler runs with the topic's token | the handler runs with the body's `instance`, else `None` — "the whole component" |
+
+A body `instance` that disagrees with the topic's token is `BAD_ARGS`
+(`"instance in body conflicts with the addressed instance"`) at every scope, checked first. A
+`Component` verb also refuses a body `instance`. A rejected fire-and-forget delivery is logged
+rather than replied to, exactly like a handler error.
+
+The library owns *addressing*. Resolving `None` against the component's configuration — the
+convention that `instance` is optional when exactly one is configured, and that an unrecognized
+name is `NO_SUCH_INSTANCE` — needs configuration knowledge the library does not have and belongs
+to the component.
+
+`Both` serves two purposes: scope-indifferent verbs (the built-ins answer identically either way)
+and dual-semantics verbs whose handler branches on `None` for component-wide behavior. Widening a
+verb from `Instance` to `Both` is additive; narrowing changes that verb's contract.
 
 ## Command availability
 
 `set_command_availability(verb, state, reason)` sets a registered verb's availability as surfaced
 by `describe`. `state` must be exactly `available`, `disabled`, or `unsupported`; any other token
 is an error, as is an unregistered verb. `available` removes the stored entry, so the verb's
-describe entry reverts to `{verb, builtIn}`; `disabled`/`unsupported` store
-`{"state": …, "reason"?: …}` and the verb's entry becomes `{verb, builtIn, availability}`. The
-`reason` is optional, trimmed, truncated to 256 characters, and omitted when empty. The describe
-digest tracks stored availability, so a console re-fetches the descriptor on every transition.
+describe entry reverts to `{verb, builtIn, scope}`; `disabled`/`unsupported` store
+`{"state": …, "reason"?: …}` and the verb's entry becomes `{verb, builtIn, scope, availability}`.
+The `reason` is optional, trimmed, truncated to 256 characters, and omitted when empty.
+Availability is orthogonal to scope — a verb can be `instance`-scoped and `disabled`. The describe
+digest tracks both the stored availability and the declared scope, so a console re-fetches the
+descriptor on every transition.
 
 ```rust
 commands.set_command_availability("sb/write", "disabled", Some("writes.allow[] is empty"))?;
-commands.set_command_availability("sb/write", "available", None)?; // back to {verb, builtIn}
+commands.set_command_availability("sb/write", "available", None)?; // back to {verb, builtIn, scope}
 ```
 
 ## Panel manifest default view
@@ -84,15 +102,17 @@ verbatim — the `default` key is not stripped.
 
 ## Explicit outcomes
 
-Long-running handlers use the parallel `OutcomeCommandHandler` surface through `outcome_handler` and
-`register_outcome`. They return one of:
+Long-running handlers use the `OutcomeCommandHandler` surface through `outcome_handler` and
+`register_outcome`, which takes the same `CommandScope` and delivers the same `addressed_instance`
+as the immediate form. They return one of:
 
 - `CommandOutcome::ImmediateSuccess(result)`;
 - `CommandOutcome::ImmediateError(CommandError)`; or
 - `CommandOutcome::Deferred(token)`; or
 - `CommandOutcome::deferred_with_continuation(token, continuation)`.
 
-Legacy and outcome handlers share one verb namespace. Built-in/delegated/no-shadowing rules apply to both.
+Immediate and outcome handlers share one verb namespace, one set of built-in/delegated/no-shadowing
+rules, and one scope-enforcement path.
 
 ## Deferred lifecycle
 
@@ -111,11 +131,11 @@ error. `defer` rejects a missing/empty `reply_to` with `REPLY_REQUIRED`; fire-an
 a later direct reply.
 
 ```rust
-use edgecommons::commands::{CommandError, CommandOutcome, outcome_handler};
+use edgecommons::commands::{CommandError, CommandOutcome, CommandScope, outcome_handler};
 use serde_json::json;
 use std::time::Duration;
 
-commands.register_outcome("sb/capture", outcome_handler(|request, deferred| async move {
+commands.register_outcome("sb/capture", CommandScope::Instance, outcome_handler(|request, deferred, addressed_instance| async move {
     let token = match deferred.defer(&request, Duration::from_secs(95)) {
         Ok(token) => token,
         Err(error) => return CommandOutcome::ImmediateError(error),
@@ -132,7 +152,11 @@ commands.register_outcome("sb/capture", outcome_handler(|request, deferred| asyn
     let completion = token.clone();
     CommandOutcome::deferred_with_continuation(token, async move {
         let _ = completion
-            .settle_success(Some(json!({ "captureId": "cap-1", "state": "SUCCEEDED" })))
+            .settle_success(Some(json!({
+                "captureId": "cap-1",
+                "instance": addressed_instance,
+                "state": "SUCCEEDED"
+            })))
             .await;
         Ok(())
     })

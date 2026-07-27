@@ -17,6 +17,12 @@ Covers:
 - custom verbs register/dispatch (namespaced verbs included), cannot shadow
   built-ins or each other, and unregister; coded (``CommandException``) vs uncoded
   (``HANDLER_ERROR``) failures;
+- the declared verb scope (D-SC-1..D-SC-4): registration requires a ``CommandScope``
+  member, the library refuses an instance-addressed (or body-named) ``COMPONENT``
+  verb and a body ``instance`` conflicting with the topic token - both with
+  ``BAD_ARGS``, before the handler runs - and resolves ``INSTANCE``/``BOTH``
+  addressing topic-first, then body, else ``None``; ``describe`` advertises the
+  lowercase scope and the digest follows it;
 - unknown verbs get an ``UNKNOWN_VERB`` error reply (requests) or are ignored
   (fire-and-forget); no-``reply_to`` commands run the handler without a reply;
 - malformed payloads (name mismatch, headerless, None) and the delegated
@@ -33,7 +39,12 @@ from pathlib import Path
 
 import pytest
 
-from edgecommons.command_inbox import CommandException, CommandInbox
+from edgecommons.command_inbox import (
+    CommandException,
+    CommandInbox,
+    CommandOutcome,
+    CommandScope,
+)
 from edgecommons.messaging.identity import HierEntry, MessageIdentity
 from edgecommons.messaging.message import Message
 from edgecommons.messaging.message_builder import MessageBuilder
@@ -356,7 +367,7 @@ def test_status_through_the_heartbeat_seam_degrades_to_ping_when_the_provider_ra
 
 def test_status_cannot_be_shadowed_by_a_custom_verb(h):
     with pytest.raises(ValueError):
-        h.inbox.register(CommandInbox.STATUS, lambda request: None)
+        h.inbox.register(CommandInbox.STATUS, CommandScope.BOTH, lambda request, instance: None)
     with pytest.raises(ValueError):
         h.inbox.unregister(CommandInbox.STATUS)
 
@@ -425,7 +436,7 @@ def test_get_configuration_replies_no_config_when_unavailable(h):
 
 
 def test_describe_includes_built_ins_custom_verbs_and_panels(h):
-    h.inbox.register("sb/browse", lambda request: {"nodes": []})
+    h.inbox.register("sb/browse", CommandScope.BOTH, lambda request, instance: {"nodes": []})
     panel = {
         "id": "address-space",
         "title": "Address Space",
@@ -448,6 +459,9 @@ def test_describe_includes_built_ins_custom_verbs_and_panels(h):
     assert "instance" not in result["component"]  # D-U28: component scope
     assert result["component"]["path"] == "test-thing"
     verbs = {entry["verb"]: entry["builtIn"] for entry in result["commands"]}
+    scopes = {entry["verb"]: entry["scope"] for entry in result["commands"]}
+    assert scopes[CommandInbox.PING] == "both", "built-ins are scope-indifferent"
+    assert scopes["sb/browse"] == "both"
     assert verbs[CommandInbox.PING] is True
     assert verbs[CommandInbox.DESCRIBE] is True
     assert verbs[CommandInbox.GET_CONFIGURATION] is True
@@ -480,10 +494,10 @@ def test_describe_includes_built_ins_custom_verbs_and_panels(h):
 def test_custom_verb_registers_and_dispatches(h):
     h.inbox.start()  # registration after start needs no new subscription
 
-    def handler(request):
+    def handler(request, instance):
         return {"restarted": True}
 
-    h.inbox.register("restart-pipeline", handler)
+    h.inbox.register("restart-pipeline", CommandScope.BOTH, handler)
     h.messaging.simulate_message(_topic("restart-pipeline"), _request("restart-pipeline"))
     body = h.only_reply_body()
     assert body["ok"] is True
@@ -491,7 +505,7 @@ def test_custom_verb_registers_and_dispatches(h):
 
 
 def test_namespaced_custom_verb_dispatches(h):
-    h.inbox.register("sb/status", lambda request: None)  # None result -> empty ack
+    h.inbox.register("sb/status", CommandScope.BOTH, lambda request, instance: None)  # None result -> empty ack
     h.inbox.start()
     h.messaging.simulate_message(_topic("sb/status"), _request("sb/status"))
     body = h.only_reply_body()
@@ -500,10 +514,10 @@ def test_namespaced_custom_verb_dispatches(h):
 
 
 def test_handler_command_exception_keeps_its_code(h):
-    def handler(request):
+    def handler(request, instance):
         raise CommandException("NOT_ALLOWED", "operator role required")
 
-    h.inbox.register("guarded", handler)
+    h.inbox.register("guarded", CommandScope.BOTH, handler)
     h.inbox.start()
     h.messaging.simulate_message(_topic("guarded"), _request("guarded"))
     body = h.only_reply_body()
@@ -513,10 +527,10 @@ def test_handler_command_exception_keeps_its_code(h):
 
 
 def test_handler_uncoded_exception_maps_to_handler_error(h):
-    def handler(request):
+    def handler(request, instance):
         raise ValueError("boom")
 
-    h.inbox.register("boomy", handler)
+    h.inbox.register("boomy", CommandScope.BOTH, handler)
     h.inbox.start()
     h.messaging.simulate_message(_topic("boomy"), _request("boomy"))
     body = h.only_reply_body()
@@ -526,22 +540,22 @@ def test_handler_uncoded_exception_maps_to_handler_error(h):
 
 def test_register_rejects_shadowing_and_invalid_verbs(h):
     with pytest.raises(ValueError):
-        h.inbox.register(CommandInbox.PING, lambda request: None)
+        h.inbox.register(CommandInbox.PING, CommandScope.BOTH, lambda request, instance: None)
     with pytest.raises(ValueError):
-        h.inbox.register(CommandInbox.DESCRIBE, lambda request: None)
+        h.inbox.register(CommandInbox.DESCRIBE, CommandScope.BOTH, lambda request, instance: None)
     with pytest.raises(ValueError):
-        h.inbox.register(CommandInbox.SET_CONFIG_VERB, lambda request: None)
-    h.inbox.register("mine", lambda request: None)
+        h.inbox.register(CommandInbox.SET_CONFIG_VERB, CommandScope.BOTH, lambda request, instance: None)
+    h.inbox.register("mine", CommandScope.BOTH, lambda request, instance: None)
     with pytest.raises(ValueError):
-        h.inbox.register("mine", lambda request: None)
+        h.inbox.register("mine", CommandScope.BOTH, lambda request, instance: None)
     with pytest.raises(UnsValidationError):
-        h.inbox.register("bad+verb", lambda request: None)
+        h.inbox.register("bad+verb", CommandScope.BOTH, lambda request, instance: None)
     with pytest.raises(UnsValidationError):
-        h.inbox.register("sb//x", lambda request: None)  # empty namespace token
+        h.inbox.register("sb//x", CommandScope.BOTH, lambda request, instance: None)  # empty namespace token
 
 
 def test_unregister_removes_custom_verbs_but_never_built_ins(h):
-    h.inbox.register("mine", lambda request: None)
+    h.inbox.register("mine", CommandScope.BOTH, lambda request, instance: None)
     assert "mine" in h.inbox.verbs()
     h.inbox.unregister("mine")
     assert "mine" not in h.inbox.verbs()
@@ -556,9 +570,9 @@ def test_unregister_removes_custom_verbs_but_never_built_ins(h):
 
 def test_register_rejects_none_verb_or_handler(h):
     with pytest.raises(ValueError):
-        h.inbox.register(None, lambda request: None)
+        h.inbox.register(None, CommandScope.BOTH, lambda request, instance: None)
     with pytest.raises(ValueError):
-        h.inbox.register("mine", None)
+        h.inbox.register("mine", CommandScope.BOTH, None)
 
 
 def test_unregister_rejects_none_verb(h):
@@ -567,7 +581,7 @@ def test_unregister_rejects_none_verb(h):
 
 
 def test_verbs_snapshot_contains_built_ins_and_customs(h):
-    h.inbox.register("mine", lambda request: None)
+    h.inbox.register("mine", CommandScope.BOTH, lambda request, instance: None)
     assert h.inbox.verbs() == {
         CommandInbox.PING,
         CommandInbox.DESCRIBE,
@@ -664,32 +678,39 @@ def test_default_view_ignores_a_non_boolean_default_value(h):
 
 
 def test_set_command_availability_surfaces_on_the_describe_entry(h):
-    h.inbox.register("sb/pause", lambda request: None)
+    h.inbox.register("sb/pause", CommandScope.BOTH, lambda request, instance: None)
     h.inbox.set_command_availability("sb/pause", "disabled", "instance is paused")
     h.inbox.start()
     commands = {entry["verb"]: entry for entry in _describe_result(h)["commands"]}
     entry = commands["sb/pause"]
-    assert list(entry.keys()) == ["verb", "builtIn", "availability"], (
-        "the entry shape is {verb, builtIn, availability?}"
+    assert list(entry.keys()) == ["verb", "builtIn", "scope", "availability"], (
+        "the entry shape is {verb, builtIn, scope, availability?}"
     )
     assert entry == {
         "verb": "sb/pause",
         "builtIn": False,
+        "scope": "both",
         "availability": {"state": "disabled", "reason": "instance is paused"},
     }
-    # Other verbs stay the plain two-key entry.
-    assert commands[CommandInbox.PING] == {"verb": CommandInbox.PING, "builtIn": True}
+    # Other verbs stay the plain three-key entry.
+    assert commands[CommandInbox.PING] == {
+        "verb": CommandInbox.PING,
+        "builtIn": True,
+        "scope": "both",
+    }
 
 
 def test_set_command_availability_available_clears_the_stored_entry(h):
-    h.inbox.register("sb/pause", lambda request: None)
+    h.inbox.register("sb/pause", CommandScope.BOTH, lambda request, instance: None)
     h.inbox.set_command_availability("sb/pause", "unsupported")
     h.inbox.set_command_availability("sb/pause", "available")
     h.inbox.start()
     commands = {entry["verb"]: entry for entry in _describe_result(h)["commands"]}
-    assert commands["sb/pause"] == {"verb": "sb/pause", "builtIn": False}, (
-        "'available' removes the stored entry - describe reverts to {verb, builtIn}"
-    )
+    assert commands["sb/pause"] == {
+        "verb": "sb/pause",
+        "builtIn": False,
+        "scope": "both",
+    }, "'available' removes the stored entry - describe reverts to {verb, builtIn, scope}"
 
 
 def test_set_command_availability_accepts_built_in_verbs(h):
@@ -702,7 +723,7 @@ def test_set_command_availability_accepts_built_in_verbs(h):
 
 
 def test_set_command_availability_trims_and_truncates_the_reason(h):
-    h.inbox.register("sb/pause", lambda request: None)
+    h.inbox.register("sb/pause", CommandScope.BOTH, lambda request, instance: None)
     h.inbox.set_command_availability("sb/pause", "disabled", "  padded reason  ")
     h.inbox.start()
     commands = {entry["verb"]: entry for entry in _describe_result(h)["commands"]}
@@ -714,8 +735,8 @@ def test_set_command_availability_trims_and_truncates_the_reason(h):
 
 
 def test_set_command_availability_omits_an_empty_or_absent_reason(h):
-    h.inbox.register("sb/pause", lambda request: None)
-    h.inbox.register("sb/resume", lambda request: None)
+    h.inbox.register("sb/pause", CommandScope.BOTH, lambda request, instance: None)
+    h.inbox.register("sb/resume", CommandScope.BOTH, lambda request, instance: None)
     h.inbox.set_command_availability("sb/pause", "disabled")
     h.inbox.set_command_availability("sb/resume", "disabled", "   ")
     h.inbox.start()
@@ -725,7 +746,7 @@ def test_set_command_availability_omits_an_empty_or_absent_reason(h):
 
 
 def test_set_command_availability_rejects_unknown_states_and_verbs(h):
-    h.inbox.register("sb/pause", lambda request: None)
+    h.inbox.register("sb/pause", CommandScope.BOTH, lambda request, instance: None)
     with pytest.raises(ValueError):
         h.inbox.set_command_availability("sb/pause", "DISABLED")
     with pytest.raises(ValueError):
@@ -737,7 +758,7 @@ def test_set_command_availability_rejects_unknown_states_and_verbs(h):
 
 
 def test_availability_changes_the_describe_digest_and_clearing_restores_it(h):
-    h.inbox.register("sb/pause", lambda request: None)
+    h.inbox.register("sb/pause", CommandScope.BOTH, lambda request, instance: None)
     h.inbox.start()
     original = _describe_result(h)["digest"]
     h.inbox.set_command_availability("sb/pause", "disabled", "paused")
@@ -749,83 +770,446 @@ def test_availability_changes_the_describe_digest_and_clearing_restores_it(h):
     )
 
 
-# ===================== scoped registration (D-U28 addressed instance) =====================
+# ===================== declared verb scope (D-SC-1..D-SC-4) =====================
 
 
-def test_register_scoped_receives_none_for_a_component_scoped_delivery(h):
+def _instance_topic(verb, instance="plc-3"):
+    return f"ecv1/test-thing/TestComponent/{instance}/cmd/{verb}"
+
+
+def _component_topic(verb):
+    return f"ecv1/test-thing/TestComponent/cmd/{verb}"
+
+
+def _body_request(verb, body, reply_to=REPLY_TO):
+    """A well-formed request carrying an arbitrary arguments body."""
+    message = MessageBuilder.create(verb, "1.0").with_payload(body).build()
+    if reply_to is not None:
+        message.make_request(reply_to)
+    return message
+
+
+def _recorder():
+    """A handler that records every addressed instance it is given."""
     seen = []
-    h.inbox.register_scoped("sb/pause", lambda request, instance: seen.append(instance) or {"paused": True})
+
+    def handler(request, addressed_instance):
+        seen.append(addressed_instance)
+        return {"seen": addressed_instance}
+
+    return seen, handler
+
+
+# ----- registration validation -----
+
+
+@pytest.mark.parametrize("scope", ["instance", "BOTH", None, 1, CommandScope])
+def test_register_requires_a_command_scope_member_not_a_raw_value(h, scope):
+    with pytest.raises(ValueError):
+        h.inbox.register("sb/pause", scope, lambda request, instance: None)
+    with pytest.raises(ValueError):
+        h.inbox.register_outcome(
+            "sb/pause", scope, lambda request, instance: CommandOutcome.success()
+        )
+    assert "sb/pause" not in h.inbox.verbs(), (
+        "a rejected scope must not leave a half-registered verb behind"
+    )
+
+
+def test_one_handler_per_verb_holds_across_both_registration_forms(h):
+    h.inbox.register("mine", CommandScope.BOTH, lambda request, instance: None)
+    with pytest.raises(ValueError):
+        h.inbox.register("mine", CommandScope.INSTANCE, lambda request, instance: None)
+    with pytest.raises(ValueError):
+        h.inbox.register_outcome(
+            "mine", CommandScope.INSTANCE, lambda request, instance: None
+        )
+    h.inbox.register_outcome(
+        "deferred", CommandScope.INSTANCE, lambda request, instance: None
+    )
+    with pytest.raises(ValueError):
+        h.inbox.register("deferred", CommandScope.BOTH, lambda request, instance: None)
+    with pytest.raises(ValueError):
+        h.inbox.register_outcome(
+            CommandInbox.PING, CommandScope.BOTH, lambda request, instance: None
+        )
+    with pytest.raises(ValueError):
+        h.inbox.register_outcome(None, CommandScope.BOTH, lambda request, instance: None)
+    with pytest.raises(ValueError):
+        h.inbox.register_outcome("other", CommandScope.BOTH, None)
+    with pytest.raises(UnsValidationError):
+        h.inbox.register_outcome(
+            "bad+verb", CommandScope.BOTH, lambda request, instance: None
+        )
+
+
+def test_unregister_clears_the_scope_so_the_verb_can_be_re_registered_differently(h):
+    h.inbox.register("sb/pause", CommandScope.COMPONENT, lambda request, instance: None)
+    h.inbox.set_command_availability("sb/pause", "disabled", "not now")
+    h.inbox.unregister("sb/pause")
+    assert "sb/pause" not in h.inbox.verbs()
+    # The cleared scope AND the cleared availability both come back to defaults.
+    h.inbox.register("sb/pause", CommandScope.INSTANCE, lambda request, instance: None)
+    h.inbox.start()
+    commands = {entry["verb"]: entry for entry in _describe_result(h)["commands"]}
+    assert commands["sb/pause"] == {
+        "verb": "sb/pause",
+        "builtIn": False,
+        "scope": "instance",
+    }
+
+
+# ----- COMPONENT: the library refuses instance addressing before dispatch -----
+
+
+def test_component_scoped_verb_refuses_an_instance_addressed_delivery(h):
+    seen, handler = _recorder()
+    h.inbox.register("sb/discover", CommandScope.COMPONENT, handler)
     h.inbox.start()
     h.messaging.simulate_message(
-        "ecv1/test-thing/TestComponent/cmd/sb/pause", _request("sb/pause")
+        _instance_topic("sb/discover"), _request("sb/discover")
     )
-    assert seen == [None], "a component-scoped topic addresses no instance"
-    assert h.only_reply_body()["result"]["paused"] is True
+    body = h.only_reply_body()
+    assert body["ok"] is False
+    assert body["error"]["code"] == CommandInbox.ERR_BAD_ARGS
+    assert "component-scoped" in body["error"]["message"]
+    assert seen == [], "the handler must never run on an addressing error"
 
 
-def test_register_scoped_receives_the_instance_token_for_an_instance_scoped_delivery(h):
-    seen = []
-    h.inbox.register_scoped("sb/pause", lambda request, instance: seen.append(instance))
+def test_component_scoped_verb_refuses_a_body_named_instance(h):
+    seen, handler = _recorder()
+    h.inbox.register("sb/discover", CommandScope.COMPONENT, handler)
     h.inbox.start()
     h.messaging.simulate_message(
-        "ecv1/test-thing/TestComponent/plc-3/cmd/sb/pause", _request("sb/pause")
+        _component_topic("sb/discover"),
+        _body_request("sb/discover", {"instance": "plc-3"}),
     )
-    assert seen == ["plc-3"], "the instance-scoped topic's token is the addressed instance"
+    body = h.only_reply_body()
+    assert body["ok"] is False
+    assert body["error"]["code"] == CommandInbox.ERR_BAD_ARGS
+    assert "component-scoped" in body["error"]["message"]
+    assert seen == []
 
 
-def test_register_scoped_error_handling_matches_plain_handlers(h):
-    def handler(request, instance):
-        raise CommandException("NOT_NOW", f"instance {instance} is busy")
-
-    h.inbox.register_scoped("sb/pause", handler)
+def test_component_scoped_verb_dispatches_with_none_on_a_component_delivery(h):
+    seen, handler = _recorder()
+    h.inbox.register("sb/discover", CommandScope.COMPONENT, handler)
     h.inbox.start()
     h.messaging.simulate_message(
-        "ecv1/test-thing/TestComponent/plc-3/cmd/sb/pause", _request("sb/pause")
+        _component_topic("sb/discover"), _request("sb/discover")
     )
+    assert seen == [None]
+    assert h.only_reply_body()["result"] == {"seen": None}
+
+
+def test_component_scoped_conflict_is_refused_as_a_conflict_first(h):
+    # The universal conflict rule is evaluated before the scope-specific rejection.
+    seen, handler = _recorder()
+    h.inbox.register("sb/discover", CommandScope.COMPONENT, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(
+        _instance_topic("sb/discover"),
+        _body_request("sb/discover", {"instance": "plc-9"}),
+    )
+    body = h.only_reply_body()
+    assert body["error"]["code"] == CommandInbox.ERR_BAD_ARGS
+    assert body["error"]["message"] == (
+        "instance in body conflicts with the addressed instance"
+    )
+    assert seen == []
+
+
+# ----- the universal conflict rule (checked first, every scope) -----
+
+
+@pytest.mark.parametrize("scope", [CommandScope.INSTANCE, CommandScope.BOTH])
+def test_a_body_instance_conflicting_with_the_topic_is_bad_args(h, scope):
+    seen, handler = _recorder()
+    h.inbox.register("sb/pause", scope, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(
+        _instance_topic("sb/pause", "plc-3"),
+        _body_request("sb/pause", {"instance": "plc-9"}),
+    )
+    body = h.only_reply_body()
+    assert body["ok"] is False
+    assert body["error"]["code"] == CommandInbox.ERR_BAD_ARGS
+    assert body["error"]["message"] == (
+        "instance in body conflicts with the addressed instance"
+    )
+    assert seen == [], "the conflict is refused before the handler (and before existence)"
+
+
+def test_a_body_instance_agreeing_with_the_topic_is_not_a_conflict(h):
+    seen, handler = _recorder()
+    h.inbox.register("sb/pause", CommandScope.INSTANCE, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(
+        _instance_topic("sb/pause", "plc-3"),
+        _body_request("sb/pause", {"instance": "plc-3"}),
+    )
+    assert seen == ["plc-3"]
+    assert h.only_reply_body()["ok"] is True
+
+
+@pytest.mark.parametrize("body", [{"instance": 7}, {"instance": "   "}, {"instance": None}, []])
+def test_a_non_string_or_blank_body_instance_names_no_instance(h, body):
+    seen, handler = _recorder()
+    h.inbox.register("sb/pause", CommandScope.INSTANCE, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(
+        _component_topic("sb/pause"), _body_request("sb/pause", body)
+    )
+    assert seen == [None]
+
+
+def test_a_body_that_cannot_be_read_names_no_instance(h):
+    # A hostile/unreadable body must never break addressing - it simply names no
+    # instance and the delivery resolves from the topic alone.
+    class _UnreadableBody:
+        def __init__(self, request):
+            self._request = request
+
+        def get_header(self):
+            return self._request.get_header()
+
+        def get_body(self):
+            raise RuntimeError("corrupt body")
+
+    seen, handler = _recorder()
+    h.inbox.register("sb/pause", CommandScope.INSTANCE, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(
+        _instance_topic("sb/pause"), _UnreadableBody(_request("sb/pause"))
+    )
+    assert seen == ["plc-3"]
+
+
+# ----- INSTANCE / BOTH resolution -----
+
+
+def test_instance_scoped_verb_resolves_the_topic_token(h):
+    seen, handler = _recorder()
+    h.inbox.register("sb/pause", CommandScope.INSTANCE, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(_instance_topic("sb/pause"), _request("sb/pause"))
+    assert seen == ["plc-3"]
+    assert h.only_reply_body()["result"] == {"seen": "plc-3"}
+
+
+def test_instance_scoped_verb_resolves_the_body_instance_on_a_component_delivery(h):
+    seen, handler = _recorder()
+    h.inbox.register("sb/pause", CommandScope.INSTANCE, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(
+        _component_topic("sb/pause"), _body_request("sb/pause", {"instance": "plc-7"})
+    )
+    assert seen == ["plc-7"]
+
+
+def test_instance_scoped_verb_passes_none_through_when_nothing_names_an_instance(h):
+    # The optional-iff-one default and NO_SUCH_INSTANCE need configuration knowledge
+    # the library does not have, so None reaches the handler and the component decides.
+    seen, handler = _recorder()
+    h.inbox.register("sb/pause", CommandScope.INSTANCE, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(_component_topic("sb/pause"), _request("sb/pause"))
+    assert seen == [None]
+    assert h.only_reply_body()["ok"] is True
+
+
+def test_both_scoped_verb_receives_none_for_the_whole_component(h):
+    seen, handler = _recorder()
+    h.inbox.register("sb/pause", CommandScope.BOTH, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(_component_topic("sb/pause"), _request("sb/pause"))
+    assert seen == [None], "None at a BOTH verb means 'the whole component'"
+    assert h.only_reply_body()["result"] == {"seen": None}
+
+
+def test_both_scoped_verb_receives_the_topic_token(h):
+    seen, handler = _recorder()
+    h.inbox.register("sb/pause", CommandScope.BOTH, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(_instance_topic("sb/pause"), _request("sb/pause"))
+    assert seen == ["plc-3"]
+
+
+def test_scoped_handler_error_handling_matches_the_plain_reply_path(h):
+    def handler(request, addressed_instance):
+        raise CommandException("NOT_NOW", f"instance {addressed_instance} is busy")
+
+    h.inbox.register("sb/pause", CommandScope.INSTANCE, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(_instance_topic("sb/pause"), _request("sb/pause"))
     body = h.only_reply_body()
     assert body["ok"] is False
     assert body["error"]["code"] == "NOT_NOW"
     assert body["error"]["message"] == "instance plc-3 is busy"
 
 
-def test_register_scoped_participates_in_describe_and_verbs(h):
-    h.inbox.register_scoped("sb/pause", lambda request, instance: None)
-    assert "sb/pause" in h.inbox.verbs()
-    h.inbox.start()
-    commands = {entry["verb"]: entry for entry in _describe_result(h)["commands"]}
-    assert commands["sb/pause"] == {"verb": "sb/pause", "builtIn": False}
-
-
-def test_register_scoped_keeps_the_one_handler_per_verb_rule(h):
-    h.inbox.register("mine", lambda request: None)
-    with pytest.raises(ValueError):
-        h.inbox.register_scoped("mine", lambda request, instance: None)
-    h.inbox.register_scoped("scoped", lambda request, instance: None)
-    with pytest.raises(ValueError):
-        h.inbox.register("scoped", lambda request: None)
-    with pytest.raises(ValueError):
-        h.inbox.register_scoped("scoped", lambda request, instance: None)
-    with pytest.raises(ValueError):
-        h.inbox.register_scoped(CommandInbox.PING, lambda request, instance: None)
-    with pytest.raises(ValueError):
-        h.inbox.register_scoped(None, lambda request, instance: None)
-    with pytest.raises(ValueError):
-        h.inbox.register_scoped("scoped2", None)
-    h.inbox.unregister("scoped")
-    assert "scoped" not in h.inbox.verbs()
-
-
-def test_plain_register_never_sees_the_addressed_instance(h):
-    # The existing register contract is untouched: the handler still takes only the
-    # request, whichever scope the delivery arrived on.
-    calls = []
-    h.inbox.register("mine", lambda request: calls.append(request) or {"ok": 1})
+def test_a_fire_and_forget_addressing_error_is_logged_not_replied(h):
+    seen, handler = _recorder()
+    h.inbox.register("sb/discover", CommandScope.COMPONENT, handler)
     h.inbox.start()
     h.messaging.simulate_message(
-        "ecv1/test-thing/TestComponent/plc-3/cmd/mine", _request("mine")
+        _instance_topic("sb/discover"), _notification("sb/discover")
     )
-    assert len(calls) == 1
-    assert h.only_reply_body()["result"] == {"ok": 1}
+    assert not h.messaging.published, "an addressing error without reply_to is not replied to"
+    assert seen == []
+
+
+# ----- outcome form parity -----
+
+
+def test_the_outcome_form_receives_the_addressed_instance(h):
+    seen = []
+
+    def handler(request, addressed_instance):
+        seen.append(addressed_instance)
+        return CommandOutcome.success({"seen": addressed_instance})
+
+    h.inbox.register_outcome("sb/capture", CommandScope.INSTANCE, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(_instance_topic("sb/capture"), _request("sb/capture"))
+    assert seen == ["plc-3"]
+    assert h.only_reply_body()["result"] == {"seen": "plc-3"}
+
+
+def test_the_outcome_form_resolves_the_body_instance_and_passes_none_through(h):
+    seen = []
+
+    def handler(request, addressed_instance):
+        seen.append(addressed_instance)
+        return CommandOutcome.success()
+
+    h.inbox.register_outcome("sb/capture", CommandScope.BOTH, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(
+        _component_topic("sb/capture"),
+        _body_request("sb/capture", {"instance": "plc-7"}),
+    )
+    h.messaging.simulate_message(_component_topic("sb/capture"), _request("sb/capture"))
+    assert seen == ["plc-7", None]
+
+
+@pytest.mark.parametrize(
+    ("topic", "body", "expected_message"),
+    [
+        (
+            _instance_topic("sb/discover"),
+            {},
+            "verb 'sb/discover' is component-scoped",
+        ),
+        (
+            _component_topic("sb/discover"),
+            {"instance": "plc-3"},
+            "verb 'sb/discover' is component-scoped - the body must not name an"
+            " instance",
+        ),
+        (
+            _instance_topic("sb/discover"),
+            {"instance": "plc-9"},
+            "instance in body conflicts with the addressed instance",
+        ),
+    ],
+)
+def test_the_outcome_form_is_refused_before_dispatch_too(h, topic, body, expected_message):
+    seen = []
+
+    def handler(request, addressed_instance):
+        seen.append(addressed_instance)
+        return CommandOutcome.success()
+
+    h.inbox.register_outcome("sb/discover", CommandScope.COMPONENT, handler)
+    h.inbox.start()
+    h.messaging.simulate_message(topic, _body_request("sb/discover", body))
+    reply = h.only_reply_body()
+    assert reply["error"]["code"] == CommandInbox.ERR_BAD_ARGS
+    assert reply["error"]["message"] == expected_message
+    assert seen == []
+
+
+# ----- built-ins are scope-indifferent -----
+
+
+@pytest.mark.parametrize(
+    "verb",
+    [
+        CommandInbox.PING,
+        CommandInbox.STATUS,
+        CommandInbox.DESCRIBE,
+        CommandInbox.GET_CONFIGURATION,
+        CommandInbox.RELOAD_CONFIG,
+    ],
+)
+def test_built_ins_answer_identically_on_both_scopes(h, verb):
+    h.inbox.start()
+    h.messaging.simulate_message(_component_topic(verb), _request(verb))
+    h.messaging.simulate_message(_instance_topic(verb), _request(verb))
+    assert len(h.messaging.published) == 2
+    component_body = h.messaging.published[0].message.get_body()
+    instance_body = h.messaging.published[1].message.get_body()
+    assert component_body["ok"] is True
+    assert component_body == instance_body, (
+        "a BOTH-scoped built-in ignores the addressed instance"
+    )
+
+
+def test_built_ins_are_declared_both_in_describe(h):
+    h.inbox.start()
+    scopes = {
+        entry["verb"]: entry["scope"] for entry in _describe_result(h)["commands"]
+    }
+    assert scopes == {verb: "both" for verb in CommandInbox.BUILT_IN_VERBS}
+
+
+# ----- describe advertises the scope -----
+
+
+def test_describe_entry_carries_the_scope_in_the_pinned_key_order(h):
+    h.inbox.register("sb/pause", CommandScope.INSTANCE, lambda request, instance: None)
+    h.inbox.register(
+        "sb/discover", CommandScope.COMPONENT, lambda request, instance: None
+    )
+    h.inbox.set_command_availability("sb/pause", "disabled", "line stopped")
+    h.inbox.start()
+    commands = {entry["verb"]: entry for entry in _describe_result(h)["commands"]}
+    assert list(commands["sb/pause"].keys()) == [
+        "verb",
+        "builtIn",
+        "scope",
+        "availability",
+    ], "the entry shape is {verb, builtIn, scope, availability?}"
+    assert commands["sb/pause"] == {
+        "verb": "sb/pause",
+        "builtIn": False,
+        "scope": "instance",
+        "availability": {"state": "disabled", "reason": "line stopped"},
+    }
+    assert commands["sb/discover"] == {
+        "verb": "sb/discover",
+        "builtIn": False,
+        "scope": "component",
+    }
+    assert list(commands[CommandInbox.PING].keys()) == ["verb", "builtIn", "scope"]
+
+
+def test_changing_a_verb_scope_changes_the_describe_digest(h):
+    h.inbox.register("sb/pause", CommandScope.INSTANCE, lambda request, instance: None)
+    h.inbox.start()
+    instance_scoped = _describe_result(h)["digest"]
+    h.inbox.unregister("sb/pause")
+    h.inbox.register("sb/pause", CommandScope.BOTH, lambda request, instance: None)
+    widened = _describe_result(h)["digest"]
+    assert widened != instance_scoped, (
+        "the declared scope participates in the describe digest"
+    )
+    h.inbox.unregister("sb/pause")
+    h.inbox.register("sb/pause", CommandScope.INSTANCE, lambda request, instance: None)
+    assert _describe_result(h)["digest"] == instance_scoped, (
+        "restoring the scope restores the digest"
+    )
 
 
 # ===================== unknown / fire-and-forget / malformed =====================
@@ -847,7 +1231,7 @@ def test_unknown_fire_and_forget_verb_is_ignored(h):
 
 def test_no_reply_to_runs_the_handler_without_replying(h):
     ran = []
-    h.inbox.register("do-it", lambda request: ran.append(True))
+    h.inbox.register("do-it", CommandScope.BOTH, lambda request, instance: ran.append(True))
     h.inbox.start()
     h.messaging.simulate_message(_topic("do-it"), _notification("do-it"))
     assert ran, "a fire-and-forget command must still run the handler"
@@ -855,20 +1239,20 @@ def test_no_reply_to_runs_the_handler_without_replying(h):
 
 
 def test_fire_and_forget_handler_failure_is_logged_only(h):
-    def handler(request):
+    def handler(request, instance):
         raise CommandException("NOPE", "nope")
 
-    h.inbox.register("do-it", handler)
+    h.inbox.register("do-it", CommandScope.BOTH, handler)
     h.inbox.start()
     h.messaging.simulate_message(_topic("do-it"), _notification("do-it"))  # must not raise
     assert not h.messaging.published
 
 
 def test_fire_and_forget_uncoded_handler_failure_is_logged_only(h):
-    def handler(request):
+    def handler(request, instance):
         raise ValueError("boom")
 
-    h.inbox.register("do-it", handler)
+    h.inbox.register("do-it", CommandScope.BOTH, handler)
     h.inbox.start()
     h.messaging.simulate_message(_topic("do-it"), _notification("do-it"))  # must not raise
     assert not h.messaging.published

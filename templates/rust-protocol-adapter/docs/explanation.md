@@ -104,9 +104,14 @@ online) — a boolean alone cannot distinguish "still trying" from "administrati
 
 ## Command routing and the allow-list
 
-The command surface is a single component-scope subscription
-(`ecv1/{device}/<<BINNAME>>/cmd/#`); the target device is chosen by an optional `instance` field in
-the request body (required once more than one device is configured — D-EIP-13 instance routing).
+The command surface rides the library's inbox, which subscribes both cmd wildcards
+(`ecv1/{device}/<<BINNAME>>/cmd/#` and `ecv1/{device}/<<BINNAME>>/+/cmd/#`). Every `sb/*` verb
+declares scope `instance`, so the **library** resolves the addressing before a handler runs: the
+topic's instance token is authoritative, a component-addressed request may name the device in the
+body instead, and a body `instance` disagreeing with the topic token is `BAD_ARGS`. `commands.rs`
+receives the resolved instance and only does the part that needs this component's configuration —
+an instance it has no device for is `NO_SUCH_INSTANCE`, and an unnamed one is the sole configured
+device, or `BAD_ARGS` once there are two or more.
 Writes are allow-listed **by stable `signal.id`**, checked before any device I/O — an adapter that
 writes whatever address it is asked to is a control-system vulnerability, not a feature, so the
 default (`writes.allow: []`) is read-only, and opening it up is a deliberate per-signal act.

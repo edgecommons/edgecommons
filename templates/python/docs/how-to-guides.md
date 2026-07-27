@@ -56,7 +56,7 @@ Register it on the builder, **before** `gg.set_ready(True)`, alongside the autom
 gg = (
     EdgeCommonsBuilder.create("<<COMPONENTFULLNAME>>")
     .with_args(sys.argv[1:])
-    .configure_commands(lambda inbox: inbox.register("my-verb", my_handler))
+    .configure_commands(lambda inbox: inbox.register("my-verb", CommandScope.BOTH, my_handler))
     .build()
 )
 ```

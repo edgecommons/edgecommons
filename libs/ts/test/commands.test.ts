@@ -14,6 +14,9 @@
  *   responder's identity;
  * - custom verbs register/dispatch (namespaced verbs included), cannot shadow built-ins or each
  *   other, and unregister; coded (`CommandException`) vs uncoded (`HANDLER_ERROR`) failures;
+ * - every verb declares a `CommandScope` and the inbox enforces it before dispatch (D-SC-2):
+ *   the topic/body conflict rule first, then the component-scope rejection, then the resolved
+ *   `addressedInstance` handed to both registration forms;
  * - unknown verbs get an `UNKNOWN_VERB` error reply (requests) or are ignored
  *   (fire-and-forget); no-`reply_to` commands run the handler without a reply;
  * - malformed payloads (name mismatch, headerless, null) and the delegated `set-config` verb
@@ -34,6 +37,7 @@ import {
   CommandInboxState,
   CommandException,
   CommandOutcomes,
+  CommandScopes,
   DeferredReply,
   DeferredReplyState,
   SettlementResult,
@@ -199,7 +203,7 @@ describe("CommandInbox", () => {
   it("retains a delivery racing subscription acknowledgement until ACTIVE", async () => {
     const releases: Array<() => void> = [];
     let handlerRan = false;
-    inbox.register("startup-race", () => {
+    inbox.register("startup-race", "both", () => {
       handlerRan = true;
       return {};
     });
@@ -384,11 +388,11 @@ describe("CommandInbox", () => {
   });
 
   it("status is a built-in: a component cannot shadow it", () => {
-    expect(() => inbox.register(CommandInbox.STATUS, () => null)).toThrow(/built-in/);
+    expect(() => inbox.register(CommandInbox.STATUS, "both", () => null)).toThrow(/built-in/);
   });
 
   it("describe includes component identity, built-ins, custom verbs, panels, and a stable digest", async () => {
-    inbox.register("sb/browse", () => ({ nodes: [] }));
+    inbox.register("sb/browse", "instance", () => ({ nodes: [] }));
     const overview = {
       id: "overview",
       title: "Overview",
@@ -412,12 +416,12 @@ describe("CommandInbox", () => {
       component: "TestComponent",
     });
     expect(result.commands).toEqual([
-      { verb: CommandInbox.DESCRIBE, builtIn: true },
-      { verb: CommandInbox.GET_CONFIGURATION, builtIn: true },
-      { verb: CommandInbox.PING, builtIn: true },
-      { verb: CommandInbox.RELOAD_CONFIG, builtIn: true },
-      { verb: "sb/browse", builtIn: false },
-      { verb: CommandInbox.STATUS, builtIn: true },
+      { verb: CommandInbox.DESCRIBE, builtIn: true, scope: "both" },
+      { verb: CommandInbox.GET_CONFIGURATION, builtIn: true, scope: "both" },
+      { verb: CommandInbox.PING, builtIn: true, scope: "both" },
+      { verb: CommandInbox.RELOAD_CONFIG, builtIn: true, scope: "both" },
+      { verb: "sb/browse", builtIn: false, scope: "instance" },
+      { verb: CommandInbox.STATUS, builtIn: true, scope: "both" },
     ]);
     expect(result.panels).toEqual({
       schemaVersion: "edgecommons.panels.v2",
@@ -497,7 +501,7 @@ describe("CommandInbox", () => {
 
   it("a custom verb registers and dispatches", async () => {
     await inbox.start(); // registration after start needs no new subscription
-    inbox.register("restart-pipeline", () => ({ restarted: true }));
+    inbox.register("restart-pipeline", "both", () => ({ restarted: true }));
     await deliver(messaging, topic("restart-pipeline"), request("restart-pipeline"));
     const body = onlyReplyBody(messaging);
     expect(body.ok).toBe(true);
@@ -505,7 +509,7 @@ describe("CommandInbox", () => {
   });
 
   it("a namespaced custom verb dispatches", async () => {
-    inbox.register("sb/status", () => null); // null result -> empty ack
+    inbox.register("sb/status", "both", () => null); // null result -> empty ack
     await inbox.start();
     await deliver(messaging, topic("sb/status"), request("sb/status"));
     const body = onlyReplyBody(messaging);
@@ -514,7 +518,7 @@ describe("CommandInbox", () => {
   });
 
   it("a handler's CommandException keeps its code", async () => {
-    inbox.register("guarded", () => {
+    inbox.register("guarded", "both", () => {
       throw new CommandException("NOT_ALLOWED", "operator role required");
     });
     await inbox.start();
@@ -527,7 +531,7 @@ describe("CommandInbox", () => {
   });
 
   it("a handler's uncoded exception maps to HANDLER_ERROR", async () => {
-    inbox.register("boomy", () => {
+    inbox.register("boomy", "both", () => {
       throw new Error("boom");
     });
     await inbox.start();
@@ -538,7 +542,7 @@ describe("CommandInbox", () => {
   });
 
   it("an async handler's rejected promise maps to HANDLER_ERROR", async () => {
-    inbox.register("async-boomy", async () => {
+    inbox.register("async-boomy", "both", async () => {
       throw new Error("async boom");
     });
     await inbox.start();
@@ -549,30 +553,30 @@ describe("CommandInbox", () => {
   });
 
   it("register rejects shadowing and invalid verbs", () => {
-    expect(() => inbox.register(CommandInbox.PING, () => null), "a built-in verb cannot be shadowed").toThrow(
+    expect(() => inbox.register(CommandInbox.PING, "both", () => null), "a built-in verb cannot be shadowed").toThrow(
       /built-in/,
     );
-    expect(() => inbox.register(CommandInbox.DESCRIBE, () => null), "describe cannot be shadowed").toThrow(
+    expect(() => inbox.register(CommandInbox.DESCRIBE, "both", () => null), "describe cannot be shadowed").toThrow(
       /built-in/,
     );
     expect(
-      () => inbox.register(CommandInbox.SET_CONFIG_VERB, () => null),
+      () => inbox.register(CommandInbox.SET_CONFIG_VERB, "both", () => null),
       "a delegated verb cannot be registered",
     ).toThrow(/owned by another/);
-    inbox.register("mine", () => null);
-    expect(() => inbox.register("mine", () => null), "an already-registered verb cannot be re-registered").toThrow(
+    inbox.register("mine", "both", () => null);
+    expect(() => inbox.register("mine", "both", () => null), "an already-registered verb cannot be re-registered").toThrow(
       /already registered/,
     );
-    expect(() => inbox.register("bad+verb", () => null), "verb tokens must pass the topic token rule").toThrow(
+    expect(() => inbox.register("bad+verb", "both", () => null), "verb tokens must pass the topic token rule").toThrow(
       UnsValidationError,
     );
-    expect(() => inbox.register("sb//x", () => null), "empty namespace tokens are rejected").toThrow(
+    expect(() => inbox.register("sb//x", "both", () => null), "empty namespace tokens are rejected").toThrow(
       UnsValidationError,
     );
   });
 
   it("unregister removes custom verbs but never built-ins", async () => {
-    inbox.register("mine", () => null);
+    inbox.register("mine", "both", () => null);
     expect(inbox.verbs().has("mine")).toBe(true);
     inbox.unregister("mine");
     expect(inbox.verbs().has("mine")).toBe(false);
@@ -586,7 +590,7 @@ describe("CommandInbox", () => {
   });
 
   it("verbs() snapshot contains built-ins and customs", () => {
-    inbox.register("mine", () => null);
+    inbox.register("mine", "both", () => null);
     expect(inbox.verbs()).toEqual(
       new Set([
         CommandInbox.PING,
@@ -619,8 +623,8 @@ describe("CommandInbox", () => {
   // ===================== explicit outcomes + deferred replies =====================
 
   it("explicit immediate outcomes preserve the standard success and coded-error bodies", async () => {
-    inbox.registerOutcome("accepted", () => CommandOutcomes.success({ durable: true }));
-    inbox.registerOutcome("rejected", () => CommandOutcomes.error("NOT_ACCEPTED", "queue is draining"));
+    inbox.registerOutcome("accepted", "both", () => CommandOutcomes.success({ durable: true }));
+    inbox.registerOutcome("rejected", "both", () => CommandOutcomes.error("NOT_ACCEPTED", "queue is draining"));
     await inbox.start();
 
     await deliver(messaging, topic("accepted"), request("accepted"));
@@ -635,18 +639,18 @@ describe("CommandInbox", () => {
   });
 
   it("legacy and explicit-outcome registrations share one no-shadowing namespace", () => {
-    inbox.registerOutcome("job", () => CommandOutcomes.success());
-    expect(() => inbox.register("job", () => null)).toThrow(/already registered/);
+    inbox.registerOutcome("job", "both", () => CommandOutcomes.success());
+    expect(() => inbox.register("job", "both", () => null)).toThrow(/already registered/);
     expect(inbox.verbs()).toContain("job");
     inbox.unregister("job");
     expect(inbox.verbs()).not.toContain("job");
-    inbox.register("job", () => null);
-    expect(() => inbox.registerOutcome("job", () => CommandOutcomes.success())).toThrow(/already registered/);
+    inbox.register("job", "both", () => null);
+    expect(() => inbox.registerOutcome("job", "both", () => CommandOutcomes.success())).toThrow(/already registered/);
   });
 
   it("provisions before durable commit, activates after commit, and confirms exactly one reply", async () => {
     let token: DeferredReply | undefined;
-    inbox.registerOutcome("capture", (req) => {
+    inbox.registerOutcome("capture", "both", (req) => {
       token = inbox.defer(req, 2_000);
       expect(token.state()).toBe(DeferredReplyState.Provisional);
       // This line represents the application durable-acceptance commit boundary.
@@ -677,7 +681,7 @@ describe("CommandInbox", () => {
   it("starts a post-accept continuation only after the inbox accepts an open token", async () => {
     let token: DeferredReply | undefined;
     let continuationRan = false;
-    inbox.registerOutcome("post-accept", (req) => {
+    inbox.registerOutcome("post-accept", "both", (req) => {
       token = inbox.defer(req, 2_000);
       expect(token.activate()).toBe(true);
       const settlement = token;
@@ -700,7 +704,7 @@ describe("CommandInbox", () => {
 
   it("does not start a post-accept continuation for an invalid token", async () => {
     let continuationRan = false;
-    inbox.registerOutcome("post-accept-invalid", (req) => {
+    inbox.registerOutcome("post-accept-invalid", "both", (req) => {
       const token = inbox.defer(req, 1_000);
       // Deliberately leave this token PROVISIONAL.
       return CommandOutcomes.deferredWithContinuation(token, () => {
@@ -719,7 +723,7 @@ describe("CommandInbox", () => {
 
   it("settles a failed post-accept continuation through the guarded error path", async () => {
     let token: DeferredReply | undefined;
-    inbox.registerOutcome("post-accept-failure", (req) => {
+    inbox.registerOutcome("post-accept-failure", "both", (req) => {
       token = inbox.defer(req, 2_000);
       expect(token.activate()).toBe(true);
       return CommandOutcomes.deferredWithContinuation(token, async () => {
@@ -737,7 +741,7 @@ describe("CommandInbox", () => {
 
   it("discards a provisional token when a handler returns it without durable activation", async () => {
     let token: DeferredReply | undefined;
-    inbox.registerOutcome("bad-defer", (req) => {
+    inbox.registerOutcome("bad-defer", "both", (req) => {
       token = inbox.defer(req, 1_000);
       return CommandOutcomes.deferred(token);
     });
@@ -973,7 +977,7 @@ describe("CommandInbox", () => {
 
   it("no reply_to runs the handler without replying", async () => {
     let ran = false;
-    inbox.register("do-it", () => {
+    inbox.register("do-it", "both", () => {
       ran = true;
       return null;
     });
@@ -984,7 +988,7 @@ describe("CommandInbox", () => {
   });
 
   it("a fire-and-forget handler failure is logged only", async () => {
-    inbox.register("do-it", () => {
+    inbox.register("do-it", "both", () => {
       throw new CommandException("NOPE", "nope");
     });
     await inbox.start();
@@ -1068,7 +1072,7 @@ describe("CommandInbox", () => {
   });
 
   it("a fire-and-forget handler's uncoded exception is logged only (never replied)", async () => {
-    inbox.register("boomy", () => {
+    inbox.register("boomy", "both", () => {
       throw new Error("boom");
     });
     await inbox.start();
@@ -1123,30 +1127,40 @@ describe("CommandInbox", () => {
   }
 
   it("setCommandAvailability surfaces {state, reason} on the verb's describe entry", async () => {
-    inbox.register("sb/write", () => null);
+    inbox.register("sb/write", "both", () => null);
     inbox.setCommandAvailability("sb/write", "disabled", "writes.allow[] is empty");
     await inbox.start();
     const result = await describeResult();
     expect(commandEntry(result, "sb/write")).toEqual({
       verb: "sb/write",
       builtIn: false,
+      scope: "both",
       availability: { state: "disabled", reason: "writes.allow[] is empty" },
     });
     // Verbs without a stored non-available state carry no availability key.
-    expect(commandEntry(result, CommandInbox.PING)).toEqual({ verb: CommandInbox.PING, builtIn: true });
+    expect(commandEntry(result, CommandInbox.PING)).toEqual({
+      verb: CommandInbox.PING,
+      builtIn: true,
+      scope: "both",
+    });
   });
 
   it("setCommandAvailability 'available' removes the stored entry (describe reverts)", async () => {
-    inbox.register("sb/write", () => null);
+    inbox.register("sb/write", "both", () => null);
     inbox.setCommandAvailability("sb/write", "unsupported");
     await inbox.start();
     expect(commandEntry(await describeResult(), "sb/write")).toEqual({
       verb: "sb/write",
       builtIn: false,
+      scope: "both",
       availability: { state: "unsupported" },
     });
     inbox.setCommandAvailability("sb/write", "available");
-    expect(commandEntry(await describeResult(), "sb/write")).toEqual({ verb: "sb/write", builtIn: false });
+    expect(commandEntry(await describeResult(), "sb/write")).toEqual({
+      verb: "sb/write",
+      builtIn: false,
+      scope: "both",
+    });
   });
 
   it("setCommandAvailability works for built-in verbs too", async () => {
@@ -1155,14 +1169,15 @@ describe("CommandInbox", () => {
     expect(commandEntry(await describeResult(), CommandInbox.RELOAD_CONFIG)).toEqual({
       verb: CommandInbox.RELOAD_CONFIG,
       builtIn: true,
+      scope: "both",
       availability: { state: "disabled", reason: "config source is read-only" },
     });
   });
 
   it("setCommandAvailability trims, truncates (256), and omits an empty reason", async () => {
-    inbox.register("a", () => null);
-    inbox.register("b", () => null);
-    inbox.register("c", () => null);
+    inbox.register("a", "both", () => null);
+    inbox.register("b", "both", () => null);
+    inbox.register("c", "both", () => null);
     inbox.setCommandAvailability("a", "disabled", "  padded reason  ");
     inbox.setCommandAvailability("b", "disabled", `${"x".repeat(300)}`);
     inbox.setCommandAvailability("c", "disabled", "   ");
@@ -1186,7 +1201,7 @@ describe("CommandInbox", () => {
   });
 
   it("availability changes the describe digest; clearing restores it", async () => {
-    inbox.register("sb/write", () => null);
+    inbox.register("sb/write", "both", () => null);
     await inbox.start();
     const original = (await describeResult()).digest;
     inbox.setCommandAvailability("sb/write", "disabled", "maintenance");
@@ -1196,76 +1211,421 @@ describe("CommandInbox", () => {
     expect((await describeResult()).digest, "clearing availability restores the original digest").toBe(original);
   });
 
-  // ===================== scoped registration (the addressed instance, D-U28) =====================
+  // ===================== declared verb scope (D-SC-2, the 0.5.0 addressing model) ===============
 
   /** An instance-scope delivery topic (`.../{instance}/cmd/{verb}`). */
   function instanceTopic(instance: string, verb: string): string {
     return `ecv1/test-thing/TestComponent/${instance}/cmd/${verb}`;
   }
 
-  it("a scoped handler receives undefined for component scope and the token for instance scope", async () => {
-    const seen: Array<string | undefined> = [];
-    inbox.registerScoped("sb/status", (req, addressedInstance) => {
-      seen.push(addressedInstance);
-      return { got: req.getBody() === null ? null : true };
+  /** A well-formed request whose body carries the given fields (e.g. a body-named `instance`). */
+  function requestWithBody(verb: string, body: Record<string, unknown>): Message {
+    return MessageBuilder.create(verb, "1.0").withPayload(body).withReplyTo(REPLY_TO).build();
+  }
+
+  /** The single reply's coded error (asserts the reply is an error reply). */
+  function onlyErrorReply(svc: RecordingMessagingService): Record<string, unknown> {
+    const body = onlyReplyBody(svc);
+    expect(body.ok, "an addressing violation must produce an error reply").toBe(false);
+    return body.error as Record<string, unknown>;
+  }
+
+  // --------------------- registration validation ---------------------
+
+  it("register/registerOutcome require one of the three declared scopes", () => {
+    expect(() => inbox.register("bad-scope", "COMPONENT" as unknown as "component", () => null)).toThrow(
+      /must be 'component', 'instance', or 'both'/,
+    );
+    expect(() => inbox.register("bad-scope", "" as unknown as "component", () => null)).toThrow(
+      /must be 'component', 'instance', or 'both'/,
+    );
+    expect(() => inbox.register("bad-scope", undefined as unknown as "component", () => null)).toThrow(
+      /must be 'component', 'instance', or 'both'/,
+    );
+    expect(() =>
+      inbox.registerOutcome("bad-scope", "anything" as unknown as "both", () => CommandOutcomes.success()),
+    ).toThrow(/must be 'component', 'instance', or 'both'/);
+    // A rejected scope registers nothing.
+    expect(inbox.verbs().has("bad-scope")).toBe(false);
+  });
+
+  it("the three CommandScopes constants are exactly the accepted scope strings", () => {
+    expect(CommandScopes).toEqual({ Component: "component", Instance: "instance", Both: "both" });
+    inbox.register("c", CommandScopes.Component, () => null);
+    inbox.register("i", CommandScopes.Instance, () => null);
+    inbox.register("b", CommandScopes.Both, () => null);
+    expect(inbox.verbs()).toContain("c");
+    expect(inbox.verbs()).toContain("i");
+    expect(inbox.verbs()).toContain("b");
+  });
+
+  it("both registration forms share one no-shadowing namespace, whatever the scope", () => {
+    inbox.register("sb/status", "instance", () => null);
+    expect(() => inbox.register("sb/status", "component", () => null)).toThrow(/already registered/);
+    expect(() =>
+      inbox.registerOutcome("sb/status", "both", () => CommandOutcomes.success()),
+    ).toThrow(/already registered/);
+    expect(() => inbox.register(CommandInbox.PING, "both", () => null)).toThrow(/built-in/);
+    // ...and the other direction.
+    inbox.registerOutcome("sb/capture", "instance", () => CommandOutcomes.success());
+    expect(() => inbox.register("sb/capture", "instance", () => null)).toThrow(/already registered/);
+  });
+
+  it("unregister clears the declared scope and the availability together", async () => {
+    inbox.register("sb/pause", "instance", () => null);
+    inbox.setCommandAvailability("sb/pause", "disabled", "maintenance");
+    inbox.unregister("sb/pause");
+    expect(inbox.verbs().has("sb/pause")).toBe(false);
+    // Re-registering at a different scope starts from a clean slate: no stale availability, and
+    // the describe entry carries the NEW scope.
+    inbox.register("sb/pause", "component", () => null);
+    await inbox.start();
+    expect(commandEntry(await describeResult(), "sb/pause")).toEqual({
+      verb: "sb/pause",
+      builtIn: false,
+      scope: "component",
+    });
+  });
+
+  // --------------------- COMPONENT scope: the library refuses instance addressing ---------------
+
+  it("a component-scoped verb refuses an instance-addressed delivery without invoking the handler", async () => {
+    let invoked = false;
+    inbox.register("sb/discover", "component", () => {
+      invoked = true;
+      return { found: [] };
     });
     await inbox.start();
 
-    await deliver(messaging, topic("sb/status"), request("sb/status"));
-    expect(onlyReplyBody(messaging).ok).toBe(true);
-    messaging.published.length = 0;
-
-    await deliver(messaging, instanceTopic("kep1", "sb/status"), request("sb/status"));
-    expect(onlyReplyBody(messaging).ok).toBe(true);
-
-    expect(seen, "component scope -> undefined; instance scope -> the topic's token").toEqual([undefined, "kep1"]);
+    await deliver(messaging, instanceTopic("kep1", "sb/discover"), request("sb/discover"));
+    const error = onlyErrorReply(messaging);
+    expect(error.code).toBe(CommandInbox.ERR_BAD_ARGS);
+    expect(error.message).toBe("verb 'sb/discover' is component-scoped");
+    expect(invoked, "the handler must never run on an addressing error (D-SC-2)").toBe(false);
   });
 
-  it("a scoped handler participates in describe/verbs and enforces one-handler-per-verb", async () => {
-    inbox.registerScoped("sb/status", () => null);
-    expect(inbox.verbs().has("sb/status")).toBe(true);
-    expect(() => inbox.register("sb/status", () => null)).toThrow(/already registered/);
-    expect(() => inbox.registerScoped("sb/status", () => null)).toThrow(/already registered/);
-    // ...and the other direction: a plain registration blocks a scoped one.
-    inbox.register("plain", () => null);
-    expect(() => inbox.registerScoped("plain", () => null)).toThrow(/already registered/);
-    expect(() => inbox.registerScoped(CommandInbox.PING, () => null)).toThrow(/built-in/);
-
+  it("a component-scoped verb refuses a body-named instance without invoking the handler", async () => {
+    let invoked = false;
+    inbox.register("sb/discover", "component", () => {
+      invoked = true;
+      return {};
+    });
     await inbox.start();
-    const result = await describeResult();
-    expect(commandEntry(result, "sb/status")).toEqual({ verb: "sb/status", builtIn: false });
+
+    await deliver(messaging, topic("sb/discover"), requestWithBody("sb/discover", { instance: "kep1" }));
+    const error = onlyErrorReply(messaging);
+    expect(error.code).toBe(CommandInbox.ERR_BAD_ARGS);
+    expect(error.message).toBe("verb 'sb/discover' is component-scoped - the body must not name an instance");
+    expect(invoked).toBe(false);
   });
 
-  it("a scoped handler's CommandException keeps its code (reply handling identical to plain)", async () => {
-    inbox.registerScoped("guarded", (_req, addressedInstance) => {
+  it("a component-scoped verb runs on a component delivery and always sees undefined", async () => {
+    const seen: Array<string | undefined> = [];
+    inbox.register("sb/discover", "component", (_req, addressedInstance) => {
+      seen.push(addressedInstance);
+      return { found: 1 };
+    });
+    await inbox.start();
+    await deliver(messaging, topic("sb/discover"), request("sb/discover"));
+    expect(onlyReplyBody(messaging).ok).toBe(true);
+    expect(seen).toEqual([undefined]);
+  });
+
+  it("an addressing violation on a fire-and-forget command is logged, never replied", async () => {
+    let invoked = false;
+    inbox.register("sb/discover", "component", () => {
+      invoked = true;
+      return null;
+    });
+    await inbox.start();
+    await deliver(messaging, instanceTopic("kep1", "sb/discover"), notification("sb/discover"));
+    expect(messaging.published, "a fire-and-forget request is never replied to").toHaveLength(0);
+    expect(invoked).toBe(false);
+  });
+
+  // --------------------- the universal conflict rule (checked FIRST) ---------------------
+
+  it("an instance-scoped verb refuses a body instance conflicting with the topic token", async () => {
+    let invoked = false;
+    inbox.register("sb/write", "instance", () => {
+      invoked = true;
+      return null;
+    });
+    await inbox.start();
+    await deliver(messaging, instanceTopic("kep1", "sb/write"), requestWithBody("sb/write", { instance: "kep2" }));
+    const error = onlyErrorReply(messaging);
+    expect(error.code).toBe(CommandInbox.ERR_BAD_ARGS);
+    expect(error.message).toBe("instance in body conflicts with the addressed instance");
+    expect(invoked, "the conflict is refused before the handler could check existence").toBe(false);
+  });
+
+  it("a both-scoped verb refuses a conflicting body instance too", async () => {
+    let invoked = false;
+    inbox.register("sb/status", "both", () => {
+      invoked = true;
+      return null;
+    });
+    await inbox.start();
+    await deliver(messaging, instanceTopic("kep1", "sb/status"), requestWithBody("sb/status", { instance: "other" }));
+    expect(onlyErrorReply(messaging).code).toBe(CommandInbox.ERR_BAD_ARGS);
+    expect(invoked).toBe(false);
+  });
+
+  it("the conflict rule is checked before the component-scope rejection", async () => {
+    inbox.register("sb/discover", "component", () => null);
+    await inbox.start();
+    // BOTH violations apply (an instance-addressed delivery at a component verb AND a
+    // disagreeing body); the universal conflict message wins.
+    await deliver(messaging, instanceTopic("kep1", "sb/discover"), requestWithBody("sb/discover", { instance: "kep2" }));
+    expect(onlyErrorReply(messaging).message).toBe("instance in body conflicts with the addressed instance");
+  });
+
+  it("a body instance that agrees with the topic token is not a conflict", async () => {
+    const seen: Array<string | undefined> = [];
+    inbox.register("sb/write", "instance", (_req, addressedInstance) => {
+      seen.push(addressedInstance);
+      return null;
+    });
+    await inbox.start();
+    await deliver(messaging, instanceTopic("kep1", "sb/write"), requestWithBody("sb/write", { instance: "kep1" }));
+    expect(onlyReplyBody(messaging).ok).toBe(true);
+    expect(seen).toEqual(["kep1"]);
+  });
+
+  // --------------------- INSTANCE / BOTH resolution ---------------------
+
+  it("an instance-scoped verb resolves topic-only, body-only, and null-through", async () => {
+    const seen: Array<string | undefined> = [];
+    inbox.register("sb/write", "instance", (_req, addressedInstance) => {
+      seen.push(addressedInstance);
+      return { done: true };
+    });
+    await inbox.start();
+
+    // 1. topic-only -> the topic's token.
+    await deliver(messaging, instanceTopic("kep1", "sb/write"), request("sb/write"));
+    // 2. body-only -> the body-named instance (component-scope delivery).
+    await deliver(messaging, topic("sb/write"), requestWithBody("sb/write", { instance: "kep2" }));
+    // 3. neither -> undefined reaches the handler: "optional iff exactly one configured instance"
+    //    and "unknown instance -> NO_SUCH_INSTANCE" need configuration the library does not have.
+    await deliver(messaging, topic("sb/write"), request("sb/write"));
+
+    expect(messaging.published, "all three are dispatched, none is an addressing error").toHaveLength(3);
+    for (const rec of messaging.published) {
+      expect((rec.message!.getBody() as Record<string, unknown>).ok).toBe(true);
+    }
+    expect(seen).toEqual(["kep1", "kep2", undefined]);
+  });
+
+  it("a body instance that is not a non-empty string names no instance", async () => {
+    const seen: Array<string | undefined> = [];
+    inbox.register("sb/write", "instance", (_req, addressedInstance) => {
+      seen.push(addressedInstance);
+      return null;
+    });
+    await inbox.start();
+    await deliver(messaging, topic("sb/write"), requestWithBody("sb/write", { instance: "" }));
+    await deliver(messaging, topic("sb/write"), requestWithBody("sb/write", { instance: 7 }));
+    await deliver(messaging, topic("sb/write"), requestWithBody("sb/write", { instance: null }));
+    expect(seen).toEqual([undefined, undefined, undefined]);
+    // ...and therefore it cannot conflict with a topic token either.
+    await deliver(messaging, instanceTopic("kep1", "sb/write"), requestWithBody("sb/write", { instance: "" }));
+    expect(seen[3]).toBe("kep1");
+  });
+
+  it("a both-scoped verb receives undefined for the whole component and the token when addressed", async () => {
+    const seen: Array<string | undefined> = [];
+    inbox.register("sb/pause", "both", (_req, addressedInstance) => {
+      seen.push(addressedInstance);
+      return { paused: addressedInstance ?? "*" };
+    });
+    await inbox.start();
+
+    await deliver(messaging, topic("sb/pause"), request("sb/pause"));
+    await deliver(messaging, instanceTopic("kep1", "sb/pause"), request("sb/pause"));
+    await deliver(messaging, topic("sb/pause"), requestWithBody("sb/pause", { instance: "kep2" }));
+
+    expect(seen, "undefined means 'the whole component' (D-SC-3)").toEqual([undefined, "kep1", "kep2"]);
+    expect(messaging.published.map((r) => (r.message!.getBody() as Record<string, unknown>).result)).toEqual([
+      { paused: "*" },
+      { paused: "kep1" },
+      { paused: "kep2" },
+    ]);
+  });
+
+  it("a scope-aware handler's CommandException keeps its code (reply handling identical to plain)", async () => {
+    inbox.register("guarded", "instance", (_req, addressedInstance) => {
       throw new CommandException("NOT_ALLOWED", `no writes on ${addressedInstance}`);
     });
     await inbox.start();
     await deliver(messaging, instanceTopic("kep1", "guarded"), request("guarded"));
-    const body = onlyReplyBody(messaging);
-    expect(body.ok).toBe(false);
-    const error = body.error as Record<string, unknown>;
+    const error = onlyErrorReply(messaging);
     expect(error.code).toBe("NOT_ALLOWED");
     expect(error.message).toBe("no writes on kep1");
   });
 
-  it("unregister removes a scoped verb", async () => {
-    inbox.registerScoped("mine", () => null);
-    inbox.unregister("mine");
-    expect(inbox.verbs().has("mine")).toBe(false);
+  // --------------------- outcome-form parity ---------------------
+
+  it("the outcome form receives the same addressed instance on every resolution path", async () => {
+    const seen: Array<string | undefined> = [];
+    inbox.registerOutcome("sb/capture", "instance", (_req, addressedInstance) => {
+      seen.push(addressedInstance);
+      return CommandOutcomes.success({ instance: addressedInstance ?? null });
+    });
     await inbox.start();
-    await deliver(messaging, topic("mine"), request("mine"));
-    expect((onlyReplyBody(messaging).error as Record<string, unknown>).code).toBe(CommandInbox.ERR_UNKNOWN_VERB);
+
+    await deliver(messaging, instanceTopic("cam-01", "sb/capture"), request("sb/capture"));
+    await deliver(messaging, topic("sb/capture"), requestWithBody("sb/capture", { instance: "cam-02" }));
+    await deliver(messaging, topic("sb/capture"), request("sb/capture"));
+
+    expect(seen).toEqual(["cam-01", "cam-02", undefined]);
+    expect(messaging.published.map((r) => (r.message!.getBody() as Record<string, unknown>).result)).toEqual([
+      { instance: "cam-01" },
+      { instance: "cam-02" },
+      { instance: null },
+    ]);
   });
 
-  it("plain register behavior is untouched: the handler gets only the request, on either scope", async () => {
-    const plain = vi.fn(() => ({ ok: 1 }));
-    inbox.register("sb/status", plain);
+  it("the outcome form is refused pre-dispatch on an addressing error (handler never runs)", async () => {
+    let invoked = false;
+    inbox.registerOutcome("sb/discover", "component", () => {
+      invoked = true;
+      return CommandOutcomes.success();
+    });
     await inbox.start();
-    await deliver(messaging, instanceTopic("kep1", "sb/status"), request("sb/status"));
-    expect(onlyReplyBody(messaging).ok).toBe(true);
-    expect(plain).toHaveBeenCalledTimes(1);
-    expect(plain.mock.calls[0], "a plain handler is invoked with exactly the request").toHaveLength(1);
-    expect(plain.mock.calls[0][0]).toBeInstanceOf(Message);
+    await deliver(messaging, instanceTopic("kep1", "sb/discover"), request("sb/discover"));
+    const error = onlyErrorReply(messaging);
+    expect(error.code).toBe(CommandInbox.ERR_BAD_ARGS);
+    expect(error.message).toBe("verb 'sb/discover' is component-scoped");
+    expect(invoked).toBe(false);
+
+    messaging.published.length = 0;
+    inbox.registerOutcome("sb/capture", "instance", () => {
+      invoked = true;
+      return CommandOutcomes.success();
+    });
+    await deliver(
+      messaging,
+      instanceTopic("cam-01", "sb/capture"),
+      requestWithBody("sb/capture", { instance: "cam-02" }),
+    );
+    expect(onlyErrorReply(messaging).message).toBe("instance in body conflicts with the addressed instance");
+    expect(invoked).toBe(false);
+  });
+
+  it("a deferred outcome still settles when the handler is addressed through the topic", async () => {
+    let token: DeferredReply | undefined;
+    let seen: string | undefined;
+    inbox.registerOutcome("sb/capture", "instance", (req, addressedInstance) => {
+      seen = addressedInstance;
+      token = inbox.defer(req, 2_000);
+      expect(token.activate()).toBe(true);
+      return CommandOutcomes.deferred(token);
+    });
+    await inbox.start();
+    await deliver(messaging, instanceTopic("cam-01", "sb/capture"), request("sb/capture"));
+
+    expect(seen).toBe("cam-01");
+    expect(messaging.published, "a deferred outcome replies nothing until it settles").toHaveLength(0);
+    expect(token!.settleSuccess({ imageId: `frame-${seen}` })).toBe(SettlementResult.Accepted);
+    await waitFor(() => token?.state() === DeferredReplyState.Settled);
+    expect(messaging.published[0].message!.getBody()).toEqual({
+      verb: "sb/capture",
+      ok: true,
+      result: { imageId: "frame-cam-01" },
+    });
+  });
+
+  // --------------------- built-ins answer identically on both topics ---------------------
+
+  it("the built-ins declare 'both' and answer identically on a component and an instance topic", async () => {
+    uptime = 99;
+    await inbox.start();
+    for (const verb of [CommandInbox.PING, CommandInbox.STATUS, CommandInbox.GET_CONFIGURATION]) {
+      messaging.published.length = 0;
+      await deliver(messaging, topic(verb), request(verb));
+      const componentBody = onlyReplyBody(messaging);
+      messaging.published.length = 0;
+      await deliver(messaging, instanceTopic("kep1", verb), request(verb));
+      const instanceBody = onlyReplyBody(messaging);
+      expect(instanceBody, `'${verb}' must answer identically on either scope`).toEqual(componentBody);
+      expect(componentBody.ok).toBe(true);
+    }
+  });
+
+  it("a built-in ignores a body-named instance rather than refusing it", async () => {
+    await inbox.start();
+    await deliver(messaging, topic(CommandInbox.PING), requestWithBody(CommandInbox.PING, { instance: "kep1" }));
+    const body = onlyReplyBody(messaging);
+    expect(body.ok).toBe(true);
+    expect((body.result as Record<string, unknown>).status).toBe("RUNNING");
+  });
+
+  // --------------------- describe: shape, key order, digest ---------------------
+
+  it("every describe entry carries its declared scope in the {verb, builtIn, scope} key order", async () => {
+    inbox.register("sb/discover", "component", () => null);
+    inbox.register("sb/write", "instance", () => null);
+    inbox.registerOutcome("sb/capture", "both", () => CommandOutcomes.success());
+    await inbox.start();
+    const result = await describeResult();
+
+    expect(result.commands).toEqual([
+      { verb: CommandInbox.DESCRIBE, builtIn: true, scope: "both" },
+      { verb: CommandInbox.GET_CONFIGURATION, builtIn: true, scope: "both" },
+      { verb: CommandInbox.PING, builtIn: true, scope: "both" },
+      { verb: CommandInbox.RELOAD_CONFIG, builtIn: true, scope: "both" },
+      { verb: "sb/capture", builtIn: false, scope: "both" },
+      { verb: "sb/discover", builtIn: false, scope: "component" },
+      { verb: "sb/write", builtIn: false, scope: "instance" },
+      { verb: CommandInbox.STATUS, builtIn: true, scope: "both" },
+    ]);
+    // The key order is normative: {verb, builtIn, scope, availability?}.
+    expect(Object.keys(commandEntry(result, "sb/write"))).toEqual(["verb", "builtIn", "scope"]);
+    inbox.setCommandAvailability("sb/write", "disabled", "writes.allow[] is empty");
+    expect(Object.keys(commandEntry(await describeResult(), "sb/write"))).toEqual([
+      "verb",
+      "builtIn",
+      "scope",
+      "availability",
+    ]);
+  });
+
+  it("a verb's declared scope participates in the describe digest", async () => {
+    await inbox.start();
+    inbox.register("sb/pause", "instance", () => null);
+    const instanceScoped = (await describeResult()).digest;
+
+    // Widening the very same verb to `both` (D-SC-5) must change the manifest digest so the
+    // console re-reads it; nothing else about the registration changes.
+    inbox.unregister("sb/pause");
+    inbox.register("sb/pause", "both", () => null);
+    const bothScoped = (await describeResult()).digest;
+    expect(bothScoped, "a scope change must alter the describe digest").not.toBe(instanceScoped);
+
+    // ...and restoring the scope restores the digest.
+    inbox.unregister("sb/pause");
+    inbox.register("sb/pause", "instance", () => null);
+    expect((await describeResult()).digest).toBe(instanceScoped);
+  });
+
+  it("availability and scope coexist on one describe entry and are orthogonal", async () => {
+    inbox.register("sb/write", "instance", () => null);
+    inbox.setCommandAvailability("sb/write", "disabled", "writes.allow[] is empty");
+    await inbox.start();
+    expect(commandEntry(await describeResult(), "sb/write")).toEqual({
+      verb: "sb/write",
+      builtIn: false,
+      scope: "instance",
+      availability: { state: "disabled", reason: "writes.allow[] is empty" },
+    });
+    // Availability is advisory metadata for the console: clearing it leaves the declared scope
+    // untouched, and it never changes the addressing enforcement.
+    inbox.setCommandAvailability("sb/write", "available");
+    expect(commandEntry(await describeResult(), "sb/write")).toEqual({
+      verb: "sb/write",
+      builtIn: false,
+      scope: "instance",
+    });
   });
 });

@@ -100,27 +100,60 @@ Note (init order): the messaging client is initialized before the config loads, 
 default is late-bound right after the `ConfigManager` exists; until then the built-in 30 s applies
 (deliberately — the CONFIG_COMPONENT bootstrap request gets a deadline too).
 
-#### Scoped command registration
+#### Declared verb scope and the addressed instance
 
 The command inbox subscribes both cmd scopes (D-U28): the component-scope topic
 (`ecv1/{device}/{component}/cmd/{verb}`) and the instance-scope topic
-(`ecv1/{device}/{component}/{instance}/cmd/{verb}`). A plain `CommandInbox.register(verb, handler)`
-handler receives only the request, whichever scope the command arrived on.
-`register_scoped(verb, handler)` additionally passes the addressed instance:
+(`ecv1/{device}/{component}/{instance}/cmd/{verb}`). Every registration declares the verb's
+`CommandScope`, and every handler receives the addressed instance beside the request:
 
 ```python
+from edgecommons import CommandScope
+
 def pause(request, addressed_instance):
-    # addressed_instance is the topic's {instance} token, or None for a
-    # component-scoped delivery.
+    # addressed_instance is the topic's {instance} token, else the body's `instance`
+    # field, else None.
     ...
     return {"paused": True}
 
-commands.register_scoped("sb/pause", pause)
+commands.register("sb/pause", CommandScope.INSTANCE, pause)
 ```
 
-A verb has either a plain or a scoped handler — the one-handler-per-verb rule, the
-shadowing/duplicate errors, the reply and error handling, and the `describe()` participation are
-identical to `register(...)`.
+`scope` is one of three `CommandScope` members — the enum itself, not its string value:
+
+| Scope | Instance-addressed delivery | Component-addressed delivery |
+|---|---|---|
+| `COMPONENT` | `BAD_ARGS` | runs with `addressed_instance = None` |
+| `INSTANCE` | runs with the topic's token | runs with the body's `instance`, else `None` |
+| `BOTH` | runs with the topic's token | runs with the body's `instance`, else `None` — "the whole component" |
+
+The inbox enforces the addressing **before dispatch**, so a handler never runs on an addressing
+error:
+
+- a body `instance` that disagrees with the topic's instance token is `BAD_ARGS`, checked first
+  and for every scope (the topic is authoritative);
+- a `COMPONENT` verb addressed to an instance — by topic or by body — is `BAD_ARGS`;
+- `INSTANCE` and `BOTH` verbs resolve `topic token → body instance → None`.
+
+The refusal messages are identical in every language:
+
+| Condition | `error.message` |
+|---|---|
+| body `instance` conflicts with the topic token (any scope) | `instance in body conflicts with the addressed instance` |
+| `COMPONENT` verb on an instance topic | `verb '<verb>' is component-scoped` |
+| `COMPONENT` verb whose body names an instance | `verb '<verb>' is component-scoped - the body must not name an instance` |
+
+`None` still reaches an `INSTANCE` handler: whether it means "the lone configured instance" or is
+an error needs configuration knowledge the library does not have, so the component applies that
+policy (and answers `NO_SUCH_INSTANCE` for an instance it does not know). At a `BOTH` verb `None`
+is a meaningful signal in its own right — the command addresses the whole component. Errors are
+replied to only when the request carries `reply_to`; a fire-and-forget addressing error is logged.
+
+The scope is advertised on the verb's `describe()` entry as the lowercase string
+(`{verb, builtIn, scope, availability?}`) and participates in the describe digest, so changing a
+verb's scope makes consoles re-fetch. Widening a verb from `INSTANCE` to `BOTH` is additive;
+narrowing breaks that verb's contract. The built-in verbs declare `BOTH` and answer identically on
+either scope.
 
 #### Command availability
 
@@ -128,8 +161,8 @@ identical to `register(...)`.
 availability on the `describe()` discovery surface. `state` is exactly `"available"`, `"disabled"`,
 or `"unsupported"`; any other value raises `ValueError`, as does an unregistered verb. `"disabled"`
 and `"unsupported"` add `"availability": {"state": ..., "reason"?: ...}` to that verb's describe
-command entry (`{verb, builtIn, availability?}`); `"available"` removes the stored entry and the
-verb reverts to the plain `{verb, builtIn}` shape. The `reason` is trimmed, truncated to 256
+command entry (`{verb, builtIn, scope, availability?}`); `"available"` removes the stored entry and
+the verb reverts to the plain `{verb, builtIn, scope}` shape. The `reason` is trimmed, truncated to 256
 characters, and omitted when empty or absent. The describe `digest` changes whenever availability
 changes, so consoles re-fetch on the next announcement.
 
@@ -144,14 +177,15 @@ property is boolean `true`, falling back to the first view; views are emitted ve
 
 #### Deferred command replies
 
-Handlers registered with `CommandInbox.register(...)` retain the existing immediate `dict`/`None`
-contract. Long-running commands use the additive `register_outcome(...)` contract and return one of
-`ImmediateSuccess`, `ImmediateError`, or `Deferred`:
+Handlers registered with `CommandInbox.register(...)` return the immediate `dict`/`None` result.
+Long-running commands use `register_outcome(verb, scope, handler)` — the same verb validation,
+scope declaration and enforcement, and `describe()` participation, differing only in what the
+handler returns: `ImmediateSuccess`, `ImmediateError`, or `Deferred`:
 
 ```python
-from edgecommons import CommandOutcome
+from edgecommons import CommandOutcome, CommandScope
 
-def capture(request):
+def capture(request, addressed_instance):
     # Provision first. This rejects fire-and-forget requests with REPLY_REQUIRED,
     # validates the guarded reply_to, and reserves one bounded registry entry.
     token = commands.defer(request, lifetime_secs=95)
@@ -168,7 +202,7 @@ def capture(request):
 
     return CommandOutcome.deferred_with_continuation(token, finish)
 
-commands.register_outcome("sb/capture", capture)
+commands.register_outcome("sb/capture", CommandScope.INSTANCE, capture)
 
 # Later, from the worker that owns the terminal result. Exactly one concurrent
 # settler receives SettlementResult.ACCEPTED.
@@ -211,7 +245,9 @@ from edgecommons import EdgeCommonsBuilder
 gg = (
     EdgeCommonsBuilder.create("com.example.CameraAdapter")
     .configure_commands(
-        lambda inbox: inbox.register_outcome("sb/capture", capture)
+        lambda inbox: inbox.register_outcome(
+            "sb/capture", CommandScope.INSTANCE, capture
+        )
     )
     .build()
 )

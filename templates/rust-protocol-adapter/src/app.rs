@@ -391,7 +391,11 @@ mod tests {
         health.set_link(LinkState::Online);
         let c = connectivity_of(&cfg, &health);
         assert!(c.connected, "the normalized flag every console reads");
+        // D-SC-7: this sample IS the keepalive's `instances[]` element (`supervisor.rs` registers
+        // it as the provider), so the state reaches every passive fleet view — a live device is
+        // distinguishable from a reconnecting one without knowing this adapter's internals.
         assert_eq!(c.state.as_deref(), Some("ONLINE"));
+        assert_eq!(c.to_json()["state"], json!("ONLINE"), "the state rides the keepalive element");
 
         health.set_link(LinkState::Backoff);
         assert!(!connectivity_of(&cfg, &health).connected);
@@ -409,7 +413,10 @@ mod tests {
         assert!(set_paused(&health, true), "pausing changed the state");
         assert!(!set_paused(&health, true), "pausing again is idempotent");
         let c = connectivity_of(&cfg, &health);
+        // D-SC-7: PAUSED reaches the keepalive too, so a deliberately paused instance is
+        // distinguishable from a silently stale one on the passive surface.
         assert_eq!(c.state.as_deref(), Some("PAUSED"), "paused + online = PAUSED");
+        assert_eq!(c.to_json()["state"], json!("PAUSED"), "the state rides the keepalive element");
         assert!(c.connected, "connected stays truthful while paused");
         assert_eq!(c.attributes["paused"], json!(true));
 

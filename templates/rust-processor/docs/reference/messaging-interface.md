@@ -22,7 +22,7 @@ pipeline model, see [explanation.md](../explanation.md).
 | `state` | keepalive | processor → bus (auto) | `ecv1/{device}/<<BINNAME>>/state` | — |
 
 This scaffold registers no custom command verbs beyond the library's automatic
-`ping`/`reload-config`/`get-configuration` — add your own with `gg.commands().register(...)` if your
+`ping`/`reload-config`/`get-configuration` — add your own with `gg.commands().register(name, scope, ...)` if your
 pipeline needs one (a "flush now" verb for a windowed stage, say).
 
 ## Message envelope

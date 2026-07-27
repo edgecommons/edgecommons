@@ -568,7 +568,10 @@ mod tests {
             "the explicit null must be present, not omitted"
         );
         assert_eq!(sample["value"], json!(null));
-        assert_eq!(sample["quality"], "GOOD", "quality defaulting still applies");
+        assert_eq!(
+            sample["quality"], "GOOD",
+            "quality defaulting still applies"
+        );
         assert_eq!(sample["qualityRaw"], "unspecified");
         assert_eq!(sample["serverTs"], "2026-07-01T12:00:00Z");
     }

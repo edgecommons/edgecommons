@@ -370,7 +370,7 @@ public class EdgeCommons
     /**
      * Returns the command-inbox facade — the minimal {@code gg.commands()} surface (DESIGN-uns
      * §9.5): register custom command verbs with
-     * {@code getCommands().register(verb, handler)}; the built-in verbs ({@code ping},
+     * {@code getCommands().register(verb, scope, handler)}; the built-in verbs ({@code ping},
      * {@code reload-config}, {@code get-configuration}) are registered by the library and cannot
      * be shadowed. May be {@code null} on a mock/subclass bring-up that never ran {@code init}.
      *

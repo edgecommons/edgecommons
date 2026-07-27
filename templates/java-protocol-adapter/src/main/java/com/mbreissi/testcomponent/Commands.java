@@ -2,6 +2,7 @@ package <<PACKAGE>>;
 
 import com.mbreissi.edgecommons.commands.CommandException;
 import com.mbreissi.edgecommons.commands.CommandInbox;
+import com.mbreissi.edgecommons.commands.CommandScope;
 import com.mbreissi.edgecommons.messaging.Message;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -24,9 +25,16 @@ import java.util.Map;
  *
  * <h2>Conventions every verb follows</h2>
  * <ul>
- *   <li><b>Instance routing (D-EIP-13):</b> {@code body.instance} is optional iff exactly one device
- *       is configured; with two or more, a missing id is {@code BAD_ARGS} and an unknown id is
- *       {@code NO_SUCH_INSTANCE}.</li>
+ *   <li><b>Every verb is {@link CommandScope#INSTANCE}-scoped:</b> it acts on exactly one device.
+ *       The <b>library</b> owns the addressing — it takes the delivery topic's {@code {instance}}
+ *       token, falls back to the request body's {@code instance} field, and rejects a body that
+ *       conflicts with the topic ({@code BAD_ARGS}) <i>before</i> the handler runs. This class
+ *       never parses addressing; it is handed the resolved {@code addressedInstance}.</li>
+ *   <li><b>Component-side instance policy (D-EIP-13):</b> what the library cannot know is this
+ *       component's configuration, so a {@code null} addressed instance resolves to the sole
+ *       configured device when there is exactly one and is {@code BAD_ARGS} otherwise, and an
+ *       instance naming no configured device is {@code NO_SUCH_INSTANCE} — see
+ *       {@link Commander#resolve}.</li>
  *   <li><b>Standardized error codes:</b> {@code BAD_ARGS}, {@code NO_SUCH_INSTANCE},
  *       {@code WRITE_NOT_ALLOWED}, {@code WRITE_FAILED}, {@code DEVICE_UNAVAILABLE},
  *       {@code READ_FAILED}, {@code RECONNECT_FAILED}, {@code BROWSE_UNSUPPORTED},
@@ -54,21 +62,36 @@ public final class Commands {
     /**
      * Register every {@code sb/*} verb + the three edge-console panels on the inbox.
      *
+     * <p>All nine verbs declare {@link CommandScope#INSTANCE}: each acts on one device, so the
+     * inbox resolves the addressed instance (topic token, else the body's {@code instance} field)
+     * and refuses a conflicting body before dispatch. Every handler is handed that resolved
+     * instance and passes it straight to the {@link Commander} — no verb reads
+     * {@code body.instance}.
+     *
      * @param commands the command inbox (from {@code gg.getCommands()})
      * @param handles  the per-device handles the command surface routes on
      */
     public static void registerAll(CommandInbox commands, List<DeviceHandle> handles) {
         Commander commander = new Commander(handles);
 
-        commands.register("sb/status", req -> commander.status(bodyOf(req)));
-        commands.register("sb/read", req -> commander.read(bodyOf(req)));
-        commands.register("sb/write", req -> commander.write(bodyOf(req)));
-        commands.register("sb/signals", req -> commander.signals(bodyOf(req)));
-        commands.register("sb/browse", req -> commander.browse(bodyOf(req)));
-        commands.register("sb/pause", req -> commander.pause(bodyOf(req)));
-        commands.register("sb/resume", req -> commander.resume(bodyOf(req)));
-        commands.register("reconnect", req -> commander.reconnect(bodyOf(req)));
-        commands.register("repoll", req -> commander.repoll(bodyOf(req)));
+        commands.register("sb/status", CommandScope.INSTANCE,
+                (req, instance) -> commander.status(instance));
+        commands.register("sb/read", CommandScope.INSTANCE,
+                (req, instance) -> commander.read(bodyOf(req), instance));
+        commands.register("sb/write", CommandScope.INSTANCE,
+                (req, instance) -> commander.write(bodyOf(req), instance));
+        commands.register("sb/signals", CommandScope.INSTANCE,
+                (req, instance) -> commander.signals(instance));
+        commands.register("sb/browse", CommandScope.INSTANCE,
+                (req, instance) -> commander.browse(bodyOf(req), instance));
+        commands.register("sb/pause", CommandScope.INSTANCE,
+                (req, instance) -> commander.pause(instance));
+        commands.register("sb/resume", CommandScope.INSTANCE,
+                (req, instance) -> commander.resume(instance));
+        commands.register("reconnect", CommandScope.INSTANCE,
+                (req, instance) -> commander.reconnect(instance));
+        commands.register("repoll", CommandScope.INSTANCE,
+                (req, instance) -> commander.repoll(instance));
 
         for (JsonObject panel : panels()) {
             commands.registerPanel(panel);
@@ -311,16 +334,22 @@ public final class Commands {
         }
 
         /**
-         * Route to the addressed device (D-EIP-13): {@code body.instance} optional iff exactly one
-         * device is configured; with two or more a missing/unknown id is {@code BAD_ARGS} /
-         * {@code NO_SUCH_INSTANCE}.
+         * Route to the addressed device — the component-side half of the addressing contract
+         * (D-EIP-13). The library has already resolved {@code addressedInstance} from the delivery
+         * topic or the body and rejected any conflict between the two; what is left needs
+         * <i>this component's configuration</i>, which the library does not have: an instance that
+         * names no configured device is {@code NO_SUCH_INSTANCE}, and no named instance at all
+         * resolves to the sole configured device when there is exactly one, else {@code BAD_ARGS}.
+         *
+         * @param addressedInstance the library-resolved addressed instance, or {@code null} when the
+         *                          command named no instance on the topic or in the body
          */
-        DeviceHandle resolve(JsonObject body) throws CommandException {
-            String id = str(body, "instance");
-            if (id != null) {
-                DeviceHandle h = devices.get(id);
+        DeviceHandle resolve(String addressedInstance) throws CommandException {
+            if (addressedInstance != null) {
+                DeviceHandle h = devices.get(addressedInstance);
                 if (h == null) {
-                    throw new CommandException("NO_SUCH_INSTANCE", "no configured device `" + id + "`");
+                    throw new CommandException("NO_SUCH_INSTANCE",
+                            "no configured device `" + addressedInstance + "`");
                 }
                 return h;
             }
@@ -333,8 +362,8 @@ public final class Commands {
 
         // --- sb/status -----------------------------------------------------------------------------
 
-        JsonObject status(JsonObject body) throws CommandException {
-            DeviceHandle h = resolve(body);
+        JsonObject status(String addressedInstance) throws CommandException {
+            DeviceHandle h = resolve(addressedInstance);
             long started = System.nanoTime();
             LinkState link = h.health.link();
             boolean connected = link == LinkState.ONLINE;
@@ -354,8 +383,8 @@ public final class Commands {
 
         // --- sb/signals (the configured inventory, no device I/O) ----------------------------------
 
-        JsonObject signals(JsonObject body) throws CommandException {
-            DeviceHandle h = resolve(body);
+        JsonObject signals(String addressedInstance) throws CommandException {
+            DeviceHandle h = resolve(addressedInstance);
             long started = System.nanoTime();
             JsonArray signals = new JsonArray();
             for (Device.SignalInfo s : h.signals) {
@@ -374,8 +403,8 @@ public final class Commands {
 
         // --- sb/read (on-demand read of named signals) ---------------------------------------------
 
-        JsonObject read(JsonObject body) throws CommandException {
-            DeviceHandle h = resolve(body);
+        JsonObject read(JsonObject body, String addressedInstance) throws CommandException {
+            DeviceHandle h = resolve(addressedInstance);
             long started = System.nanoTime();
             JsonArray refs = arrOrNull(body, "signals");
             if (refs == null) {
@@ -438,8 +467,8 @@ public final class Commands {
 
         // --- sb/write (§2.2 batch shape; allow-list BEFORE any device I/O; confirmed) --------------
 
-        JsonObject write(JsonObject body) throws CommandException {
-            DeviceHandle h = resolve(body);
+        JsonObject write(JsonObject body, String addressedInstance) throws CommandException {
+            DeviceHandle h = resolve(addressedInstance);
             long started = System.nanoTime();
             List<JsonObject> entries = writeEntries(body);
 
@@ -507,8 +536,8 @@ public final class Commands {
 
         // --- sb/browse (paged address-space discovery + the hierarchical panel mode) ---------------
 
-        JsonObject browse(JsonObject body) throws CommandException {
-            DeviceHandle h = resolve(body);
+        JsonObject browse(JsonObject body, String addressedInstance) throws CommandException {
+            DeviceHandle h = resolve(addressedInstance);
             long started = System.nanoTime();
             // Presence of `ref` (or its companions `depth`/`maxRefs`) selects the hierarchical panel
             // mode; mixing the two request families is BAD_ARGS.
@@ -647,8 +676,8 @@ public final class Commands {
 
         // --- sb/pause + sb/resume (idempotent {paused, changed}) -----------------------------------
 
-        JsonObject pause(JsonObject body) throws CommandException {
-            DeviceHandle h = resolve(body);
+        JsonObject pause(String addressedInstance) throws CommandException {
+            DeviceHandle h = resolve(addressedInstance);
             long started = System.nanoTime();
             boolean changed = h.control.pause();
             h.dm.recordCommand("sb/pause", true, ms(started));
@@ -659,8 +688,8 @@ public final class Commands {
             return out;
         }
 
-        JsonObject resume(JsonObject body) throws CommandException {
-            DeviceHandle h = resolve(body);
+        JsonObject resume(String addressedInstance) throws CommandException {
+            DeviceHandle h = resolve(addressedInstance);
             long started = System.nanoTime();
             boolean changed = h.control.resume();
             h.dm.recordCommand("sb/resume", true, ms(started));
@@ -673,8 +702,8 @@ public final class Commands {
 
         // --- reconnect -----------------------------------------------------------------------------
 
-        JsonObject reconnect(JsonObject body) throws CommandException {
-            DeviceHandle h = resolve(body);
+        JsonObject reconnect(String addressedInstance) throws CommandException {
+            DeviceHandle h = resolve(addressedInstance);
             long started = System.nanoTime();
             try {
                 h.control.reconnect();
@@ -694,8 +723,8 @@ public final class Commands {
 
         // --- repoll (refused with PAUSED while paused) ---------------------------------------------
 
-        JsonObject repoll(JsonObject body) throws CommandException {
-            DeviceHandle h = resolve(body);
+        JsonObject repoll(String addressedInstance) throws CommandException {
+            DeviceHandle h = resolve(addressedInstance);
             long started = System.nanoTime();
             if (h.health.isPaused()) {
                 h.dm.recordCommand("repoll", false, ms(started));

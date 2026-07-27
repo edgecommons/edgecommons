@@ -1,6 +1,7 @@
 import com.mbreissi.edgecommons.EdgeCommons;
 import com.mbreissi.edgecommons.commands.CommandInbox;
 import com.mbreissi.edgecommons.commands.CommandOutcome;
+import com.mbreissi.edgecommons.commands.CommandScope;
 import com.mbreissi.edgecommons.heartbeat.InstanceConnectivity;
 import com.mbreissi.edgecommons.logging.LogRecord;
 import com.mbreissi.edgecommons.messaging.Message;
@@ -521,7 +522,7 @@ public class InteropNode {
             CommandInbox inbox = gg.getCommands();
             if (inbox == null) throw new IllegalStateException("runtime did not expose command inbox");
             String responderActor = actor;
-            inbox.registerOutcome("deferred", request -> {
+            inbox.registerOutcome("deferred", CommandScope.BOTH, (request, addressedInstance) -> {
                 CommandInbox.DeferredReply deferred = inbox.defer(request, Duration.ofSeconds(4));
                 JsonObject requestBody = asElement(request.getBody()).getAsJsonObject();
                 Path acceptanceMarker;
@@ -779,7 +780,7 @@ public class InteropNode {
                 if (inbox == null) {
                     throw new IllegalStateException("runtime did not expose command inbox");
                 }
-                inbox.registerOutcome("deferred", request -> {
+                inbox.registerOutcome("deferred", CommandScope.BOTH, (request, addressedInstance) -> {
                     CommandInbox.DeferredReply deferred = inbox.defer(request, Duration.ofSeconds(4));
                     Path acceptanceMarker;
                     try {

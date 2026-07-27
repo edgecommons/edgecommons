@@ -74,9 +74,41 @@ the same bytes are passed to the transport unchanged.
 depends on a transport-confirmed publication. A prepared message is immutable from the
 caller's perspective: byte and message accessors return defensive copies.
 
+## Registering command verbs: declared scope and the addressed instance
+
+There are two registration forms, and both take the verb's declared scope and both hand the
+handler the addressed instance:
+
+```ts
+gg.commands()!.register("sb/write", "instance", (request, addressedInstance) => { /* ... */ });
+gg.commands()!.registerOutcome("sb/capture", "instance", (request, addressedInstance) =>
+  CommandOutcomes.success());
+```
+
+`scope` is one of `"component"`, `"instance"`, or `"both"` (also available as `CommandScopes`);
+any other value is rejected at registration. The inbox enforces the declared scope **before**
+dispatch, so a handler never runs on an addressing error:
+
+| Declared scope | Instance-addressed topic | `body.instance` | What the handler receives |
+|---|---|---|---|
+| `"component"` | `BAD_ARGS` | `BAD_ARGS` | always `undefined` |
+| `"instance"` | the topic token | the body-named instance | topic token, else body instance, else `undefined` |
+| `"both"` | the topic token | the body-named instance | topic token, else body instance, else `undefined` ("the whole component") |
+
+The delivery topic is authoritative: when the topic addresses one instance and the body names a
+different one, the request is refused with `BAD_ARGS` before any other check.
+
+The library owns **addressing** only. Resolving `undefined` to "the lone configured instance",
+and refusing an unknown instance with `NO_SUCH_INSTANCE`, need configuration knowledge the
+library does not have, so those decisions belong to the handler.
+
+Each verb's scope appears on its `describe()` entry as `{verb, builtIn, scope, availability?}`
+and participates in the describe digest. The built-in verbs (`ping`, `describe`, `reload-config`,
+`get-configuration`, `status`) declare `"both"` and answer identically on either topic.
+
 ## Explicit command outcomes and deferred replies
 
-`CommandInbox.registerOutcome(verb, handler)` supports three tagged outcomes from
+`CommandInbox.registerOutcome(verb, scope, handler)` supports three tagged outcomes from
 `CommandOutcomes`: immediate success, immediate coded error, or a deferred reply. Deferred
 work follows a two-step durability boundary:
 
@@ -98,19 +130,15 @@ at most 1024 entries, lifetime is capped at 1,860,000 ms, open expiry emits the 
 cancelling remaining tokens. Deferred state retains only reply metadata and the eventual
 reply, not the original request body or application job payload.
 
-## Command availability and the addressed instance
+## Command availability
 
 `CommandInbox.setCommandAvailability(verb, state, reason?)` declares a registered verb's
 availability for `describe()` consumers. `disabled` / `unsupported` store `{state, reason?}` and
-the verb's describe entry becomes `{verb, builtIn, availability}` — the describe digest changes
-with it; `available` removes the stored entry so the entry reverts to `{verb, builtIn}`. The
-optional reason is trimmed, truncated to 256 characters, and omitted when empty.
-
-`CommandInbox.registerScoped(verb, handler)` registers a scope-aware handler that receives the
-request plus the **addressed instance**: the delivery topic's `{instance}` token for an
-instance-scope command (`ecv1/{device}/{component}/{instance}/cmd/{verb}`), or `undefined` for a
-component-scope one (`ecv1/{device}/{component}/cmd/{verb}`). It follows the same
-one-handler-per-verb rule, `describe()` participation, and reply/error handling as `register`.
+the verb's describe entry becomes `{verb, builtIn, scope, availability}` — the describe digest
+changes with it; `available` removes the stored entry so the entry reverts to
+`{verb, builtIn, scope}`. The optional reason is trimmed, truncated to 256 characters, and
+omitted when empty. Availability is orthogonal to the declared scope: a verb can be
+`"instance"`-scoped and `disabled`.
 
 ## Startup gates and candidate validation
 

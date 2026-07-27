@@ -31,7 +31,8 @@ EdgeCommons gg = EdgeCommonsBuilder.create("com.example.CameraAdapter")
         .withConfigValidationTimeout(Duration.ofSeconds(5))
         .withConfigurationValidator("camera-endpoints", (candidate, prior, phase) ->
                 validateEndpoints(candidate, prior, phase))
-        .configureCommands(inbox -> inbox.register("sb/capture", this::capture))
+        .configureCommands(inbox ->
+                inbox.register("sb/capture", CommandScope.INSTANCE, this::capture))
         .build();
 // Finish component-owned startup, then explicitly release the application gate.
 gg.setReady(true);
@@ -394,25 +395,27 @@ Sends a guarded correlated reply through the strict acknowledgement path.
 ### Command outcomes
 
 ```java
-public void registerOutcome(String verb, OutcomeCommandHandler handler)
+public void register(String verb, CommandScope scope, CommandHandler handler)
+public void registerOutcome(String verb, CommandScope scope, OutcomeCommandHandler handler)
 public DeferredReply defer(Message request, Duration lifetime) throws CommandException
 public DeferredReplySnapshot deferredReplySnapshot()
 ```
+
+Every registration declares the verb's `CommandScope` (`COMPONENT`, `INSTANCE`, or `BOTH`), and
+every handler — the immediate `CommandHandler` and the outcome `OutcomeCommandHandler` alike —
+receives `(request, addressedInstance)`: the delivery topic's `{instance}` token, else the
+body's string `instance` field, or `null`. The inbox enforces the scope before dispatch: a
+topic/body instance conflict, or any instance addressing at a `COMPONENT` verb, is rejected with
+a coded `BAD_ARGS` reply and the handler never runs. A `null` flows through to `INSTANCE`/`BOTH`
+handlers — the component applies its own default and unknown-instance policy. `describe` command
+entries carry `"scope": "component" | "instance" | "both"` (entry shape
+`{verb, builtIn, scope, availability?}`; the digest covers it).
 
 `OutcomeCommandHandler` returns one of `CommandOutcome.ImmediateSuccess`,
 `CommandOutcome.ImmediateError`, or `CommandOutcome.Deferred`. `DeferredReply` exposes
 `activate()`, `discard()`, `settleSuccess(...)`, `settleError(...)`, and `state()`. The inbox owns
 the guarded reply metadata, timer, retry policy, 1,024-entry capacity bound, and shutdown
 settlement.
-
-```java
-public void registerScoped(String verb, ScopedCommandHandler handler)
-```
-
-Registers a scope-aware handler: `handle(request, addressedInstance)` receives the delivery
-topic's `{instance}` token for an instance-scoped command, or `null` for a component-scoped one.
-The one-handler-per-verb rule, `describe` participation, and reply/error semantics are shared with
-`register(...)`.
 
 ```java
 public void setCommandAvailability(String verb, String state, String reason)

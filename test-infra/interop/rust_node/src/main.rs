@@ -21,8 +21,8 @@ use std::time::Duration;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use edgecommons::prelude::{
-    outcome_handler, CommandError, CommandOutcome, EdgeCommonsBuilder, InstanceConnectivity,
-    InstanceConnectivityProvider, LogLevel, LogRecord,
+    outcome_handler, CommandError, CommandOutcome, CommandScope, EdgeCommonsBuilder,
+    InstanceConnectivity, InstanceConnectivityProvider, LogLevel, LogRecord,
 };
 use serde_json::json;
 #[cfg(feature = "greengrass")]
@@ -1146,7 +1146,8 @@ async fn run_gg_p1_matrix(args: &[String]) -> ! {
     inbox
         .register_outcome(
             "deferred",
-            outcome_handler(move |request, deferred| {
+            CommandScope::Both,
+            outcome_handler(move |request, deferred, _addressed_instance| {
                 let responder_actor = responder_actor.clone();
                 async move {
                     let token = match deferred.defer(&request, Duration::from_secs(4)) {
@@ -1865,7 +1866,8 @@ async fn main() {
             inbox
                 .register_outcome(
                     "deferred",
-                    outcome_handler(|request, deferred| async move {
+                    CommandScope::Both,
+                    outcome_handler(|request, deferred, _addressed_instance| async move {
                         let token = match deferred.defer(&request, Duration::from_secs(4)) {
                             Ok(token) => token,
                             Err(error) => return CommandOutcome::ImmediateError(error),

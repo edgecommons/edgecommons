@@ -54,8 +54,9 @@ await this.events?.clearAlarm("my-alarm", { ... });
 ## Register a custom command verb
 
 ```ts
-commands?.register("my-verb", (request: Message) => {
+commands?.register("my-verb", "both", (request: Message, addressedInstance) => {
   // validate request.body, throw CommandException(code, message) on bad input
+  // addressedInstance is the topic/body-resolved instance, or undefined for the whole component
   return { result: "..." }; // becomes { ok: true, result: {...} } in the reply
 });
 ```

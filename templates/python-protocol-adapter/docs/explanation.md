@@ -72,9 +72,14 @@ after a failure" and an operator needs to.
 
 ## Instance routing
 
-`body.instance` is optional **iff** exactly one device is configured (D-EIP-13 convention); with two
-or more, a missing id is `BAD_ARGS` and an unknown id is `NO_SUCH_INSTANCE`. This is why the tutorial
-never needs `instance` in its requests — the scaffold ships one device.
+Every `sb/*` verb declares scope `instance`, and the **library** resolves the addressing before the
+handler runs: the topic's instance token (`…/{instance}/cmd/{verb}`) is authoritative, a request
+addressed to the component may name the device in the body instead, and a body `instance` that
+disagrees with the topic token is refused with `BAD_ARGS` before anything else. `command_service.py`
+receives the resolved instance and only has to do the part that needs *this component's*
+configuration: an instance it has no device for is `NO_SUCH_INSTANCE`, and an unnamed instance is
+the sole configured device — `BAD_ARGS` once there are two or more. This is why the tutorial never
+needs `instance` in its requests: the scaffold ships one device.
 
 ## The command surface, and why the allow-list comes first
 

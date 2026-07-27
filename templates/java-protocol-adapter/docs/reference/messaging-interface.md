@@ -34,7 +34,7 @@ All messages use the EdgeCommons JSON envelope, `{header, identity, tags, body}`
 | Class | Message | Direction | Topic |
 |-------|---------|-----------|-------|
 | `data` | `SouthboundSignalUpdate` | adapter → bus | `ecv1/{device}/<<BINNAME>>/{instance}/data/{signalPath}` |
-| `cmd` | `sb/*` verbs, `reconnect`, `repoll` | bus ↔ adapter | `ecv1/{device}/<<BINNAME>>/cmd/{verb}` |
+| `cmd` | `sb/*` verbs, `reconnect`, `repoll` | bus ↔ adapter | `ecv1/{device}/<<BINNAME>>/{instance}/cmd/{verb}` (or `ecv1/{device}/<<BINNAME>>/cmd/{verb}`) |
 | `evt` | connection alarms | adapter → bus | `ecv1/{device}/<<BINNAME>>/{instance}/evt/{severity}/{type}` |
 | `metric` | `southbound_health`, `<<COMPONENTNAME>>Connection`, `<<COMPONENTNAME>>Command` | adapter → bus | `ecv1/{device}/<<BINNAME>>/metric/{metricName}` |
 | `state` | keepalive | adapter → bus | `ecv1/{device}/<<BINNAME>>/state` |
@@ -51,22 +51,34 @@ A request is a `cmd` envelope whose `header.name` equals the verb; a reply carri
 { "ok": false, "error": { "code": "…", "message": "…" } }
 ```
 
-**Instance selector.** Every `sb/*` request body may carry an `"instance"` field. With exactly one
-device configured it is optional; with two or more, a missing id is `BAD_ARGS` and an unknown one is
-`NO_SUCH_INSTANCE`.
+**Addressing.** Every verb below declares the scope `instance`: it acts on exactly one configured
+device. Address it either way — the library resolves both, and refuses a request that addresses two
+devices at once:
 
-| Verb | Purpose |
-|------|---------|
-| `sb/status` | Per-device link state / paused / endpoint + connection counters. |
-| `sb/read` | On-demand read of named signals. |
-| `sb/write` | Allow-listed batch write, per-entry confirmed. |
-| `sb/signals` | The configured signal inventory (no device round-trip). |
-| `sb/browse` | Paged device discovery, plus the hierarchical panel mode; `BROWSE_UNSUPPORTED` by default. |
-| `sb/pause` / `sb/resume` | Idempotent pause/resume of telemetry production. |
-| `reconnect` | Drop the session and re-establish it (one confirmed attempt). |
-| `repoll` | Trigger an immediate poll cycle. |
+- **On the topic:** `ecv1/{device}/<<BINNAME>>/{instance}/cmd/{verb}` names the device directly.
+- **In the body:** an `"instance"` field on a command sent to the component topic
+  `ecv1/{device}/<<BINNAME>>/cmd/{verb}`.
+- **Both:** the topic wins, and a body naming a *different* device is `BAD_ARGS`
+  ("instance in body conflicts with the addressed instance") — checked before the device is looked
+  up, so the verb never runs.
+- **Neither:** with exactly one device configured the command applies to it; with two or more it is
+  `BAD_ARGS`. An instance that names no configured device is `NO_SUCH_INSTANCE`.
 
-The library also serves `ping`, `reload-config`, and `get-configuration` on the same inbox.
+| Verb | Scope | Purpose |
+|------|-------|---------|
+| `sb/status` | `instance` | Per-device link state / paused / endpoint + connection counters. |
+| `sb/read` | `instance` | On-demand read of named signals. |
+| `sb/write` | `instance` | Allow-listed batch write, per-entry confirmed. |
+| `sb/signals` | `instance` | The configured signal inventory (no device round-trip). |
+| `sb/browse` | `instance` | Paged device discovery, plus the hierarchical panel mode; `BROWSE_UNSUPPORTED` by default. |
+| `sb/pause` / `sb/resume` | `instance` | Idempotent pause/resume of telemetry production. |
+| `reconnect` | `instance` | Drop the session and re-establish it (one confirmed attempt). |
+| `repoll` | `instance` | Trigger an immediate poll cycle. |
+
+The library also serves `ping`, `status`, `describe`, `reload-config`, and `get-configuration` on the
+same inbox; those are scope `both` and answer identically on either topic. Each verb's scope is
+published in the `describe` reply (`commands[].scope`), which is how the edge-console decides whether
+to offer a device selector.
 
 Error codes: `BAD_ARGS`, `NO_SUCH_INSTANCE`, `WRITE_NOT_ALLOWED`, `WRITE_FAILED`,
 `DEVICE_UNAVAILABLE`, `READ_FAILED`, `RECONNECT_FAILED`, `BROWSE_UNSUPPORTED`, `BROWSE_FAILED`,
@@ -197,8 +209,18 @@ Idempotent: pausing an already-paused device returns `"changed": false`.
 
 ## State keepalive
 
-Each RUNNING tick, `instances[]` carries one `{instance, connected, detail}` per configured device —
-the passive counterpart to `sb/status`.
+Each RUNNING tick, `instances[]` carries one entry per configured device — the passive counterpart
+to `sb/status`:
+
+```jsonc
+{ "instance": "device-1", "connected": true, "state": "PAUSED", "detail": "sim://device-1",
+  "attributes": { "adapter": "sim", "paused": true } }
+```
+
+`state` is this adapter's own vocabulary — `CONNECTING`, `ONLINE`, `BACKOFF`, or `PAUSED` — read from
+the same per-device state that answers `sb/status`, so a fleet view and a status reply cannot
+disagree. A deliberately paused device reads `PAUSED` while `connected` stays truthful; a link that
+breaks while paused reads `BACKOFF`.
 
 ## CLI
 

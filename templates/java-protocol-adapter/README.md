@@ -42,8 +42,12 @@ above it (the connection lifecycle, backoff, publishing, health, the command sur
 ## The command surface (`sb/*`)
 
 Registered in `Commands.java`, routed through the worker's `DeviceControl` seam so the command layer
-never races the poll loop on the same connection. Instance routing follows D-EIP-13: `body.instance` is
-optional when exactly one device is configured, otherwise required.
+never races the poll loop on the same connection. All nine verbs are registered with the scope
+`INSTANCE`, so each is addressable either on the device's own topic
+(`ecv1/{device}/{component}/{instance}/cmd/{verb}`) or on the component topic with an `"instance"`
+body field; the library resolves the two and refuses a body that names a different device than the
+topic. Naming no device at all resolves to the sole configured one, and is `BAD_ARGS` when two or
+more are configured (D-EIP-13).
 
 | Verb | What it does |
 |------|--------------|

@@ -50,10 +50,18 @@ Within a few seconds you see JSON messages carrying a `SouthboundSignalUpdate` b
 
 ## Step 4 — Check status
 
+Every `sb/*` verb acts on one device, so it is addressed either on that device's own topic
+(`ecv1/{device}/<<BINNAME>>/{instance}/cmd/{verb}`) or, as here, on the component topic with the
+device named in the body:
+
 ```bash
 mosquitto_pub -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/cmd/sb/status' -m \
   '{"header":{"name":"sb/status","reply_to":"app/reply/1","correlation_id":"1"},"body":{"instance":"device-1"}}'
 mosquitto_sub -h localhost -t 'app/reply/1' -C 1 -v
+
+# The same command, addressed on the device's own topic:
+mosquitto_pub -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/device-1/cmd/sb/status' -m \
+  '{"header":{"name":"sb/status","reply_to":"app/reply/1","correlation_id":"1"},"body":{}}'
 ```
 
 The reply's `result` carries `connected`, `state`, `paused`, `endpoint`, and the device's counters.

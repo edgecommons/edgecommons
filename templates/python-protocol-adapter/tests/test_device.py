@@ -132,6 +132,9 @@ def test_every_device_reports_its_own_connectivity():
     c = connectivity_of(cfg, health)
     assert c.connected is True
     assert c.state == ONLINE
+    # D-SC-7: the state rides the keepalive's instances[] element, not just this object — a fleet
+    # view can tell a live device from a reconnecting one without knowing this adapter's internals.
+    assert c.to_dict()["state"] == ONLINE
 
     health.set_link(BACKOFF)
     assert connectivity_of(cfg, health).connected is False
@@ -148,6 +151,9 @@ def test_a_paused_online_device_reports_paused_but_stays_connected():
     assert c.state == "PAUSED", "paused + online = PAUSED"
     assert c.connected is True, "connected stays truthful while paused"
     assert c.attributes["paused"] is True
+    # D-SC-7: PAUSED reaches the keepalive too, so a deliberately paused instance is distinguishable
+    # from a silently stale one on the passive surface.
+    assert c.to_dict()["state"] == "PAUSED"
 
     # A break while paused reports BACKOFF (not PAUSED), connected false.
     health.set_link(BACKOFF)

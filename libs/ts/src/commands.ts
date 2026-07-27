@@ -15,9 +15,10 @@
  * the request's `correlation_id` (the `uns-bridge` rewrites `reply_to` across brokers, so
  * console→component request/reply works transparently over the site bus); a `cmd` without
  * `reply_to` is fire-and-forget (the handler runs, no reply). Obtain the facade via
- * `EdgeCommons.commands()` and register custom verbs with {@link CommandInbox.register} (or
- * {@link CommandInbox.registerScoped} when the handler needs the addressed instance token).
- * A producer declares a verb's availability for `describe()` consumers with
+ * `EdgeCommons.commands()` and register custom verbs with {@link CommandInbox.register} or
+ * {@link CommandInbox.registerOutcome}: both take the verb's declared {@link CommandScope} and
+ * both hand the handler the **addressed instance**, so no registration form is blind to the
+ * envelope (D-SC-1). A producer declares a verb's availability for `describe()` consumers with
  * {@link CommandInbox.setCommandAvailability}. Mirrors the Java
  * `com.mbreissi.edgecommons.commands.CommandInbox`.
  *
@@ -44,6 +45,16 @@
  * - **Unknown verb** — a well-formed request whose verb has no handler gets an
  *   {@link CommandInbox.ERR_UNKNOWN_VERB} error reply (fire-and-forget unknowns are ignored at
  *   DEBUG).
+ * - **Declared scope** — every verb declares a {@link CommandScope}, and the inbox enforces the
+ *   addressing **before dispatch**, so a handler never runs on an addressing error (D-SC-2). The
+ *   delivery topic's instance token and a `body.instance` field that disagree are
+ *   {@link CommandInbox.ERR_BAD_ARGS} (the conflict is checked first, before anything else); a
+ *   `component`-scoped verb rejects both an instance-addressed topic and a `body.instance`; an
+ *   `instance`- or `both`-scoped verb receives the topic token, else the body-named instance,
+ *   else `undefined` (`both`: "addressed to the whole component", D-SC-3). The library owns
+ *   **addressing** only — the "optional iff exactly one configured instance" default and
+ *   "unknown instance → NO_SUCH_INSTANCE" need configuration knowledge the library does not
+ *   have and stay with the component's handler.
  * - **Malformed** — a missing header, a `header.name` that does not equal the topic's verb, or
  *   any parse anomaly is ignored at DEBUG, **never replied to and never a crash** (the G-S1
  *   precedent; replying would race foreign conventions that use a different header name on a
@@ -103,26 +114,52 @@ export type CommandResult = Record<string, unknown> | null | undefined;
  *
  * @param request the full request envelope (body = the verb's arguments object; the
  *                requester's `identity`/`tags`, when present, are informational)
+ * @param addressedInstance the instance this delivery addresses (D-SC-2): the delivery topic's
+ *                `{instance}` token, else the request body's `instance` field, else `undefined`
+ *                for a component-scoped delivery. Always `undefined` for a
+ *                `"component"`-scoped verb; for a `"both"`-scoped verb `undefined` means "the
+ *                whole component"
  * @returns the verb-specific result object (may be `null`/`undefined` for an empty result),
  *          synchronously or via a `Promise`
  */
-export type CommandHandler = (request: Message) => CommandResult | Promise<CommandResult>;
-
-/**
- * A scope-aware command-verb handler ({@link CommandInbox.registerScoped}): receives everything a
- * {@link CommandHandler} receives PLUS the **addressed instance** — the `{instance}` token of the
- * delivery topic when the command was addressed instance-scope
- * (`ecv1/{device}/{component}/{instance}/cmd/{verb}`), or `undefined` when it was addressed
- * component-scope (`ecv1/{device}/{component}/cmd/{verb}`, D-U28). Result/failure semantics are
- * identical to {@link CommandHandler}.
- *
- * @param request           the full request envelope (body = the verb's arguments object)
- * @param addressedInstance the topic's instance token, or `undefined` for component scope
- */
-export type ScopedCommandHandler = (
+export type CommandHandler = (
   request: Message,
   addressedInstance: string | undefined,
 ) => CommandResult | Promise<CommandResult>;
+
+/**
+ * A verb's declared **addressing scope** (D-SC-2): required at registration, enforced by the
+ * inbox before dispatch, and advertised on the verb's `describe` entry as this exact lowercase
+ * string.
+ *
+ * - `"component"` — the verb addresses the component as a whole. An instance-addressed delivery
+ *   (or a `body.instance` field) is refused with {@link CommandInbox.ERR_BAD_ARGS}; the handler
+ *   always receives `undefined`.
+ * - `"instance"` — the verb acts on one instance. The handler receives the delivery topic's
+ *   instance token, else the body-named instance. `undefined` still reaches the handler: whether
+ *   a component-scoped delivery resolves to "the lone configured instance" or is an error needs
+ *   configuration knowledge the library does not have, so that decision stays with the handler.
+ * - `"both"` — both deliveries are meaningful (D-SC-3): scope-indifferent verbs (the built-ins)
+ *   ignore the parameter, dual-semantics verbs branch on `undefined` = "the whole component".
+ *
+ * Widening a verb (`"instance"` → `"both"`) is additive; narrowing is a breaking change to that
+ * verb's contract (D-SC-5).
+ */
+export type CommandScope = "component" | "instance" | "both";
+
+/** The three declared {@link CommandScope} values, for callers that prefer a named constant. */
+export const CommandScopes = {
+  Component: "component",
+  Instance: "instance",
+  Both: "both",
+} as const;
+
+/** The declared scopes, in the order they are reported by the registration validation error. */
+const COMMAND_SCOPES: ReadonlySet<string> = new Set<string>([
+  CommandScopes.Component,
+  CommandScopes.Instance,
+  CommandScopes.Both,
+]);
 
 /** A command's producer-declared availability state ({@link CommandInbox.setCommandAvailability}). */
 export type CommandAvailabilityState = "available" | "disabled" | "unsupported";
@@ -209,8 +246,20 @@ export const CommandOutcomes = {
   },
 } as const;
 
-/** Explicit-outcome command handler; may be synchronous or asynchronous. */
-export type OutcomeCommandHandler = (request: Message) => CommandOutcome | Promise<CommandOutcome>;
+/**
+ * Explicit-outcome command handler; may be synchronous or asynchronous. Receives the same
+ * `addressedInstance` a {@link CommandHandler} does (D-SC-1), so a deferred verb can see the
+ * addressing it acts on. Deferred-token semantics are unchanged: the handler mints its own token
+ * with {@link CommandInbox.defer} at its durable-acceptance boundary and returns it through
+ * {@link CommandOutcomes}.
+ *
+ * @param request           the full request envelope (body = the verb's arguments object)
+ * @param addressedInstance the addressed instance, or `undefined` for a component-scoped delivery
+ */
+export type OutcomeCommandHandler = (
+  request: Message,
+  addressedInstance: string | undefined,
+) => CommandOutcome | Promise<CommandOutcome>;
 
 interface DeferredEntry {
   readonly id: symbol;
@@ -358,6 +407,52 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * The request body's `instance` field (§2.2 body addressing): present only when the body is a
+ * JSON object carrying a non-empty string. A binary, absent, or unreadable body names no
+ * instance.
+ */
+function commandBodyInstance(request: Message): string | undefined {
+  let body: unknown;
+  try {
+    body = request.getBody();
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(body)) return undefined;
+  const named = body.instance;
+  return typeof named === "string" && named !== "" ? named : undefined;
+}
+
+/**
+ * The pre-dispatch addressing check (D-SC-2/D-SC-4): returns the
+ * {@link CommandInbox.ERR_BAD_ARGS} message when the delivery violates the verb's declared
+ * scope, or `undefined` when it is well-addressed.
+ *
+ * The conflict rule is universal and checked **first**, before scope-specific rejection and
+ * before any existence check a handler might do: the delivery topic's instance token is
+ * authoritative, so a body naming a different instance is always refused.
+ */
+function addressingViolation(
+  verb: string,
+  scope: CommandScope,
+  topicInstance: string | undefined,
+  bodyInstance: string | undefined,
+): string | undefined {
+  if (topicInstance !== undefined && bodyInstance !== undefined && topicInstance !== bodyInstance) {
+    return "instance in body conflicts with the addressed instance";
+  }
+  if (scope === CommandScopes.Component) {
+    if (topicInstance !== undefined) {
+      return `verb '${verb}' is component-scoped`;
+    }
+    if (bodyInstance !== undefined) {
+      return `verb '${verb}' is component-scoped - the body must not name an instance`;
+    }
+  }
+  return undefined;
+}
+
 function stableJson(value: unknown): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value) ?? "null";
@@ -461,6 +556,13 @@ export class CommandInbox {
   static readonly ERR_UNKNOWN_VERB = "UNKNOWN_VERB";
   /** Error code: the handler threw an uncoded exception. */
   static readonly ERR_HANDLER_ERROR = "HANDLER_ERROR";
+  /**
+   * Error code: the request's addressing violates the verb's declared {@link CommandScope}
+   * (D-SC-2) - a `body.instance` conflicting with the delivery topic's instance token, or an
+   * instance-addressed delivery (or `body.instance`) at a `"component"`-scoped verb. Raised by
+   * the inbox before dispatch, so the handler never runs.
+   */
+  static readonly ERR_BAD_ARGS = "BAD_ARGS";
   /** Error code: {@link CommandInbox.RELOAD_CONFIG} could not re-fetch or the document was rejected. */
   static readonly ERR_RELOAD_FAILED = "RELOAD_FAILED";
   /** Error code: {@link CommandInbox.GET_CONFIGURATION} found no effective configuration to return. */
@@ -509,8 +611,12 @@ export class CommandInbox {
   private readonly handlers = new Map<string, CommandHandler>();
   /** verb -> explicit-outcome handler; custom verbs via {@link registerOutcome}. */
   private readonly outcomeHandlers = new Map<string, OutcomeCommandHandler>();
-  /** verb -> scope-aware handler; custom verbs via {@link registerScoped}. */
-  private readonly scopedHandlers = new Map<string, ScopedCommandHandler>();
+  /**
+   * verb -> declared {@link CommandScope} (D-SC-2), for every registered verb across both
+   * registration forms; built-ins are seeded `"both"`. Drives pre-dispatch enforcement and the
+   * verb's `describe` entry.
+   */
+  private readonly scopes = new Map<string, CommandScope>();
   /** verb -> stored non-available availability (`{state, reason?}`); see {@link setCommandAvailability}. */
   private readonly availability = new Map<string, { state: CommandAvailabilityState; reason?: string }>();
   /** panel id -> descriptor; panel descriptors are carried verbatim for `describe`. */
@@ -571,14 +677,14 @@ export class CommandInbox {
   ) {
     // ping -> the state keepalive's RUNNING body shape: proves the component is not just alive
     // (the keepalive does that) but RESPONSIVE to addressed commands.
-    this.handlers.set(CommandInbox.PING, () => ({
+    this.registerBuiltIn(CommandInbox.PING, () => ({
       status: "RUNNING",
       uptimeSecs: uptimeSecs(),
     }));
     // status -> ping's per-instance superset. Same body, plus the `instances` the state keepalive
     // pushes, from the same provider. A component with no instances omits the section, so a plain
     // service answers exactly as ping does.
-    this.handlers.set(CommandInbox.STATUS, () => {
+    this.registerBuiltIn(CommandInbox.STATUS, () => {
       const result: Record<string, unknown> = {
         status: "RUNNING",
         uptimeSecs: uptimeSecs(),
@@ -593,9 +699,9 @@ export class CommandInbox {
       return result;
     });
     // describe -> command/panel discovery manifest for descriptor-driven console panels.
-    this.handlers.set(CommandInbox.DESCRIBE, () => this.describe());
+    this.registerBuiltIn(CommandInbox.DESCRIBE, () => this.describe());
     // get-configuration (Flow B) -> the cfg class's body shape, as a reply.
-    this.handlers.set(CommandInbox.GET_CONFIGURATION, () => {
+    this.registerBuiltIn(CommandInbox.GET_CONFIGURATION, () => {
       const config = redactedConfig();
       if (config === undefined) {
         throw new CommandException(CommandInbox.ERR_NO_CONFIG, "no effective configuration is available");
@@ -604,7 +710,7 @@ export class CommandInbox {
     });
     // reload-config -> re-fetch from the active config source and re-apply (listeners fire, so
     // a successful reload also re-announces the cfg push as a side effect).
-    this.handlers.set(CommandInbox.RELOAD_CONFIG, async () => {
+    this.registerBuiltIn(CommandInbox.RELOAD_CONFIG, async () => {
       const ok = await configReload();
       if (!ok) {
         throw new CommandException(
@@ -615,6 +721,16 @@ export class CommandInbox {
       }
       return { reloaded: true };
     });
+  }
+
+  /**
+   * Seeds one built-in verb. Built-ins declare {@link CommandScopes.Both} and ignore the
+   * addressed instance - their answer is identical on a component-scope and an instance-scope
+   * delivery (D-SC-3, sanctioned use 1).
+   */
+  private registerBuiltIn(verb: string, handler: CommandHandler): void {
+    this.handlers.set(verb, handler);
+    this.scopes.set(verb, CommandScopes.Both);
   }
 
   /** Current startup state; ACTIVE means the exact transport filter was acknowledged. */
@@ -645,52 +761,59 @@ export class CommandInbox {
   }
 
   /**
-   * Registers a custom verb handler — the minimal `commands()` registration seam. The verb is
+   * Registers a custom verb handler - the minimal `commands()` registration seam. The verb is
    * one or more `/`-separated channel tokens (`"restart-pipeline"`, `"sb/status"`), each
    * validated against the §2.2 token rule. Registration is allowed before or after
-   * {@link start} (the inbox is a single wildcard subscription — no per-verb subscribe).
+   * {@link start} (the inbox is a single wildcard subscription - no per-verb subscribe).
    *
-   * **Precedence:** no shadowing, ever — registering a {@link CommandInbox.BUILT_IN_VERBS
+   * The verb's {@link CommandScope} is **required** (D-SC-2): the inbox enforces it before
+   * dispatch and advertises it in `describe()`. The handler always receives the resolved
+   * addressed instance, so no registration form is blind to the envelope (D-SC-1).
+   *
+   * **Precedence:** no shadowing, ever - registering a {@link CommandInbox.BUILT_IN_VERBS
    * built-in}, a {@link CommandInbox.DELEGATED_VERBS delegated} or an already-registered verb
    * throws. Replace a custom handler by {@link unregister} first.
    *
    * @param verb    the verb (the `cmd` channel, `/`-namespaces allowed)
+   * @param scope   the verb's declared addressing scope
    * @param handler the handler to dispatch it to
-   * @throws Error when the verb is built-in/delegated/already registered
+   * @throws Error when the scope is not one of the three, or the verb is
+   *         built-in/delegated/already registered
    * @throws UnsValidationError when a verb token violates the §2.2 token rule
    */
-  register(verb: string, handler: CommandHandler): void {
-    this.validateCustomVerbRegistration(verb);
+  register(verb: string, scope: CommandScope, handler: CommandHandler): void {
+    this.validateCustomVerbRegistration(verb, scope);
     this.handlers.set(verb, handler);
-    logger.debug(`command verb '${verb}' registered`);
-  }
-
-  /** Register an explicit-outcome handler without changing the legacy {@link register} API. */
-  registerOutcome(verb: string, handler: OutcomeCommandHandler): void {
-    this.validateCustomVerbRegistration(verb);
-    this.outcomeHandlers.set(verb, handler);
-    logger.debug(`outcome command verb '${verb}' registered`);
+    this.scopes.set(verb, scope);
+    logger.debug(`command verb '${verb}' registered (scope: ${scope})`);
   }
 
   /**
-   * Registers a scope-aware custom verb handler — identical to {@link register} (same token
-   * validation, same no-shadowing/one-handler-per-verb precedence, same participation in
-   * `describe()` and reply/error handling), except the handler also receives the **addressed
-   * instance**: the delivery topic's `{instance}` token for an instance-scope command, or
-   * `undefined` for a component-scope one (D-U28).
+   * Registers an explicit-outcome handler for a custom verb - identical to {@link register}
+   * (same declared {@link CommandScope} and its pre-dispatch enforcement, same token validation,
+   * same one-handler-per-verb precedence, same `describe()` participation), except the handler
+   * chooses its outcome explicitly through {@link CommandOutcomes} and may defer the reply.
    *
    * @param verb    the verb (the `cmd` channel, `/`-namespaces allowed)
-   * @param handler the scope-aware handler to dispatch it to
-   * @throws Error when the verb is built-in/delegated/already registered
+   * @param scope   the verb's declared addressing scope
+   * @param handler the explicit-outcome handler to dispatch it to
+   * @throws Error when the scope is not one of the three, or the verb is
+   *         built-in/delegated/already registered
    * @throws UnsValidationError when a verb token violates the §2.2 token rule
    */
-  registerScoped(verb: string, handler: ScopedCommandHandler): void {
-    this.validateCustomVerbRegistration(verb);
-    this.scopedHandlers.set(verb, handler);
-    logger.debug(`scoped command verb '${verb}' registered`);
+  registerOutcome(verb: string, scope: CommandScope, handler: OutcomeCommandHandler): void {
+    this.validateCustomVerbRegistration(verb, scope);
+    this.outcomeHandlers.set(verb, handler);
+    this.scopes.set(verb, scope);
+    logger.debug(`outcome command verb '${verb}' registered (scope: ${scope})`);
   }
 
-  private validateCustomVerbRegistration(verb: string): void {
+  private validateCustomVerbRegistration(verb: string, scope: CommandScope): void {
+    if (!COMMAND_SCOPES.has(scope as string)) {
+      throw new Error(
+        `command scope '${String(scope)}' must be 'component', 'instance', or 'both'`,
+      );
+    }
     for (const token of verb.split("/")) {
       checkToken(token, "verb token");
     }
@@ -700,7 +823,7 @@ export class CommandInbox {
     if (CommandInbox.DELEGATED_VERBS.has(verb)) {
       throw new Error(`verb '${verb}' is owned by another library subsystem and cannot be registered`);
     }
-    if (this.handlers.has(verb) || this.outcomeHandlers.has(verb) || this.scopedHandlers.has(verb)) {
+    if (this.handlers.has(verb) || this.outcomeHandlers.has(verb)) {
       throw new Error(`verb '${verb}' is already registered - unregister it first to replace the handler`);
     }
   }
@@ -716,8 +839,10 @@ export class CommandInbox {
     if (CommandInbox.BUILT_IN_VERBS.has(verb)) {
       throw new Error(`verb '${verb}' is a built-in verb and cannot be unregistered`);
     }
-    if (this.handlers.delete(verb) || this.outcomeHandlers.delete(verb) || this.scopedHandlers.delete(verb)) {
-      // Availability is tied to the registration: an unregistered verb keeps no stored state.
+    if (this.handlers.delete(verb) || this.outcomeHandlers.delete(verb)) {
+      // Availability and the declared scope are tied to the registration: an unregistered verb
+      // keeps no stored state.
+      this.scopes.delete(verb);
       this.availability.delete(verb);
       logger.debug(`command verb '${verb}' unregistered`);
     }
@@ -725,13 +850,13 @@ export class CommandInbox {
 
   /** The currently registered verbs (built-ins + custom) — a snapshot copy. */
   verbs(): Set<string> {
-    return new Set([...this.handlers.keys(), ...this.outcomeHandlers.keys(), ...this.scopedHandlers.keys()]);
+    return new Set([...this.handlers.keys(), ...this.outcomeHandlers.keys()]);
   }
 
   /**
    * Declares a registered verb's availability for `describe()` consumers (the console greys or
    * hides the bound controls; `docs/SOUTHBOUND.md`): `available` (the default) removes any stored
-   * entry so the verb's describe entry reverts to `{verb, builtIn}`; `disabled`/`unsupported`
+   * entry so the verb's describe entry reverts to `{verb, builtIn, scope}`; `disabled`/`unsupported`
    * store `{state, reason?}` and surface on the verb's describe entry as
    * `"availability": {"state", "reason"?}` — changing the describe digest. The optional `reason`
    * is caller-provided display text: trimmed, truncated to
@@ -877,11 +1002,15 @@ export class CommandInbox {
     const config = this.configProvider();
     const identity = config.componentIdentity;
     const commands = [...this.verbs()].sort().map((verb) => {
+      // Key order is normative: {verb, builtIn, scope, availability?} (D-SC-2). `scope` is the
+      // declared lowercase string and always present; the digest covers it, so widening a verb's
+      // scope changes the digest and the console re-reads the manifest.
       const entry: Record<string, unknown> = {
         verb,
         builtIn: CommandInbox.BUILT_IN_VERBS.has(verb),
+        scope: this.scopes.get(verb) ?? CommandScopes.Both,
       };
-      // Only verbs with a stored non-available state carry the key: {verb, builtIn, availability?}.
+      // Only verbs with a stored non-available state carry the availability key.
       const availability = this.availability.get(verb);
       if (availability !== undefined) {
         entry.availability = { ...availability };
@@ -1065,20 +1194,20 @@ export class CommandInbox {
         logger.debug(`ignoring malformed/foreign cmd payload on '${topic}' (header.name must equal the topic verb)`);
         return;
       }
-      await this.dispatch(verb, message, this.addressedInstance(topic, cmdMarker));
+      await this.dispatch(verb, message, this.topicInstance(topic, cmdMarker));
     } catch (e) {
       logger.debug(`ignoring malformed cmd payload on '${topic}': ${errMsg(e)}`);
     }
   }
 
   /**
-   * The delivery topic's addressed-instance token (D-U28), parsed against the stored
+   * The delivery topic's instance token (D-U28), parsed against the stored
    * component-scope filter's own prefix (the same identity `start()` subscribed — never
    * re-derived from config a second way): `ecv1/{device}/{component}/cmd/…` → component scope
    * (`undefined`); `ecv1/{device}/{component}/{instance}/cmd/…` → that `{instance}` token. A
    * malformed topic (impossible through the subscribed filters) is treated as component scope.
    */
-  private addressedInstance(topic: string, cmdMarker: number): string | undefined {
+  private topicInstance(topic: string, cmdMarker: number): string | undefined {
     const componentFilter = this.componentInboxFilter;
     if (componentFilter === undefined || !componentFilter.endsWith("/cmd/#")) {
       return undefined;
@@ -1097,14 +1226,24 @@ export class CommandInbox {
     return undefined; // malformed -> component scope
   }
 
-  /** Dispatches a well-formed request to its handler and replies (when `reply_to` set). */
-  private async dispatch(verb: string, request: Message, addressedInstance: string | undefined): Promise<void> {
+  /**
+   * Dispatches a well-formed request to its handler and replies (when `reply_to` set). The
+   * verb's declared {@link CommandScope} is enforced here, **before** the handler runs (D-SC-2):
+   * an addressing violation is answered with {@link CommandInbox.ERR_BAD_ARGS} through the same
+   * coded-error reply path a handler's {@link CommandException} uses, and the handler is never
+   * invoked.
+   *
+   * @param verb          the dispatched verb
+   * @param request       the well-formed request envelope
+   * @param topicInstance the delivery topic's `{instance}` token, or `undefined` for a
+   *                      component-scope delivery (D-U28)
+   */
+  private async dispatch(verb: string, request: Message, topicInstance: string | undefined): Promise<void> {
     const replyTo = request.getReplyTo();
     const wantsReply = replyTo !== undefined && replyTo !== "";
     const outcomeHandler = this.outcomeHandlers.get(verb);
-    const scopedHandler = this.scopedHandlers.get(verb);
     const handler = this.handlers.get(verb);
-    if (!handler && !outcomeHandler && !scopedHandler) {
+    if (!handler && !outcomeHandler) {
       if (wantsReply) {
         logger.debug(`unknown verb '${verb}' - sending ${CommandInbox.ERR_UNKNOWN_VERB} error reply`);
         await this.sendReply(
@@ -1117,15 +1256,30 @@ export class CommandInbox {
       }
       return;
     }
+    // D-SC-2: the library owns ADDRESSING - topic/body extraction, the conflict rule, and the
+    // component-scope rejection. It deliberately does not own the "optional iff exactly one
+    // configured instance" default or "unknown instance -> NO_SUCH_INSTANCE": both need
+    // configuration knowledge the library does not have, so `undefined` reaches the handler.
+    const scope = this.scopes.get(verb) ?? CommandScopes.Both;
+    const bodyInstance = commandBodyInstance(request);
+    const violation = addressingViolation(verb, scope, topicInstance, bodyInstance);
+    if (violation !== undefined) {
+      if (wantsReply) {
+        await this.sendReply(request, verb, errorBody(CommandInbox.ERR_BAD_ARGS, violation));
+      } else {
+        logger.warn(`fire-and-forget verb '${verb}' rejected (${CommandInbox.ERR_BAD_ARGS}): ${violation}`);
+      }
+      return;
+    }
+    const addressedInstance = scope === CommandScopes.Component ? undefined : topicInstance ?? bodyInstance;
+
     if (outcomeHandler) {
-      await this.dispatchOutcome(verb, request, wantsReply, outcomeHandler);
+      await this.dispatchOutcome(verb, request, wantsReply, outcomeHandler, addressedInstance);
       return;
     }
     let result: CommandResult;
     try {
-      // A scoped handler is the plain path plus the addressed-instance argument (D-U28);
-      // reply/error handling is identical.
-      result = scopedHandler ? await scopedHandler(request, addressedInstance) : await handler!(request);
+      result = await handler!(request, addressedInstance);
     } catch (e) {
       if (e instanceof CommandException) {
         if (wantsReply) {
@@ -1150,10 +1304,11 @@ export class CommandInbox {
     request: Message,
     wantsReply: boolean,
     handler: OutcomeCommandHandler,
+    addressedInstance: string | undefined,
   ): Promise<void> {
     let outcome: CommandOutcome;
     try {
-      outcome = await handler(request);
+      outcome = await handler(request, addressedInstance);
       if (!outcome || typeof outcome !== "object" || !("kind" in outcome)) {
         throw new Error("outcome handler returned an invalid outcome");
       }
