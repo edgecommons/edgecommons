@@ -69,7 +69,8 @@ doesn't exist" — that split is spelled out in the `INSTANCE` bullet below and 
   meaning here — "addressed to the whole component" — a distinct, meaningful signal for the first
   time, not an error or a default to be resolved.
 
-`BOTH` has two intended uses, both first-class:
+`BOTH` has two intended uses, both first-class (camera-adapter ships the first dual-semantics
+verbs: `sb/status`, `sb/capture-status`, `sb/queue-status`, `sb/queue-clear`):
 
 1. **Scope-indifferent** verbs (built-ins `ping`, `describe`, `get-configuration`, `status`):
    identical answer either way; the handler ignores the parameter.
@@ -136,9 +137,12 @@ Breaking for every registered handler in all four languages. One coordinated wav
   `instances[]` entries with the instance **state** from the same single state model that answers
   `sb/status`, using the shared `CONNECTING`/`ONLINE`/`BACKOFF`/`PAUSED` vocabulary. Additive —
   the library API exists since 0.4.0; no core change.
-- **D-SC-8:** (companion, §6) edge-console renders that state in the fleet/Instances views and its
-  miss-detection treats `PAUSED` as expected-quiet (no staleness alarm for a deliberately paused
-  instance). Unknown/absent state falls back to today's connectivity-only rendering.
+- **D-SC-8:** (companion, §6) edge-console renders that state in the fleet/Instances views.
+  Pause-awareness lives in the Health tab's aggregate connection check (paused instances are
+  excluded from the connected ratio; an all-paused component reads Paused, not Disconnected) —
+  NOT in miss-detection, which keys on the component keepalive's age and therefore structurally
+  cannot misread a pause (the keepalive keeps ticking while instances are paused). Unknown/absent
+  state falls back to connectivity-only rendering. The gateway forwards the state token verbatim.
 - **D-SC-9:** (companion, §6) The keepalive-state adoption rides the same 0.5.0 coordinated wave
   (one PR per repo covers both changes), though it is technically additive on 0.4.0 and carries no
   breaking risk of its own.
