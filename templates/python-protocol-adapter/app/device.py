@@ -141,7 +141,8 @@ class ReconnectFailed(Exception):
 
 
 class RepollRefused(Exception):
-    """A ``repoll`` was refused (the instance is paused). Maps to ``BAD_ARGS``."""
+    """A generic ``repoll`` refusal from the seam. Maps to ``BAD_ARGS``. (A repoll on a *paused*
+    instance never reaches the seam — the command layer refuses it with ``PAUSED`` first.)"""
 
 
 # =================================================================================================

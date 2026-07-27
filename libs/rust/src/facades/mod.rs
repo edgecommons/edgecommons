@@ -246,6 +246,7 @@ mod vector_tests {
                         .get("serverTs")
                         .and_then(Value::as_str)
                         .map(str::to_string),
+                    ..Default::default()
                 };
                 builder = builder.sample(sample);
             }

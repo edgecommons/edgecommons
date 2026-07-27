@@ -48,9 +48,9 @@ hardware; a real deployment implements the device seam for its protocol.
 - **Every sample carries a quality.** `GOOD`/`BAD`/`UNCERTAIN`, normalized — a failed read publishes
   `BAD`, it is never silently omitted.
 - **`southbound_health`'s measure set is exact** (SOUTHBOUND.md §5): `connectionState`,
-  `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, `reconnects`. Do not rename or
-  drop one without updating `metrics.py`'s `HEALTH_MEASURES`, the metrics test, and
-  `docs/reference/metrics.md` together.
+  `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, `reconnects`, `writeErrors`,
+  `signalsSubscribed`. Do not rename or drop one without updating `metrics.py`'s `HEALTH_MEASURES`,
+  the metrics test, and `docs/reference/metrics.md` together.
 - **Instance routing** (D-EIP-13): `body.instance` optional iff exactly one device is configured;
   otherwise a missing id is `BAD_ARGS`, an unknown id is `NO_SUCH_INSTANCE`.
 

@@ -2,7 +2,7 @@
 families are named from the component and low-cardinality, and the interval counters reset on emit.
 Asserted against an independent literal transcription of §5 so a drift from the canonical doc fails
 the test."""
-from <<SNAKENAME>>.adapter import Health
+from <<SNAKENAME>>.adapter import BACKOFF, ONLINE, Health
 from <<SNAKENAME>>.metrics import (
     COMMAND,
     COMMAND_VERBS,
@@ -57,7 +57,7 @@ def test_southbound_health_emits_exactly_the_section_5_measure_set():
     # A second, independent copy of §5 — NOT the module const, so a wrong edit to one is caught.
     section_5 = {
         "connectionState", "publishLatencyMs", "pollLatencyMs", "readErrors", "staleSignals",
-        "reconnects",
+        "reconnects", "writeErrors", "signalsSubscribed",
     }
     emitted = {m.name for m in _family(HEALTH).measures}
     assert emitted == section_5, "southbound_health must be the exact §5 set — no more, no less"
@@ -134,6 +134,28 @@ def test_recording_a_command_tracks_requests_errors_and_latency():
     combos = [v for (n, v) in metrics.emitted if n == COMMAND]
     assert any(v.get("commandRequestsTotal") == 1.0 and v.get("commandErrorsTotal") == 1.0
                for v in combos), "the error combo recorded a request and an error"
+
+
+def test_write_errors_drain_on_emit_and_signals_subscribed_tracks_the_link():
+    metrics = RecordingMetrics()
+    health = Health()
+    health.set_signal_inventory(2)
+    health.set_link(ONLINE)
+    health.incr_write_error()
+    health.incr_write_error()
+    dm = _dm(metrics, health=health)
+
+    dm.emit_periodic()
+    payload = next(v for (n, v) in metrics.emitted if n == HEALTH)
+    assert payload["writeErrors"] == 2.0, "both rejected entries are reported"
+    assert payload["signalsSubscribed"] == 2.0, "the sb/signals inventory size while connected"
+
+    metrics.emitted.clear()
+    health.set_link(BACKOFF)
+    dm.emit_periodic()
+    payload = next(v for (n, v) in metrics.emitted if n == HEALTH)
+    assert payload["writeErrors"] == 0.0, "the interval counter drained on the previous emit"
+    assert payload["signalsSubscribed"] == 0.0, "0 while disconnected"
 
 
 def test_a_signal_with_no_recent_update_is_counted_stale():

@@ -68,7 +68,7 @@ A **signal** is one data point (OPC UA calls it a "tag"; Modbus calls it a "regi
 | **Quality on every sample** (`GOOD \| BAD \| UNCERTAIN` + the native code in `qualityRaw`) | It lets a consumer gate on quality without knowing your protocol. |
 | **A failed read is published as `BAD`, not swallowed** | A signal that silently stops updating is indistinguishable from one that is simply not changing. "I could not read this" is information; silence is not. |
 | **Reconnect with exponential backoff + full jitter** | So a plant full of adapters does not reconnect in lockstep when a PLC reboots. A *permanent* failure (a bad endpoint, a rejected credential) backs off to the ceiling at once rather than hammering a device that will never answer. |
-| **`southbound_health`, dimensioned by instance** | An operator sees a link go down without reading logs: the exact SOUTHBOUND.md §5 set — `connectionState`, `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, `reconnects`. |
+| **`southbound_health`, dimensioned by instance** | An operator sees a link go down without reading logs: the exact SOUTHBOUND.md §5 set — `connectionState`, `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, `reconnects`, `writeErrors`, `signalsSubscribed`. |
 | **Writes are ALLOW-LISTED by stable `signal.id`, and default to EMPTY** | An adapter that writes whatever it is asked to is a control-system vulnerability, not a convenience. "The caller was authorized" is not this component's judgement to make. |
 | **A write is CONFIRMED** | The command reply is the *device's* answer, not "we sent it". |
 | **One loop per instance** (one device) | Most device protocols are a single request/response channel; a write and a poll on two callers would interleave into nonsense. The loop serializes them. |
@@ -84,7 +84,7 @@ adapter registers the full generic southbound family (`src/commands.ts`):
 | `sb/read` | `ecv1/{device}/{component}/cmd/sb/read` | `{"signals": [{"signalId": "temperature-1"}]}` |
 | `sb/write` | `ecv1/{device}/{component}/cmd/sb/write` | `{"writes": [{"signalId": "temperature-1", "value": 42}]}` |
 | `sb/signals` | `ecv1/{device}/{component}/cmd/sb/signals` | `{}` |
-| `sb/browse` | `ecv1/{device}/{component}/cmd/sb/browse` | `{"cursor"?: "...", "max"?: 200}` |
+| `sb/browse` | `ecv1/{device}/{component}/cmd/sb/browse` | `{"cursor"?: "...", "max"?: 200}` or `{"ref": "root", "depth"?: 1, "maxRefs"?: 200}` |
 | `sb/pause` / `sb/resume` | `ecv1/{device}/{component}/cmd/sb/{pause,resume}` | `{}` |
 | `reconnect` / `repoll` | `ecv1/{device}/{component}/cmd/{reconnect,repoll}` | `{}` |
 

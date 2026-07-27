@@ -18,7 +18,10 @@ import com.mbreissi.edgecommons.messaging.Qos;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -186,6 +189,104 @@ class DataFacadeTest {
     void detachedBuilderPublishThrows() {
         SignalUpdate.Builder detached = new SignalUpdate.Builder("temp").addSample(1.0);
         assertThrows(IllegalStateException.class, detached::publish);
+    }
+
+    // ===================== explicit null (the deliberate protocol null) =====================
+
+    @Test
+    void explicitNullSamplePublishesJsonNullWithNormalQualityDefaulting() {
+        facade().signal("temp").addSample(SignalUpdate.Sample.ofNull()).publish();
+
+        JsonObject sample = firstSample(lastBody());
+        assertTrue(sample.get("value").isJsonNull(),
+                "an explicit protocol null publishes \"value\": null");
+        assertEquals("GOOD", sample.get("quality").getAsString());
+        assertEquals("unspecified", sample.get("qualityRaw").getAsString(),
+                "the normal quality defaulting applies to an explicit null");
+        assertEquals(NOW, sample.get("serverTs").getAsString());
+    }
+
+    @Test
+    void explicitNullSampleKeepsAnExplicitQuality() {
+        facade().signal("temp").addSample(SignalUpdate.Sample.ofNull(Quality.BAD)).publish();
+
+        JsonObject sample = firstSample(lastBody());
+        assertTrue(sample.get("value").isJsonNull());
+        assertEquals("BAD", sample.get("quality").getAsString());
+        assertFalse(sample.has("qualityRaw"),
+                "an explicit quality with no qualityRaw stays unmarked");
+    }
+
+    @Test
+    void accidentalNullValueStillFailsFast() {
+        DataFacade facade = facade();
+        SignalUpdate update = new SignalUpdate.Builder("temp").addSample((Object) null).build();
+        assertThrows(IllegalArgumentException.class, () -> facade.publish(update),
+                "a null value without the explicit-null opt-in stays the fail-fast error");
+        assertTrue(messaging.getPublishedMessages().isEmpty(), "nothing reaches the wire");
+    }
+
+    // ===================== sample extras (additive protocol-specific fields) =====================
+
+    @Test
+    void sampleExtrasAreCopiedAfterTheCanonicalFields() {
+        facade().signal("temp")
+                .addSample(SignalUpdate.Sample.of(21.5)
+                        .withExtra("valueType", "float").withExtra("bitIndex", 3))
+                .publish();
+
+        JsonObject sample = firstSample(lastBody());
+        assertEquals("float", sample.get("valueType").getAsString());
+        assertEquals(3, sample.get("bitIndex").getAsInt());
+        assertEquals(List.of("value", "quality", "qualityRaw", "serverTs", "valueType", "bitIndex"),
+                new ArrayList<>(sample.keySet()),
+                "extras ride after the canonical fields, in insertion order");
+    }
+
+    @Test
+    void reservedExtraKeysAreRejectedAtBuild() {
+        DataFacade facade = facade();
+        for (String reserved : DataFacade.RESERVED_SAMPLE_EXTRA_KEYS) {
+            SignalUpdate update = new SignalUpdate.Builder("temp")
+                    .addSample(SignalUpdate.Sample.of(1.0).withExtra(reserved, "x")).build();
+            assertThrows(IllegalArgumentException.class, () -> facade.publish(update),
+                    "extra key '" + reserved + "' is reserved and must fail fast");
+        }
+        assertTrue(messaging.getPublishedMessages().isEmpty(), "nothing reaches the wire");
+    }
+
+    @Test
+    void withExtraCopiesAndNeverSharesTheExtraMap() {
+        SignalUpdate.Sample base = SignalUpdate.Sample.of(1.0);
+        SignalUpdate.Sample withOne = base.withExtra("valueType", "float");
+        SignalUpdate.Sample withTwo = withOne.withExtra("bitIndex", 3);
+
+        assertNull(base.extra(), "the source sample is unmodified");
+        assertEquals(1, withOne.extra().size(), "each withExtra returns a fresh copy");
+        assertEquals(2, withTwo.extra().size());
+        assertThrows(UnsupportedOperationException.class, () -> withTwo.extra().put("k", "v"),
+                "the exposed extra map is unmodifiable");
+
+        Map<String, Object> caller = new LinkedHashMap<>(Map.of("a", 1));
+        SignalUpdate.Sample fromMap =
+                new SignalUpdate.Sample(1.0, null, null, null, null, caller, false);
+        caller.put("b", 2);
+        assertEquals(1, fromMap.extra().size(), "the constructor copies the caller's map");
+    }
+
+    @Test
+    void explicitNullAndExtrasRoundTripThroughTheProtoCodec() {
+        facade().signal("temp")
+                .addSample(SignalUpdate.Sample.ofNull().withExtra("valueType", "null"))
+                .publish();
+
+        Message published = messaging.getPublishedMessages().get(0).message;
+        JsonObject sample = Message.fromBytes(published.toBytes()).toDict()
+                .getAsJsonObject("body").getAsJsonArray("samples").get(0).getAsJsonObject();
+        assertTrue(sample.get("value").isJsonNull(),
+                "the explicit null survives the protobuf codec as JSON null");
+        assertEquals("null", sample.get("valueType").getAsString(),
+                "the extra key rides through the codec's sample extra map verbatim");
     }
 
     // ===================== channel sanitization =====================

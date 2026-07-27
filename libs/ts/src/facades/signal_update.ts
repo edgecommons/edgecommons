@@ -22,9 +22,23 @@ import type { Quality } from "./quality";
  * `serverTs` is filled with now; `sourceTs` is never synthesized; `qualityRaw` is the synthetic
  * `"unspecified"` marker when (and only when) the quality was defaulted, else passed through
  * verbatim.
+ *
+ * A `value` of JSON `null` is a **legitimate explicit protocol null** (`docs/SOUTHBOUND.md` §2):
+ * it publishes as `"value": null` with the normal quality defaulting. `undefined` remains the
+ * accidental-missing-value fail-fast at publish — the null-vs-undefined split is the explicit
+ * opt-in.
+ *
+ * A sample MAY also carry additive protocol-specific fields ("extras") beside the canonical
+ * five, via {@link Sample.extra}. Extras are copied into the sample JSON object after the
+ * canonical fields; a key that collides with a canonical/derived sample field (`value`,
+ * `quality`, `qualityRaw`, `sourceTs`, `serverTs`, `sourceTsMs`, `serverTsMs`) is rejected
+ * fail-fast at publish.
  */
 export interface Sample {
-  /** The measured value (JSON-native: number/boolean/string/array/object) — REQUIRED at publish. */
+  /**
+   * The measured value (JSON-native: number/boolean/string/array/object, or an explicit
+   * `null` protocol null) — `undefined` is rejected at publish.
+   */
   readonly value: unknown;
   /** The normalized quality, or `undefined` to default to {@link Quality.Good}. */
   readonly quality?: Quality;
@@ -34,6 +48,8 @@ export interface Sample {
   readonly sourceTs?: string;
   /** The protocol-server ISO-8601 timestamp, or `undefined` to default to now. */
   readonly serverTs?: string;
+  /** Additive protocol-specific fields, or `undefined` (reserved keys rejected at publish). */
+  readonly extra?: Record<string, unknown>;
 }
 
 /** The optional parts of a {@link Sample} beyond its required `value` (see {@link SignalUpdateBuilder.addSample}). */
@@ -42,6 +58,8 @@ export interface SampleOptions {
   qualityRaw?: string;
   sourceTs?: string;
   serverTs?: string;
+  /** Additive protocol-specific fields copied after the canonical ones (reserved keys rejected). */
+  extra?: Record<string, unknown>;
 }
 
 /**
@@ -139,6 +157,8 @@ export class SignalUpdateBuilder {
       qualityRaw: opts?.qualityRaw,
       sourceTs: opts?.sourceTs,
       serverTs: opts?.serverTs,
+      // Copied, never shared mutable: a caller mutating its map after addSample changes nothing.
+      extra: opts?.extra === undefined ? undefined : { ...opts.extra },
     });
     return this;
   }

@@ -12,7 +12,7 @@
  *   configured; with two or more, a missing id is `BAD_ARGS` and an unknown id is `NO_SUCH_INSTANCE`.
  * * **Standardized error codes:** `BAD_ARGS`, `NO_SUCH_INSTANCE`, `WRITE_NOT_ALLOWED`,
  *   `WRITE_FAILED`, `DEVICE_UNAVAILABLE`, `READ_FAILED`, `RECONNECT_FAILED`, `BROWSE_UNSUPPORTED`,
- *   `BROWSE_FAILED`.
+ *   `BROWSE_FAILED`, `PAUSED`.
  * * **The session is never touched here.** Every verb that reads/writes/reconnects/pauses is sent
  *   to the device's own loop as a {@link DeviceControl} and *confirmed* through the reply that rides
  *   it, because the session lives in that loop.
@@ -37,7 +37,7 @@ import type {
   RepollOutcome,
   WriteOutcome,
 } from "./app";
-import { Quality, Reading, SignalInfo } from "./device";
+import { BrowsedSignal, Quality, Reading, SignalInfo } from "./device";
 import type { DeviceMetrics } from "./metrics";
 
 /**
@@ -77,9 +77,17 @@ export function registerAll(commands: CommandInbox, handles: DeviceHandle[]): vo
 }
 
 /**
- * The three edge-console panel descriptors. Core validates `id`/`title`/uniqueness; the widget
- * kinds and bound verbs are console-interpreted, so they ride verbatim. `order` 10/20/30,
- * `scope: "instance"`.
+ * The three edge-console panel descriptors — renderable by the shipped descriptor renderer:
+ * `summary.rows`, `commandSummary.verbs`, a `signalGrid` bound to `sb/signals`/`sb/read`, and a
+ * hierarchical `treeBrowser` bound to `sb/browse`/`sb/read`. Core validates `id`/`title`/
+ * uniqueness; the widget kinds and bound verbs are console-interpreted, so they ride verbatim.
+ * `order` 10/20/30, `scope: "instance"` on each view and on every command-backed widget.
+ *
+ * The `subscriptionsVerb` on the signal grid is a descriptor-compat hint: the shipped edge-console
+ * signalGrid reads `subscriptionsVerb` (falling back to the removed `sb/subscriptions`). Pointing
+ * that key at the `sb/signals` verb too makes the current console bind correctly until it reads
+ * `signalsVerb`. It is a descriptor field alias, NOT a wire-verb alias — no `sb/subscriptions`
+ * verb exists here.
  */
 export function panels(): Record<string, unknown>[] {
   return [
@@ -89,8 +97,22 @@ export function panels(): Record<string, unknown>[] {
       order: 10,
       scope: "instance",
       widgets: [
-        { kind: "summary", fields: ["connected", "state", "paused", "endpoint"] },
-        { kind: "commandSummary", actions: ["reconnect", "sb/pause", "sb/resume"] },
+        {
+          kind: "summary",
+          id: "overview-summary",
+          title: "Adapter overview",
+          rows: [
+            { label: "Signals", value: "Configured signal inventory via cmd/sb/signals" },
+            { label: "Lifecycle", value: "Pause, resume, reconnect, and repoll the instance" },
+            { label: "Writes", value: "Allow-listed via writes.allow[]; checked before device I/O" },
+          ],
+        },
+        {
+          kind: "commandSummary",
+          id: "overview-lifecycle",
+          title: "Lifecycle bindings",
+          verbs: ["sb/status", "reconnect", "sb/pause", "sb/resume", "repoll"],
+        },
       ],
       verbs: ["sb/status", "reconnect", "sb/pause", "sb/resume"],
     },
@@ -99,7 +121,17 @@ export function panels(): Record<string, unknown>[] {
       title: "Signals",
       order: 20,
       scope: "instance",
-      widgets: [{ kind: "signalGrid" }],
+      widgets: [
+        {
+          kind: "signalGrid",
+          id: "configured-signals",
+          title: "Configured signals",
+          scope: "instance",
+          signalsVerb: "sb/signals",
+          subscriptionsVerb: "sb/signals",
+          readVerb: "sb/read",
+        },
+      ],
       verbs: ["sb/signals", "sb/read", "sb/write", "repoll"],
     },
     {
@@ -107,7 +139,26 @@ export function panels(): Record<string, unknown>[] {
       title: "Diagnostics",
       order: 30,
       scope: "instance",
-      widgets: [{ kind: "treeBrowser" }, { kind: "keyValueList" }],
+      widgets: [
+        {
+          kind: "treeBrowser",
+          id: "inventory-tree",
+          title: "Inventory",
+          scope: "instance",
+          mode: "hierarchical",
+          rootRef: "root",
+          depth: 1,
+          maxRefs: 200,
+          browseVerb: "sb/browse",
+          readVerb: "sb/read",
+        },
+        {
+          kind: "commandSummary",
+          id: "diagnostic-commands",
+          title: "Diagnostic commands",
+          verbs: ["sb/status", "sb/browse"],
+        },
+      ],
       verbs: ["sb/browse", "sb/status"],
     },
   ];
@@ -250,11 +301,22 @@ export class Commander {
       const value = (entry as Record<string, unknown>).value;
 
       attempted += 1;
-      const ack = await send<WriteOutcome>(h, (reply) => ({ kind: "write", signalId: id, value, ack: reply }));
+      // `writeErrors` mirrors `readErrors`: DEVICE-path failures only. An entry counts iff it
+      // passed validation + the allow-list and then failed at the device (a rejection or a gone
+      // device loop); caller/policy errors (unresolved refs, allow-list refusals, missing values)
+      // do not.
+      let ack: WriteOutcome;
+      try {
+        ack = await send<WriteOutcome>(h, (reply) => ({ kind: "write", signalId: id, value, ack: reply }));
+      } catch (e) {
+        h.health.writeErrors += 1; // the device loop is gone mid-write
+        throw e;
+      }
       if (ack.ok) {
         succeeded += 1;
         results.push({ signal: id, value, ok: true });
       } else {
+        h.health.writeErrors += 1;
         results.push({ signal: id, value, ok: false, error: ack.error });
       }
     }
@@ -274,12 +336,25 @@ export class Commander {
     return { id: h.cfg.id, written: succeeded, results };
   }
 
-  // --- sb/browse (paged address-space discovery) ------------------------------------------------
+  // --- sb/browse (paged address-space discovery + the hierarchical panel mode) ------------------
 
   async browse(body: unknown): Promise<Reply> {
     const h = this.resolve(body);
     const started = Date.now();
     const o = asObject(body);
+    // Presence of `ref` (or its companions `depth`/`maxRefs`) selects the hierarchical panel mode;
+    // mixing the two request families is BAD_ARGS.
+    const hierArgs = "ref" in o || "depth" in o || "maxRefs" in o;
+    const pagedArgs = "cursor" in o || "max" in o;
+    if (hierArgs && pagedArgs) {
+      h.dm.recordCommand("sb/browse", false, ms(started));
+      throw new CommandException(
+        "BAD_ARGS",
+        "`ref`/`depth`/`maxRefs` (hierarchical) and `cursor`/`max` (paged) are mutually exclusive",
+      );
+    }
+    if (hierArgs) return this.browseHierarchical(h, o, started);
+
     const cursor = typeof o.cursor === "string" ? o.cursor : undefined;
     const max = clamp(typeof o.max === "number" ? Math.floor(o.max) : 200, 1, 1000);
 
@@ -297,6 +372,74 @@ export class Commander {
       throw new CommandException("BROWSE_UNSUPPORTED", "this adapter has no discovery service");
     }
     throw new CommandException("BROWSE_FAILED", outcome.error.message);
+  }
+
+  /**
+   * The hierarchical `sb/browse` mode the edge-console `treeBrowser` sends
+   * (`{instance, ref, depth?, maxRefs?}`). Serves the SAME `BrowsedSignal` inventory as the paged
+   * mode, shaped as a node tree: `ref: "root"` answers the device node whose `contains` refs are
+   * the browsed signals (bounded by `maxRefs`); a signal id as `ref` answers that node with
+   * `"refs": []` (a known leaf); an unknown ref is `BAD_ARGS`. `depth` is bounded 1..4 and honored,
+   * but the template's tree is flat — depth beyond 1 finds no grandchildren.
+   */
+  private async browseHierarchical(
+    h: DeviceHandle,
+    o: Record<string, unknown>,
+    started: number,
+  ): Promise<Reply> {
+    const ref = o.ref;
+    if (typeof ref !== "string") {
+      h.dm.recordCommand("sb/browse", false, ms(started));
+      throw new CommandException("BAD_ARGS", "hierarchical browse requires a `ref` string");
+    }
+    const depth = clamp(typeof o.depth === "number" ? Math.floor(o.depth) : 1, 1, 4);
+    const maxRefs = clamp(typeof o.maxRefs === "number" ? Math.floor(o.maxRefs) : 200, 1, 1000);
+
+    // Drain the same paged inventory the plain mode serves. For `root`, one entry past maxRefs is
+    // enough to know the reply is truncated; a leaf lookup drains every page.
+    const limit = ref === "root" ? maxRefs + 1 : Number.MAX_SAFE_INTEGER;
+    const inventory: BrowsedSignal[] = [];
+    let cursor: string | undefined;
+    do {
+      const outcome = await send<BrowseOutcome>(h, (reply) => ({ kind: "browse", cursor, max: 1000, reply }));
+      if (!outcome.ok) {
+        h.dm.recordCommand("sb/browse", false, ms(started));
+        if (outcome.error.reason === "UNSUPPORTED") {
+          throw new CommandException("BROWSE_UNSUPPORTED", "this adapter has no discovery service");
+        }
+        throw new CommandException("BROWSE_FAILED", outcome.error.message);
+      }
+      inventory.push(...outcome.page.entries);
+      cursor = outcome.page.nextCursor;
+    } while (cursor !== undefined && inventory.length < limit);
+
+    let root: Reply;
+    let refCount: number;
+    let truncated: boolean;
+    if (ref === "root") {
+      const bounded = inventory.slice(0, maxRefs);
+      root = {
+        nodeId: "root",
+        name: h.cfg.id,
+        nodeClass: "device",
+        dataType: null,
+        refs: bounded.map((e) => ({ referenceType: "contains", target: signalNode(e) })),
+      };
+      refCount = bounded.length;
+      truncated = inventory.length > maxRefs;
+    } else {
+      const found = inventory.find((e) => e.id === ref);
+      if (found === undefined) {
+        h.dm.recordCommand("sb/browse", false, ms(started));
+        throw new CommandException("BAD_ARGS", `unknown ref \`${ref}\``);
+      }
+      root = { ...signalNode(found), refs: [] }; // a known leaf
+      refCount = 0;
+      truncated = false;
+    }
+
+    h.dm.recordCommand("sb/browse", true, ms(started));
+    return { id: h.cfg.id, mode: "hierarchical", root, refCount, depth, truncated };
   }
 
   // --- sb/pause + sb/resume (idempotent {paused, changed}) --------------------------------------
@@ -331,14 +474,14 @@ export class Commander {
     throw new CommandException("RECONNECT_FAILED", outcome.error);
   }
 
-  // --- repoll (refused while paused) ------------------------------------------------------------
+  // --- repoll (refused with PAUSED while paused) ------------------------------------------------
 
   async repoll(body: unknown): Promise<Reply> {
     const h = this.resolve(body);
     const started = Date.now();
     if (h.health.isPaused()) {
       h.dm.recordCommand("repoll", false, ms(started));
-      throw new CommandException("BAD_ARGS", "instance is paused - resume first");
+      throw new CommandException("PAUSED", "instance is paused - resume first");
     }
     const outcome = await send<RepollOutcome>(h, (reply) => ({ kind: "repoll", reply }));
     if (outcome.ok) {
@@ -347,7 +490,7 @@ export class Commander {
     }
     h.dm.recordCommand("repoll", false, ms(started));
     if (outcome.error.includes("paused")) {
-      throw new CommandException("BAD_ARGS", outcome.error);
+      throw new CommandException("PAUSED", outcome.error);
     }
     throw new CommandException("DEVICE_UNAVAILABLE", outcome.error);
   }
@@ -384,6 +527,11 @@ function qualityStr(q: Quality): string {
 
 function badRead(id: string, raw: string): Reply {
   return { signal: { id }, value: null, quality: "BAD", qualityRaw: raw };
+}
+
+/** One browsed signal as a hierarchical-browse node (`nodeId, name, nodeClass, dataType`). */
+function signalNode(e: BrowsedSignal): Reply {
+  return { nodeId: e.id, name: e.name ?? e.id, nodeClass: "signal", dataType: e.typeName };
 }
 
 /**

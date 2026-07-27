@@ -68,8 +68,8 @@ request/reply shapes.
 **Goal:** know whether a configured device is connected and healthy.
 
 - **`southbound_health`** — `connectionState`, `publishLatencyMs`, `pollLatencyMs`, `readErrors`,
-  `staleSignals`, `reconnects`, dimensioned by `instance`. Routes to wherever
-  `metricEmission.target` sends it.
+  `staleSignals`, `reconnects`, `writeErrors`, `signalsSubscribed`, dimensioned by `instance`.
+  Routes to wherever `metricEmission.target` sends it.
 - **State keepalive** — subscribe `ecv1/+/+/+/state`; the RUNNING keepalive's `instances[]` carries
   one `{instance, connected, detail}` entry per configured device.
 - **`sb/status`** — a pull for one device's `connected`/`state`/`paused`/`endpoint` plus its

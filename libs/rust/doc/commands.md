@@ -43,6 +43,45 @@ commands.register("sb/status", command_handler(|_request| async move {
 }))?;
 ```
 
+## Scoped registration: the addressed instance
+
+`register_scoped` registers a handler that also receives the **addressed instance** — the delivery
+topic's `{instance}` token (`ecv1/{device}/{component}/{instance}/cmd/{verb}`), or `None` when the
+command was addressed to the component as a whole (`ecv1/{device}/{component}/cmd/{verb}`). Verb
+validation, the one-handler-per-verb rule, duplicate-registration errors, `describe` participation,
+and reply/error semantics are identical to `register`.
+
+```rust
+use edgecommons::commands::scoped_command_handler;
+use serde_json::json;
+
+commands.register_scoped("sb/read", scoped_command_handler(|_request, addressed_instance| async move {
+    // addressed_instance: Option<String> - Some("press12") or None for component scope.
+    Ok(Some(json!({ "instance": addressed_instance })))
+}))?;
+```
+
+## Command availability
+
+`set_command_availability(verb, state, reason)` sets a registered verb's availability as surfaced
+by `describe`. `state` must be exactly `available`, `disabled`, or `unsupported`; any other token
+is an error, as is an unregistered verb. `available` removes the stored entry, so the verb's
+describe entry reverts to `{verb, builtIn}`; `disabled`/`unsupported` store
+`{"state": …, "reason"?: …}` and the verb's entry becomes `{verb, builtIn, availability}`. The
+`reason` is optional, trimmed, truncated to 256 characters, and omitted when empty. The describe
+digest tracks stored availability, so a console re-fetches the descriptor on every transition.
+
+```rust
+commands.set_command_availability("sb/write", "disabled", Some("writes.allow[] is empty"))?;
+commands.set_command_availability("sb/write", "available", None)?; // back to {verb, builtIn}
+```
+
+## Panel manifest default view
+
+`describe`'s panel manifest sets `defaultView` to the `id` of the first registered view whose
+`default` property is boolean `true`, falling back to the first view's `id`. Views are emitted
+verbatim — the `default` key is not stripped.
+
 ## Explicit outcomes
 
 Long-running handlers use the parallel `OutcomeCommandHandler` surface through `outcome_handler` and

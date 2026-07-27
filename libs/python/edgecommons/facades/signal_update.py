@@ -28,21 +28,38 @@ from edgecommons.facades.quality import Quality
 if TYPE_CHECKING:
     from edgecommons.facades.data_facade import DataFacade
 
+#: Sample keys owned by the canonical contract -- rejected as :attr:`Sample.extra` keys
+#: with a fail-fast :class:`ValueError` at publish/build (``docs/SOUTHBOUND.md`` §2).
+RESERVED_SAMPLE_KEYS = frozenset(
+    {"value", "quality", "qualityRaw", "sourceTs", "serverTs", "sourceTsMs", "serverTsMs"}
+)
+
 
 @dataclass(frozen=True)
 class Sample:
-    """One sample: a measured ``value`` (REQUIRED) plus the optional quality/timestamp
-    parts. A ``None`` ``quality`` is defaulted to :attr:`Quality.GOOD` by the facade; a
-    ``None`` ``server_ts`` is filled with now; ``source_ts`` is never synthesized;
-    ``quality_raw`` is a synthetic ``"unspecified"`` marker when (and only when) the
-    quality was defaulted, else passed through verbatim.
+    """One sample: a measured ``value`` (REQUIRED unless :attr:`explicit_null`) plus the
+    optional quality/timestamp parts. A ``None`` ``quality`` is defaulted to
+    :attr:`Quality.GOOD` by the facade; a ``None`` ``server_ts`` is filled with now;
+    ``source_ts`` is never synthesized; ``quality_raw`` is a synthetic ``"unspecified"``
+    marker when (and only when) the quality was defaulted, else passed through verbatim.
+
+    A sample MAY carry additive protocol-specific fields beside the canonical five via
+    :attr:`extra`; they are copied into the sample JSON object after the canonical
+    fields. Keys in :data:`RESERVED_SAMPLE_KEYS` are rejected at build. A legitimate
+    protocol null is publishable through :meth:`null_value` (``value`` rides as JSON
+    ``null`` with the normal quality defaulting); an accidental ``None`` value without
+    the explicit opt-in stays a fail-fast error.
 
     :param value: the measured value (any JSON-native type) -- REQUIRED (``None`` is a
-        fail-fast error at build)
+        fail-fast error at build unless ``explicit_null`` is set)
     :param quality: the normalized quality, or ``None`` to default to :attr:`Quality.GOOD`
     :param quality_raw: the native status code, or ``None``
     :param source_ts: the device/field ISO-8601 timestamp, or ``None`` (never synthesized)
     :param server_ts: the protocol-server ISO-8601 timestamp, or ``None`` to default to now
+    :param extra: additive protocol-specific sample fields, or ``None`` (reserved keys
+        are rejected at build)
+    :param explicit_null: ``True`` marks a ``None`` value as a legitimate protocol null
+        (published as JSON ``null``) rather than an accidental missing value
     """
 
     value: Any
@@ -50,6 +67,8 @@ class Sample:
     quality_raw: Optional[str] = None
     source_ts: Optional[str] = None
     server_ts: Optional[str] = None
+    extra: Optional[Dict[str, Any]] = None
+    explicit_null: bool = False
 
     @staticmethod
     def of(value: Any, quality: Optional[Quality] = None,
@@ -58,6 +77,16 @@ class Sample:
         now. Collapses Java's three ``Sample.of`` overloads into one factory with keyword
         defaults."""
         return Sample(value, quality, None, source_ts, None)
+
+    @staticmethod
+    def null_value(quality: Optional[Quality] = None,
+                   quality_raw: Optional[str] = None,
+                   source_ts: Optional[str] = None) -> "Sample":
+        """A legitimate protocol null: the sample's ``value`` is published as JSON
+        ``null`` with the normal quality defaulting (``quality`` -> ``GOOD`` when
+        omitted). This is the explicit opt-in -- a plain ``Sample(None, ...)`` stays the
+        fail-fast accidental-missing-value error."""
+        return Sample(None, quality, quality_raw, source_ts, None, None, True)
 
 
 class SignalUpdate:

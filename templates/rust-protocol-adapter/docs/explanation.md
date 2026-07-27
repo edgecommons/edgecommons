@@ -83,7 +83,8 @@ until the device's own response comes back over the control channel (see above).
 
 Every adapter — whatever the protocol — emits `southbound_health` with the **exact** canonical
 measure set (`connectionState`, `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`,
-`reconnects`), so a fleet dashboard has one health metric that means the same thing everywhere. On
+`reconnects`, `writeErrors`, `signalsSubscribed`), so a fleet dashboard has one health metric that
+means the same thing everywhere. On
 top of that floor, `src/metrics.rs` ships the **operational-family pattern** — a `Total`/`Interval`
 counter-pair convention — two families deep (`<<COMPONENTNAME>>Connection`,
 `<<COMPONENTNAME>>Command`), with a signposted place to add your protocol's own `Inventory` / `Poll`

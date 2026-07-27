@@ -405,6 +405,26 @@ public DeferredReplySnapshot deferredReplySnapshot()
 the guarded reply metadata, timer, retry policy, 1,024-entry capacity bound, and shutdown
 settlement.
 
+```java
+public void registerScoped(String verb, ScopedCommandHandler handler)
+```
+
+Registers a scope-aware handler: `handle(request, addressedInstance)` receives the delivery
+topic's `{instance}` token for an instance-scoped command, or `null` for a component-scoped one.
+The one-handler-per-verb rule, `describe` participation, and reply/error semantics are shared with
+`register(...)`.
+
+```java
+public void setCommandAvailability(String verb, String state, String reason)
+public void setCommandAvailability(String verb, String state)
+```
+
+Declares a registered verb's availability for `describe` consumers. `state` is `available`,
+`disabled`, or `unsupported` (anything else, or an unregistered verb, throws
+`IllegalArgumentException`). `available` removes the stored declaration; `disabled`/`unsupported`
+surface `"availability": {"state", "reason"?}` on the verb's `describe` entry — the reason is
+trimmed, truncated to 256 characters, and omitted when empty.
+
 For asynchronous application work, return
 `CommandOutcome.deferredWithContinuation(token, continuation)` after the durable commit and
 `token.activate()`. The inbox validates that the exact token is still `OPEN`, then starts the

@@ -14,14 +14,23 @@ use crate::messaging::message::binary_value;
 ///
 /// A `None` `value` is a fail-fast [`crate::EdgeCommonsError::Facade`] at
 /// [`DataFacade::publish`](super::DataFacade::publish) (a quality-only sample is not a sample —
-/// pass `Quality::Bad`/`Quality::Uncertain` for a failed read instead). A `None` `quality` is
+/// pass `Quality::Bad`/`Quality::Uncertain` for a failed read instead), unless the sample opts in
+/// via [`Self::explicit_null`] — a legitimate protocol null (see [`Sample::null_value`]) is
+/// published as JSON `null` with the normal quality defaulting. A `None` `quality` is
 /// defaulted to [`Quality::Good`] by the facade; a `None` `server_ts` is filled with now;
 /// `source_ts` is never synthesized; `quality_raw` is a synthetic `"unspecified"` marker when (and
 /// only when) the quality was defaulted, else passed through verbatim.
+///
+/// A sample MAY carry additive protocol-specific fields ("extras", `docs/SOUTHBOUND.md` §2) beside
+/// the canonical five — set them via the fluent [`Sample::extra`]. The facade copies them into the
+/// sample JSON object after the canonical fields; the reserved keys `value`, `quality`,
+/// `qualityRaw`, `sourceTs`, `serverTs`, `sourceTsMs`, and `serverTsMs` are rejected as extras
+/// with a fail-fast [`crate::EdgeCommonsError::Facade`] at publish.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Sample {
     /// The measured value (JSON-native: number/boolean/string/array/object). Required at publish
-    /// time — `None` here models "no value supplied", the one hard reject inside a sample.
+    /// time — `None` here models "no value supplied", the one hard reject inside a sample —
+    /// unless [`Self::explicit_null`] opts into publishing a legitimate JSON `null`.
     pub value: Option<Value>,
     /// The normalized quality, or `None` to default to [`Quality::Good`].
     pub quality: Option<Quality>,
@@ -31,6 +40,12 @@ pub struct Sample {
     pub source_ts: Option<String>,
     /// The protocol-server ISO-8601 timestamp, or `None` to default to now.
     pub server_ts: Option<String>,
+    /// Additive protocol-specific fields copied verbatim into the sample JSON object after the
+    /// canonical fields, or `None`. Reserved canonical keys are rejected at publish.
+    pub extra: Option<serde_json::Map<String, Value>>,
+    /// Opt-in marker for a legitimate protocol null: when `true`, a `None` [`Self::value`] is
+    /// published as JSON `null` instead of failing fast (see [`Sample::null_value`]).
+    pub explicit_null: bool,
 }
 
 impl Sample {
@@ -73,6 +88,16 @@ impl Sample {
         })
     }
 
+    /// A legitimate protocol-null sample: the facade publishes `"value": null` with the normal
+    /// quality defaulting ([`Quality::Good`] unless set). This is the explicit opt-in — an
+    /// accidental missing value (`value: None` without the opt-in) still fails fast at publish.
+    pub fn null_value() -> Sample {
+        Sample {
+            explicit_null: true,
+            ..Default::default()
+        }
+    }
+
     /// Sets the native status code (fluent).
     pub fn quality_raw(mut self, raw: impl Into<String>) -> Sample {
         self.quality_raw = Some(raw.into());
@@ -82,6 +107,17 @@ impl Sample {
     /// Sets an explicit `server_ts` instead of the "now" default (fluent).
     pub fn server_ts(mut self, ts: impl Into<String>) -> Sample {
         self.server_ts = Some(ts.into());
+        self
+    }
+
+    /// Adds one additive protocol-specific field ("extra", fluent). The facade copies extras into
+    /// the sample JSON object after the canonical fields; a reserved canonical key (`value`,
+    /// `quality`, `qualityRaw`, `sourceTs`, `serverTs`, `sourceTsMs`, `serverTsMs`) is a
+    /// fail-fast [`crate::EdgeCommonsError::Facade`] at publish.
+    pub fn extra(mut self, key: impl Into<String>, value: impl Into<Value>) -> Sample {
+        self.extra
+            .get_or_insert_with(serde_json::Map::new)
+            .insert(key.into(), value.into());
         self
     }
 }
@@ -241,6 +277,32 @@ mod tests {
         assert_eq!(s.source_ts.as_deref(), Some("2026-07-01T11:59:59Z"));
         assert_eq!(s.quality_raw.as_deref(), Some("Good"));
         assert_eq!(s.server_ts.as_deref(), Some("2026-07-01T11:59:59.5Z"));
+    }
+
+    #[test]
+    fn null_value_sample_opts_into_the_explicit_null() {
+        let s = Sample::null_value();
+        assert_eq!(s.value, None);
+        assert!(s.explicit_null);
+        assert_eq!(s.quality, None, "quality defaulting still applies");
+        // The opt-in composes with the fluent quality/timestamp setters.
+        let s = Sample {
+            quality: Some(Quality::Uncertain),
+            ..Sample::null_value()
+        };
+        assert!(s.explicit_null);
+        assert_eq!(s.quality, Some(Quality::Uncertain));
+    }
+
+    #[test]
+    fn fluent_extra_accumulates_additive_fields() {
+        let s = Sample::new(21.5)
+            .extra("valueType", "Double")
+            .extra("statusText", "Good (0x0)");
+        let extra = s.extra.as_ref().expect("extras present");
+        assert_eq!(extra.get("valueType"), Some(&Value::from("Double")));
+        assert_eq!(extra.get("statusText"), Some(&Value::from("Good (0x0)")));
+        assert!(!s.explicit_null, "extras never imply the null opt-in");
     }
 
     #[test]

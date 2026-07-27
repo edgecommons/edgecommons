@@ -16,8 +16,8 @@
 //!
 //! Every **counter** is emitted as a measure PAIR: `<name>Total` (monotonic since start) and
 //! `<name>Interval` (since the previous emit of that family; **reset on emit** — see [`Pair`]).
-//! **Gauges** (`connectionState`) and interval **sums** (the `*Ms` latencies/durations) are single
-//! measures. This is the same convention `modbus-adapter` and `ethernet-ip-adapter` use, so a fleet
+//! **Gauges** (`connectionState`, `signalsSubscribed`) and interval **sums** (the `*Ms`
+//! latencies/durations) are single measures. This is the same convention `modbus-adapter` and `ethernet-ip-adapter` use, so a fleet
 //! dashboard reads every adapter the same way.
 //!
 //! ## Dimensions are LOW-CARDINALITY only
@@ -69,12 +69,14 @@ pub const COMMAND_VERBS: [&str; 9] = [
 ];
 
 /// The **exact** SOUTHBOUND.md §5 measure set of `southbound_health` — `connectionState`,
-/// `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, plus the §5-optional
-/// `reconnects`. This literal list is the parity anchor the metrics test asserts against; if you
-/// change what `emit_health` emits, this list and [`family_defs`] must move with it.
+/// `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, `reconnects`, `writeErrors`,
+/// and the `signalsSubscribed` gauge. This literal list is the parity anchor the metrics test
+/// asserts against; if you change what `emit_health` emits, this list and [`family_defs`] must move
+/// with it.
 #[allow(dead_code)] // a documentation + parity anchor, consumed by the metrics test
-pub const HEALTH_MEASURES: [&str; 6] = [
-    "connectionState", "publishLatencyMs", "pollLatencyMs", "readErrors", "staleSignals", "reconnects",
+pub const HEALTH_MEASURES: [&str; 8] = [
+    "connectionState", "publishLatencyMs", "pollLatencyMs", "readErrors", "staleSignals",
+    "reconnects", "writeErrors", "signalsSubscribed",
 ];
 
 const UNIT_COUNT: &str = "Count";
@@ -131,6 +133,8 @@ pub fn family_defs() -> Vec<FamilyDef> {
             m("readErrors", UNIT_COUNT, 60),
             m("staleSignals", UNIT_COUNT, 60),
             m("reconnects", UNIT_COUNT, 60),
+            m("writeErrors", UNIT_COUNT, 60),
+            m("signalsSubscribed", UNIT_COUNT, 1),
         ],
     });
 
@@ -431,6 +435,8 @@ impl DeviceMetrics {
         v.insert("readErrors".to_string(), self.health.read_errors.swap(0, Ordering::Relaxed) as f64);
         v.insert("staleSignals".to_string(), self.stale_count(Instant::now()));
         v.insert("reconnects".to_string(), self.health.reconnects.swap(0, Ordering::Relaxed) as f64);
+        v.insert("writeErrors".to_string(), self.health.write_errors.swap(0, Ordering::Relaxed) as f64);
+        v.insert("signalsSubscribed".to_string(), self.health.signals_subscribed() as f64);
         self.emit_combo(HEALTH, &[("instance", self.instance())], v, now).await;
     }
 
@@ -626,6 +632,8 @@ mod tests {
             "readErrors",
             "staleSignals",
             "reconnects",
+            "writeErrors",
+            "signalsSubscribed",
         ]
         .into_iter()
         .collect();
@@ -638,6 +646,26 @@ mod tests {
         // The advertised const must agree with what family_defs emits.
         let advertised: std::collections::BTreeSet<&str> = HEALTH_MEASURES.into_iter().collect();
         assert_eq!(advertised, section_5, "HEALTH_MEASURES must equal the §5 set");
+    }
+
+    #[tokio::test]
+    async fn write_errors_drain_on_emit_and_signals_subscribed_tracks_the_link() {
+        let health = Arc::new(Health::default());
+        health.set_signal_inventory(2);
+        health.set_link(LinkState::Online);
+        health.write_errors.fetch_add(2, Ordering::Relaxed);
+        let dm = dm(Arc::clone(&health), 30);
+
+        assert_eq!(health.signals_subscribed(), 2, "the sb/signals inventory size while connected");
+        dm.emit_periodic().await;
+        assert_eq!(
+            health.write_errors.load(Ordering::Relaxed),
+            0,
+            "the emit drained the writeErrors interval counter"
+        );
+
+        health.set_link(LinkState::Backoff);
+        assert_eq!(health.signals_subscribed(), 0, "0 while disconnected");
     }
 
     /// The operational families are named from the component and carry only low-cardinality dimensions.

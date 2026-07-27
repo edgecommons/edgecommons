@@ -1079,4 +1079,193 @@ describe("CommandInbox", () => {
   it("CommandException rejects an empty code", () => {
     expect(() => new CommandException("", "message")).toThrow(/code must not be empty/);
   });
+
+  // ===================== panel-set defaultView =====================
+
+  it("describe defaultView is the first view carrying default:true, views emitted verbatim", async () => {
+    inbox.registerPanel({ id: "overview", title: "Overview", order: 10 });
+    inbox.registerPanel({ id: "signals", title: "Signals", order: 20, default: true });
+    await inbox.start();
+    await deliver(messaging, topic(CommandInbox.DESCRIBE), request(CommandInbox.DESCRIBE));
+    const result = onlyReplyBody(messaging).result as Record<string, unknown>;
+    const panels = result.panels as Record<string, unknown>;
+    expect(panels.defaultView, "the second view carries default:true and wins over views[0]").toBe("signals");
+    // Views are carried verbatim - the `default` key is not stripped.
+    expect(panels.views).toEqual([
+      { id: "overview", title: "Overview", order: 10 },
+      { id: "signals", title: "Signals", order: 20, default: true },
+    ]);
+  });
+
+  it("describe defaultView falls back to views[0].id when no view carries default:true", async () => {
+    inbox.registerPanel({ id: "overview", title: "Overview", order: 10 });
+    inbox.registerPanel({ id: "signals", title: "Signals", order: 20 });
+    await inbox.start();
+    await deliver(messaging, topic(CommandInbox.DESCRIBE), request(CommandInbox.DESCRIBE));
+    const result = onlyReplyBody(messaging).result as Record<string, unknown>;
+    expect((result.panels as Record<string, unknown>).defaultView).toBe("overview");
+  });
+
+  // ===================== command availability (the producer side) =====================
+
+  /** One describe round-trip; returns the reply's `result` object. */
+  async function describeResult(): Promise<Record<string, unknown>> {
+    messaging.published.length = 0;
+    await deliver(messaging, topic(CommandInbox.DESCRIBE), request(CommandInbox.DESCRIBE));
+    return onlyReplyBody(messaging).result as Record<string, unknown>;
+  }
+
+  /** The describe entry for a verb. */
+  function commandEntry(result: Record<string, unknown>, verb: string): Record<string, unknown> {
+    const entry = (result.commands as Record<string, unknown>[]).find((c) => c.verb === verb);
+    if (!entry) throw new Error(`no describe entry for verb '${verb}'`);
+    return entry;
+  }
+
+  it("setCommandAvailability surfaces {state, reason} on the verb's describe entry", async () => {
+    inbox.register("sb/write", () => null);
+    inbox.setCommandAvailability("sb/write", "disabled", "writes.allow[] is empty");
+    await inbox.start();
+    const result = await describeResult();
+    expect(commandEntry(result, "sb/write")).toEqual({
+      verb: "sb/write",
+      builtIn: false,
+      availability: { state: "disabled", reason: "writes.allow[] is empty" },
+    });
+    // Verbs without a stored non-available state carry no availability key.
+    expect(commandEntry(result, CommandInbox.PING)).toEqual({ verb: CommandInbox.PING, builtIn: true });
+  });
+
+  it("setCommandAvailability 'available' removes the stored entry (describe reverts)", async () => {
+    inbox.register("sb/write", () => null);
+    inbox.setCommandAvailability("sb/write", "unsupported");
+    await inbox.start();
+    expect(commandEntry(await describeResult(), "sb/write")).toEqual({
+      verb: "sb/write",
+      builtIn: false,
+      availability: { state: "unsupported" },
+    });
+    inbox.setCommandAvailability("sb/write", "available");
+    expect(commandEntry(await describeResult(), "sb/write")).toEqual({ verb: "sb/write", builtIn: false });
+  });
+
+  it("setCommandAvailability works for built-in verbs too", async () => {
+    inbox.setCommandAvailability(CommandInbox.RELOAD_CONFIG, "disabled", "config source is read-only");
+    await inbox.start();
+    expect(commandEntry(await describeResult(), CommandInbox.RELOAD_CONFIG)).toEqual({
+      verb: CommandInbox.RELOAD_CONFIG,
+      builtIn: true,
+      availability: { state: "disabled", reason: "config source is read-only" },
+    });
+  });
+
+  it("setCommandAvailability trims, truncates (256), and omits an empty reason", async () => {
+    inbox.register("a", () => null);
+    inbox.register("b", () => null);
+    inbox.register("c", () => null);
+    inbox.setCommandAvailability("a", "disabled", "  padded reason  ");
+    inbox.setCommandAvailability("b", "disabled", `${"x".repeat(300)}`);
+    inbox.setCommandAvailability("c", "disabled", "   ");
+    await inbox.start();
+    const result = await describeResult();
+    expect((commandEntry(result, "a").availability as Record<string, unknown>).reason).toBe("padded reason");
+    expect((commandEntry(result, "b").availability as Record<string, unknown>).reason).toBe("x".repeat(256));
+    expect(commandEntry(result, "c").availability, "an empty/whitespace reason is omitted").toEqual({
+      state: "disabled",
+    });
+  });
+
+  it("setCommandAvailability rejects unknown verbs and invalid states", () => {
+    expect(() => inbox.setCommandAvailability("nope", "disabled")).toThrow(/not registered/);
+    expect(() =>
+      inbox.setCommandAvailability(CommandInbox.PING, "DISABLED" as unknown as "disabled"),
+    ).toThrow(/must be 'available', 'disabled', or 'unsupported'/);
+    expect(() =>
+      inbox.setCommandAvailability(CommandInbox.PING, "" as unknown as "disabled"),
+    ).toThrow(/must be 'available', 'disabled', or 'unsupported'/);
+  });
+
+  it("availability changes the describe digest; clearing restores it", async () => {
+    inbox.register("sb/write", () => null);
+    await inbox.start();
+    const original = (await describeResult()).digest;
+    inbox.setCommandAvailability("sb/write", "disabled", "maintenance");
+    const changed = (await describeResult()).digest;
+    expect(changed, "a stored availability must change the describe digest").not.toBe(original);
+    inbox.setCommandAvailability("sb/write", "available");
+    expect((await describeResult()).digest, "clearing availability restores the original digest").toBe(original);
+  });
+
+  // ===================== scoped registration (the addressed instance, D-U28) =====================
+
+  /** An instance-scope delivery topic (`.../{instance}/cmd/{verb}`). */
+  function instanceTopic(instance: string, verb: string): string {
+    return `ecv1/test-thing/TestComponent/${instance}/cmd/${verb}`;
+  }
+
+  it("a scoped handler receives undefined for component scope and the token for instance scope", async () => {
+    const seen: Array<string | undefined> = [];
+    inbox.registerScoped("sb/status", (req, addressedInstance) => {
+      seen.push(addressedInstance);
+      return { got: req.getBody() === null ? null : true };
+    });
+    await inbox.start();
+
+    await deliver(messaging, topic("sb/status"), request("sb/status"));
+    expect(onlyReplyBody(messaging).ok).toBe(true);
+    messaging.published.length = 0;
+
+    await deliver(messaging, instanceTopic("kep1", "sb/status"), request("sb/status"));
+    expect(onlyReplyBody(messaging).ok).toBe(true);
+
+    expect(seen, "component scope -> undefined; instance scope -> the topic's token").toEqual([undefined, "kep1"]);
+  });
+
+  it("a scoped handler participates in describe/verbs and enforces one-handler-per-verb", async () => {
+    inbox.registerScoped("sb/status", () => null);
+    expect(inbox.verbs().has("sb/status")).toBe(true);
+    expect(() => inbox.register("sb/status", () => null)).toThrow(/already registered/);
+    expect(() => inbox.registerScoped("sb/status", () => null)).toThrow(/already registered/);
+    // ...and the other direction: a plain registration blocks a scoped one.
+    inbox.register("plain", () => null);
+    expect(() => inbox.registerScoped("plain", () => null)).toThrow(/already registered/);
+    expect(() => inbox.registerScoped(CommandInbox.PING, () => null)).toThrow(/built-in/);
+
+    await inbox.start();
+    const result = await describeResult();
+    expect(commandEntry(result, "sb/status")).toEqual({ verb: "sb/status", builtIn: false });
+  });
+
+  it("a scoped handler's CommandException keeps its code (reply handling identical to plain)", async () => {
+    inbox.registerScoped("guarded", (_req, addressedInstance) => {
+      throw new CommandException("NOT_ALLOWED", `no writes on ${addressedInstance}`);
+    });
+    await inbox.start();
+    await deliver(messaging, instanceTopic("kep1", "guarded"), request("guarded"));
+    const body = onlyReplyBody(messaging);
+    expect(body.ok).toBe(false);
+    const error = body.error as Record<string, unknown>;
+    expect(error.code).toBe("NOT_ALLOWED");
+    expect(error.message).toBe("no writes on kep1");
+  });
+
+  it("unregister removes a scoped verb", async () => {
+    inbox.registerScoped("mine", () => null);
+    inbox.unregister("mine");
+    expect(inbox.verbs().has("mine")).toBe(false);
+    await inbox.start();
+    await deliver(messaging, topic("mine"), request("mine"));
+    expect((onlyReplyBody(messaging).error as Record<string, unknown>).code).toBe(CommandInbox.ERR_UNKNOWN_VERB);
+  });
+
+  it("plain register behavior is untouched: the handler gets only the request, on either scope", async () => {
+    const plain = vi.fn(() => ({ ok: 1 }));
+    inbox.register("sb/status", plain);
+    await inbox.start();
+    await deliver(messaging, instanceTopic("kep1", "sb/status"), request("sb/status"));
+    expect(onlyReplyBody(messaging).ok).toBe(true);
+    expect(plain).toHaveBeenCalledTimes(1);
+    expect(plain.mock.calls[0], "a plain handler is invoked with exactly the request").toHaveLength(1);
+    expect(plain.mock.calls[0][0]).toBeInstanceOf(Message);
+  });
 });

@@ -139,6 +139,43 @@ is rejected before provisioning with `REPLY_REQUIRED`. Shutdown attempts a `COMP
 reply for each open token while messaging is still available, then marks it
 `CANCELLED_ON_SHUTDOWN`.
 
+#### Scoped command handlers (the addressed instance)
+
+The inbox subscribes both cmd scopes: the instance-scoped
+`ecv1/{device}/{component}/{instance}/cmd/{verb}` and the component-scoped
+`ecv1/{device}/{component}/cmd/{verb}`. `registerScoped(verb, handler)` registers a
+`ScopedCommandHandler` that receives everything a plain handler receives plus the **addressed
+instance** — the delivery topic's `{instance}` token, or `null` for a component-scoped delivery.
+The token is parsed against the inbox's own subscribed filters, never re-derived from config.
+
+```java
+commands.registerScoped("sb/read", (request, addressedInstance) -> {
+    // addressedInstance == null  -> component scope (ecv1/{device}/{component}/cmd/sb/read)
+    // addressedInstance == "plc7" -> ecv1/{device}/{component}/plc7/cmd/sb/read
+    return readSignals(addressedInstance, request.getPayload());
+});
+```
+
+A verb has either a plain or a scoped handler (the same one-handler-per-verb rule and
+duplicate-registration errors apply), scoped verbs participate in `describe` identically, and the
+reply/error wrappers are the same.
+
+#### Command availability
+
+`setCommandAvailability(verb, state, reason)` declares a registered verb's availability for
+`describe` consumers (a console greys a `disabled` verb, hides an `unsupported` one). `state` is
+exactly `available`, `disabled`, or `unsupported`; the verb must already be registered — anything
+else is an `IllegalArgumentException`. `available` removes the stored declaration; the other two
+store `{state, reason?}`, surfaced on the verb's `describe` command entry as
+`"availability": {"state": ..., "reason": ...}` (the entry shape is `{verb, builtIn,
+availability?}`, and the describe digest changes with it). The reason is trimmed, truncated to 256
+characters, and omitted when empty.
+
+```java
+commands.setCommandAvailability("sb/write", "disabled", "writes.allow[] is empty");
+commands.setCommandAvailability("sb/write", "available");   // back to the plain entry
+```
+
 #### Prepared and correlated application messages
 
 `AppFacade.prepare(...)` returns `PreparedAppMessage`: the facade-generated topic, the built

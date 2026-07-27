@@ -99,9 +99,15 @@ class MockControl:
             raise BrowseUnsupported()
         if self.browse_kind == "failed":
             raise BrowseFailed("mid-browse error")
-        next_cursor = "page-2" if self.browse_kind == "paged" else None
+        if self.browse_kind == "paged":
+            # Two entries over two pages, so cursor-following and truncation are observable.
+            if cursor is None:
+                return BrowsePage(entries=[BrowsedSignal("temperature-1", "Ambient temperature", "REAL")],
+                                  next_cursor="page-2")
+            return BrowsePage(entries=[BrowsedSignal("pressure-1", "Line pressure", "REAL")],
+                              next_cursor=None)
         return BrowsePage(entries=[BrowsedSignal("temperature-1", "Ambient temperature", "REAL")],
-                          next_cursor=next_cursor)
+                          next_cursor=None)
 
     def pause(self):
         if self.unavailable:
@@ -214,11 +220,12 @@ def test_read_without_a_signals_array_is_bad_args_and_a_link_error_is_read_faile
 # --- sb/write: allow-list BEFORE any device I/O (the security guarantee) -----------------------
 
 def test_a_refused_write_never_reaches_the_device():
-    c, control, _health = commander()
+    c, control, health = commander()
     # temperature-1 is NOT on the allow-list.
     code = err_code(lambda: c.write({"writes": [{"signalId": "temperature-1", "value": 1}]}))
     assert code == "WRITE_NOT_ALLOWED"
     assert control.writes == [], "the refused write must never reach the device"
+    assert health.take_write_errors() == 0, "an allow-list refusal is policy, not a device write error"
 
 
 def test_an_allow_listed_write_is_confirmed_and_batches_mix_results():
@@ -239,9 +246,10 @@ def test_an_allow_listed_write_is_confirmed_and_batches_mix_results():
     assert len(control.writes) == 2
 
 
-def test_a_write_the_device_rejects_is_write_failed():
-    c, _control, _health = commander(write_ok=False)
+def test_a_write_the_device_rejects_is_write_failed_and_counts_a_write_error():
+    c, _control, health = commander(write_ok=False)
     assert err_code(lambda: c.write({"signalId": "setpoint-1", "value": 42})) == "WRITE_FAILED"
+    assert health.take_write_errors() == 1, "one rejected entry feeds southbound_health.writeErrors"
 
 
 def test_a_write_with_no_writes_or_value_is_bad_args():
@@ -264,6 +272,75 @@ def test_browse_returns_a_page_or_the_right_error_code():
     assert err_code(lambda: c3.browse({})) == "BROWSE_FAILED"
 
 
+# --- sb/browse: the hierarchical panel mode ----------------------------------------------------
+
+
+def test_hierarchical_browse_of_root_lists_the_inventory_as_contains_refs():
+    c, _control, _health = commander()
+    out = c.browse({"ref": "root"})
+    assert out["mode"] == "hierarchical"
+    root = out["root"]
+    assert root["nodeId"] == "root"
+    assert root["name"] == "plc-1", "the root node is the instance"
+    assert root["nodeClass"] == "device"
+    assert root["dataType"] is None
+    assert root["refs"] == [{
+        "referenceType": "contains",
+        "target": {"nodeId": "temperature-1", "name": "Ambient temperature",
+                   "nodeClass": "signal", "dataType": "REAL"},
+    }]
+    assert out["refCount"] == 1
+    assert out["depth"] == 1
+    assert out["truncated"] is False
+
+
+def test_hierarchical_browse_of_a_signal_is_a_known_leaf():
+    c, _control, _health = commander()
+    out = c.browse({"ref": "temperature-1"})
+    root = out["root"]
+    assert root["nodeId"] == "temperature-1"
+    assert root["nodeClass"] == "signal"
+    assert root["dataType"] == "REAL"
+    assert root["refs"] == [], "a known leaf carries an explicit empty refs"
+    assert out["refCount"] == 0
+    assert out["truncated"] is False
+
+
+def test_hierarchical_browse_rejects_unknown_refs_and_mode_mixing():
+    c, _control, _health = commander()
+    assert err_code(lambda: c.browse({"ref": "ghost"})) == "BAD_ARGS"
+    # `ref`/`depth`/`maxRefs` (hierarchical) and `cursor`/`max` (paged) are mutually exclusive.
+    assert err_code(lambda: c.browse({"ref": "root", "cursor": "page-2"})) == "BAD_ARGS"
+    assert err_code(lambda: c.browse({"depth": 2, "max": 10})) == "BAD_ARGS"
+    # The hierarchical-only arguments are rejected without a `ref` — no silent paged fallback.
+    assert err_code(lambda: c.browse({"depth": 2})) == "BAD_ARGS"
+    assert err_code(lambda: c.browse({"maxRefs": 10})) == "BAD_ARGS"
+    assert err_code(lambda: c.browse({"ref": 7})) == "BAD_ARGS", "a non-string ref is malformed"
+
+
+def test_hierarchical_browse_bounds_depth_and_max_refs():
+    c, _control, _health = commander()
+    # Out-of-range values are clamped into 1..4 / 1..1000, the same convention as the paged `max`.
+    assert c.browse({"ref": "root", "depth": 99, "maxRefs": 5000})["depth"] == 4
+    assert c.browse({"ref": "root", "depth": 0})["depth"] == 1
+
+
+def test_hierarchical_browse_truncates_at_max_refs_across_pages():
+    c, _control, _health = commander(browse="paged")
+    # The paged seam serves two entries over two pages; maxRefs 1 truncates the root's refs.
+    out = c.browse({"ref": "root", "maxRefs": 1})
+    assert out["refCount"] == 1
+    assert out["truncated"] is True
+    # The second page's entry is still resolvable as a leaf ref — the whole inventory is one tree.
+    assert c.browse({"ref": "pressure-1"})["root"]["nodeClass"] == "signal"
+
+
+def test_hierarchical_browse_maps_the_seam_errors_to_the_same_codes():
+    assert err_code(lambda: commander(browse="unsupported")[0].browse({"ref": "root"})) == "BROWSE_UNSUPPORTED"
+    assert err_code(lambda: commander(browse="failed")[0].browse({"ref": "root"})) == "BROWSE_FAILED"
+    assert err_code(lambda: commander(unavailable=True)[0].browse({"ref": "root"})) == "DEVICE_UNAVAILABLE"
+
+
 # --- pause / resume / repoll -------------------------------------------------------------------
 
 def test_pause_is_idempotent_and_repoll_is_refused_while_paused():
@@ -277,8 +354,8 @@ def test_pause_is_idempotent_and_repoll_is_refused_while_paused():
     assert out["changed"] is True
     assert health.is_paused()
 
-    # repoll is refused while paused (BAD_ARGS).
-    assert err_code(lambda: c.repoll({})) == "BAD_ARGS"
+    # repoll is refused while paused, with the dedicated PAUSED code.
+    assert err_code(lambda: c.repoll({})) == "PAUSED"
 
     # pausing again is idempotent.
     assert c.pause({})["changed"] is False
@@ -317,6 +394,43 @@ def test_the_three_panels_are_registered_with_the_right_ids_orders_and_scope():
     # The signals panel binds the signal verbs; diagnostics binds browse.
     assert ps[1]["verbs"] == ["sb/signals", "sb/read", "sb/write", "repoll"]
     assert ps[2]["verbs"] == ["sb/browse", "sb/status"]
+
+
+def test_the_overview_panel_carries_the_summary_rows_and_lifecycle_bindings():
+    summary, lifecycle = panels()[0]["widgets"]
+    assert (summary["kind"], summary["id"], summary["title"]) == \
+        ("summary", "overview-summary", "Adapter overview")
+    assert summary["rows"] == [
+        {"label": "Signals", "value": "Configured signal inventory via cmd/sb/signals"},
+        {"label": "Lifecycle", "value": "Pause, resume, reconnect, and repoll the instance"},
+        {"label": "Writes", "value": "Allow-listed via writes.allow[]; checked before device I/O"},
+    ]
+    assert lifecycle == {"kind": "commandSummary", "id": "overview-lifecycle",
+                         "title": "Lifecycle bindings",
+                         "verbs": ["sb/status", "reconnect", "sb/pause", "sb/resume", "repoll"]}
+
+
+def test_the_signal_grid_binds_sb_signals_through_both_verb_keys_and_never_a_write_verb():
+    (grid,) = panels()[1]["widgets"]
+    assert (grid["kind"], grid["id"], grid["title"]) == \
+        ("signalGrid", "configured-signals", "Configured signals")
+    assert grid["scope"] == "instance", "command-backed widgets repeat the view scope"
+    assert grid["signalsVerb"] == "sb/signals"
+    assert grid["subscriptionsVerb"] == "sb/signals", "the renderer-compat alias binds the same verb"
+    assert grid["readVerb"] == "sb/read"
+    assert "writeVerb" not in grid, "panels never advertise a write surface"
+
+
+def test_the_diagnostics_tree_browser_is_hierarchical_and_bounded():
+    tree, commands_widget = panels()[2]["widgets"]
+    assert (tree["kind"], tree["id"], tree["title"]) == ("treeBrowser", "inventory-tree", "Inventory")
+    assert tree["scope"] == "instance"
+    assert (tree["mode"], tree["rootRef"]) == ("hierarchical", "root")
+    assert (tree["depth"], tree["maxRefs"]) == (1, 200)
+    assert (tree["browseVerb"], tree["readVerb"]) == ("sb/browse", "sb/read")
+    assert "writeVerb" not in tree, "panels never advertise a write surface"
+    assert commands_widget == {"kind": "commandSummary", "id": "diagnostic-commands",
+                               "title": "Diagnostic commands", "verbs": ["sb/status", "sb/browse"]}
 
 
 class _FakeRequest:
@@ -362,7 +476,7 @@ def test_read_maps_a_missing_device_to_device_unavailable():
 
 
 def test_write_flags_an_unresolved_entry_and_an_allow_listed_entry_with_no_value():
-    c, control, _health = commander()
+    c, control, health = commander()
     # An entry with no recognizable ref, and an allow-listed ref with no `value`: both are per-entry
     # results, neither reaches the device, and (nothing attempted) the call still succeeds overall.
     out = c.write({"writes": [{"value": 1}, {"signalId": "setpoint-1"}]})
@@ -371,11 +485,14 @@ def test_write_flags_an_unresolved_entry_and_an_allow_listed_entry_with_no_value
     assert "missing value" in errors
     assert out["written"] == 0
     assert control.writes == []
+    assert health.take_write_errors() == 0, "entries that never reach the device are not write errors"
 
 
 def test_write_maps_a_missing_device_to_device_unavailable():
-    c, _control, _health = commander(unavailable=True)
+    c, _control, health = commander(unavailable=True)
     assert err_code(lambda: c.write({"signalId": "setpoint-1", "value": 1})) == "DEVICE_UNAVAILABLE"
+    # The attempted (allow-listed) entry was aborted on the device path — it counts as a write error.
+    assert health.take_write_errors() == 1
 
 
 def test_browse_carries_a_next_cursor_when_the_page_is_partial_and_maps_unavailable():
@@ -394,6 +511,7 @@ def test_pause_and_resume_map_a_missing_device_to_device_unavailable():
 
 
 def test_repoll_maps_a_refusal_to_bad_args_and_a_missing_device_to_device_unavailable():
+    # A generic seam refusal (RepollRefused) stays BAD_ARGS; only the paused gate is PAUSED.
     c, _control, _health = commander(repoll_refused=True)
     assert err_code(lambda: c.repoll({})) == "BAD_ARGS"
 

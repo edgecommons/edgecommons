@@ -25,7 +25,12 @@ from .data_facade import DataFacade
 from .events_facade import EventsFacade
 from .quality import Quality
 from .severity import Severity
-from .signal_update import Sample, SignalUpdate, SignalUpdateBuilder
+from .signal_update import (
+    RESERVED_SAMPLE_KEYS,
+    Sample,
+    SignalUpdate,
+    SignalUpdateBuilder,
+)
 from .stream_sink import StreamSink
 
 __all__ = [
@@ -35,6 +40,7 @@ __all__ = [
     "DataFacade",
     "EventsFacade",
     "Quality",
+    "RESERVED_SAMPLE_KEYS",
     "Sample",
     "Severity",
     "SignalUpdate",

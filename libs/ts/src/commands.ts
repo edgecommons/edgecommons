@@ -15,8 +15,11 @@
  * the request's `correlation_id` (the `uns-bridge` rewrites `reply_to` across brokers, so
  * console→component request/reply works transparently over the site bus); a `cmd` without
  * `reply_to` is fire-and-forget (the handler runs, no reply). Obtain the facade via
- * `EdgeCommons.commands()` and register custom verbs with {@link CommandInbox.register}. Mirrors
- * the Java `com.mbreissi.edgecommons.commands.CommandInbox`.
+ * `EdgeCommons.commands()` and register custom verbs with {@link CommandInbox.register} (or
+ * {@link CommandInbox.registerScoped} when the handler needs the addressed instance token).
+ * A producer declares a verb's availability for `describe()` consumers with
+ * {@link CommandInbox.setCommandAvailability}. Mirrors the Java
+ * `com.mbreissi.edgecommons.commands.CommandInbox`.
  *
  * **Normative behavior (mirrored by the Java/Python/Rust inboxes; pinned by
  * `uns-test-vectors/commands.json`):**
@@ -104,6 +107,25 @@ export type CommandResult = Record<string, unknown> | null | undefined;
  *          synchronously or via a `Promise`
  */
 export type CommandHandler = (request: Message) => CommandResult | Promise<CommandResult>;
+
+/**
+ * A scope-aware command-verb handler ({@link CommandInbox.registerScoped}): receives everything a
+ * {@link CommandHandler} receives PLUS the **addressed instance** — the `{instance}` token of the
+ * delivery topic when the command was addressed instance-scope
+ * (`ecv1/{device}/{component}/{instance}/cmd/{verb}`), or `undefined` when it was addressed
+ * component-scope (`ecv1/{device}/{component}/cmd/{verb}`, D-U28). Result/failure semantics are
+ * identical to {@link CommandHandler}.
+ *
+ * @param request           the full request envelope (body = the verb's arguments object)
+ * @param addressedInstance the topic's instance token, or `undefined` for component scope
+ */
+export type ScopedCommandHandler = (
+  request: Message,
+  addressedInstance: string | undefined,
+) => CommandResult | Promise<CommandResult>;
+
+/** A command's producer-declared availability state ({@link CommandInbox.setCommandAvailability}). */
+export type CommandAvailabilityState = "available" | "disabled" | "unsupported";
 
 /** Observable state of one inbox-owned deferred reply. */
 export enum DeferredReplyState {
@@ -480,10 +502,17 @@ export class CommandInbox {
   /** Verbs owned by other library subscriptions on the same inbox path — always ignored. */
   static readonly DELEGATED_VERBS: ReadonlySet<string> = new Set([CommandInbox.SET_CONFIG_VERB]);
 
+  /** Maximum stored length of a {@link setCommandAvailability} reason (longer text is truncated). */
+  static readonly MAX_AVAILABILITY_REASON_LENGTH = 256;
+
   /** verb -> handler; built-ins seeded at construction, custom verbs via {@link register}. */
   private readonly handlers = new Map<string, CommandHandler>();
   /** verb -> explicit-outcome handler; custom verbs via {@link registerOutcome}. */
   private readonly outcomeHandlers = new Map<string, OutcomeCommandHandler>();
+  /** verb -> scope-aware handler; custom verbs via {@link registerScoped}. */
+  private readonly scopedHandlers = new Map<string, ScopedCommandHandler>();
+  /** verb -> stored non-available availability (`{state, reason?}`); see {@link setCommandAvailability}. */
+  private readonly availability = new Map<string, { state: CommandAvailabilityState; reason?: string }>();
   /** panel id -> descriptor; panel descriptors are carried verbatim for `describe`. */
   private readonly panelViews = new Map<string, Record<string, unknown>>();
   /** The instance-scoped inbox filter (`…/+/cmd/#`); undefined until {@link start} builds it. */
@@ -643,6 +672,24 @@ export class CommandInbox {
     logger.debug(`outcome command verb '${verb}' registered`);
   }
 
+  /**
+   * Registers a scope-aware custom verb handler — identical to {@link register} (same token
+   * validation, same no-shadowing/one-handler-per-verb precedence, same participation in
+   * `describe()` and reply/error handling), except the handler also receives the **addressed
+   * instance**: the delivery topic's `{instance}` token for an instance-scope command, or
+   * `undefined` for a component-scope one (D-U28).
+   *
+   * @param verb    the verb (the `cmd` channel, `/`-namespaces allowed)
+   * @param handler the scope-aware handler to dispatch it to
+   * @throws Error when the verb is built-in/delegated/already registered
+   * @throws UnsValidationError when a verb token violates the §2.2 token rule
+   */
+  registerScoped(verb: string, handler: ScopedCommandHandler): void {
+    this.validateCustomVerbRegistration(verb);
+    this.scopedHandlers.set(verb, handler);
+    logger.debug(`scoped command verb '${verb}' registered`);
+  }
+
   private validateCustomVerbRegistration(verb: string): void {
     for (const token of verb.split("/")) {
       checkToken(token, "verb token");
@@ -653,7 +700,7 @@ export class CommandInbox {
     if (CommandInbox.DELEGATED_VERBS.has(verb)) {
       throw new Error(`verb '${verb}' is owned by another library subsystem and cannot be registered`);
     }
-    if (this.handlers.has(verb) || this.outcomeHandlers.has(verb)) {
+    if (this.handlers.has(verb) || this.outcomeHandlers.has(verb) || this.scopedHandlers.has(verb)) {
       throw new Error(`verb '${verb}' is already registered - unregister it first to replace the handler`);
     }
   }
@@ -669,14 +716,51 @@ export class CommandInbox {
     if (CommandInbox.BUILT_IN_VERBS.has(verb)) {
       throw new Error(`verb '${verb}' is a built-in verb and cannot be unregistered`);
     }
-    if (this.handlers.delete(verb) || this.outcomeHandlers.delete(verb)) {
+    if (this.handlers.delete(verb) || this.outcomeHandlers.delete(verb) || this.scopedHandlers.delete(verb)) {
+      // Availability is tied to the registration: an unregistered verb keeps no stored state.
+      this.availability.delete(verb);
       logger.debug(`command verb '${verb}' unregistered`);
     }
   }
 
   /** The currently registered verbs (built-ins + custom) — a snapshot copy. */
   verbs(): Set<string> {
-    return new Set([...this.handlers.keys(), ...this.outcomeHandlers.keys()]);
+    return new Set([...this.handlers.keys(), ...this.outcomeHandlers.keys(), ...this.scopedHandlers.keys()]);
+  }
+
+  /**
+   * Declares a registered verb's availability for `describe()` consumers (the console greys or
+   * hides the bound controls; `docs/SOUTHBOUND.md`): `available` (the default) removes any stored
+   * entry so the verb's describe entry reverts to `{verb, builtIn}`; `disabled`/`unsupported`
+   * store `{state, reason?}` and surface on the verb's describe entry as
+   * `"availability": {"state", "reason"?}` — changing the describe digest. The optional `reason`
+   * is caller-provided display text: trimmed, truncated to
+   * {@link CommandInbox.MAX_AVAILABILITY_REASON_LENGTH} chars, omitted when empty/absent.
+   *
+   * @param verb   an already-registered verb (built-in or custom)
+   * @param state  exactly `available`, `disabled`, or `unsupported`
+   * @param reason optional human-readable display text for the non-available state
+   * @throws Error when the state is not one of the three, or the verb is not registered
+   */
+  setCommandAvailability(verb: string, state: CommandAvailabilityState, reason?: string): void {
+    if (state !== "available" && state !== "disabled" && state !== "unsupported") {
+      throw new Error(
+        `availability state '${String(state)}' must be 'available', 'disabled', or 'unsupported'`,
+      );
+    }
+    if (!this.verbs().has(verb)) {
+      throw new Error(`verb '${verb}' is not registered on this component`);
+    }
+    if (state === "available") {
+      this.availability.delete(verb);
+      return;
+    }
+    const entry: { state: CommandAvailabilityState; reason?: string } = { state };
+    const trimmed = reason?.trim();
+    if (trimmed !== undefined && trimmed !== "") {
+      entry.reason = trimmed.slice(0, CommandInbox.MAX_AVAILABILITY_REASON_LENGTH);
+    }
+    this.availability.set(verb, entry);
   }
 
   /**
@@ -792,10 +876,18 @@ export class CommandInbox {
   private describe(): Record<string, unknown> {
     const config = this.configProvider();
     const identity = config.componentIdentity;
-    const commands = [...this.verbs()].sort().map((verb) => ({
-      verb,
-      builtIn: CommandInbox.BUILT_IN_VERBS.has(verb),
-    }));
+    const commands = [...this.verbs()].sort().map((verb) => {
+      const entry: Record<string, unknown> = {
+        verb,
+        builtIn: CommandInbox.BUILT_IN_VERBS.has(verb),
+      };
+      // Only verbs with a stored non-available state carry the key: {verb, builtIn, availability?}.
+      const availability = this.availability.get(verb);
+      if (availability !== undefined) {
+        entry.availability = { ...availability };
+      }
+      return entry;
+    });
     const views = this.panels();
     const defaultView = (views.find((view) => view.default === true) ?? views[0])?.id;
     const panels = {
@@ -973,19 +1065,46 @@ export class CommandInbox {
         logger.debug(`ignoring malformed/foreign cmd payload on '${topic}' (header.name must equal the topic verb)`);
         return;
       }
-      await this.dispatch(verb, message);
+      await this.dispatch(verb, message, this.addressedInstance(topic, cmdMarker));
     } catch (e) {
       logger.debug(`ignoring malformed cmd payload on '${topic}': ${errMsg(e)}`);
     }
   }
 
+  /**
+   * The delivery topic's addressed-instance token (D-U28), parsed against the stored
+   * component-scope filter's own prefix (the same identity `start()` subscribed — never
+   * re-derived from config a second way): `ecv1/{device}/{component}/cmd/…` → component scope
+   * (`undefined`); `ecv1/{device}/{component}/{instance}/cmd/…` → that `{instance}` token. A
+   * malformed topic (impossible through the subscribed filters) is treated as component scope.
+   */
+  private addressedInstance(topic: string, cmdMarker: number): string | undefined {
+    const componentFilter = this.componentInboxFilter;
+    if (componentFilter === undefined || !componentFilter.endsWith("/cmd/#")) {
+      return undefined;
+    }
+    const ownPrefix = componentFilter.slice(0, componentFilter.length - "/cmd/#".length);
+    const scopePart = topic.slice(0, cmdMarker);
+    if (scopePart === ownPrefix) {
+      return undefined; // component scope: .../cmd/{verb}
+    }
+    if (scopePart.startsWith(`${ownPrefix}/`)) {
+      const token = scopePart.slice(ownPrefix.length + 1);
+      if (token !== "" && !token.includes("/")) {
+        return token; // instance scope: .../{instance}/cmd/{verb}
+      }
+    }
+    return undefined; // malformed -> component scope
+  }
+
   /** Dispatches a well-formed request to its handler and replies (when `reply_to` set). */
-  private async dispatch(verb: string, request: Message): Promise<void> {
+  private async dispatch(verb: string, request: Message, addressedInstance: string | undefined): Promise<void> {
     const replyTo = request.getReplyTo();
     const wantsReply = replyTo !== undefined && replyTo !== "";
     const outcomeHandler = this.outcomeHandlers.get(verb);
+    const scopedHandler = this.scopedHandlers.get(verb);
     const handler = this.handlers.get(verb);
-    if (!handler && !outcomeHandler) {
+    if (!handler && !outcomeHandler && !scopedHandler) {
       if (wantsReply) {
         logger.debug(`unknown verb '${verb}' - sending ${CommandInbox.ERR_UNKNOWN_VERB} error reply`);
         await this.sendReply(
@@ -1004,7 +1123,9 @@ export class CommandInbox {
     }
     let result: CommandResult;
     try {
-      result = await handler!(request);
+      // A scoped handler is the plain path plus the addressed-instance argument (D-U28);
+      // reply/error handling is identical.
+      result = scopedHandler ? await scopedHandler(request, addressedInstance) : await handler!(request);
     } catch (e) {
       if (e instanceof CommandException) {
         if (wantsReply) {

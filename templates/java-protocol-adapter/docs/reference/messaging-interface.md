@@ -61,7 +61,7 @@ device configured it is optional; with two or more, a missing id is `BAD_ARGS` a
 | `sb/read` | On-demand read of named signals. |
 | `sb/write` | Allow-listed batch write, per-entry confirmed. |
 | `sb/signals` | The configured signal inventory (no device round-trip). |
-| `sb/browse` | Paged device discovery; `BROWSE_UNSUPPORTED` by default. |
+| `sb/browse` | Paged device discovery, plus the hierarchical panel mode; `BROWSE_UNSUPPORTED` by default. |
 | `sb/pause` / `sb/resume` | Idempotent pause/resume of telemetry production. |
 | `reconnect` | Drop the session and re-establish it (one confirmed attempt). |
 | `repoll` | Trigger an immediate poll cycle. |
@@ -69,7 +69,8 @@ device configured it is optional; with two or more, a missing id is `BAD_ARGS` a
 The library also serves `ping`, `reload-config`, and `get-configuration` on the same inbox.
 
 Error codes: `BAD_ARGS`, `NO_SUCH_INSTANCE`, `WRITE_NOT_ALLOWED`, `WRITE_FAILED`,
-`DEVICE_UNAVAILABLE`, `READ_FAILED`, `RECONNECT_FAILED`, `BROWSE_UNSUPPORTED`, `BROWSE_FAILED`.
+`DEVICE_UNAVAILABLE`, `READ_FAILED`, `RECONNECT_FAILED`, `BROWSE_UNSUPPORTED`, `BROWSE_FAILED`,
+`PAUSED`.
 
 ### `SouthboundSignalUpdate` (data plane)
 
@@ -117,6 +118,10 @@ device. `WRITE_NOT_ALLOWED` is thrown only when **every** entry was refused by t
 
 ### `sb/browse`
 
+Two request forms serve the same browsed inventory.
+
+**Paged** (`cursor`/`max`):
+
 ```jsonc
 "body": { "instance": "device-1", "cursor": null, "max": 200 }
 ```
@@ -125,6 +130,28 @@ device. `WRITE_NOT_ALLOWED` is thrown only when **every** entry was refused by t
     { "id": "temperature-1", "name": "Ambient temperature", "type": "REAL" } ], "cursor": null } }
 ```
 `cursor` is present in the reply only while more pages remain.
+
+**Hierarchical** (`ref`/`depth`/`maxRefs`) — the form the edge-console `treeBrowser` widget sends.
+Presence of `ref` selects it; mixing `ref`/`depth`/`maxRefs` with `cursor`/`max` is `BAD_ARGS`.
+`depth` is bounded 1–4 (default 1) and `maxRefs` 1–1000 (default 200).
+
+```jsonc
+"body": { "instance": "device-1", "ref": "root", "depth": 1, "maxRefs": 200 }
+```
+```jsonc
+{ "ok": true, "result": {
+    "id": "device-1", "mode": "hierarchical",
+    "root": { "nodeId": "root", "name": "device-1", "nodeClass": "device", "dataType": null,
+              "refs": [ { "referenceType": "contains",
+                          "target": { "nodeId": "temperature-1", "name": "Ambient temperature",
+                                      "nodeClass": "signal", "dataType": "REAL" } } ] },
+    "refCount": 1, "depth": 1, "truncated": false } }
+```
+
+`ref: "root"` answers the device node whose `contains` refs are the browsed signals (bounded by
+`maxRefs`; `truncated` reports whether more exist). A signal id as `ref` answers that node with
+`"refs": []` (a known leaf); an unknown ref is `BAD_ARGS`. The scaffold's tree is flat, so a depth
+beyond 1 finds no grandchildren.
 
 ### `sb/status`
 
@@ -149,7 +176,7 @@ Idempotent: pausing an already-paused device returns `"changed": false`.
 { "ok": true, "result": { "id": "device-1", "connected": true } }        // reconnect
 { "ok": true, "result": { "id": "device-1", "polled": 2 } }              // repoll
 ```
-`repoll` refuses with `BAD_ARGS` ("instance is paused - resume first") while the device is paused.
+`repoll` refuses with `PAUSED` ("instance is paused - resume first") while the device is paused.
 
 ## Events (`evt` class)
 

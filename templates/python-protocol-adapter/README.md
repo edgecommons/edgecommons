@@ -44,10 +44,10 @@ request body's `instance` (optional when exactly one device is configured):
 | `sb/read` | On-demand read of named signals (`{signals:[{signalId|id|name}]}`). |
 | `sb/write` | Batch write (`{writes:[{signalId, value}]}`), **allow-listed before any device I/O**. |
 | `sb/signals` | The configured signal inventory (no device round-trip). |
-| `sb/browse` | Paged address-space discovery (the sim returns one page; `BROWSE_UNSUPPORTED` when a protocol has none). |
+| `sb/browse` | Address-space discovery: paged (`cursor`/`max`) or hierarchical (`ref`/`depth`/`maxRefs` — the console tree mode); `BROWSE_UNSUPPORTED` when a protocol has none. |
 | `sb/pause` / `sb/resume` | Pause/resume telemetry production (idempotent). |
 | `reconnect` | Drop + re-establish the link, one attempt. |
-| `repoll` | Force an immediate poll (refused while paused). |
+| `repoll` | Force an immediate poll (refused with `PAUSED` while paused). |
 
 Writes are **allow-listed by stable `signal.id`** (`writes.allow` per device) and the list is checked
 **before** anything reaches the device — an empty list (the default) means the adapter is read-only.

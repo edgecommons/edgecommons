@@ -12,7 +12,8 @@ Body (``header.name`` = :data:`DataFacade.DATA_MESSAGE_NAME`, version
 
     {"device":  {"adapter": <str>, "instance": <str>, "endpoint": <str>}?,  # optional
      "signal":  {"id": <REQUIRED>, "name"?, "address"?},
-     "samples": [{"value": <REQUIRED>, "quality", "qualityRaw"?, "sourceTs"?, "serverTs"}]}
+     "samples": [{"value": <REQUIRED>, "quality", "qualityRaw"?, "sourceTs"?, "serverTs",
+                  <additive protocol-specific extras>...}]}
 
 Defaulting (DESIGN-class-facades §2.1, pinned by ``uns-test-vectors/data.json``):
 
@@ -25,6 +26,12 @@ Defaulting (DESIGN-class-facades §2.1, pinned by ``uns-test-vectors/data.json``
    bare value).
 5. ``signal.id`` is the **only** hard reject -- a publish with no stable id raises
    :class:`ValueError` at the call site.
+6. A sample's :attr:`~edgecommons.facades.signal_update.Sample.extra` fields are copied
+   into the sample object after the canonical fields;
+   :data:`~edgecommons.facades.signal_update.RESERVED_SAMPLE_KEYS` keys raise
+   :class:`ValueError`. A ``None`` value is published as JSON ``null`` only for an
+   explicit ``Sample.null_value()`` sample -- an accidental ``None`` stays the
+   fail-fast :class:`ValueError`.
 
 Channel routing (DESIGN-class-facades §4, D1): per-call
 :meth:`~edgecommons.facades.signal_update.SignalUpdateBuilder.via` override -> config
@@ -46,7 +53,12 @@ from typing import Any, Callable, Dict, Optional
 
 from edgecommons.facades.channel import Channel
 from edgecommons.facades.quality import Quality
-from edgecommons.facades.signal_update import Sample, SignalUpdate, SignalUpdateBuilder
+from edgecommons.facades.signal_update import (
+    RESERVED_SAMPLE_KEYS,
+    Sample,
+    SignalUpdate,
+    SignalUpdateBuilder,
+)
 from edgecommons.facades.stream_sink import StreamSink
 from edgecommons.facades.util import (
     format_instant,
@@ -206,11 +218,16 @@ class DataFacade:
         return body
 
     def _build_sample(self, sample: Sample) -> Dict[str, Any]:
-        """Builds one sample with the quality/qualityRaw/serverTs defaulting rules."""
-        if sample.value is None:
+        """Builds one sample with the quality/qualityRaw/serverTs defaulting rules,
+        then copies the additive :attr:`~edgecommons.facades.signal_update.Sample.extra`
+        fields after the canonical ones (reserved keys are rejected). A ``None`` value
+        is allowed iff the sample is an explicit protocol null
+        (:meth:`~edgecommons.facades.signal_update.Sample.null_value`)."""
+        if sample.value is None and not sample.explicit_null:
             raise ValueError(
                 "data sample value is required (a quality-only sample is not a sample) -"
-                " pass BAD/UNCERTAIN for a failed read"
+                " pass BAD/UNCERTAIN for a failed read, or Sample.null_value() for a"
+                " legitimate protocol null"
             )
         out: Dict[str, Any] = {"value": sample.value}
 
@@ -227,6 +244,15 @@ class DataFacade:
         if sample.source_ts is not None:
             out["sourceTs"] = sample.source_ts
         out["serverTs"] = sample.server_ts if sample.server_ts is not None else self._now_iso()
+
+        if sample.extra:
+            for key, value in sample.extra.items():
+                if key in RESERVED_SAMPLE_KEYS:
+                    raise ValueError(
+                        f"sample extra key '{key}' is reserved by the canonical sample"
+                        " contract"
+                    )
+                out[key] = value
         return out
 
     # ===================== channel routing =====================

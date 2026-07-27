@@ -19,8 +19,8 @@ belong in data messages, events, logs, or command replies.
 ## The Total/Interval counter convention
 
 Every counter is emitted as a measure pair: `<name>Total` (monotonic since start) and
-`<name>Interval` (since the previous emit; **reset on emit**). Gauges (`connectionState`) and
-interval sums (the `*Ms` latencies/durations) are single measures.
+`<name>Interval` (since the previous emit; **reset on emit**). Gauges (`connectionState`,
+`signalsSubscribed`) and interval sums (the `*Ms` latencies/durations) are single measures.
 
 ## `southbound_health`
 
@@ -37,6 +37,8 @@ Dimensions: `instance`.
 | `readErrors` | Count | Read failures in the interval. |
 | `staleSignals` | Count | Signals with no update for longer than `healthThresholds.staleSignalSecs`. |
 | `reconnects` | Count | Reconnects in the interval. |
+| `writeErrors` | Count | Device-failed `sb/write` entries in the interval — writes that passed validation and the allow-list and then failed at the device (drained on emit, exactly like `readErrors`; allow-list refusals and malformed entries do not count). |
+| `signalsSubscribed` | Count | Signals the instance's connected session currently serves — the `sb/signals` inventory size while connected, `0` while disconnected. |
 
 ## `<<COMPONENTNAME>>Connection`
 

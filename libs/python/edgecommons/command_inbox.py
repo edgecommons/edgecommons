@@ -189,6 +189,12 @@ BUILT_IN_VERBS = frozenset({PING, DESCRIBE, RELOAD_CONFIG, GET_CONFIGURATION, ST
 #: Verbs owned by other library subscriptions on the same inbox path - always ignored.
 DELEGATED_VERBS = frozenset({SET_CONFIG_VERB})
 
+#: The accepted command-availability states (:meth:`CommandInbox.set_command_availability`).
+AVAILABILITY_STATES = frozenset({"available", "disabled", "unsupported"})
+
+#: Maximum length of a stored availability ``reason`` (longer reasons are truncated).
+MAX_AVAILABILITY_REASON_CHARS = 256
+
 
 class CommandInboxStartupState(str, Enum):
     """Observable lifecycle state of the command plane."""
@@ -222,6 +228,15 @@ class _ActivationGate:
 #: :data:`ERR_HANDLER_ERROR`. Handlers run synchronously on the messaging delivery
 #: thread - keep them fast, or hand off internally.
 CommandHandler = Callable[["Message"], Optional[dict]]
+
+#: A scope-aware command-verb handler:
+#: ``(request: Message, addressed_instance: Optional[str]) -> Optional[dict]``.
+#: ``addressed_instance`` is the instance token the command was addressed to
+#: (``ecv1/{device}/{component}/{instance}/cmd/{verb}``), or ``None`` for a
+#: component-scoped delivery (``ecv1/{device}/{component}/cmd/{verb}``, D-U28).
+#: Everything else - result wrapping, :class:`CommandException` mapping,
+#: fire-and-forget behavior - is identical to :data:`CommandHandler`.
+ScopedCommandHandler = Callable[["Message", Optional[str]], Optional[dict]]
 
 
 class CommandOutcome:
@@ -430,6 +445,8 @@ class CommandInbox:
     SET_CONFIG_VERB = SET_CONFIG_VERB
     BUILT_IN_VERBS = BUILT_IN_VERBS
     DELEGATED_VERBS = DELEGATED_VERBS
+    AVAILABILITY_STATES = AVAILABILITY_STATES
+    MAX_AVAILABILITY_REASON_CHARS = MAX_AVAILABILITY_REASON_CHARS
 
     def __init__(
         self,
@@ -485,7 +502,11 @@ class CommandInbox:
         # verb -> handler; built-ins seeded here, custom verbs via register().
         self._handlers: Dict[str, CommandHandler] = {}
         self._outcome_handlers: Dict[str, OutcomeCommandHandler] = {}
+        self._scoped_handlers: Dict[str, ScopedCommandHandler] = {}
         self._panels: Dict[str, dict] = {}
+        # verb -> {"state": ..., "reason"?: ...} for the describe() availability
+        # surface; only non-"available" states are stored.
+        self._availability: Dict[str, Dict[str, str]] = {}
 
         # ping -> the state keepalive's RUNNING body shape: proves the component is
         # not just alive (the keepalive does that) but RESPONSIVE to addressed
@@ -519,10 +540,16 @@ class CommandInbox:
             return {"reloaded": True}
 
         def _describe(request):
-            commands = [
-                {"verb": verb, "builtIn": verb in BUILT_IN_VERBS}
-                for verb in sorted(self.verbs())
-            ]
+            with self._lock:
+                availability = {
+                    verb: dict(entry) for verb, entry in self._availability.items()
+                }
+            commands = []
+            for verb in sorted(self.verbs()):
+                entry = {"verb": verb, "builtIn": verb in BUILT_IN_VERBS}
+                if verb in availability:
+                    entry["availability"] = availability[verb]
+                commands.append(entry)
             panels = self._panel_descriptor()
             manifest = {
                 "schemaVersion": "edgecommons.component.describe.v1",
@@ -642,6 +669,82 @@ class CommandInbox:
             self._outcome_handlers[verb] = handler
         logger.debug("Outcome command verb '%s' registered", verb)
 
+    def register_scoped(self, verb: str, handler: ScopedCommandHandler) -> None:
+        """Registers a scope-aware custom verb handler that receives the addressed
+        instance beside the request: ``handler(request, addressed_instance)`` where
+        ``addressed_instance`` is the topic's instance token
+        (``.../{instance}/cmd/{verb}``), or ``None`` for a component-scoped delivery
+        (``.../cmd/{verb}``, D-U28).
+
+        Everything else matches :meth:`register`: the same one-handler-per-verb rule
+        (a verb has EITHER a plain or a scoped handler), the same shadowing/duplicate
+        errors, the same reply/error handling, and identical participation in
+        ``describe()``.
+
+        :param verb: the verb (the ``cmd`` channel, ``/``-namespaces allowed)
+        :param handler: the scoped handler to dispatch it to
+        :raises ValueError: when the verb is built-in/delegated/already registered
+        :raises edgecommons.uns.UnsValidationError: when a verb token violates the
+            §2.2 token rule
+        """
+        if verb is None:
+            raise ValueError("verb must not be None")
+        if handler is None:
+            raise ValueError("handler must not be None")
+        for token in verb.split("/"):
+            Uns.check_token(token, "verb token")
+        with self._lock:
+            self._validate_custom_verb_registration(verb)
+            self._scoped_handlers[verb] = handler
+        logger.debug("Scoped command verb '%s' registered", verb)
+
+    def set_command_availability(
+        self, verb: str, state: str, reason: Optional[str] = None
+    ) -> None:
+        """Declares a registered verb's availability for the ``describe()``
+        discovery surface.
+
+        ``state`` must be exactly ``"available"``, ``"disabled"``, or
+        ``"unsupported"``. ``"available"`` removes any stored entry (the verb's
+        describe entry reverts to ``{verb, builtIn}``); ``"disabled"``/
+        ``"unsupported"`` store ``{"state": ..., "reason"?: ...}``, surfaced on the
+        verb's describe entry as ``"availability"``. The ``reason`` is trimmed,
+        truncated to :data:`MAX_AVAILABILITY_REASON_CHARS` characters, and omitted
+        when empty/absent. The describe digest changes with the availability.
+
+        :param verb: an already registered verb (built-in or custom)
+        :param state: ``"available"`` | ``"disabled"`` | ``"unsupported"``
+        :param reason: an optional caller-provided human-readable reason
+        :raises ValueError: when the state is not one of the three tokens or the
+            verb is not registered
+        """
+        if verb is None:
+            raise ValueError("verb must not be None")
+        if state not in AVAILABILITY_STATES:
+            raise ValueError(
+                "availability state must be 'available', 'disabled', or"
+                f" 'unsupported' - got {state!r}"
+            )
+        with self._lock:
+            if (
+                verb not in self._handlers
+                and verb not in self._outcome_handlers
+                and verb not in self._scoped_handlers
+            ):
+                raise ValueError(
+                    f"verb '{verb}' is not registered on this component"
+                )
+            if state == "available":
+                self._availability.pop(verb, None)
+            else:
+                entry: Dict[str, str] = {"state": state}
+                if reason is not None:
+                    trimmed = reason.strip()[:MAX_AVAILABILITY_REASON_CHARS]
+                    if trimmed:
+                        entry["reason"] = trimmed
+                self._availability[verb] = entry
+        logger.debug("Command verb '%s' availability set to '%s'", verb, state)
+
     def _validate_custom_verb_registration(self, verb: str) -> None:
         if verb in BUILT_IN_VERBS:
             raise ValueError(
@@ -652,7 +755,11 @@ class CommandInbox:
                 f"verb '{verb}' is owned by another library subsystem and cannot"
                 " be registered"
             )
-        if verb in self._handlers or verb in self._outcome_handlers:
+        if (
+            verb in self._handlers
+            or verb in self._outcome_handlers
+            or verb in self._scoped_handlers
+        ):
             raise ValueError(
                 f"verb '{verb}' is already registered - unregister it first to"
                 " replace the handler"
@@ -673,13 +780,19 @@ class CommandInbox:
         with self._lock:
             removed = self._handlers.pop(verb, None)
             outcome_removed = self._outcome_handlers.pop(verb, None)
-        if removed is not None or outcome_removed is not None:
+            scoped_removed = self._scoped_handlers.pop(verb, None)
+            self._availability.pop(verb, None)
+        if removed is not None or outcome_removed is not None or scoped_removed is not None:
             logger.debug("Command verb '%s' unregistered", verb)
 
     def verbs(self) -> Set[str]:
         """The currently registered verbs (built-ins + custom) - a snapshot copy."""
         with self._lock:
-            return set(self._handlers.keys()) | set(self._outcome_handlers.keys())
+            return (
+                set(self._handlers.keys())
+                | set(self._outcome_handlers.keys())
+                | set(self._scoped_handlers.keys())
+            )
 
     def register_panel(self, panel: Mapping[str, Any]) -> None:
         """Registers a descriptor panel view for the built-in ``describe`` verb.
@@ -715,7 +828,12 @@ class CommandInbox:
             "views": views,
         }
         if views:
-            panels["defaultView"] = views[0]["id"]
+            # The first view carrying boolean "default": true wins; else views[0].
+            # Views are emitted verbatim (the "default" key is not stripped).
+            default_view = next(
+                (view["id"] for view in views if view.get("default") is True), None
+            )
+            panels["defaultView"] = default_view if default_view is not None else views[0]["id"]
         return panels
 
     def _component_descriptor(self) -> Optional[dict]:
@@ -1398,17 +1516,50 @@ class CommandInbox:
                     topic,
                 )
                 return
-            self._dispatch(verb, message)
+            self._dispatch(
+                verb, message, self._addressed_instance(prefix, topic, cmd_marker)
+            )
         except Exception as e:  # noqa: BLE001 - a bad payload must never crash us
             logger.debug("Ignoring malformed cmd payload on '%s': %s", topic, e)
 
-    def _dispatch(self, verb: str, request) -> None:
+    @staticmethod
+    def _addressed_instance(
+        prefix: str, topic: str, cmd_marker: int
+    ) -> Optional[str]:
+        """The instance token the delivery topic addressed, per D-U28: ``None`` for
+        the component scope (``.../cmd/{verb}``), the ``{instance}`` token for the
+        instance scope (``.../{instance}/cmd/{verb}``). Derived from the stored
+        instance-filter prefix (``.../+/cmd/``) - never re-derived from config.
+        Malformed topics (unreachable through the subscribed filters) resolve to the
+        component scope."""
+        suffix = "/+/cmd/"
+        if not prefix.endswith(suffix):
+            return None
+        component_head = prefix[: -len(suffix)]
+        head = topic[:cmd_marker]
+        if head == component_head:
+            return None  # component scope: .../cmd/{verb}
+        if head.startswith(component_head + "/"):
+            instance = head[len(component_head) + 1:]
+            if instance and "/" not in instance:
+                return instance
+        return None  # malformed -> treat as component scope
+
+    def _dispatch(
+        self, verb: str, request, addressed_instance: Optional[str] = None
+    ) -> None:
         """Dispatches a well-formed request to its handler and replies (when
         ``reply_to`` is set)."""
         wants_reply = bool(request.get_header().reply_to)
         with self._lock:
             handler = self._handlers.get(verb)
             outcome_handler = self._outcome_handlers.get(verb)
+            scoped_handler = self._scoped_handlers.get(verb)
+        if scoped_handler is not None:
+            # A scoped handler is a plain handler that also receives the addressed
+            # instance - the reply/error path is byte-for-byte the plain one.
+            def handler(req, _scoped=scoped_handler, _inst=addressed_instance):
+                return _scoped(req, _inst)
         if handler is None and outcome_handler is None:
             if wants_reply:
                 logger.debug(

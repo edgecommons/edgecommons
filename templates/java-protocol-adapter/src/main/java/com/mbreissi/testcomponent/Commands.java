@@ -30,7 +30,7 @@ import java.util.Map;
  *   <li><b>Standardized error codes:</b> {@code BAD_ARGS}, {@code NO_SUCH_INSTANCE},
  *       {@code WRITE_NOT_ALLOWED}, {@code WRITE_FAILED}, {@code DEVICE_UNAVAILABLE},
  *       {@code READ_FAILED}, {@code RECONNECT_FAILED}, {@code BROWSE_UNSUPPORTED},
- *       {@code BROWSE_FAILED}.</li>
+ *       {@code BROWSE_FAILED}, {@code PAUSED}.</li>
  *   <li><b>The session is never touched here.</b> Every verb that reads/writes/reconnects/pauses is
  *       routed through the device's own {@link DeviceControl} — the worker serializes it with the poll
  *       loop and <i>confirms</i> it — so the command surface never races the poll loop on the same
@@ -82,34 +82,41 @@ public final class Commands {
     }
 
     /**
-     * The three edge-console panel descriptors. Core validates {@code id}/{@code title}/uniqueness; the
-     * widget kinds and bound verbs are console-interpreted, so they ride verbatim. {@code order}
-     * 10/20/30, {@code scope: "instance"}.
+     * The three edge-console panel descriptors — renderable by the shipped descriptor renderer:
+     * {@code summary.rows}, {@code commandSummary.verbs}, a {@code signalGrid} bound to
+     * {@code sb/signals}/{@code sb/read}, and a hierarchical {@code treeBrowser} bound to
+     * {@code sb/browse}/{@code sb/read}. Core validates {@code id}/{@code title}/uniqueness; the widget
+     * kinds and bound verbs are console-interpreted, so they ride verbatim. {@code order} 10/20/30,
+     * {@code scope: "instance"} on each view and on every command-backed widget.
      */
     public static List<JsonObject> panels() {
         List<JsonObject> out = new ArrayList<>();
 
         JsonObject overview = panel("overview", "Overview", 10);
         JsonArray overviewWidgets = new JsonArray();
-        overviewWidgets.add(widget("summary", "fields",
-                arr("connected", "state", "paused", "endpoint")));
-        overviewWidgets.add(widget("commandSummary", "actions",
-                arr("reconnect", "sb/pause", "sb/resume")));
+        overviewWidgets.add(summaryWidget("overview-summary", "Adapter overview",
+                row("Signals", "Configured signal inventory via cmd/sb/signals"),
+                row("Lifecycle", "Pause, resume, reconnect, and repoll the instance"),
+                row("Writes", "Allow-listed via writes.allow[]; checked before device I/O")));
+        overviewWidgets.add(commandSummaryWidget("overview-lifecycle", "Lifecycle bindings",
+                "sb/status", "reconnect", "sb/pause", "sb/resume", "repoll"));
         overview.add("widgets", overviewWidgets);
         overview.add("verbs", arr("sb/status", "reconnect", "sb/pause", "sb/resume"));
         out.add(overview);
 
         JsonObject signals = panel("signals", "Signals", 20);
         JsonArray signalsWidgets = new JsonArray();
-        signalsWidgets.add(widget("signalGrid"));
+        signalsWidgets.add(signalGridWidget("configured-signals", "Configured signals",
+                "sb/signals", "sb/read"));
         signals.add("widgets", signalsWidgets);
         signals.add("verbs", arr("sb/signals", "sb/read", "sb/write", "repoll"));
         out.add(signals);
 
         JsonObject diagnostics = panel("diagnostics", "Diagnostics", 30);
         JsonArray diagWidgets = new JsonArray();
-        diagWidgets.add(widget("treeBrowser"));
-        diagWidgets.add(widget("keyValueList"));
+        diagWidgets.add(treeBrowserWidget("inventory-tree", "Inventory", "sb/browse", "sb/read"));
+        diagWidgets.add(commandSummaryWidget("diagnostic-commands", "Diagnostic commands",
+                "sb/status", "sb/browse"));
         diagnostics.add("widgets", diagWidgets);
         diagnostics.add("verbs", arr("sb/browse", "sb/status"));
         out.add(diagnostics);
@@ -126,16 +133,62 @@ public final class Commands {
         return p;
     }
 
-    private static JsonObject widget(String kind) {
+    private static JsonObject baseWidget(String kind, String id, String title) {
         JsonObject w = new JsonObject();
         w.addProperty("kind", kind);
+        w.addProperty("id", id);
+        w.addProperty("title", title);
         return w;
     }
 
-    private static JsonObject widget(String kind, String key, JsonArray values) {
-        JsonObject w = widget(kind);
-        w.add(key, values);
+    private static JsonObject summaryWidget(String id, String title, JsonObject... rows) {
+        JsonObject w = baseWidget("summary", id, title);
+        JsonArray rowArray = new JsonArray();
+        for (JsonObject row : rows) {
+            rowArray.add(row);
+        }
+        w.add("rows", rowArray);
         return w;
+    }
+
+    private static JsonObject commandSummaryWidget(String id, String title, String... verbs) {
+        JsonObject w = baseWidget("commandSummary", id, title);
+        w.add("verbs", arr(verbs));
+        return w;
+    }
+
+    private static JsonObject treeBrowserWidget(String id, String title,
+                                                String browseVerb, String readVerb) {
+        JsonObject w = baseWidget("treeBrowser", id, title);
+        w.addProperty("scope", "instance");
+        w.addProperty("mode", "hierarchical");
+        w.addProperty("rootRef", "root");
+        w.addProperty("depth", 1);
+        w.addProperty("maxRefs", 200);
+        w.addProperty("browseVerb", browseVerb);
+        w.addProperty("readVerb", readVerb);
+        return w;
+    }
+
+    private static JsonObject signalGridWidget(String id, String title,
+                                               String signalsVerb, String readVerb) {
+        JsonObject w = baseWidget("signalGrid", id, title);
+        w.addProperty("scope", "instance");
+        w.addProperty("signalsVerb", signalsVerb);
+        // Descriptor-compat hint: the shipped edge-console signalGrid reads `subscriptionsVerb`
+        // (falling back to the removed `sb/subscriptions`). Point that key at the `sb/signals`
+        // verb too, so the current console binds correctly until it reads `signalsVerb`. This is a
+        // descriptor field alias, NOT a wire-verb alias — no `sb/subscriptions` verb exists here.
+        w.addProperty("subscriptionsVerb", signalsVerb);
+        w.addProperty("readVerb", readVerb);
+        return w;
+    }
+
+    private static JsonObject row(String label, String value) {
+        JsonObject row = new JsonObject();
+        row.addProperty("label", label);
+        row.addProperty("value", value);
+        return row;
     }
 
     private static JsonArray arr(String... values) {
@@ -414,13 +467,18 @@ public final class Commands {
                 }
 
                 attempted++;
+                // `writeErrors` mirrors `readErrors`: DEVICE-path failures only. An entry counts iff
+                // it passed validation + the allow-list and then failed at the device; caller/policy
+                // errors (unresolved refs, allow-list refusals, missing values) do not.
                 try {
                     h.control.write(ref.id, value);
                     succeeded++;
                     results.add(writeResult(ref.id, value, true, null));
                 } catch (WriteFailedException e) {
+                    h.health.incrementWriteErrors();
                     results.add(writeResult(ref.id, value, false, e.getMessage()));
                 } catch (DeviceUnavailableException e) {
+                    h.health.incrementWriteErrors();
                     h.dm.recordCommand("sb/write", false, ms(started));
                     throw new CommandException("DEVICE_UNAVAILABLE", e.getMessage());
                 }
@@ -447,11 +505,23 @@ public final class Commands {
             return out;
         }
 
-        // --- sb/browse (paged address-space discovery) ---------------------------------------------
+        // --- sb/browse (paged address-space discovery + the hierarchical panel mode) ---------------
 
         JsonObject browse(JsonObject body) throws CommandException {
             DeviceHandle h = resolve(body);
             long started = System.nanoTime();
+            // Presence of `ref` (or its companions `depth`/`maxRefs`) selects the hierarchical panel
+            // mode; mixing the two request families is BAD_ARGS.
+            boolean hierArgs = body.has("ref") || body.has("depth") || body.has("maxRefs");
+            boolean pagedArgs = body.has("cursor") || body.has("max");
+            if (hierArgs && pagedArgs) {
+                h.dm.recordCommand("sb/browse", false, ms(started));
+                throw new CommandException("BAD_ARGS",
+                        "`ref`/`depth`/`maxRefs` (hierarchical) and `cursor`/`max` (paged) are mutually exclusive");
+            }
+            if (hierArgs) {
+                return browseHierarchical(h, body, started);
+            }
             String cursor = str(body, "cursor");
             int max = 200;
             if (body.has("max") && body.get("max").isJsonPrimitive()) {
@@ -486,6 +556,93 @@ public final class Commands {
                 h.dm.recordCommand("sb/browse", false, ms(started));
                 throw new CommandException("DEVICE_UNAVAILABLE", e.getMessage());
             }
+        }
+
+        /**
+         * The hierarchical {@code sb/browse} mode the edge-console {@code treeBrowser} sends
+         * ({@code {instance, ref, depth?, maxRefs?}}). Serves the SAME {@link Device.BrowsedSignal}
+         * inventory as the paged mode, shaped as a node tree: {@code ref: "root"} answers the device
+         * node whose {@code contains} refs are the browsed signals (bounded by {@code maxRefs});
+         * a signal id as {@code ref} answers that node with {@code "refs": []} (a known leaf); an
+         * unknown ref is {@code BAD_ARGS}. {@code depth} is bounded 1..4 and honored, but the
+         * template's tree is flat — depth beyond 1 finds no grandchildren.
+         */
+        private JsonObject browseHierarchical(DeviceHandle h, JsonObject body, long started)
+                throws CommandException {
+            String ref = str(body, "ref");
+            if (ref == null) {
+                h.dm.recordCommand("sb/browse", false, ms(started));
+                throw new CommandException("BAD_ARGS", "hierarchical browse requires a `ref` string");
+            }
+            int depth = boundedInt(body, "depth", 1, 1, 4);
+            int maxRefs = boundedInt(body, "maxRefs", 200, 1, 1000);
+
+            // Drain the same paged inventory the plain mode serves. For `root`, one entry past
+            // maxRefs is enough to know the reply is truncated; a leaf lookup drains every page.
+            List<Device.BrowsedSignal> inventory = new ArrayList<>();
+            int limit = "root".equals(ref) ? maxRefs + 1 : Integer.MAX_VALUE;
+            try {
+                String cursor = null;
+                do {
+                    Device.BrowsePage page = h.control.browse(cursor, 1000);
+                    inventory.addAll(page.entries());
+                    cursor = page.nextCursor();
+                } while (cursor != null && inventory.size() < limit);
+            } catch (Device.BrowseException e) {
+                h.dm.recordCommand("sb/browse", false, ms(started));
+                if (e.isUnsupported()) {
+                    throw new CommandException("BROWSE_UNSUPPORTED", e.getMessage());
+                }
+                throw new CommandException("BROWSE_FAILED", e.getMessage());
+            } catch (DeviceUnavailableException e) {
+                h.dm.recordCommand("sb/browse", false, ms(started));
+                throw new CommandException("DEVICE_UNAVAILABLE", e.getMessage());
+            }
+
+            JsonObject root;
+            int refCount;
+            boolean truncated;
+            if ("root".equals(ref)) {
+                JsonArray refs = new JsonArray();
+                int n = Math.min(inventory.size(), maxRefs);
+                for (int i = 0; i < n; i++) {
+                    Device.BrowsedSignal e = inventory.get(i);
+                    JsonObject contains = new JsonObject();
+                    contains.addProperty("referenceType", "contains");
+                    contains.add("target", node(e.id(), e.name(), "signal", e.typeName()));
+                    refs.add(contains);
+                }
+                root = node("root", h.cfg.id(), "device", null);
+                root.add("refs", refs);
+                refCount = n;
+                truncated = inventory.size() > maxRefs;
+            } else {
+                Device.BrowsedSignal found = null;
+                for (Device.BrowsedSignal e : inventory) {
+                    if (e.id().equals(ref)) {
+                        found = e;
+                        break;
+                    }
+                }
+                if (found == null) {
+                    h.dm.recordCommand("sb/browse", false, ms(started));
+                    throw new CommandException("BAD_ARGS", "unknown ref `" + ref + "`");
+                }
+                root = node(found.id(), found.name(), "signal", found.typeName());
+                root.add("refs", new JsonArray()); // a known leaf
+                refCount = 0;
+                truncated = false;
+            }
+
+            JsonObject out = new JsonObject();
+            out.addProperty("id", h.cfg.id());
+            out.addProperty("mode", "hierarchical");
+            out.add("root", root);
+            out.addProperty("refCount", refCount);
+            out.addProperty("depth", depth);
+            out.addProperty("truncated", truncated);
+            h.dm.recordCommand("sb/browse", true, ms(started));
+            return out;
         }
 
         // --- sb/pause + sb/resume (idempotent {paused, changed}) -----------------------------------
@@ -535,14 +692,14 @@ public final class Commands {
             }
         }
 
-        // --- repoll (refused while paused) ---------------------------------------------------------
+        // --- repoll (refused with PAUSED while paused) ---------------------------------------------
 
         JsonObject repoll(JsonObject body) throws CommandException {
             DeviceHandle h = resolve(body);
             long started = System.nanoTime();
             if (h.health.isPaused()) {
                 h.dm.recordCommand("repoll", false, ms(started));
-                throw new CommandException("BAD_ARGS", "instance is paused - resume first");
+                throw new CommandException("PAUSED", "instance is paused - resume first");
             }
             try {
                 long polled = h.control.repoll();
@@ -612,6 +769,33 @@ public final class Commands {
 
     private static JsonArray arrOrNull(JsonObject o, String key) {
         return o.has(key) && o.get(key).isJsonArray() ? o.getAsJsonArray(key) : null;
+    }
+
+    /** An integer body field, defaulted when absent/malformed and clamped into {@code [lo, hi]}. */
+    private static int boundedInt(JsonObject o, String key, int def, int lo, int hi) {
+        int v = def;
+        if (o.has(key) && o.get(key).isJsonPrimitive()) {
+            try {
+                v = o.get(key).getAsInt();
+            } catch (RuntimeException e) {
+                v = def;
+            }
+        }
+        return Math.max(lo, Math.min(hi, v));
+    }
+
+    /** One hierarchical-browse node ({@code nodeId, name, nodeClass, dataType}); refs are added by the caller. */
+    private static JsonObject node(String nodeId, String name, String nodeClass, String dataType) {
+        JsonObject o = new JsonObject();
+        o.addProperty("nodeId", nodeId);
+        o.addProperty("name", name);
+        o.addProperty("nodeClass", nodeClass);
+        if (dataType == null) {
+            o.add("dataType", JsonNull.INSTANCE);
+        } else {
+            o.addProperty("dataType", dataType);
+        }
+        return o;
     }
 
     private static JsonObject badRead(String id, String raw) {

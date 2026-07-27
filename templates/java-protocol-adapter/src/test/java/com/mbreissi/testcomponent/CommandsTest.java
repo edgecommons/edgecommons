@@ -27,7 +27,7 @@ class CommandsTest {
 
     // --- a mock control seam that records the writes that reach the "device" -----------------------
 
-    private enum Browse { ONE, UNSUPPORTED, FAILED }
+    private enum Browse { ONE, MANY, UNSUPPORTED, FAILED }
 
     private static final class MockControl implements Commands.DeviceControl {
         final Health health;
@@ -80,6 +80,11 @@ class CommandsTest {
             return switch (browse) {
                 case ONE -> new Device.BrowsePage(
                         List.of(new Device.BrowsedSignal("temperature-1", "Ambient temperature", "REAL")),
+                        null);
+                case MANY -> new Device.BrowsePage(
+                        List.of(new Device.BrowsedSignal("temperature-1", "Ambient temperature", "REAL"),
+                                new Device.BrowsedSignal("pressure-1", "Line pressure", "REAL"),
+                                new Device.BrowsedSignal("setpoint-1", "Setpoint", "REAL")),
                         null);
                 case UNSUPPORTED -> throw Device.BrowseException.unsupported();
                 case FAILED -> throw Device.BrowseException.failed("mid-browse error");
@@ -141,7 +146,7 @@ class CommandsTest {
     private static DeviceMetrics dm(DeviceConfig cfg, Health health) {
         // No emitter/config: the Commander touches only the counters (recordCommand / countersView),
         // never define/emit — so a metric-less DeviceMetrics is enough to exercise the command surface.
-        return new DeviceMetrics(null, null, cfg.id(), health, 30);
+        return new DeviceMetrics(null, null, cfg.id(), health, 30, simSignals().size());
     }
 
     private static final class Harness {
@@ -274,6 +279,8 @@ class CommandsTest {
         assertEquals("WRITE_NOT_ALLOWED", errCode(() -> h.commander.write(
                 json("{\"writes\":[{\"signalId\":\"temperature-1\",\"value\":1}]}"))));
         assertTrue(h.control.writes.isEmpty(), "the refused write must never reach the device");
+        assertEquals(0, h.health.takeWriteErrors(),
+                "an allow-list refusal is a policy error, not a device write error");
     }
 
     @Test
@@ -309,11 +316,33 @@ class CommandsTest {
     }
 
     @Test
-    void aWriteTheDeviceRejectsIsWriteFailed() {
+    void aWriteTheDeviceRejectsIsWriteFailedAndCountsAWriteError() {
         Harness h = harness(aDevice());
         h.control.writeOk = false;
         assertEquals("WRITE_FAILED",
                 errCode(() -> h.commander.write(json("{\"signalId\":\"setpoint-1\",\"value\":42}"))));
+        assertEquals(1, h.health.takeWriteErrors(), "the device rejection feeds the writeErrors counter");
+    }
+
+    @Test
+    void writeErrorsCountsOnlyDevicePathFailures() throws Exception {
+        // A successful write counts nothing.
+        Harness h = harness(aDevice());
+        h.commander.write(json("{\"signalId\":\"setpoint-1\",\"value\":42}"));
+        assertEquals(0, h.health.takeWriteErrors());
+
+        // Unresolved refs and missing values are caller errors — no increment.
+        h.commander.write(json(
+                "{\"writes\":[{\"name\":\"ghost\",\"value\":1},{\"signalId\":\"setpoint-1\"},"
+                        + "{\"signalId\":\"setpoint-1\",\"value\":2}]}"));
+        assertEquals(0, h.health.takeWriteErrors());
+
+        // A gone device loop mid-write IS a device-path failure.
+        Harness gone = harness(aDevice());
+        gone.control.unavailable = true;
+        assertEquals("DEVICE_UNAVAILABLE",
+                errCode(() -> gone.commander.write(json("{\"signalId\":\"setpoint-1\",\"value\":42}"))));
+        assertEquals(1, gone.health.takeWriteErrors());
     }
 
     @Test
@@ -341,6 +370,88 @@ class CommandsTest {
         assertEquals("BROWSE_FAILED", errCode(() -> f.commander.browse(json("{}"))));
     }
 
+    // --- sb/browse: the hierarchical panel mode ----------------------------------------------------
+
+    @Test
+    void hierarchicalRootAnswersTheDeviceNodeOverTheSameInventory() throws Exception {
+        Harness h = harness(aDevice());
+        JsonObject out = h.commander.browse(json("{\"ref\":\"root\"}"));
+
+        assertEquals("hierarchical", out.get("mode").getAsString());
+        assertEquals(1, out.get("refCount").getAsInt());
+        assertEquals(1, out.get("depth").getAsInt());
+        assertFalse(out.get("truncated").getAsBoolean());
+
+        JsonObject root = out.getAsJsonObject("root");
+        assertEquals("root", root.get("nodeId").getAsString());
+        assertEquals("plc-1", root.get("name").getAsString(), "the root node is named from the instance");
+        assertEquals("device", root.get("nodeClass").getAsString());
+        assertTrue(root.get("dataType").isJsonNull());
+
+        JsonObject ref = root.getAsJsonArray("refs").get(0).getAsJsonObject();
+        assertEquals("contains", ref.get("referenceType").getAsString());
+        JsonObject target = ref.getAsJsonObject("target");
+        assertEquals("temperature-1", target.get("nodeId").getAsString());
+        assertEquals("Ambient temperature", target.get("name").getAsString());
+        assertEquals("signal", target.get("nodeClass").getAsString());
+        assertEquals("REAL", target.get("dataType").getAsString());
+    }
+
+    @Test
+    void hierarchicalSignalRefIsAKnownLeafAndAnUnknownRefIsBadArgs() throws Exception {
+        Harness h = harness(aDevice());
+        JsonObject out = h.commander.browse(json("{\"ref\":\"temperature-1\"}"));
+        JsonObject root = out.getAsJsonObject("root");
+        assertEquals("temperature-1", root.get("nodeId").getAsString());
+        assertEquals("signal", root.get("nodeClass").getAsString());
+        assertEquals("REAL", root.get("dataType").getAsString());
+        assertEquals(0, root.getAsJsonArray("refs").size(), "a known leaf answers refs: []");
+        assertEquals(0, out.get("refCount").getAsInt());
+        assertFalse(out.get("truncated").getAsBoolean());
+
+        assertEquals("BAD_ARGS", errCode(() -> h.commander.browse(json("{\"ref\":\"ghost\"}"))));
+    }
+
+    @Test
+    void mixingHierarchicalAndPagedArgsIsBadArgs() {
+        Harness h = harness(aDevice());
+        assertEquals("BAD_ARGS",
+                errCode(() -> h.commander.browse(json("{\"ref\":\"root\",\"cursor\":\"x\"}"))));
+        assertEquals("BAD_ARGS",
+                errCode(() -> h.commander.browse(json("{\"depth\":2,\"max\":10}"))));
+        // The hierarchical companions without `ref` are also refused: nothing to anchor the tree on.
+        assertEquals("BAD_ARGS", errCode(() -> h.commander.browse(json("{\"depth\":2}"))));
+    }
+
+    @Test
+    void hierarchicalDepthAndMaxRefsAreBoundedAndTruncationIsReported() throws Exception {
+        // depth clamps into 1..4; maxRefs into 1..1000.
+        Harness h = harness(aDevice());
+        assertEquals(4, h.commander.browse(json("{\"ref\":\"root\",\"depth\":99}"))
+                .get("depth").getAsInt());
+        assertEquals(1, h.commander.browse(json("{\"ref\":\"root\",\"depth\":0}"))
+                .get("depth").getAsInt());
+
+        // Three browsable signals, maxRefs 2 -> two refs, truncated.
+        Harness many = harness(aDevice());
+        many.control.browse = Browse.MANY;
+        JsonObject out = many.commander.browse(json("{\"ref\":\"root\",\"maxRefs\":2}"));
+        assertEquals(2, out.getAsJsonObject("root").getAsJsonArray("refs").size());
+        assertEquals(2, out.get("refCount").getAsInt());
+        assertTrue(out.get("truncated").getAsBoolean());
+    }
+
+    @Test
+    void hierarchicalBrowseMapsTheBrowseErrorCodesLikeThePagedMode() {
+        Harness u = harness(aDevice());
+        u.control.browse = Browse.UNSUPPORTED;
+        assertEquals("BROWSE_UNSUPPORTED", errCode(() -> u.commander.browse(json("{\"ref\":\"root\"}"))));
+
+        Harness f = harness(aDevice());
+        f.control.browse = Browse.FAILED;
+        assertEquals("BROWSE_FAILED", errCode(() -> f.commander.browse(json("{\"ref\":\"root\"}"))));
+    }
+
     // --- pause / resume / repoll -------------------------------------------------------------------
 
     @Test
@@ -355,8 +466,8 @@ class CommandsTest {
         assertTrue(out.get("changed").getAsBoolean());
         assertTrue(h.health.isPaused());
 
-        // repoll is refused while paused (BAD_ARGS).
-        assertEquals("BAD_ARGS", errCode(() -> h.commander.repoll(json("{}"))));
+        // repoll is refused while paused, with the dedicated PAUSED code.
+        assertEquals("PAUSED", errCode(() -> h.commander.repoll(json("{}"))));
 
         // pausing again is idempotent.
         assertFalse(h.commander.pause(json("{}")).get("changed").getAsBoolean());
@@ -410,11 +521,84 @@ class CommandsTest {
         assertNull(ps.get(0).get("nonexistent"));
     }
 
-    private static List<String> verbsOf(JsonObject panel) {
+    /** The widget descriptors are exactly what the edge-console descriptor renderer reads. */
+    @Test
+    void thePanelWidgetsMatchTheRenderableDescriptorShapeExactly() {
+        List<JsonObject> ps = Commands.panels();
+
+        // overview: a summary with rows + a lifecycle commandSummary with verbs.
+        JsonArray overviewWidgets = ps.get(0).getAsJsonArray("widgets");
+        assertEquals(2, overviewWidgets.size());
+        JsonObject summary = overviewWidgets.get(0).getAsJsonObject();
+        assertEquals("summary", summary.get("kind").getAsString());
+        assertEquals("overview-summary", summary.get("id").getAsString());
+        assertEquals("Adapter overview", summary.get("title").getAsString());
+        JsonArray rows = summary.getAsJsonArray("rows");
+        assertEquals(3, rows.size());
+        assertEquals("Signals", rows.get(0).getAsJsonObject().get("label").getAsString());
+        assertEquals("Configured signal inventory via cmd/sb/signals",
+                rows.get(0).getAsJsonObject().get("value").getAsString());
+        assertNull(summary.get("fields"), "the renderer reads rows, not fields");
+        JsonObject lifecycle = overviewWidgets.get(1).getAsJsonObject();
+        assertEquals("commandSummary", lifecycle.get("kind").getAsString());
+        assertEquals("overview-lifecycle", lifecycle.get("id").getAsString());
+        assertEquals("Lifecycle bindings", lifecycle.get("title").getAsString());
+        assertEquals(List.of("sb/status", "reconnect", "sb/pause", "sb/resume", "repoll"),
+                strings(lifecycle.getAsJsonArray("verbs")));
+        assertNull(lifecycle.get("actions"), "the renderer reads verbs, not actions");
+
+        // signals: one signalGrid bound to sb/signals (with the subscriptionsVerb compat alias).
+        JsonArray signalsWidgets = ps.get(1).getAsJsonArray("widgets");
+        assertEquals(1, signalsWidgets.size());
+        JsonObject grid = signalsWidgets.get(0).getAsJsonObject();
+        assertEquals("signalGrid", grid.get("kind").getAsString());
+        assertEquals("configured-signals", grid.get("id").getAsString());
+        assertEquals("Configured signals", grid.get("title").getAsString());
+        assertEquals("instance", grid.get("scope").getAsString(),
+                "command-backed widgets repeat the instance scope");
+        assertEquals("sb/signals", grid.get("signalsVerb").getAsString());
+        assertEquals("sb/signals", grid.get("subscriptionsVerb").getAsString(),
+                "the renderer-compat alias points at the same sb/signals verb");
+        assertEquals("sb/read", grid.get("readVerb").getAsString());
+
+        // diagnostics: the hierarchical treeBrowser + a diagnostic commandSummary.
+        JsonArray diagWidgets = ps.get(2).getAsJsonArray("widgets");
+        assertEquals(2, diagWidgets.size());
+        JsonObject tree = diagWidgets.get(0).getAsJsonObject();
+        assertEquals("treeBrowser", tree.get("kind").getAsString());
+        assertEquals("inventory-tree", tree.get("id").getAsString());
+        assertEquals("Inventory", tree.get("title").getAsString());
+        assertEquals("instance", tree.get("scope").getAsString());
+        assertEquals("hierarchical", tree.get("mode").getAsString());
+        assertEquals("root", tree.get("rootRef").getAsString());
+        assertEquals(1, tree.get("depth").getAsInt());
+        assertEquals(200, tree.get("maxRefs").getAsInt());
+        assertEquals("sb/browse", tree.get("browseVerb").getAsString());
+        assertEquals("sb/read", tree.get("readVerb").getAsString());
+        assertNull(tree.get("writeVerb"), "no writeVerb anywhere - the console has no write surface");
+        JsonObject diagCommands = diagWidgets.get(1).getAsJsonObject();
+        assertEquals("commandSummary", diagCommands.get("kind").getAsString());
+        assertEquals("diagnostic-commands", diagCommands.get("id").getAsString());
+        assertEquals("Diagnostic commands", diagCommands.get("title").getAsString());
+        assertEquals(List.of("sb/status", "sb/browse"), strings(diagCommands.getAsJsonArray("verbs")));
+
+        // No widget anywhere carries a writeVerb.
+        for (JsonObject p : ps) {
+            for (JsonElement w : p.getAsJsonArray("widgets")) {
+                assertNull(w.getAsJsonObject().get("writeVerb"));
+            }
+        }
+    }
+
+    private static List<String> strings(JsonArray arr) {
         List<String> out = new ArrayList<>();
-        for (JsonElement e : panel.getAsJsonArray("verbs")) {
+        for (JsonElement e : arr) {
             out.add(e.getAsString());
         }
         return out;
+    }
+
+    private static List<String> verbsOf(JsonObject panel) {
+        return strings(panel.getAsJsonArray("verbs"));
     }
 }

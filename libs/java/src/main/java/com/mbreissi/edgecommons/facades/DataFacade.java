@@ -14,13 +14,16 @@ import com.mbreissi.edgecommons.uns.UnsClass;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * The {@code data()} publish facade — the telemetry / signal data plane (DESIGN-class-facades §2.1,
@@ -36,7 +39,8 @@ import java.util.Objects;
  * <pre>{@code
  *   { "device": {adapter, instance, endpoint}?,          // optional block
  *     "signal": { "id": <REQUIRED>, "name"?, "address"? },
- *     "samples": [ { "value": <REQUIRED>, "quality", "qualityRaw"?, "sourceTs"?, "serverTs" } ] }
+ *     "samples": [ { "value": <REQUIRED>, "quality", "qualityRaw"?, "sourceTs"?, "serverTs",
+ *                    <extras...>? } ] }
  * }</pre>
  *
  * <p><b>Defaulting (DESIGN-class-facades §2.1, pinned by {@code uns-test-vectors/data.json}):</b>
@@ -48,9 +52,18 @@ import java.util.Objects;
  *       omitted; {@code sourceTs} is <b>never</b> synthesized (absent when the source has none).</li>
  *   <li>the {@code samples} wrapper is enforced for the value-shorthand (a caller never emits a
  *       bare value).</li>
- *   <li>{@code signal.id} is the <b>only</b> hard reject — a publish with no stable id throws
+ *   <li>hard rejects — a publish with no stable {@code signal.id}, a sample with no value and no
+ *       {@linkplain SignalUpdate.Sample#explicitNull() explicit-null opt-in}, or an extra using a
+ *       {@linkplain #RESERVED_SAMPLE_EXTRA_KEYS reserved key} throws
  *       {@link IllegalArgumentException} at the call site.</li>
  * </ol>
+ *
+ * <p><b>Sample extras + explicit null ({@code docs/SOUTHBOUND.md} §2):</b> a sample MAY carry
+ * additive protocol-specific fields ({@link SignalUpdate.Sample#withExtra}); the build step copies
+ * them into the sample JSON object after the canonical fields and rejects the reserved keys. A
+ * legitimate protocol {@code null} ({@link SignalUpdate.Sample#ofNull()}) publishes
+ * {@code "value": null} with the normal quality defaulting; an accidental {@code null} value
+ * without the opt-in stays a fail-fast error.
  *
  * <p><b>Channel routing (DESIGN-class-facades §4, D1):</b> per-call {@link SignalUpdate.Builder#via}
  * override ▸ config {@code publish.channel} (instance ▸ global) ▸ {@link Channel#LOCAL}. A
@@ -74,6 +87,14 @@ public final class DataFacade {
     public static final String DATA_MESSAGE_VERSION = "1.0";
     /** The {@code qualityRaw} marker written when {@code quality} was defaulted to {@code GOOD}. */
     public static final String QUALITY_UNSPECIFIED = "unspecified";
+
+    /**
+     * Sample keys owned by the canonical contract (both spellings of the wire timestamp pair
+     * included) — rejected as {@linkplain SignalUpdate.Sample#extra() extras} with a fail-fast
+     * {@link IllegalArgumentException} at build.
+     */
+    public static final Set<String> RESERVED_SAMPLE_EXTRA_KEYS = Set.of(
+            "value", "quality", "qualityRaw", "sourceTs", "serverTs", "sourceTsMs", "serverTsMs");
 
     private static final Gson GSON = new Gson();
 
@@ -238,14 +259,18 @@ public final class DataFacade {
         return body;
     }
 
-    /** Builds one sample with the quality/qualityRaw/serverTs defaulting rules. */
+    /**
+     * Builds one sample with the quality/qualityRaw/serverTs defaulting rules, the explicit-null
+     * gate, and the additive extras (copied after the canonical fields; reserved keys rejected).
+     */
     private JsonObject buildSample(SignalUpdate.Sample sample) {
-        if (sample.value() == null) {
+        if (sample.value() == null && !sample.explicitNull()) {
             throw new IllegalArgumentException("data sample value is required (a quality-only"
-                    + " sample is not a sample) - pass BAD/UNCERTAIN for a failed read");
+                    + " sample is not a sample) - pass BAD/UNCERTAIN for a failed read, or"
+                    + " Sample.ofNull() for a legitimate protocol null");
         }
         JsonObject out = new JsonObject();
-        out.add("value", toJsonElement(sample.value()));
+        out.add("value", sample.value() == null ? JsonNull.INSTANCE : toJsonElement(sample.value()));
 
         boolean qualityDefaulted = sample.quality() == null;
         Quality quality = qualityDefaulted ? Quality.GOOD : sample.quality();
@@ -263,6 +288,17 @@ public final class DataFacade {
             out.addProperty("sourceTs", sample.sourceTs());
         }
         out.addProperty("serverTs", sample.serverTs() != null ? sample.serverTs() : nowIso());
+
+        if (sample.extra() != null) {
+            for (Map.Entry<String, Object> entry : sample.extra().entrySet()) {
+                if (RESERVED_SAMPLE_EXTRA_KEYS.contains(entry.getKey())) {
+                    throw new IllegalArgumentException("sample extra key '" + entry.getKey()
+                            + "' is reserved - the canonical sample fields cannot be overridden"
+                            + " by an extra");
+                }
+                out.add(entry.getKey(), toJsonElement(entry.getValue()));
+            }
+        }
         return out;
     }
 

@@ -59,6 +59,7 @@
     }
   },
   "$defs": {
+    "instance": { "$ref": "#/$defs/device" },
     "device": {
       "title": "One device",
       "description": "One entry of `component.instances[]`. Each device gets its own task and its own connection lifecycle.",

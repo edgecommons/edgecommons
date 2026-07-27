@@ -102,14 +102,23 @@ export class App {
       const instance = this.gg.instance(device.id);
 
       const health = this.health.get(device.id) as Health;
-      const dm = new DeviceMetrics(this.metrics, this.config, device.id, health, this.staleSignalSecs);
+
+      // The signal inventory `sb/signals` shows — a config/backend view, no device round-trip.
+      // Its size is also the `signalsSubscribed` gauge while the session is connected.
+      const backend = backendFor(device.adapter);
+      const signals: SignalInfo[] = backend?.inventory?.(device.connection) ?? [];
+
+      const dm = new DeviceMetrics(
+        this.metrics,
+        this.config,
+        device.id,
+        health,
+        this.staleSignalSecs,
+        signals.length,
+      );
       // Pre-define the metric set so it is fixed and discoverable at startup.
       dm.defineAll();
       this.deviceMetrics.set(device.id, dm);
-
-      // The signal inventory `sb/signals` shows — a config/backend view, no device round-trip.
-      const backend = backendFor(device.adapter);
-      const signals: SignalInfo[] = backend?.inventory?.(device.connection) ?? [];
 
       const control = new Mailbox<DeviceControl>();
       this.control.set(device.id, control);

@@ -66,8 +66,8 @@ signal that silently stops updating is indistinguishable from one that is simply
 simulator's `pressure-1` demonstrates exactly this.
 
 **`southbound_health`, dimensioned by instance** — the canonical SOUTHBOUND.md §5 set:
-`connectionState`, `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, `reconnects` —
-so an operator sees a link go down without reading logs. On top of it, `src/metrics.rs` ships the
+`connectionState`, `publishLatencyMs`, `pollLatencyMs`, `readErrors`, `staleSignals`, `reconnects`,
+`writeErrors`, `signalsSubscribed` — so an operator sees a link go down without reading logs. On top of it, `src/metrics.rs` ships the
 **operational-family pattern** two families deep (`<<COMPONENTNAME>>Connection`,
 `<<COMPONENTNAME>>Command`) as worked examples, with a signposted place to add your protocol's own
 `Inventory` / `Poll` / `Publish` families.
@@ -116,4 +116,6 @@ The adapter serves the generic southbound `sb/*` family on its `commands()` inbo
 one device is configured. Every session-touching verb is handed to the device's own task over a
 control channel and confirmed through the reply that rides it, so the inbox never touches a live
 connection. The same module registers three edge-console panels — `overview`, `signals`,
-`diagnostics` — bound to the verbs above.
+`diagnostics` — an adapter-overview summary with lifecycle bindings, a signal grid bound to
+`sb/signals`, and a hierarchical inventory tree driving `sb/browse`'s `ref` mode. `repoll` is
+refused with `PAUSED` while the instance is paused.

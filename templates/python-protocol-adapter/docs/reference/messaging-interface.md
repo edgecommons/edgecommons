@@ -69,6 +69,7 @@ field in the request body (optional when only one device is configured — see
 | `RECONNECT_FAILED` | A `reconnect` attempt failed. |
 | `BROWSE_UNSUPPORTED` | The protocol has no discovery service (the default `DeviceSession.browse`). |
 | `BROWSE_FAILED` | A mid-browse failure (a link error, a malformed reply). |
+| `PAUSED` | A `repoll` was requested while the instance is paused — resume first. |
 
 ## Sample object
 
@@ -136,13 +137,36 @@ allow-list are reported per-entry as `{"ok": false, "error": ...}` without touch
   flag.
 - **`sb/signals`** → `{ id, signals: [ { id, name, writable } ] }` — the configured inventory, no
   device round-trip.
-- **`sb/browse`** → `{ id, entries: [ { id, name, type } ], cursor? }` — paged discovery; the
-  simulator returns one page. `BROWSE_UNSUPPORTED` when the protocol has none.
+- **`sb/browse`** → paged discovery by default: `{ id, entries: [ { id, name, type } ], cursor? }`;
+  the simulator returns one page. `BROWSE_UNSUPPORTED` when the protocol has none. A request
+  carrying `ref` selects the hierarchical panel mode instead (below); mixing `ref`/`depth`/`maxRefs`
+  with `cursor`/`max` is `BAD_ARGS`, as is `depth`/`maxRefs` without `ref`.
 - **`sb/pause`** / **`sb/resume`** → `{ id, paused, changed }`. Idempotent: pausing an
   already-paused device reports `changed: false`.
 - **`reconnect`** → `{ id, connected: true }` or a `RECONNECT_FAILED` error.
-- **`repoll`** → `{ id, polled: <count> }`, or `BAD_ARGS` if the device is currently paused (resume
+- **`repoll`** → `{ id, polled: <count> }`, or `PAUSED` if the instance is currently paused (resume
   first).
+
+### Hierarchical `sb/browse` (the panel mode)
+
+The `treeBrowser` panel drives `sb/browse` with `{ instance?, ref, depth?, maxRefs? }` instead of a
+cursor. `ref` selects the node: `"root"` is the device itself, whose `contains` refs are the same
+inventory the paged mode serves; a signal id selects that node as a known leaf (`"refs": []`). An
+unknown `ref` is `BAD_ARGS`, and so is `depth`/`maxRefs` without `ref`. `depth` is bounded 1–4
+(default 1) and `maxRefs` 1–1000 (default 200); the adapter's inventory is flat, so a deeper `depth`
+finds no grandchildren.
+
+```jsonc
+// request body
+"body": { "ref": "root", "depth": 1, "maxRefs": 200 }
+// reply body: { "ok": true, "result": {
+//   "id": "device-1", "mode": "hierarchical",
+//   "root": { "nodeId": "root", "name": "device-1", "nodeClass": "device", "dataType": null,
+//             "refs": [ { "referenceType": "contains",
+//                         "target": { "nodeId": "temperature-1", "name": "Ambient temperature",
+//                                     "nodeClass": "signal", "dataType": "REAL" } } ] },
+//   "refCount": 1, "depth": 1, "truncated": false } }
+```
 
 ## Events (`evt` class)
 
@@ -167,10 +191,19 @@ the same `Health`/`connectivity_of` the metrics and `sb/status` read.
 ## Panels
 
 Three edge-console panel descriptors are registered via `commands.register_panel`, `scope:
-"instance"`, order 10/20/30: **`overview`** (connected/state/paused/endpoint summary; actions
-`reconnect`/`sb/pause`/`sb/resume`), **`signals`** (a signal grid; verbs `sb/signals`/`sb/read`/
-`sb/write`/`repoll`), **`diagnostics`** (a tree browser + key-value list; verbs `sb/browse`/
-`sb/status`).
+"instance"` (repeated on every command-backed widget), order 10/20/30:
+
+- **`overview`** — an *Adapter overview* summary (Signals / Lifecycle / Writes rows) plus a
+  *Lifecycle bindings* command summary (`sb/status`, `reconnect`, `sb/pause`, `sb/resume`,
+  `repoll`).
+- **`signals`** — a `signalGrid` bound to `sb/signals` through both `signalsVerb` and the
+  renderer-compat `subscriptionsVerb` alias (a descriptor field alias — no `sb/subscriptions` wire
+  verb exists), with `readVerb: sb/read`.
+- **`diagnostics`** — a hierarchical `treeBrowser` (`browseVerb: sb/browse`, `rootRef: "root"`,
+  `depth: 1`, `maxRefs: 200`, `readVerb: sb/read`) plus a *Diagnostic commands* summary
+  (`sb/status`, `sb/browse`).
+
+No widget names a `writeVerb` — writes stay on the command surface behind the allow-list.
 
 ## CLI
 

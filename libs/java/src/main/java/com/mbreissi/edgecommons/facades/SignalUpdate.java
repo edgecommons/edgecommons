@@ -7,7 +7,11 @@ package com.mbreissi.edgecommons.facades;
 import com.google.gson.JsonObject;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * The constructed {@code SouthboundSignalUpdate} body (DESIGN-class-facades §2.1,
@@ -24,7 +28,8 @@ import java.util.List;
  * {@link IllegalArgumentException} at publish (DESIGN-class-facades §5.2), never a dropped message.
  *
  * <p><b>Mirror note (Python/Rust/TS):</b> the same builder shape; {@code Sample} is a small
- * value/record with the same five fields (value REQUIRED, the rest optional).
+ * value/record with the same five canonical fields (value REQUIRED, the rest optional) plus the
+ * additive {@code extra}/{@code explicitNull} parts.
  */
 public final class SignalUpdate {
 
@@ -35,15 +40,40 @@ public final class SignalUpdate {
      * {@code qualityRaw} is a synthetic {@code "unspecified"} marker when (and only when) the
      * quality was defaulted, else passed through verbatim.
      *
-     * @param value      the measured value (JSON-native: number/boolean/string/array/JsonElement) —
-     *                   REQUIRED (a null value is a fail-fast error at build)
-     * @param quality    the normalized quality, or {@code null} to default to {@link Quality#GOOD}
-     * @param qualityRaw the native status code, or {@code null}
-     * @param sourceTs   the device/field ISO-8601 timestamp, or {@code null} (never synthesized)
-     * @param serverTs   the protocol-server ISO-8601 timestamp, or {@code null} to default to now
+     * <p>A sample MAY carry additive protocol-specific fields ("extras") beside the canonical
+     * five — attach them with {@link #withExtra(String, Object)}; the facade copies them into the
+     * sample JSON object after the canonical fields and rejects the
+     * {@linkplain DataFacade#RESERVED_SAMPLE_EXTRA_KEYS reserved keys} at build. A legitimate
+     * protocol {@code null} is publishable via {@link #ofNull()} — the sample's {@code value} is
+     * JSON {@code null} with normal quality defaulting; an accidental missing value (no explicit
+     * opt-in) is still the fail-fast error at build.
+     *
+     * @param value        the measured value (JSON-native: number/boolean/string/array/JsonElement)
+     *                     — REQUIRED unless {@code explicitNull} (a null value without the opt-in
+     *                     is a fail-fast error at build)
+     * @param quality      the normalized quality, or {@code null} to default to {@link Quality#GOOD}
+     * @param qualityRaw   the native status code, or {@code null}
+     * @param sourceTs     the device/field ISO-8601 timestamp, or {@code null} (never synthesized)
+     * @param serverTs     the protocol-server ISO-8601 timestamp, or {@code null} to default to now
+     * @param extra        additive protocol-specific fields copied into the sample JSON after the
+     *                     canonical fields, or {@code null} for none
+     * @param explicitNull whether a {@code null} {@code value} is a deliberate protocol null
+     *                     (publishes {@code "value": null}) rather than an accidental omission
      */
     public record Sample(Object value, Quality quality, String qualityRaw, String sourceTs,
-                         String serverTs) {
+                         String serverTs, Map<String, Object> extra, boolean explicitNull) {
+
+        /** Canonical constructor: the {@code extra} map is copied, never shared mutable. */
+        public Sample {
+            extra = extra == null
+                    ? null : Collections.unmodifiableMap(new LinkedHashMap<>(extra));
+        }
+
+        /** The canonical five-field sample (no extras, no explicit-null opt-in). */
+        public Sample(Object value, Quality quality, String qualityRaw, String sourceTs,
+                      String serverTs) {
+            this(value, quality, qualityRaw, sourceTs, serverTs, null, false);
+        }
 
         /** A value-only sample: quality defaults to {@code GOOD}, {@code serverTs} to now. */
         public static Sample of(Object value) {
@@ -58,6 +88,40 @@ public final class SignalUpdate {
         /** A value + quality + device timestamp sample ({@code serverTs} defaults to now). */
         public static Sample of(Object value, Quality quality, String sourceTs) {
             return new Sample(value, quality, null, sourceTs, null);
+        }
+
+        /**
+         * An explicit-null sample — a legitimate protocol {@code null} ({@code "value": null} on
+         * the wire) with normal quality defaulting ({@code GOOD} + the {@code "unspecified"}
+         * marker, {@code serverTs} → now).
+         */
+        public static Sample ofNull() {
+            return new Sample(null, null, null, null, null, null, true);
+        }
+
+        /** An explicit-null sample with an explicit quality ({@code serverTs} defaults to now). */
+        public static Sample ofNull(Quality quality) {
+            return new Sample(null, quality, null, null, null, null, true);
+        }
+
+        /**
+         * Returns a copy of this sample with one additive protocol-specific extra appended (the
+         * extra map is copied, never shared mutable). Reserved canonical keys are rejected at
+         * build, not here — see {@link DataFacade#RESERVED_SAMPLE_EXTRA_KEYS}.
+         *
+         * @param key   the extra field name
+         * @param value the extra field value (JSON-native, {@code null} allowed)
+         * @return the copied sample carrying the extra
+         */
+        public Sample withExtra(String key, Object value) {
+            Objects.requireNonNull(key, "extra key must not be null");
+            Map<String, Object> merged = new LinkedHashMap<>();
+            if (extra != null) {
+                merged.putAll(extra);
+            }
+            merged.put(key, value);
+            return new Sample(this.value, quality, qualityRaw, sourceTs, serverTs, merged,
+                    explicitNull);
         }
     }
 

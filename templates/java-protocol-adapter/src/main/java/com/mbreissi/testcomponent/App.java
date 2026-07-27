@@ -118,14 +118,16 @@ public class <<COMPONENTNAME>> implements ConfigurationChangeListener {
             EdgeCommonsInstance instance = edgeCommons.instance(device.id());
 
             Health health = new Health();
-            DeviceMetrics dm = new DeviceMetrics(metrics, config, device.id(), health, staleSignalSecs);
-            // Pre-define the metric set so it is fixed and discoverable at startup.
-            dm.defineAll();
-
             Device.DeviceBackend backend = Device.backendFor(device.adapter());
             // The signal inventory `sb/signals` shows — a config/backend view, no device round-trip.
+            // Its size is also the `signalsSubscribed` gauge while the session is connected.
             List<Device.SignalInfo> signals =
                     backend != null ? backend.inventory(device.connection()) : List.of();
+
+            DeviceMetrics dm = new DeviceMetrics(metrics, config, device.id(), health, staleSignalSecs,
+                    signals.size());
+            // Pre-define the metric set so it is fixed and discoverable at startup.
+            dm.defineAll();
 
             DeviceWorker worker = new DeviceWorker(device, instance.data(), instance.events(), dm, health);
             reported.add(new Reported(device, health));
@@ -602,7 +604,7 @@ enum LinkState {
 /**
  * The shared per-device state the metrics emitter reads and the connectivity provider renders. The
  * gauges ({@code connectionState}, latencies) and the interval counters ({@code readErrors},
- * {@code reconnects}) feed {@code southbound_health} ({@link Metrics}); {@code paused} and {@code link}
+ * {@code writeErrors}, {@code reconnects}) feed {@code southbound_health} ({@link Metrics}); {@code paused} and {@code link}
  * feed the connectivity token and {@code sb/status}. One source, several surfaces — so a health dot, a
  * metric, and a status reply can never disagree.
  */
@@ -614,6 +616,7 @@ final class Health {
     private final AtomicLong pollLatencyMs = new AtomicLong();
     private final AtomicLong publishLatencyMs = new AtomicLong();
     private final AtomicLong readErrors = new AtomicLong();
+    private final AtomicLong writeErrors = new AtomicLong();
     private final AtomicLong reconnects = new AtomicLong();
 
     /**
@@ -661,6 +664,15 @@ final class Health {
         readErrors.incrementAndGet();
     }
 
+    /**
+     * One device-failed {@code sb/write} entry — an entry that passed validation and the allow-list
+     * and then failed at the device. Caller/policy errors (unresolved refs, allow-list refusals,
+     * missing values) do not count; {@code writeErrors} mirrors {@code readErrors} as device health.
+     */
+    void incrementWriteErrors() {
+        writeErrors.incrementAndGet();
+    }
+
     void incrementReconnects() {
         reconnects.incrementAndGet();
     }
@@ -668,6 +680,11 @@ final class Health {
     /** Read-and-reset the read-error interval counter (the {@code southbound_health} emit convention). */
     long takeReadErrors() {
         return readErrors.getAndSet(0);
+    }
+
+    /** Read-and-reset the write-error interval counter (drained on emit, exactly like read errors). */
+    long takeWriteErrors() {
+        return writeErrors.getAndSet(0);
     }
 
     /** Read-and-reset the reconnect interval counter. */

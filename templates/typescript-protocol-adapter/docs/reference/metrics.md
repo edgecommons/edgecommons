@@ -32,6 +32,8 @@ Dimensions: `instance`.
 | `readErrors` | Count | Read failures since the last emission. Reset on emit. |
 | `staleSignals` | Count | Signals with no update for longer than `healthThresholds.staleSignalSecs`. |
 | `reconnects` | Count | Reconnects (link drops) since the last emission. Reset on emit. |
+| `writeErrors` | Count | Device-failed `sb/write` entries since the last emission — writes that passed validation and the allow-list and then failed at the device (drained on emit, exactly like `readErrors`; allow-list refusals and malformed entries do not count). |
+| `signalsSubscribed` | Count | Signals the instance's connected session currently serves — the `sb/signals` inventory size while connected, `0` while disconnected. |
 
 ## `<<COMPONENTNAME>>Connection`
 
@@ -65,7 +67,8 @@ Dimensions: `instance`, `verb` (`sb/status`, `sb/read`, `sb/write`, `sb/signals`
 
 Every **counter** is emitted as a measure pair: `<name>Total` (monotonic since start) and
 `<name>Interval` (since the previous emit of that family — reset on emit). Gauges
-(`connectionState`) and interval sums (the `*Ms` latencies/durations) are single measures. This is
+(`connectionState`, `signalsSubscribed`) and interval sums (the `*Ms` latencies/durations) are
+single measures. This is
 the same convention `modbus-adapter` and `ethernet-ip-adapter` use, so a fleet dashboard reads
 every adapter the same way.
 
