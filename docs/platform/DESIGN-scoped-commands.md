@@ -112,6 +112,16 @@ Breaking for every registered handler in all four languages. One coordinated wav
   change.
 - **D-SC-6:** Ships only in a breaking release (0.5.0) as one coordinated wave; 0.4.x keeps the
   additive surface frozen (no `registerScopedOutcome` stopgap).
+- **D-SC-7:** (companion, §6) Every multi-instance component populates the state keepalive's
+  `instances[]` entries with the instance **state** from the same single state model that answers
+  `sb/status`, using the shared `CONNECTING`/`ONLINE`/`BACKOFF`/`PAUSED` vocabulary. Additive —
+  the library API exists since 0.4.0; no core change.
+- **D-SC-8:** (companion, §6) edge-console renders that state in the fleet/Instances views and its
+  miss-detection treats `PAUSED` as expected-quiet (no staleness alarm for a deliberately paused
+  instance). Unknown/absent state falls back to today's connectivity-only rendering.
+- **D-SC-9:** (companion, §6) The keepalive-state adoption rides the same 0.5.0 coordinated wave
+  (one PR per repo covers both changes), though it is technically additive on 0.4.0 and carries no
+  breaking risk of its own.
 
 ## 5. Open questions
 
@@ -122,3 +132,17 @@ Breaking for every registered handler in all four languages. One coordinated wav
 3. `status` built-in currently reports per-instance data at component scope; declare `BOTH` with
    identical output, or give instance-addressed `status` a filtered reply? Proposed: identical
    first, filtered as a later additive refinement.
+
+## 6. Companion wave item — keepalive instance state (accepted)
+
+A deliberately paused instance is indistinguishable on every passive surface from one that has
+silently gone stale: the keepalive's `instances[]` reports connectivity only, so fleet views show
+"connected" while data has stopped, and console miss-detection may alarm on intentional pauses.
+The library constraint that once justified this (the pre-0.4.0 `InstanceConnectivity` carried no
+state) is gone.
+
+Accepted resolution (D-SC-7..9): fleet-wide adoption, derived from the **single instance state
+model** (never a second bookkeeping path — the same source that answers `sb/status`), rendered by
+the console with pause-aware miss-detection. Per-repo register notes that recorded the old
+constraint (e.g. modbus D-M8/D-M3) are updated by each repo's wave PR. Consumers MUST ignore an
+absent/unknown state — the field is additive on the existing keepalive shape.
