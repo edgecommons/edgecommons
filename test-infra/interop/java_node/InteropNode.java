@@ -50,6 +50,7 @@ import java.nio.charset.StandardCharsets;
  *   InteropNode state-instances-sub  &lt;component&gt;
  *   InteropNode describe-responder   &lt;component&gt;
  *   InteropNode describe-requester   &lt;component&gt;
+ *   InteropNode gg-scope-matrix      &lt;runId&gt; &lt;langsCsv&gt; [&lt;ignoredHex&gt;]
  * Local-only MQTT transport against localhost:1883. Messages are built WITHOUT a
  * config service — the envelope legally omits {@code identity} unless an explicit
  * identity is stamped (the UNS roles), and {@code tags.thing} no longer exists.
@@ -702,6 +703,441 @@ public class InteropNode {
     }
 
     /**
+     * The INSTANCE-scoped custom verb every language's {@code gg-scope-matrix} component registers:
+     * it echoes the library-resolved addressed instance, so a peer can prove topic addressing wins
+     * and that a conflicting body instance never reaches the handler.
+     */
+    static final String SCOPE_PROBE_VERB = "sb/probe";
+
+    /**
+     * The COMPONENT-scoped custom verb of the same component: it must refuse instance addressing
+     * with a coded {@code BAD_ARGS} reply before the handler ever runs.
+     */
+    static final String SCOPE_DISCOVER_VERB = "sb/discover";
+
+    static Path ggScopeReadyPath(String runId, String actor) {
+        return Path.of("/tmp", "edgecommons_gg_ipc_scope_ready_" + actor + "_" + runId);
+    }
+
+    static Path ggScopeDonePath(String runId, String actor) {
+        return Path.of("/tmp", "edgecommons_gg_ipc_scope_done_" + actor + "_" + runId);
+    }
+
+    static java.util.List<String> waitForGgScopeReady(String runId, String[] expectedActors)
+            throws InterruptedException {
+        long readyWaitMs = (long) (Double.parseDouble(
+                System.getenv().getOrDefault("EDGECOMMONS_GG_READY_WAIT_SECS", "180")) * 1000);
+        long deadline = System.currentTimeMillis() + readyWaitMs;
+        while (System.currentTimeMillis() < deadline) {
+            java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+            for (String actor : expectedActors) {
+                if (!Files.exists(ggScopeReadyPath(runId, actor))) {
+                    missing.add(actor);
+                }
+            }
+            if (missing.isEmpty()) {
+                return missing;
+            }
+            Thread.sleep(200);
+        }
+        java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+        for (String actor : expectedActors) {
+            if (!Files.exists(ggScopeReadyPath(runId, actor))) {
+                missing.add(actor);
+            }
+        }
+        return missing;
+    }
+
+    /**
+     * Hold every responder alive until every CANONICAL peer has finished probing: a responder that
+     * exits early would strand the peers still driving their four probes against it.
+     */
+    static java.util.List<String> waitForGgScopeDone(String runId, String[] expectedActors,
+            long waitMs) throws InterruptedException {
+        java.util.List<String> canonicalActors = new java.util.ArrayList<>();
+        for (String actor : expectedActors) {
+            if (!actor.equals("rustpeer")) {
+                canonicalActors.add(actor);
+            }
+        }
+        long deadline = System.currentTimeMillis() + waitMs;
+        while (System.currentTimeMillis() < deadline) {
+            java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+            for (String actor : canonicalActors) {
+                if (!Files.exists(ggScopeDonePath(runId, actor))) {
+                    missing.add(actor);
+                }
+            }
+            if (missing.isEmpty()) {
+                return missing;
+            }
+            Thread.sleep(200);
+        }
+        java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+        for (String actor : canonicalActors) {
+            if (!Files.exists(ggScopeDonePath(runId, actor))) {
+                missing.add(actor);
+            }
+        }
+        return missing;
+    }
+
+    /** The base UNS topic of one scope-matrix actor's component under test. */
+    static String ggScopeBaseTopic(String targetActor) {
+        return "ecv1/" + INTEROP_DEVICE + "/interop-scope-" + targetActor;
+    }
+
+    /** One {@code describe} manifest entry: EXACTLY the key set {verb, builtIn, scope}. */
+    static JsonObject ggScopeCommandEntry(String verb, boolean builtIn, String scope) {
+        JsonObject entry = new JsonObject();
+        entry.addProperty("verb", verb);
+        entry.addProperty("builtIn", builtIn);
+        entry.addProperty("scope", scope);
+        return entry;
+    }
+
+    /**
+     * The pinned manifest the scope-matrix component must advertise: the five scope-indifferent
+     * built-ins plus the two custom verbs, verb-sorted, every entry carrying a {@code scope} and
+     * nothing else (no {@code availability} member on an enabled verb).
+     */
+    static JsonArray ggScopeExpectedCommands() {
+        JsonArray commands = new JsonArray();
+        commands.add(ggScopeCommandEntry("describe", true, "both"));
+        commands.add(ggScopeCommandEntry("get-configuration", true, "both"));
+        commands.add(ggScopeCommandEntry("ping", true, "both"));
+        commands.add(ggScopeCommandEntry("reload-config", true, "both"));
+        commands.add(ggScopeCommandEntry(SCOPE_DISCOVER_VERB, false, "component"));
+        commands.add(ggScopeCommandEntry(SCOPE_PROBE_VERB, false, "instance"));
+        commands.add(ggScopeCommandEntry("status", true, "both"));
+        return commands;
+    }
+
+    /**
+     * Publish ONE scoped-command request raw with the provider (not through the runtime) on a
+     * unique reply topic subscribed BEFORE the publish, and wait up to 10 s for the reply. The
+     * reply subscription is always torn down — a leaked IPC subscription trips the shared-connection
+     * quota. Returns the observed envelope plus the correlation check; the caller grades it.
+     */
+    static JsonObject ggScopeCall(MessagingProvider provider, String runId, String senderActor,
+            String targetActor, String topic, String verb, JsonObject commandBody) throws Exception {
+        String replyTopic = "edgecommons/interop/scope/" + runId + "/reply/" + senderActor + "/"
+                + targetActor + "/" + java.util.UUID.randomUUID();
+        java.util.concurrent.atomic.AtomicReference<Message> replyBox =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        CountDownLatch replied = new CountDownLatch(1);
+        provider.subscribe(replyTopic, (replyTopicSeen, reply) -> {
+            replyBox.compareAndSet(null, reply);
+            replied.countDown();
+        }, 1, 2);
+        try {
+            Message request = MessageBuilder.create(verb, "1.0")
+                    .withCommand(commandBody).withReplyTo(replyTopic).build();
+            String correlation = request.getCorrelationId();
+            provider.publish(topic, request);
+            JsonObject call = new JsonObject();
+            if (!replied.await(10, TimeUnit.SECONDS)) {
+                call.addProperty("timeout", true);
+                call.addProperty("correlation_match", false);
+                call.add("envelope", JsonNull.INSTANCE);
+                return call;
+            }
+            Message reply = replyBox.get();
+            call.addProperty("timeout", false);
+            call.addProperty("correlation_match",
+                    correlation != null && correlation.equals(reply.getCorrelationId()));
+            call.add("envelope", asElement(reply.getBody()));
+            return call;
+        } finally {
+            provider.unsubscribe(replyTopic);
+        }
+    }
+
+    /** The reply envelope of a completed call, or {@code null} when it was not a JSON object. */
+    static JsonObject ggScopeEnvelope(JsonObject call) {
+        JsonElement envelope = call.get("envelope");
+        return envelope != null && envelope.isJsonObject() ? envelope.getAsJsonObject() : null;
+    }
+
+    /** {@code true} iff the envelope is the success form {@code {"ok": true, "result": {...}}}. */
+    static boolean ggScopeEnvelopeOk(JsonObject envelope) {
+        return envelope != null && envelope.has("ok") && envelope.get("ok").isJsonPrimitive()
+                && envelope.get("ok").getAsBoolean();
+    }
+
+    /** The success envelope's {@code result} object, or {@code null}. */
+    static JsonObject ggScopeResult(JsonObject envelope) {
+        return envelope != null && envelope.has("result") && envelope.get("result").isJsonObject()
+                ? envelope.getAsJsonObject("result") : null;
+    }
+
+    /**
+     * Probe 1 — {@code describe} carries a {@code scope} on EVERY manifest entry, matching the
+     * pinned array byte-for-byte in order and key set.
+     */
+    static JsonObject ggScopeDescribeProbe(MessagingProvider provider, String runId, String actor,
+            String targetActor) throws Exception {
+        JsonObject requestBody = new JsonObject();
+        requestBody.addProperty("from", LANG);
+        JsonObject call = ggScopeCall(provider, runId, actor, targetActor,
+                ggScopeBaseTopic(targetActor) + "/cmd/" + CommandInbox.DESCRIBE,
+                CommandInbox.DESCRIBE, requestBody);
+        JsonObject record = new JsonObject();
+        if (call.get("timeout").getAsBoolean()) {
+            record.addProperty("ok", false);
+            record.add("commands", JsonNull.INSTANCE);
+            record.add("digest", JsonNull.INSTANCE);
+            record.addProperty("error", "timeout");
+            return record;
+        }
+        boolean correlationMatch = call.get("correlation_match").getAsBoolean();
+        JsonObject envelope = ggScopeEnvelope(call);
+        boolean envelopeOk = ggScopeEnvelopeOk(envelope);
+        JsonObject result = ggScopeResult(envelope);
+        JsonElement commands = result != null && result.has("commands")
+                ? result.get("commands") : JsonNull.INSTANCE;
+        String digest = result != null && result.has("digest")
+                && result.get("digest").isJsonPrimitive()
+                && result.getAsJsonPrimitive("digest").isString()
+                ? result.get("digest").getAsString() : null;
+        boolean commandsMatch = commands.isJsonArray()
+                && ggScopeExpectedCommands().equals(commands.getAsJsonArray());
+        boolean ok = correlationMatch && envelopeOk && commandsMatch && digest != null;
+        record.addProperty("ok", ok);
+        record.add("commands", commands);
+        record.addProperty("digest", digest);
+        if (!ok) {
+            record.addProperty("error", !correlationMatch ? "correlation_mismatch"
+                    : !envelopeOk ? "reply_not_ok"
+                    : !commandsMatch ? "manifest_mismatch" : "digest_missing");
+        }
+        return record;
+    }
+
+    /**
+     * Probe 2 — an instance-addressed topic with NO {@code body.instance}: the topic's token is the
+     * addressed instance the INSTANCE-scoped handler sees.
+     */
+    static JsonObject ggScopeInstanceRoutingProbe(MessagingProvider provider, String runId,
+            String actor, String targetLanguage, String targetActor) throws Exception {
+        JsonObject requestBody = new JsonObject();
+        requestBody.addProperty("from", LANG);
+        JsonObject call = ggScopeCall(provider, runId, actor, targetActor,
+                ggScopeBaseTopic(targetActor) + "/kep1/cmd/" + SCOPE_PROBE_VERB,
+                SCOPE_PROBE_VERB, requestBody);
+        JsonObject record = new JsonObject();
+        if (call.get("timeout").getAsBoolean()) {
+            record.addProperty("ok", false);
+            record.add("addressed_instance", JsonNull.INSTANCE);
+            record.add("reply_body", JsonNull.INSTANCE);
+            record.addProperty("error", "timeout");
+            return record;
+        }
+        JsonObject envelope = ggScopeEnvelope(call);
+        boolean envelopeOk = ggScopeEnvelopeOk(envelope);
+        JsonObject result = ggScopeResult(envelope);
+        JsonElement addressedInstance = result != null && result.has("instance")
+                ? result.get("instance") : JsonNull.INSTANCE;
+        String instance = addressedInstance.isJsonPrimitive()
+                ? addressedInstance.getAsString() : null;
+        String probe = result != null && result.has("probe") && result.get("probe").isJsonPrimitive()
+                ? result.get("probe").getAsString() : null;
+        boolean ok = envelopeOk && "kep1".equals(instance) && targetLanguage.equals(probe);
+        record.addProperty("ok", ok);
+        record.add("addressed_instance", addressedInstance);
+        record.add("reply_body", result != null ? result : JsonNull.INSTANCE);
+        if (!ok) {
+            record.addProperty("error", !envelopeOk ? "reply_not_ok"
+                    : !"kep1".equals(instance) ? "addressed_instance_mismatch"
+                    : "responder_mismatch");
+        }
+        return record;
+    }
+
+    /**
+     * The shared grading of the two coded-rejection probes: the library must refuse the request
+     * BEFORE the handler runs, with {@code BAD_ARGS} and a byte-exact message.
+     */
+    static JsonObject ggScopeCodedRejection(JsonObject call, String expectedMessage) {
+        JsonObject record = new JsonObject();
+        if (call.get("timeout").getAsBoolean()) {
+            record.addProperty("ok", false);
+            record.add("code", JsonNull.INSTANCE);
+            record.add("message", JsonNull.INSTANCE);
+            record.addProperty("error", "timeout");
+            return record;
+        }
+        JsonObject envelope = ggScopeEnvelope(call);
+        boolean rejected = envelope != null && envelope.has("ok")
+                && envelope.get("ok").isJsonPrimitive() && !envelope.get("ok").getAsBoolean();
+        JsonObject error = envelope != null && envelope.has("error")
+                && envelope.get("error").isJsonObject()
+                ? envelope.getAsJsonObject("error") : null;
+        String code = error != null && error.has("code") && error.get("code").isJsonPrimitive()
+                ? error.get("code").getAsString() : null;
+        String message = error != null && error.has("message")
+                && error.get("message").isJsonPrimitive()
+                ? error.get("message").getAsString() : null;
+        boolean ok = rejected && "BAD_ARGS".equals(code) && expectedMessage.equals(message);
+        record.addProperty("ok", ok);
+        record.addProperty("code", code);
+        record.addProperty("message", message);
+        if (!ok) {
+            record.addProperty("error", !rejected ? "not_rejected"
+                    : !"BAD_ARGS".equals(code) ? "code_mismatch" : "message_mismatch");
+        }
+        return record;
+    }
+
+    /** Probe 3 — an instance in the body that conflicts with the addressed instance is refused. */
+    static JsonObject ggScopeConflictProbe(MessagingProvider provider, String runId, String actor,
+            String targetActor) throws Exception {
+        JsonObject requestBody = new JsonObject();
+        requestBody.addProperty("from", LANG);
+        requestBody.addProperty("instance", "other");
+        JsonObject call = ggScopeCall(provider, runId, actor, targetActor,
+                ggScopeBaseTopic(targetActor) + "/kep1/cmd/" + SCOPE_PROBE_VERB,
+                SCOPE_PROBE_VERB, requestBody);
+        return ggScopeCodedRejection(call, "instance in body conflicts with the addressed instance");
+    }
+
+    /** Probe 4 — a COMPONENT-scoped verb refuses instance addressing outright. */
+    static JsonObject ggScopeComponentScopeProbe(MessagingProvider provider, String runId,
+            String actor, String targetActor) throws Exception {
+        JsonObject requestBody = new JsonObject();
+        requestBody.addProperty("from", LANG);
+        JsonObject call = ggScopeCall(provider, runId, actor, targetActor,
+                ggScopeBaseTopic(targetActor) + "/kep1/cmd/" + SCOPE_DISCOVER_VERB,
+                SCOPE_DISCOVER_VERB, requestBody);
+        return ggScopeCodedRejection(call, "verb '" + SCOPE_DISCOVER_VERB + "' is component-scoped");
+    }
+
+    /**
+     * The 0.5.0 scoped-command matrix over real Greengrass IPC: every actor stands up a component
+     * carrying one INSTANCE-scoped and one COMPONENT-scoped custom verb, then every canonical actor
+     * drives four probes (manifest scope, instance-topic routing, topic/body conflict,
+     * component-scope refusal) against EVERY language's component — including its own.
+     */
+    static void runGgScopeMatrix(String[] args) throws Exception {
+        String runId = args[1];
+        String[] languages = args[2].split(",");
+        String[] expectedActors = System.getenv().getOrDefault(
+                "EDGECOMMONS_GG_READY_LANGS", args[2]).split(",");
+        String actor = System.getenv().getOrDefault("EDGECOMMONS_GG_READY_LANG", LANG);
+        boolean canonicalActor = !actor.equals("rustpeer");
+        long subscribeDelayMs = (long) (Double.parseDouble(
+                System.getenv().getOrDefault("EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS", "2")) * 1000);
+        long waitMs = (long) (Double.parseDouble(
+                System.getenv().getOrDefault("EDGECOMMONS_GG_WAIT_SECS", "90")) * 1000);
+
+        MessagingProvider provider = new GreengrassMessagingProvider(true);
+        java.util.concurrent.ConcurrentHashMap<String, String> errors =
+                new java.util.concurrent.ConcurrentHashMap<>();
+        EdgeCommons gg = null;
+        Path path = null;
+        int exitCode = 1;
+        try {
+            path = writeCommandRuntimeConfig("interop-scope-" + actor);
+            gg = new EdgeCommons("com.mbreissi.edgecommons.interop." + LANG + ".ScopeResponder",
+                    ggLogRuntimeArgs(path));
+            CommandInbox inbox = gg.getCommands();
+            if (inbox == null) throw new IllegalStateException("runtime did not expose command inbox");
+            String responderActor = actor;
+            inbox.register(SCOPE_PROBE_VERB, CommandScope.INSTANCE,
+                    (request, addressedInstance) -> {
+                        JsonObject probe = new JsonObject();
+                        probe.addProperty("probe", LANG);
+                        probe.addProperty("actor", responderActor);
+                        probe.addProperty("instance", addressedInstance);
+                        return probe;
+                    });
+            inbox.register(SCOPE_DISCOVER_VERB, CommandScope.COMPONENT,
+                    (request, addressedInstance) -> {
+                        JsonObject discover = new JsonObject();
+                        discover.addProperty("discover", LANG);
+                        discover.addProperty("actor", responderActor);
+                        discover.addProperty("instance", addressedInstance);
+                        return discover;
+                    });
+            System.out.println("READY");
+            System.out.flush();
+            Files.writeString(ggScopeReadyPath(runId, actor),
+                    Long.toString(System.currentTimeMillis()), StandardCharsets.UTF_8);
+
+            java.util.List<String> readyMissing = waitForGgScopeReady(runId, expectedActors);
+            JsonObject targets = new JsonObject();
+            if (readyMissing.isEmpty() && canonicalActor) {
+                Thread.sleep(subscribeDelayMs);
+                for (String targetLanguage : languages) {
+                    String targetActor = ggP1TargetActor(targetLanguage, actor);
+                    JsonObject target = new JsonObject();
+                    target.addProperty("target_actor", targetActor);
+                    try {
+                        target.add("describe",
+                                ggScopeDescribeProbe(provider, runId, actor, targetActor));
+                        target.add("instance_routing", ggScopeInstanceRoutingProbe(
+                                provider, runId, actor, targetLanguage, targetActor));
+                        target.add("conflict",
+                                ggScopeConflictProbe(provider, runId, actor, targetActor));
+                        target.add("component_scope",
+                                ggScopeComponentScopeProbe(provider, runId, actor, targetActor));
+                    } catch (Exception error) {
+                        // One bad target must never abort the run: record it and keep probing.
+                        errors.put("probe:" + targetLanguage, error.toString());
+                    }
+                    targets.add(targetLanguage, target);
+                }
+            }
+            Files.writeString(ggScopeDonePath(runId, actor),
+                    Long.toString(System.currentTimeMillis()), StandardCharsets.UTF_8);
+            java.util.List<String> doneMissing =
+                    waitForGgScopeDone(runId, expectedActors, waitMs);
+
+            boolean probesOk = true;
+            if (canonicalActor) {
+                for (String targetLanguage : languages) {
+                    JsonObject target = targets.has(targetLanguage)
+                            ? targets.getAsJsonObject(targetLanguage) : null;
+                    if (target == null) {
+                        probesOk = false;
+                        continue;
+                    }
+                    for (String probe : new String[] {
+                            "describe", "instance_routing", "conflict", "component_scope" }) {
+                        probesOk = probesOk && target.has(probe)
+                                && target.getAsJsonObject(probe).get("ok").getAsBoolean();
+                    }
+                }
+            }
+            boolean ok = readyMissing.isEmpty() && errors.isEmpty() && probesOk;
+            JsonObject result = new JsonObject();
+            result.addProperty("schema", "edgecommons.gg-ipc-scope.v1");
+            result.addProperty("ok", ok);
+            result.addProperty("run_id", runId);
+            result.addProperty("actor", actor);
+            result.addProperty("language", LANG);
+            result.addProperty("canonical_actor", canonicalActor);
+            result.add("ready_missing", GSON.toJsonTree(readyMissing));
+            result.add("done_missing", GSON.toJsonTree(doneMissing));
+            result.add("targets", targets);
+            result.add("errors", GSON.toJsonTree(errors));
+            Files.writeString(
+                    Path.of("/tmp", "edgecommons_gg_ipc_scope_" + actor + "_" + runId + ".json"),
+                    GSON.toJson(result), StandardCharsets.UTF_8);
+            System.out.println(result);
+            exitCode = ok ? 0 : 1;
+        } finally {
+            // Always tear the runtime and the raw provider down — a leaked IPC subscription trips
+            // the device's shared-connection quota.
+            if (gg != null) gg.shutdown();
+            if (path != null) Files.deleteIfExists(path);
+            provider.close();
+        }
+        System.exit(exitCode);
+    }
+
+    /**
      * Canonical cross-language payload permutations, built as a plain {@link java.util.Map} (NOT a
      * JsonObject) so the Java sender exercises issue #13's {@code withPayload(Map)} -> Gson
      * serialization across the wire. {@code null} is tested inside an array (Gson drops null-valued
@@ -1286,6 +1722,8 @@ public class InteropNode {
             }
         } else if (role.equals("gg-p1-matrix")) {
             runGgP1Matrix(args);
+        } else if (role.equals("gg-scope-matrix")) {
+            runGgScopeMatrix(args);
         } else if (role.equals("gg-binary-matrix")) {
             String runId = args[1];
             String[] expectedLangs = args[2].split(",");

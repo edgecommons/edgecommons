@@ -17,6 +17,7 @@
  *   interop_node state-instances-sub <component>
  *   interop_node describe-responder  <component>
  *   interop_node describe-requester  <component>
+ *   interop_node gg-scope-matrix     <runId> <langsCsv>
  *
  * Messages are built without a config — the envelope legally omits `identity` unless
  * one is stamped explicitly (the UNS roles); `tags.thing` no longer exists (UNS hard cut).
@@ -883,6 +884,354 @@ async function runGgP1Matrix(runId: string, langsCsv: string): Promise<number> {
   }
 }
 
+// --- gg-scope-matrix: the 0.5.0 scoped-command wire contract over real Greengrass IPC -----------
+//
+// Every actor deploys the same component (`interop-scope-<actor>`) carrying exactly TWO custom
+// verbs registered through the 0.5.0 `register(verb, scope, handler)` surface — one INSTANCE-scoped
+// and one COMPONENT-scoped. Each canonical actor then probes EVERY language's component four ways:
+// the `describe` manifest carries a `scope` on every entry, an instance-addressed topic reaches an
+// INSTANCE-scoped verb without any `body.instance`, a topic/body instance conflict is refused, and
+// a COMPONENT-scoped verb refuses instance addressing. The two rejections pin the BYTE-EXACT
+// BAD_ARGS messages, so a reworded library message is a cross-language interop failure.
+
+/** The INSTANCE-scoped custom verb every scope responder registers. */
+const GG_SCOPE_PROBE_VERB = "sb/probe";
+
+/** The COMPONENT-scoped custom verb every scope responder registers. */
+const GG_SCOPE_DISCOVER_VERB = "sb/discover";
+
+/** The pinned BAD_ARGS message for a topic/body instance conflict (probe 3). */
+const GG_SCOPE_CONFLICT_MESSAGE = "instance in body conflicts with the addressed instance";
+
+/** The pinned BAD_ARGS message for instance-addressing a COMPONENT-scoped verb (probe 4). */
+const GG_SCOPE_COMPONENT_MESSAGE = `verb '${GG_SCOPE_DISCOVER_VERB}' is component-scoped`;
+
+/** The four probe keys carried by every target entry of the result JSON. */
+const GG_SCOPE_PROBE_KEYS = ["describe", "instance_routing", "conflict", "component_scope"] as const;
+
+/**
+ * The EXACT `describe` manifest entries the scope responder must advertise: the five built-ins
+ * (all `both`) plus the two custom verbs at their declared scopes, verb-sorted, each entry carrying
+ * EXACTLY {verb, builtIn, scope} — no `availability` key.
+ */
+const GG_SCOPE_EXPECTED_COMMANDS: ReadonlyArray<{ verb: string; builtIn: boolean; scope: string }> = [
+  { verb: "describe", builtIn: true, scope: "both" },
+  { verb: "get-configuration", builtIn: true, scope: "both" },
+  { verb: "ping", builtIn: true, scope: "both" },
+  { verb: "reload-config", builtIn: true, scope: "both" },
+  { verb: GG_SCOPE_DISCOVER_VERB, builtIn: false, scope: "component" },
+  { verb: GG_SCOPE_PROBE_VERB, builtIn: false, scope: "instance" },
+  { verb: "status", builtIn: true, scope: "both" },
+];
+
+function ggScopeReadyPath(runId: string, actor: string): string {
+  return `/tmp/edgecommons_gg_ipc_scope_ready_${actor}_${runId}`;
+}
+
+function ggScopeDonePath(runId: string, actor: string): string {
+  return `/tmp/edgecommons_gg_ipc_scope_done_${actor}_${runId}`;
+}
+
+/** The addressed component's base UNS topic; the probes append the class/verb tail themselves. */
+function ggScopeBaseTopic(actor: string): string {
+  return `ecv1/interop-device/interop-scope-${actor}`;
+}
+
+async function waitForGgScopeReady(runId: string, expectedActors: string[]): Promise<string[]> {
+  const readyWaitSecs = Number(process.env.EDGECOMMONS_GG_READY_WAIT_SECS ?? "180");
+  const deadline = Date.now() + readyWaitSecs * 1000;
+  while (Date.now() < deadline) {
+    const missing = expectedActors.filter((actor) => !existsSync(ggScopeReadyPath(runId, actor)));
+    if (missing.length === 0) return [];
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return expectedActors.filter((actor) => !existsSync(ggScopeReadyPath(runId, actor)));
+}
+
+/**
+ * Holds this responder alive until every canonical actor has finished probing — a responder that
+ * exits early would make the still-probing peers time out against a dead component.
+ */
+async function waitForGgScopeDone(runId: string, expectedActors: string[]): Promise<string[]> {
+  const waitSecs = Number(process.env.EDGECOMMONS_GG_WAIT_SECS ?? "90");
+  const deadline = Date.now() + waitSecs * 1000;
+  while (Date.now() < deadline) {
+    const missing = expectedActors.filter((actor) => !existsSync(ggScopeDonePath(runId, actor)));
+    if (missing.length === 0) return [];
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return expectedActors.filter((actor) => !existsSync(ggScopeDonePath(runId, actor)));
+}
+
+/** The observed manifest must match the pinned entries exactly — order, values, and key set. */
+function ggScopeCommandsMatch(observed: unknown): boolean {
+  if (!Array.isArray(observed) || observed.length !== GG_SCOPE_EXPECTED_COMMANDS.length) return false;
+  return GG_SCOPE_EXPECTED_COMMANDS.every((expected, index) => {
+    const entry = observed[index] as Record<string, unknown> | null;
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return false;
+    const keys = Object.keys(entry).sort();
+    return keys.length === 3
+      && keys[0] === "builtIn"
+      && keys[1] === "scope"
+      && keys[2] === "verb"
+      && entry.verb === expected.verb
+      && entry.builtIn === expected.builtIn
+      && entry.scope === expected.scope;
+  });
+}
+
+/**
+ * One scoped-command round trip over raw IPC: a fresh reply topic subscribed BEFORE the publish,
+ * the request published with the provider (never through the runtime), and the subscription removed
+ * on the way out so a 4-probe x N-target sweep cannot leak IPC subscriptions.
+ */
+async function ggScopeRequest(
+  svc: DefaultMessagingService,
+  runId: string,
+  senderActor: string,
+  targetActor: string,
+  topic: string,
+  verb: string,
+  commandBody: Record<string, unknown>,
+): Promise<{ correlation_match: boolean; body: Record<string, unknown> } | null> {
+  const replyTopic = `edgecommons/interop/scope/${runId}/reply/${senderActor}/${targetActor}/${randomUUID()}`;
+  const replies: Message[] = [];
+  await svc.subscribe(replyTopic, (_topic, reply) => {
+    replies.push(reply);
+  }, 2, 1);
+  try {
+    const request = MessageBuilder.create(verb, "1.0")
+      .withCommand(commandBody)
+      .withReplyTo(replyTopic)
+      .withTags({})
+      .build();
+    const correlation = request.getCorrelationId();
+    await svc.publish(topic, request);
+    const deadline = Date.now() + 10_000;
+    while (replies.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (replies.length === 0) return null;
+    const reply = replies[0];
+    return {
+      correlation_match: reply.getCorrelationId() === correlation,
+      body: (reply.getBody() ?? {}) as Record<string, unknown>,
+    };
+  } finally {
+    await svc.unsubscribe(replyTopic).catch(() => undefined);
+  }
+}
+
+/** Probe 1 — the `describe` manifest declares a scope on every entry (D-SC-2). */
+async function ggScopeDescribeProbe(
+  svc: DefaultMessagingService,
+  runId: string,
+  senderActor: string,
+  targetActor: string,
+): Promise<Record<string, unknown>> {
+  const reply = await ggScopeRequest(
+    svc, runId, senderActor, targetActor,
+    `${ggScopeBaseTopic(targetActor)}/cmd/describe`, "describe", { from: LANG },
+  );
+  if (reply === null) return { ok: false, commands: null, digest: null, error: "timeout" };
+  const result = reply.body.result as Record<string, unknown> | undefined;
+  const commands = result?.commands;
+  const digest = typeof result?.digest === "string" ? result.digest : null;
+  const ok = reply.correlation_match
+    && reply.body.ok === true
+    && Array.isArray(commands)
+    && digest !== null
+    && ggScopeCommandsMatch(commands);
+  return {
+    ok,
+    commands: commands ?? null,
+    digest,
+    ...(ok ? {} : { error: `unexpected describe manifest: ${JSON.stringify(reply.body)}` }),
+  };
+}
+
+/** Probe 2 — an instance topic addresses an INSTANCE-scoped verb with NO `body.instance`. */
+async function ggScopeInstanceRoutingProbe(
+  svc: DefaultMessagingService,
+  runId: string,
+  senderActor: string,
+  targetLanguage: string,
+  targetActor: string,
+): Promise<Record<string, unknown>> {
+  const reply = await ggScopeRequest(
+    svc, runId, senderActor, targetActor,
+    `${ggScopeBaseTopic(targetActor)}/kep1/cmd/${GG_SCOPE_PROBE_VERB}`, GG_SCOPE_PROBE_VERB,
+    { from: LANG },
+  );
+  if (reply === null) {
+    return { ok: false, addressed_instance: null, reply_body: null, error: "timeout" };
+  }
+  const result = reply.body.result as Record<string, unknown> | undefined;
+  const addressedInstance = result?.instance ?? null;
+  const ok = reply.body.ok === true
+    && addressedInstance === "kep1"
+    && result?.probe === targetLanguage;
+  return {
+    ok,
+    addressed_instance: addressedInstance,
+    reply_body: result ?? null,
+    ...(ok ? {} : { error: `unexpected instance routing reply: ${JSON.stringify(reply.body)}` }),
+  };
+}
+
+/**
+ * Probes 3 and 4 — the two coded rejections. Both assert BAD_ARGS plus a BYTE-EXACT message, so a
+ * reworded library string is a cross-language interop failure rather than a silent drift.
+ */
+async function ggScopeRejectionProbe(
+  svc: DefaultMessagingService,
+  runId: string,
+  senderActor: string,
+  targetActor: string,
+  topic: string,
+  verb: string,
+  commandBody: Record<string, unknown>,
+  expectedMessage: string,
+): Promise<Record<string, unknown>> {
+  const reply = await ggScopeRequest(
+    svc, runId, senderActor, targetActor, topic, verb, commandBody,
+  );
+  if (reply === null) return { ok: false, code: null, message: null, error: "timeout" };
+  const error = reply.body.error as Record<string, unknown> | undefined;
+  const code = error?.code ?? null;
+  const message = error?.message ?? null;
+  const ok = reply.body.ok === false && code === "BAD_ARGS" && message === expectedMessage;
+  return {
+    ok,
+    code,
+    message,
+    ...(ok ? {} : { error: `expected BAD_ARGS '${expectedMessage}', got: ${JSON.stringify(reply.body)}` }),
+  };
+}
+
+/** Probe 3 — a `body.instance` disagreeing with the addressed instance is refused. */
+function ggScopeConflictProbe(
+  svc: DefaultMessagingService,
+  runId: string,
+  senderActor: string,
+  targetActor: string,
+): Promise<Record<string, unknown>> {
+  return ggScopeRejectionProbe(
+    svc, runId, senderActor, targetActor,
+    `${ggScopeBaseTopic(targetActor)}/kep1/cmd/${GG_SCOPE_PROBE_VERB}`, GG_SCOPE_PROBE_VERB,
+    { from: LANG, instance: "other" }, GG_SCOPE_CONFLICT_MESSAGE,
+  );
+}
+
+/** Probe 4 — a COMPONENT-scoped verb refuses instance addressing. */
+function ggScopeComponentScopeProbe(
+  svc: DefaultMessagingService,
+  runId: string,
+  senderActor: string,
+  targetActor: string,
+): Promise<Record<string, unknown>> {
+  return ggScopeRejectionProbe(
+    svc, runId, senderActor, targetActor,
+    `${ggScopeBaseTopic(targetActor)}/kep1/cmd/${GG_SCOPE_DISCOVER_VERB}`, GG_SCOPE_DISCOVER_VERB,
+    { from: LANG }, GG_SCOPE_COMPONENT_MESSAGE,
+  );
+}
+
+async function runGgScopeMatrix(runId: string, langsCsv: string): Promise<number> {
+  const languages = langsCsv.split(",").filter(Boolean);
+  const expectedActors = (process.env.EDGECOMMONS_GG_READY_LANGS ?? langsCsv).split(",").filter(Boolean);
+  const actor = process.env.EDGECOMMONS_GG_READY_LANG ?? LANG;
+  const canonicalActor = actor !== "rustpeer";
+  const subscribeDelaySecs = Number(process.env.EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS ?? "2");
+  const svc = await ipcService();
+  const errors = new Map<string, string>();
+  const targets: Record<string, Record<string, unknown>> = {};
+  let gg: Awaited<ReturnType<EdgeCommonsBuilder["build"]>> | undefined;
+  let path: string | undefined;
+  try {
+    path = writeCommandRuntimeConfig(`interop-scope-${actor}`);
+    gg = await new EdgeCommonsBuilder(`com.mbreissi.edgecommons.interop.${LANG}.ScopeResponder`)
+      .args(ggLogRuntimeArgs(path))
+      .configureCommands((inbox) => {
+        inbox.register(GG_SCOPE_PROBE_VERB, CommandScopes.Instance, (_request, addressedInstance) => ({
+          probe: LANG,
+          actor,
+          instance: addressedInstance ?? null,
+        }));
+        inbox.register(GG_SCOPE_DISCOVER_VERB, CommandScopes.Component, (_request, addressedInstance) => ({
+          discover: LANG,
+          actor,
+          instance: addressedInstance ?? null,
+        }));
+      })
+      .build();
+    process.stdout.write("READY\n");
+    writeFileSync(ggScopeReadyPath(runId, actor), String(Date.now()), "utf8");
+    const readyMissing = await waitForGgScopeReady(runId, expectedActors);
+    await new Promise((resolve) => setTimeout(resolve, subscribeDelaySecs * 1000));
+    if (readyMissing.length === 0 && canonicalActor) {
+      for (const targetLanguage of languages) {
+        const targetActor = ggP1TargetActor(targetLanguage, actor);
+        try {
+          // Sequential on purpose: one reply topic is live at a time, per target and per probe.
+          const describe = await ggScopeDescribeProbe(svc, runId, actor, targetActor);
+          const instanceRouting = await ggScopeInstanceRoutingProbe(
+            svc, runId, actor, targetLanguage, targetActor,
+          );
+          const conflict = await ggScopeConflictProbe(svc, runId, actor, targetActor);
+          const componentScope = await ggScopeComponentScopeProbe(svc, runId, actor, targetActor);
+          targets[targetLanguage] = {
+            target_actor: targetActor,
+            describe,
+            instance_routing: instanceRouting,
+            conflict,
+            component_scope: componentScope,
+          };
+        } catch (error) {
+          // One unreachable target must not abort the sweep over the remaining languages.
+          errors.set(`probe:${targetLanguage}`, String(error));
+        }
+      }
+    }
+    writeFileSync(ggScopeDonePath(runId, actor), String(Date.now()), "utf8");
+    const doneMissing = await waitForGgScopeDone(
+      runId, expectedActors.filter((expected) => expected !== "rustpeer"),
+    );
+    const targetsOk = !canonicalActor || languages.every((language) => {
+      const target = targets[language];
+      return target !== undefined && GG_SCOPE_PROBE_KEYS.every(
+        (key) => (target[key] as Record<string, unknown> | undefined)?.ok === true,
+      );
+    });
+    const ok = readyMissing.length === 0 && errors.size === 0 && targetsOk;
+    const result = {
+      schema: "edgecommons.gg-ipc-scope.v1",
+      ok,
+      run_id: runId,
+      actor,
+      language: LANG,
+      canonical_actor: canonicalActor,
+      ready_missing: readyMissing,
+      done_missing: doneMissing,
+      targets,
+      errors: Object.fromEntries(errors),
+    };
+    writeFileSync(`/tmp/edgecommons_gg_ipc_scope_${actor}_${runId}.json`, JSON.stringify(result), "utf8");
+    emit(result);
+    return ok ? 0 : 1;
+  } finally {
+    if (gg) await gg.close();
+    if (path) {
+      try {
+        unlinkSync(path);
+      } catch {
+        // best effort after a failed runtime startup
+      }
+    }
+    await svc.disconnect();
+  }
+}
+
 async function runGgLogMatrix(runId: string, langsCsv: string): Promise<number> {
   const expectedLangs = langsCsv.split(",").filter(Boolean);
   const expected = new Set(expectedLangs);
@@ -1462,6 +1811,8 @@ async function main(): Promise<void> {
       process.exit(await runGgBinaryMatrix(a, b, c));
     case "gg-p1-matrix":
       process.exit(await runGgP1Matrix(a, b));
+    case "gg-scope-matrix":
+      process.exit(await runGgScopeMatrix(a, b));
     case "uns-pub":
       process.exit(await runUnsPub(a, b, c));
     case "uns-sub":
