@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-07-15",
+  "updated": "2026-07-28",
   "components": [
     {
       "name": "opcua-adapter",
@@ -10,9 +10,20 @@
       "protocol": "OPC UA",
       "description": "Java reference southbound adapter (Eclipse Milo). Subscribes to OPC UA nodes and republishes value changes as SouthboundSignalUpdate messages; serves on-demand reads/writes and emits the southbound_health metric.",
       "status": "beta",
-      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "platforms": [
+        "GREENGRASS",
+        "HOST",
+        "KUBERNETES"
+      ],
       "library": "com.mbreissi.edgecommons:edgecommons",
-      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "opc-ua", "edgecommons-adapter"]
+      "greengrassComponentName": "com.mbreissi.edgecommons.OpcUaAdapter",
+      "topics": [
+        "edgecommons",
+        "aws-iot-greengrass",
+        "iiot",
+        "opc-ua",
+        "edgecommons-adapter"
+      ]
     },
     {
       "name": "modbus-adapter",
@@ -22,21 +33,46 @@
       "protocol": "Modbus (TCP / RTU / RTU-over-TCP)",
       "description": "Python reference southbound adapter (pymodbus). Polls Modbus TCP / serial RTU / RTU-over-TCP register maps and republishes value changes as SouthboundSignalUpdate messages; serves reads/writes and emits the southbound_health metric.",
       "status": "beta",
-      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "platforms": [
+        "GREENGRASS",
+        "HOST",
+        "KUBERNETES"
+      ],
       "library": "edgecommons",
-      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "modbus", "edgecommons-adapter"]
+      "greengrassComponentName": "com.mbreissi.edgecommons.ModbusAdapter",
+      "topics": [
+        "edgecommons",
+        "aws-iot-greengrass",
+        "iiot",
+        "modbus",
+        "edgecommons-adapter"
+      ]
     },
     {
       "name": "camera-adapter",
       "repo": "edgecommons/camera-adapter",
       "language": "RUST",
       "category": "adapter",
-      "protocol": "ONVIF / RTSP / GigE Vision (GenICam)",
-      "description": "Rust reference southbound camera adapter. Captures still images from ONVIF/RTSP and GigE Vision (GenICam) cameras on cron schedules or on-demand commands, persists them with checksums and metadata sidecars, and announces terminal results (with an optional thumbnail) on a unified namespace. Backed by a durable SQLite job catalog with a fleet-wide capture queue, byte-based admission, and retention.",
+      "protocol": "ONVIF / RTSP / GenICam",
+      "description": "Rust southbound image-capture adapter for ONVIF snapshot and RTSP cameras, with optional Linux GenICam/Aravis support. Schedules and commands create durable local images, publish terminal metadata, and expose capability-gated PTZ and preset operations.",
       "status": "beta",
-      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "platforms": [
+        "GREENGRASS",
+        "HOST",
+        "KUBERNETES"
+      ],
       "library": "edgecommons",
-      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "camera", "onvif", "edgecommons-adapter"]
+      "greengrassComponentName": "com.mbreissi.edgecommons.CameraAdapter",
+      "topics": [
+        "edgecommons",
+        "aws-iot-greengrass",
+        "iiot",
+        "camera",
+        "onvif",
+        "rtsp",
+        "genicam",
+        "edgecommons-adapter"
+      ]
     },
     {
       "name": "ethernet-ip-adapter",
@@ -45,21 +81,68 @@
       "category": "adapter",
       "protocol": "EtherNet/IP (Allen-Bradley CIP; explicit polling + class-1 implicit I/O)",
       "description": "Rust reference southbound EtherNet/IP adapter on an owned, memory-safe pure-Rust EtherNet/IP + CIP stack. Polls Allen-Bradley Logix tags (CIP explicit messaging) and consumes class-1 implicit I/O assemblies, republishing as SouthboundSignalUpdate; serves read/write/status/pause/resume/browse commands and emits southbound_health plus the EtherNetIp* operational metrics.",
-      "status": "experimental",
-      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "status": "beta",
+      "platforms": [
+        "GREENGRASS",
+        "HOST",
+        "KUBERNETES"
+      ],
       "library": "edgecommons",
-      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "ethernet-ip", "cip", "edgecommons-adapter"]
+      "greengrassComponentName": "com.mbreissi.edgecommons.EthernetIpAdapter",
+      "topics": [
+        "edgecommons",
+        "aws-iot-greengrass",
+        "iiot",
+        "ethernet-ip",
+        "cip",
+        "edgecommons-adapter"
+      ]
+    },
+    {
+      "name": "mtconnect-adapter",
+      "repo": "edgecommons/mtconnect-adapter",
+      "language": "RUST",
+      "category": "adapter",
+      "protocol": "MTConnect (HTTP/XML; streaming + polling)",
+      "description": "Southbound MTConnect client adapter - consumes one or more MTConnect agents. Reads each agent's device model and observations over HTTP (multipart streaming with a polling fallback and automatic resync on data loss or agent restart) and republishes them as SouthboundSignalUpdate messages; serves status/read/browse commands and emits southbound_health plus MTConnect-specific operational metrics. Read-only by protocol specification.",
+      "status": "beta",
+      "platforms": [
+        "GREENGRASS",
+        "HOST",
+        "KUBERNETES"
+      ],
+      "library": "edgecommons",
+      "greengrassComponentName": "com.mbreissi.edgecommons.MtconnectAdapter",
+      "topics": [
+        "edgecommons",
+        "aws-iot-greengrass",
+        "iiot",
+        "mtconnect",
+        "edgecommons-adapter"
+      ]
     },
     {
       "name": "telemetry-processor",
       "repo": "edgecommons/telemetry-processor",
       "language": "RUST",
       "category": "processor",
-      "description": "Rust reference processing component: the high-throughput northbound seam between southbound adapters and the cloud. Subscribes to configured (wildcard, templated) local telemetry topics, runs a declarative per-route pipeline (filter / sample / aggregate / project / script — Rhai or Lua), and forwards results to a target: local republish, northbound MQTT/IoT Core, or a durable stream (Kinesis / Kafka / rolling Parquet-AVRO files).",
-      "status": "experimental",
-      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "description": "Rust reference processing component: the high-throughput northbound seam between southbound adapters and the cloud. Subscribes to configured (wildcard, templated) local telemetry topics, runs a declarative per-route pipeline (filter / sample / aggregate / project / script \u2014 Rhai or Lua), and forwards results to a target: local republish, northbound MQTT/IoT Core, or a durable stream (Kinesis / Kafka / rolling Parquet-AVRO files).",
+      "status": "beta",
+      "platforms": [
+        "GREENGRASS",
+        "HOST",
+        "KUBERNETES"
+      ],
       "library": "edgecommons",
-      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "telemetry", "stream-processing", "edgecommons-processor"]
+      "greengrassComponentName": "com.mbreissi.edgecommons.TelemetryProcessor",
+      "topics": [
+        "edgecommons",
+        "aws-iot-greengrass",
+        "iiot",
+        "telemetry",
+        "stream-processing",
+        "edgecommons-processor"
+      ]
     },
     {
       "name": "uns-bridge",
@@ -67,10 +150,21 @@
       "language": "RUST",
       "category": "bridge",
       "description": "Envelope-aware UNS relay between a device bus and a site broker. Uplinks the six UNS consumer classes topic-verbatim with hop-tag loop protection and per-class policy (rate caps, evt replay buffer), relays own-device commands back down, and proxies request/reply across the bridge (reply_to rewrite). One uns-bridge per device bus.",
-      "status": "experimental",
-      "platforms": ["HOST", "KUBERNETES"],
+      "status": "beta",
+      "platforms": [
+        "HOST",
+        "KUBERNETES"
+      ],
       "library": "edgecommons",
-      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "unified-namespace", "mqtt", "edgecommons-bridge"]
+      "greengrassComponentName": "com.mbreissi.edgecommons.UnsBridge",
+      "topics": [
+        "edgecommons",
+        "aws-iot-greengrass",
+        "iiot",
+        "unified-namespace",
+        "mqtt",
+        "edgecommons-bridge"
+      ]
     },
     {
       "name": "edge-console",
@@ -78,10 +172,60 @@
       "language": "RUST",
       "category": "console",
       "description": "Edge-deployed real-time web console and the site's sole browser-to-bus bridge (HTTPS+WS in front, MQTT/UNS behind). A Rust gateway (edge-console-gateway) consumes the six UNS consumer classes from the site broker into a timestamped last-known-value model with console-side miss-detection (cfg-derived cadence, stale/offline ladder, whole-device UNREACHABLE from the uns-bridge LWT) and self-serves an IBM Carbon/React UI for edge-health, signals, events, config-review, and command views.",
-      "status": "experimental",
-      "platforms": ["HOST", "KUBERNETES"],
+      "status": "beta",
+      "platforms": [
+        "HOST",
+        "KUBERNETES"
+      ],
       "library": "edgecommons",
-      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "unified-namespace", "console", "edgecommons-console"]
+      "greengrassComponentName": "com.mbreissi.edgecommons.EdgeConsole",
+      "topics": [
+        "edgecommons",
+        "aws-iot-greengrass",
+        "iiot",
+        "unified-namespace",
+        "console",
+        "edgecommons-console"
+      ]
+    },
+    {
+      "name": "ec-uns-cmd",
+      "repo": "edgecommons/ec-uns-cmd",
+      "language": "RUST",
+      "category": "tool",
+      "description": "EdgeCommons UNS command-line tool. Sends a cmd/sb/* (or any) command to a component's command inbox over the UNS and prints the correlated reply; reaches Greengrass/IPC components via uns-bridge. Operate and test any EdgeCommons component from the shell.",
+      "status": "beta",
+      "platforms": [
+        "HOST"
+      ],
+      "library": "edgecommons",
+      "topics": [
+        "edgecommons",
+        "cli",
+        "uns",
+        "iiot",
+        "edgecommons-tool"
+      ]
+    },
+    {
+      "name": "ec-secrets",
+      "repo": "edgecommons/ec-secrets",
+      "language": "RUST",
+      "category": "tool",
+      "description": "EdgeCommons vault-seeding CLI. Populates and manages the LOCAL credentials vault (set/get/list/delete/import) that components read via gg.credentials() and $secret refs \u2014 same envelope encryption + KeyProvider (file/env/kms). Built on the library, so what it writes is exactly what a component decrypts.",
+      "status": "beta",
+      "platforms": [
+        "HOST"
+      ],
+      "library": "edgecommons",
+      "topics": [
+        "edgecommons",
+        "cli",
+        "secrets",
+        "vault",
+        "credentials",
+        "edgecommons-tool"
+      ]
     },
     {
       "name": "config-component",
@@ -89,10 +233,22 @@
       "language": "RUST",
       "category": "service",
       "description": "Rust dedicated configuration service for hierarchical-config deployments. Boots from its own non-CONFIG_COMPONENT source, loads a pluggable hierarchy catalog, serves ordered lineage bundles over the CONFIG_COMPONENT rendezvous, accepts privileged catalog replacement messages, and pushes accepted versions to consumers.",
-      "status": "experimental",
-      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "status": "beta",
+      "platforms": [
+        "GREENGRASS",
+        "HOST",
+        "KUBERNETES"
+      ],
       "library": "edgecommons",
-      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "configuration", "hierarchical-config", "edgecommons-service"]
+      "greengrassComponentName": "com.mbreissi.edgecommons.ConfigComponent",
+      "topics": [
+        "edgecommons",
+        "aws-iot-greengrass",
+        "iiot",
+        "configuration",
+        "hierarchical-config",
+        "edgecommons-service"
+      ]
     },
     {
       "name": "file-replicator",
@@ -100,10 +256,40 @@
       "language": "RUST",
       "category": "sink",
       "description": "Rust reference sink component (northbound file delivery): watches local directories and replicates files to local, S3, or optional SFTP/FTPS, HTTP(S), Azure Blob, and GCS destinations on arrival or on cron schedules/windows. Resumable uploads with integrity verification, bandwidth caps, per-instance activation, on-complete delete/archive/quarantine, and a full control + event surface on a unified namespace.",
-      "status": "experimental",
-      "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],
+      "status": "beta",
+      "platforms": [
+        "GREENGRASS",
+        "HOST",
+        "KUBERNETES"
+      ],
       "library": "edgecommons",
-      "topics": ["edgecommons", "aws-iot-greengrass", "iiot", "file-replication", "s3", "edgecommons-sink"]
+      "greengrassComponentName": "com.mbreissi.edgecommons.FileReplicator",
+      "topics": [
+        "edgecommons",
+        "aws-iot-greengrass",
+        "iiot",
+        "file-replication",
+        "s3",
+        "edgecommons-sink"
+      ]
+    },
+    {
+      "name": "edgecommons",
+      "repo": "edgecommons/edgecommons",
+      "docsPath": "cli/docs",
+      "language": "RUST",
+      "category": "tool",
+      "description": "The EdgeCommons CLI. One static binary that scaffolds components in four languages, validates their config and artifacts against the canonical schema, moves them between library versions, packages and releases them, and compiles a deployment definition into platform-native artifacts. Carries the templates and schema inside itself, so it works offline.",
+      "status": "beta",
+      "library": "edgecommons",
+      "topics": [
+        "edgecommons",
+        "cli",
+        "scaffolding",
+        "deployment",
+        "iiot",
+        "edgecommons-tool"
+      ]
     }
   ]
 }
