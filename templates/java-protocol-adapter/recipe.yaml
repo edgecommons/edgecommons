@@ -43,6 +43,9 @@ ComponentConfiguration:
       # The scaffold ships the in-process `sim` backend so a deployed component runs and is testable
       # with no hardware — replace it with your protocol (see Device.java / docs/SOUTHBOUND.md).
       component:
+        # UNS component token. The Greengrass ComponentName is reverse-DNS PascalCase; the token the
+        # wire carries is lower-kebab, so it is set explicitly rather than derived from the name.
+        token: <<BINNAME>>
         global:
           defaults:
             pollIntervalMs: 5000

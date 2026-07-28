@@ -18,6 +18,15 @@ Adapter settings live under `component`; the sibling sections (`hierarchy`, `ide
 `messaging`, `credentials`, `logging`, `heartbeat`, `metricEmission`) are standard EdgeCommons
 sections, owned by the canonical schema and not redeclared here.
 
+## `component.token`
+
+The UNS component token: the `{component}` segment of every topic this component publishes on, and
+the `identity.component` field of every message envelope. UNS tokens are lower-kebab
+(`<<BINNAME>>`); the Greengrass component name is the reverse-DNS `<<COMPONENTFULLNAME>>` and never
+reaches the wire. Every shipped configuration and the recipe set it. Leave it set — without it the
+library falls back to the short form of the component name, `<<COMPONENTNAME>>`, and the topics in
+this documentation stop matching what the component publishes.
+
 ## `component.global`
 
 | Key | Type | Default | Definition |
@@ -59,6 +68,7 @@ Add your protocol's real connection keys here as you implement `Device.java` —
   "messaging": { "local": { "host": "localhost", "port": 1883 } },
   "metricEmission": { "target": "messaging", "targetConfig": { "destination": "local" } },
   "component": {
+    "token": "<<BINNAME>>",
     "global": {
       "defaults": { "pollIntervalMs": 5000 },
       "timeouts": { "connectMs": 5000, "reconnectBackoffMinMs": 1000, "reconnectBackoffMaxMs": 60000 },

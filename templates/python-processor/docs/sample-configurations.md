@@ -18,6 +18,7 @@ The scaffold ships one working config, `test-configs/config.json`, plus the MQTT
   "metricEmission": { "target": "log", "namespace": "edgecommons", "targetConfig": { "logFileName": "{ComponentFullName}.metric.log" } },
   "tags": { "site": "factory-1" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "tickMs": 10000, "maxQueue": 256 } },
     "instances": [
       {

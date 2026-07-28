@@ -17,6 +17,7 @@ The scaffold ships one working config, `test-configs/<<COMPONENTNAME>>.json`, pl
   "logging": { "level": "INFO" },
   "metricEmission": { "target": "messaging", "targetConfig": { "destination": "local" } },
   "component": {
+    "token": "<<BINNAME>>",
     "global": {
       "defaults": { "pollIntervalMs": 5000 },
       "healthThresholds": { "staleSignalSecs": 30 }

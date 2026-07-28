@@ -46,7 +46,7 @@ set it to `messaging` in `test-configs/config.json` to see `loopTicks` on the wi
 ## 5. Command it
 
 ```text
-publish ecv1/my-thing/<<COMPONENTNAME>>/cmd/set-greeting
+publish ecv1/my-thing/<<BINNAME>>/cmd/set-greeting
   {"header":{"name":"set-greeting","version":"1.0"},"body":{"greeting":"Hi there"}}
 ```
 

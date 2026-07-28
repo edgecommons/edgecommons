@@ -11,6 +11,7 @@
   "metricEmission": { "target": "log", "namespace": "edgecommons" },
   "tags": { "site": "factory-1" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "publish_interval": 3 },
     "instances": [ { "id": "main" } ]
   }

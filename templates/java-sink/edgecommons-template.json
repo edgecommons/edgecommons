@@ -63,6 +63,7 @@
       "JARNAME"
     ],
     "docs/sample-configurations.md": [
+      "BINNAME",
       "COMPONENTNAME"
     ],
     "docs/reference/messaging-interface.md": [
@@ -74,6 +75,7 @@
     ],
     "recipe.yaml": [
       "AUTHOR",
+      "BINNAME",
       "COMPONENTFULLNAME",
       "DESCRIPTION",
       "JARNAME",
@@ -128,6 +130,17 @@
     ],
     "test-configs/standalone-messaging.json": [
       "BINNAME"
+    ],
+    "test-configs/config.json": [
+      "BINNAME"
+    ],
+    "test-configs/config_2.json": [
+      "BINNAME"
+    ],
+    "docs/reference/configuration.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
     ]
   },
   "renames": [

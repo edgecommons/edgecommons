@@ -33,6 +33,7 @@
     "line": "line1"
   },
   "component": {
+    "token": "python-component-skeleton",
     "global": {
       "publish_interval": 1
     },

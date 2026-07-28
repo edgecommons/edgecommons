@@ -59,7 +59,7 @@ below with a single device configured, on the component topic
 topic you subscribe:
 
 ```
-publish ecv1/my-thing/<<COMPONENTNAME>>/cmd/sb/read
+publish ecv1/my-thing/<<BINNAME>>/cmd/sb/read
   {"header":{"name":"sb/read","reply_to":"app/r","correlation_id":"1"},
    "body":{"signals":[{"name":"temperature-1"}]}}
 subscribe app/r → {"ok":true,"result":{"id":"device-1","reads":[{"signal":{"id":"temperature-1"},"value":21.3,"quality":"GOOD",...}]}}
@@ -78,7 +78,7 @@ risk, not a feature). Add the signal you want to allow:
 Rebuild the config, restart, then:
 
 ```
-publish ecv1/my-thing/<<COMPONENTNAME>>/cmd/sb/write
+publish ecv1/my-thing/<<BINNAME>>/cmd/sb/write
   {"header":{"name":"sb/write","reply_to":"app/r","correlation_id":"2"},
    "body":{"writes":[{"signalId":"temperature-1","value":42.5}]}}
 subscribe app/r → {"ok":true,"result":{"id":"device-1","written":1,"results":[...]}}
@@ -89,7 +89,7 @@ The simulator's `writeSignal` just logs the write — a real backend would send 
 ## 7. Browse the device's address space
 
 ```
-publish ecv1/my-thing/<<COMPONENTNAME>>/cmd/sb/browse
+publish ecv1/my-thing/<<BINNAME>>/cmd/sb/browse
   {"header":{"name":"sb/browse","reply_to":"app/r","correlation_id":"3"},"body":{}}
 subscribe app/r → {"ok":true,"result":{"id":"device-1","entries":[{"id":"temperature-1",...},{"id":"pressure-1",...}]}}
 ```

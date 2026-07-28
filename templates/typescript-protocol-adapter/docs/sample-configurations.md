@@ -25,6 +25,7 @@ The component loads **one JSON document** from `-c/--config`. The top level may 
   "metricEmission": { "target": "log", "namespace": "edgecommons" },
   "tags": { "site": "factory-1" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": {
       "defaults": { "pollIntervalMs": 5000 },
       "timeouts": { "connectMs": 5000, "reconnectBackoffMinMs": 1000, "reconnectBackoffMaxMs": 60000 },
@@ -62,6 +63,7 @@ The component loads **one JSON document** from `-c/--config`. The top level may 
 ```jsonc
 {
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "pollIntervalMs": 5000 }, "healthThresholds": { "staleSignalSecs": 30 } },
     "instances": [
       { "id": "device-1", "adapter": "sim", "connection": { "endpoint": "sim://device-1" }, "pollIntervalMs": 5000, "writes": { "allow": [] } },
@@ -135,6 +137,7 @@ data:
       "messaging": { "local": { "type": "mqtt", "host": "emqx.default.svc.cluster.local", "port": 1883 } },
       "metricEmission": { "target": "prometheus", "targetConfig": { "port": 9090, "path": "/metrics" } },
       "component": {
+        "token": "<<BINNAME>>",
         "global": { "defaults": { "pollIntervalMs": 5000 }, "healthThresholds": { "staleSignalSecs": 30 } },
         "instances": [
           { "id": "device-1", "adapter": "sim", "connection": { "endpoint": "sim://device-1" }, "pollIntervalMs": 5000, "writes": { "allow": [] } }

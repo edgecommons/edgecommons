@@ -13,6 +13,15 @@ The component reads one JSON document from `-c/--config`, defaulting by platform
 `metricEmission`, `heartbeat`) are standard edgecommons sections owned by the canonical schema and
 are **not** redeclared in `config.schema.json`.
 
+## `component.token`
+
+The UNS component token: the `{component}` segment of every topic this component publishes on, and
+the `identity.component` field of every message envelope. UNS tokens are lower-kebab
+(`<<BINNAME>>`); the Greengrass component name is the reverse-DNS `<<COMPONENTFULLNAME>>` and never
+reaches the wire. Every shipped configuration and the recipe set it. Leave it set — without it the
+library falls back to the short form of the component name, `<<COMPONENTNAME>>`, and the topics in
+this documentation stop matching what the component publishes.
+
 ## `component.global.defaults`
 
 | Key | Type | Default | Definition |
@@ -70,6 +79,7 @@ synchronized thundering herd on every backoff boundary.
   "identity": { "site": "factory-1" },
   "metricEmission": { "target": "messaging" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "retry": { "baseDelayMs": 1000, "giveUpAfterMs": 3600000 }, "maxQueue": 256 } },
     "instances": [
       {

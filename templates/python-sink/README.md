@@ -85,6 +85,7 @@ queue **drops and counts** rather than blocking the transport's dispatch thread.
 ```json
 {
   "component": {
+    "token": "<<BINNAME>>",
     "global": {
       "defaults": {
         "retry": { "baseDelayMs": 1000, "maxDelayMs": 900000, "giveUpAfterMs": 3600000 },

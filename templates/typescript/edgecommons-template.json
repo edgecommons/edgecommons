@@ -40,6 +40,7 @@
       "COMPONENTNAME"
     ],
     "docs/tutorial.md": [
+      "BINNAME",
       "COMPONENTNAME"
     ],
     "docs/sample-configurations.md": [
@@ -92,6 +93,14 @@
     ],
     "supervisor/component.conf": [
       "BINNAME",
+      "COMPONENTNAME"
+    ],
+    "test-configs/config.json": [
+      "BINNAME"
+    ],
+    "docs/reference/configuration.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME",
       "COMPONENTNAME"
     ]
   },

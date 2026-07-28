@@ -7,7 +7,9 @@ Unified Namespace: `ecv1/{device}/{component}/{instance}/{class}[/channel]`. For
 this, see [explanation.md](../explanation.md); for client recipes, the [how-to guides](../how-to-guides.md).
 
 - `{device}` — the resolved Thing name (the last `hierarchy` level, or `-t` directly).
-- `{component}` — the component UNS token, `<<BINNAME>>`.
+- `{component}` — the component UNS token, `<<BINNAME>>`, set by `component.token`. It is a
+  separate identifier from the Greengrass component name (`<<COMPONENTFULLNAME>>`), which never
+  appears on the wire.
 - `{instance}` — a route id (e.g. `rollup`) for its published output and its events; `main` for the
   shared command inbox, the `state` keepalive, and `metric`.
 

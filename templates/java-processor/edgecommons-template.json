@@ -36,6 +36,7 @@
       "PACKAGE"
     ],
     "README.md": [
+      "BINNAME",
       "COMPONENTFULLNAME",
       "COMPONENTNAME",
       "JARNAME"
@@ -67,7 +68,9 @@
       "COMPONENTNAME"
     ],
     "docs/reference/configuration.md": [
-      "BINNAME"
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
     ],
     "docs/reference/messaging-interface.md": [
       "BINNAME"

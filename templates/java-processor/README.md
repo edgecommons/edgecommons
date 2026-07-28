@@ -83,7 +83,7 @@ including rejecting an **unknown key**, because a typo'd route key is a mistake,
 {
   "id": "rollup",
   "subscribe": ["ecv1/+/+/+/data/#"],
-  "publishTopic": "ecv1/gw-01/<<COMPONENTNAME>>/rollup/data/summary",
+  "publishTopic": "ecv1/gw-01/<<BINNAME>>/rollup/data/summary",
   "target": "local",
   "pipeline": [
     { "fieldEquals": { "path": "signal.id", "value": "temperature-1" } },

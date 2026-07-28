@@ -15,6 +15,7 @@
     "sync": { "names": ["/skeleton/region", "/skeleton/poolSize"] }
   },
   "component": {
+    "token": "python-component-skeleton",
     "global": {
       "publish_interval": 3
     },

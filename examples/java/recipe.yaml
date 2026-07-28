@@ -69,6 +69,9 @@ ComponentConfiguration:
             - "/skeleton/region"
             - "/skeleton/poolSize"
       component:
+        # UNS component token. The Greengrass ComponentName is reverse-DNS PascalCase; the token the
+        # wire carries is lower-kebab, so it is set explicitly rather than derived from the name.
+        token: java-component-skeleton
         global:
           'publish_interval': 3
           'message': "Hello World!"

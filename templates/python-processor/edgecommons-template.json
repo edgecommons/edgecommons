@@ -87,10 +87,13 @@
       "BINNAME"
     ],
     "docs/reference/configuration.md": [
-      "BINNAME"
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
     ],
     "docs/reference/messaging-interface.md": [
-      "BINNAME"
+      "BINNAME",
+      "COMPONENTFULLNAME"
     ],
     "docs/reference/metrics.md": [
       "BINNAME"

@@ -31,6 +31,7 @@ data:
         }
       },
       "component": {
+        "token": "<<BINNAME>>",
         "global": {
           "defaults": {
             "pollIntervalMs": 1000

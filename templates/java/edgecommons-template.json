@@ -78,6 +78,7 @@
     ],
     "recipe.yaml": [
       "AUTHOR",
+      "BINNAME",
       "COMPONENTFULLNAME",
       "DESCRIPTION",
       "JARNAME",
@@ -104,6 +105,17 @@
       "JARNAME"
     ],
     "test-configs/standalone-messaging.json": [
+      "COMPONENTNAME"
+    ],
+    "test-configs/TestComponent.json": [
+      "BINNAME"
+    ],
+    "test-configs/config_2.json": [
+      "BINNAME"
+    ],
+    "docs/reference/configuration.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME",
       "COMPONENTNAME"
     ]
   },

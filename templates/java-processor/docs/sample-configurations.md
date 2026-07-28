@@ -15,6 +15,7 @@ Ready-to-adapt configurations for `<<COMPONENTNAME>>`. For the exhaustive option
   "hierarchy": { "levels": ["site", "device"] },
   "identity":  { "site": "factory-1" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "tickMs": 10000, "maxQueue": 256 } },
     "instances": [
       {

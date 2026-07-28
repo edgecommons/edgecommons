@@ -25,6 +25,7 @@ The component loads **one JSON document** from `-c/--config`. The top level may 
   "metricEmission": { "target": "log", "namespace": "edgecommons" },
   "tags": { "site": "factory-1" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "tickMs": 10000, "maxQueue": 256 } },
     "instances": [
       {
@@ -62,6 +63,7 @@ The component loads **one JSON document** from `-c/--config`. The top level may 
 ```jsonc
 {
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "tickMs": 10000, "maxQueue": 256 } },
     "instances": [
       {
@@ -132,6 +134,7 @@ data:
       "messaging": { "local": { "type": "mqtt", "host": "emqx.default.svc.cluster.local", "port": 1883 } },
       "metricEmission": { "target": "prometheus", "targetConfig": { "port": 9090, "path": "/metrics" } },
       "component": {
+        "token": "<<BINNAME>>",
         "global": { "defaults": { "tickMs": 10000, "maxQueue": 256 } },
         "instances": [
           { "id": "rollup", "subscribe": ["ecv1/+/+/+/data/#"],

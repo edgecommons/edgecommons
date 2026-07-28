@@ -28,6 +28,7 @@
     "site": "factory-1"
   },
   "component": {
+    "token": "<<BINNAME>>",
     "global": {
       "defaults": {
         "tickMs": 5000,

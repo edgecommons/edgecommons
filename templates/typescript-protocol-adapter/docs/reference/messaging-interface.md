@@ -8,7 +8,9 @@ model behind the data/control split, see [../explanation.md](../explanation.md);
 recipes, the [how-to guides](../how-to-guides.md).
 
 - `{device}` — the resolved Thing name (the last `hierarchy` level).
-- `{component}` — this component's UNS token.
+- `{component}` — the component UNS token, `<<BINNAME>>`, set by `component.token`. It is a
+  separate identifier from the Greengrass component name (`<<COMPONENTFULLNAME>>`), which never
+  appears on the wire.
 - `{instance}` — the configured device id (`device-1`, …) for `data`/`evt`; the command inbox and
   `state`/`metric` are component-scoped.
 

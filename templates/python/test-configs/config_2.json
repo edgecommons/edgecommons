@@ -4,6 +4,7 @@
     "python_format": "%(asctime)s [%(levelname)s] %(filename)s %(funcName)s(%(lineno)d) [%(threadName)s]: %(message)s"
   },
   "component": {
+    "token": "<<BINNAME>>",
     "global": {
       "publish_interval": 3
     },

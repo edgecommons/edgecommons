@@ -65,6 +65,7 @@
     }
   },
   "component": {
+    "token": "java-component-skeleton",
     "global": {
       "publish_interval": 1,
       "message": "Hello world config_2!"

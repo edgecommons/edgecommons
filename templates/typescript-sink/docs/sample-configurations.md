@@ -25,6 +25,7 @@ The component loads **one JSON document** from `-c/--config`. The top level may 
   "metricEmission": { "target": "log", "namespace": "edgecommons" },
   "tags": { "site": "factory-1" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "retry": { "baseDelayMs": 1000, "giveUpAfterMs": 3600000 }, "maxQueue": 256 } },
     "instances": [
       {
@@ -56,6 +57,7 @@ The component loads **one JSON document** from `-c/--config`. The top level may 
 ```jsonc
 {
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "retry": { "baseDelayMs": 1000, "giveUpAfterMs": 3600000 }, "maxQueue": 256 } },
     "instances": [
       { "id": "archive", "subscribe": "ecv1/+/+/+/data/#", "destination": { "type": "local", "path": "./out" } },
@@ -108,6 +110,7 @@ data:
       "messaging": { "local": { "type": "mqtt", "host": "emqx.default.svc.cluster.local", "port": 1883 } },
       "metricEmission": { "target": "prometheus", "targetConfig": { "port": 9090, "path": "/metrics" } },
       "component": {
+        "token": "<<BINNAME>>",
         "global": { "defaults": { "retry": { "baseDelayMs": 1000, "giveUpAfterMs": 3600000 }, "maxQueue": 256 } },
         "instances": [
           { "id": "archive", "subscribe": "ecv1/+/+/+/data/#", "destination": { "type": "local", "path": "/data/out" } }

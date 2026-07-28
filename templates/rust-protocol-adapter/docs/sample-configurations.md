@@ -24,6 +24,7 @@ The adapter loads **one JSON document** from `-c/--config`. The top level carrie
   "metricEmission": { "target": "log", "namespace": "edgecommons" },
   "tags": { "site": "factory-1" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": {
       "defaults": { "pollIntervalMs": 5000 },
       "timeouts": { "connectMs": 5000, "reconnectBackoffMinMs": 1000, "reconnectBackoffMaxMs": 60000 },
@@ -76,6 +77,7 @@ Two devices behind one adapter process, one of them with a writable signal and a
   "messaging": { "local": { "type": "mqtt", "host": "localhost", "port": 1883, "clientId": "<<BINNAME>>-pumphouse" } },
   "metricEmission": { "target": "messaging" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": {
       "defaults": { "pollIntervalMs": 5000 },
       "healthThresholds": { "staleSignalSecs": 15 }

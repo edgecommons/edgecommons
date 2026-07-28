@@ -29,6 +29,7 @@ data:
         "level": "INFO"
       },
       "component": {
+        "token": "<<BINNAME>>",
         "global": {
           "defaults": {
             "retry": {

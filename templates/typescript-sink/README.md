@@ -84,6 +84,7 @@ unchanged, which is the point of the seam.
 ```json
 {
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "retry": { "baseDelayMs": 1000, "giveUpAfterMs": 3600000 } } },
     "instances": [
       {

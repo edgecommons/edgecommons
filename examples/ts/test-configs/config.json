@@ -22,6 +22,7 @@
   "identity": { "site": "factory-1" },
   "tags": { "site": "factory-1" },
   "component": {
+    "token": "ts-component-skeleton",
     "global": { "publish_interval": 3 },
     "instances": [ { "id": "main" } ]
   }

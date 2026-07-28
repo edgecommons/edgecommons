@@ -24,6 +24,7 @@ scaffold's own config) plus the standard `edgecommons` sections: `tags`, `hierar
   "metricEmission": { "target": "log", "namespace": "edgecommons" },
   "tags": { "site": "factory-1" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "retry": { "baseDelayMs": 1000, "giveUpAfterMs": 3600000 } } },
     "instances": [
       {
@@ -76,6 +77,7 @@ different retry postures:
   },
   "metricEmission": { "target": "messaging" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "maxQueue": 512 } },
     "instances": [
       {

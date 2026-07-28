@@ -69,12 +69,12 @@ Both go through the command inbox (`ecv1/{device}/{component}/cmd/{verb}`). Set 
 the verb and `header.reply_to` + `header.correlation_id` for the reply.
 
 ```
-publish ecv1/<device>/<<COMPONENTNAME>>/cmd/sb/read
+publish ecv1/<device>/<<BINNAME>>/cmd/sb/read
   {"header":{"name":"sb/read","reply_to":"app/r","correlation_id":"1"},
    "body":{"signals":[{"name":"temperature-1"}]}}
 subscribe app/r → {"ok":true,"result":{"reads":[...]}}
 
-publish ecv1/<device>/<<COMPONENTNAME>>/cmd/sb/write
+publish ecv1/<device>/<<BINNAME>>/cmd/sb/write
   {"header":{"name":"sb/write","reply_to":"app/r","correlation_id":"2"},
    "body":{"writes":[{"signalId":"temperature-1","value":42.5}]}}
 subscribe app/r → {"ok":true,"result":{"written":1,"results":[...]}}
@@ -93,8 +93,8 @@ Useful during maintenance windows, or before a `sb/write` sequence you don't wan
 to interleave with.
 
 ```
-publish ecv1/<device>/<<COMPONENTNAME>>/cmd/sb/pause   {"header":{"name":"sb/pause","reply_to":"app/r","correlation_id":"3"},"body":{}}
-publish ecv1/<device>/<<COMPONENTNAME>>/cmd/sb/resume  {"header":{"name":"sb/resume","reply_to":"app/r","correlation_id":"4"},"body":{}}
+publish ecv1/<device>/<<BINNAME>>/cmd/sb/pause   {"header":{"name":"sb/pause","reply_to":"app/r","correlation_id":"3"},"body":{}}
+publish ecv1/<device>/<<BINNAME>>/cmd/sb/resume  {"header":{"name":"sb/resume","reply_to":"app/r","correlation_id":"4"},"body":{}}
 ```
 
 `repoll` refuses with `PAUSED` while paused ("resume first") — pausing means *nothing* touches
@@ -105,8 +105,8 @@ the device, not even an on-demand poll.
 ## Force a reconnect or an immediate poll
 
 ```
-publish ecv1/<device>/<<COMPONENTNAME>>/cmd/reconnect {"header":{"name":"reconnect","reply_to":"app/r","correlation_id":"5"},"body":{}}
-publish ecv1/<device>/<<COMPONENTNAME>>/cmd/repoll    {"header":{"name":"repoll","reply_to":"app/r","correlation_id":"6"},"body":{}}
+publish ecv1/<device>/<<BINNAME>>/cmd/reconnect {"header":{"name":"reconnect","reply_to":"app/r","correlation_id":"5"},"body":{}}
+publish ecv1/<device>/<<BINNAME>>/cmd/repoll    {"header":{"name":"repoll","reply_to":"app/r","correlation_id":"6"},"body":{}}
 ```
 
 `reconnect` drops the current session and re-establishes it (one bounded attempt, confirmed by

@@ -29,6 +29,7 @@
     "site": "factory-1"
   },
   "component": {
+    "token": "<<BINNAME>>",
     "global": {
       "defaults": {
         "pollIntervalMs": 5000

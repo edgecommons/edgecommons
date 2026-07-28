@@ -36,6 +36,7 @@
     "line": "line1"
   },
   "component": {
+    "token": "<<BINNAME>>",
     "global": {
       "publish_interval": 2
     },

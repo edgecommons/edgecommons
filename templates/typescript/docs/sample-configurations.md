@@ -25,6 +25,7 @@ The component loads **one JSON document** from `-c/--config`. The top level may 
   "identity": { "site": "factory-1" },
   "tags": { "site": "factory-1" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "publish_interval": 3 },
     "instances": [ { "id": "main" } ]
   }

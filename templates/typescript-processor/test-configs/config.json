@@ -11,6 +11,7 @@
   "metricEmission": { "target": "log", "namespace": "edgecommons" },
   "tags": { "site": "factory-1" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": {
       "defaults": { "tickMs": 10000, "maxQueue": 256 }
     },

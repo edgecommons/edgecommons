@@ -71,6 +71,7 @@ not do. So: raw `gg.get_messaging()`, and topics from config.
 ```json
 {
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "tickMs": 10000, "maxQueue": 256 } },
     "instances": [
       {
