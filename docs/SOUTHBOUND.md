@@ -47,6 +47,12 @@ Adapters reuse the standard `Message` envelope — since the UNS change, `{heade
 body}` — with the library stamping `identity` automatically. The contract standardizes only the
 **body**, published with header `name = "SouthboundSignalUpdate"`, `version = "1.0"`:
 
+> **The envelope below is shown in its JSON projection** — the canonical field names and shapes; the
+> MQTT/IPC wire encoding is the protobuf envelope (`proto/edgecommons/v1`), which round-trips this
+> projection exactly. This is the canonical stance for envelope examples across EdgeCommons
+> documentation: component repositories adopt this sentence when they touch their own envelope
+> sections.
+
 ```json
 {
   "header": { "name": "SouthboundSignalUpdate", "version": "1.0", "timestamp": "...", "uuid": "...", "correlation_id": null },
