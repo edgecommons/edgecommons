@@ -104,6 +104,7 @@ fresh adapter read-only. Full payload shapes and error codes:
 ```json
 {
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "pollIntervalMs": 5000 } },
     "instances": [
       {

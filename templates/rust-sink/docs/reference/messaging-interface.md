@@ -7,7 +7,9 @@ Every topic this sink subscribes to or publishes, and its CLI flags. Addressing 
 delivery model, see [explanation.md](../explanation.md).
 
 - `{device}` — the resolved Thing name (`-t`, or the last `hierarchy` level).
-- `{component}` — the component UNS token, `<<BINNAME>>`.
+- `{component}` — the component UNS token, `<<BINNAME>>`, set by `component.token`. It is a
+  separate identifier from the Greengrass component name (`<<COMPONENTFULLNAME>>`), which never
+  appears on the wire.
 - `{instance}` — a configured sink id (`archive`, …) for its own `evt`/connectivity surface; the
   command inbox and `state` keepalive are component-scoped.
 

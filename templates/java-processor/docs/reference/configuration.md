@@ -18,6 +18,15 @@ Processor settings live under `component`; the sibling sections (`hierarchy`, `i
 `messaging`, `logging`, `heartbeat`, `metricEmission`, `credentials`) are standard EdgeCommons
 sections, owned by the canonical schema and not redeclared here.
 
+## `component.token`
+
+The UNS component token: the `{component}` segment of every topic this component publishes on, and
+the `identity.component` field of every message envelope. UNS tokens are lower-kebab
+(`<<BINNAME>>`); the Greengrass component name is the reverse-DNS `<<COMPONENTFULLNAME>>` and never
+reaches the wire. Every shipped configuration and the recipe set it. Leave it set — without it the
+library falls back to the short form of the component name, `<<COMPONENTNAME>>`, and the topics in
+this documentation stop matching what the component publishes.
+
 ## `component.global.defaults`
 
 | Key | Type | Default | Definition |
@@ -56,6 +65,7 @@ Add your own stage as a new key here, mirroring the `RouteConfig.buildStage` cas
   "hierarchy": { "levels": ["site", "device"] },
   "identity":  { "site": "factory-1" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "tickMs": 10000, "maxQueue": 256 } },
     "instances": [
       {

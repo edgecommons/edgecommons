@@ -24,6 +24,7 @@ The shipped `test-configs/<<COMPONENTNAME>>.json`:
   "messaging": { "local": { "host": "localhost", "port": 1883 } },
   "metricEmission": { "target": "messaging", "targetConfig": { "destination": "local" } },
   "component": {
+    "token": "<<BINNAME>>",
     "global": {
       "defaults": { "pollIntervalMs": 5000 },
       "timeouts": { "connectMs": 5000, "reconnectBackoffMinMs": 1000, "reconnectBackoffMaxMs": 60000 },
@@ -82,6 +83,7 @@ Because each device is an independent worker, one deployment bridges several by 
 
 ```jsonc
 "component": {
+  "token": "<<BINNAME>>",
   "global": { "defaults": { "pollIntervalMs": 5000 } },
   "instances": [
     { "id": "device-1", "adapter": "sim", "connection": { "endpoint": "sim://device-1" } },

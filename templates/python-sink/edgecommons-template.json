@@ -39,6 +39,7 @@
       "COMPONENTNAME"
     ],
     "README.md": [
+      "BINNAME",
       "COMPONENTFULLNAME",
       "COMPONENTNAME"
     ],
@@ -79,7 +80,8 @@
       "BINNAME"
     ],
     "docs/reference/messaging-interface.md": [
-      "BINNAME"
+      "BINNAME",
+      "COMPONENTFULLNAME"
     ],
     "docs/reference/metrics.md": [
       "BINNAME"
@@ -93,6 +95,14 @@
       "COMPONENTNAME"
     ],
     "DESIGN.md": [
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
+    ],
+    "test-configs/config.json": [
+      "BINNAME"
+    ],
+    "docs/reference/configuration.md": [
+      "BINNAME",
       "COMPONENTFULLNAME",
       "COMPONENTNAME"
     ]

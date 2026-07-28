@@ -7,7 +7,9 @@ Every topic this component publishes or accepts, and its CLI flags. Addressing f
 facades are used instead of hand-built topics, see [explanation.md](../explanation.md).
 
 - `{device}` — the resolved Thing name (`-t`, or the last `hierarchy` level).
-- `{component}` — the component UNS token, `<<BINNAME>>`.
+- `{component}` — the component UNS token, `<<BINNAME>>`, set by `component.token`. It is a
+  separate identifier from the Greengrass component name (`<<COMPONENTFULLNAME>>`), which never
+  appears on the wire.
 - `{instance}` — this scaffold's demo publishes use the **component-scoped** facades
   (`gg.data()`/`gg.events()`/`gg.metrics()`), so no instance token appears in their topics; use
   `gg.instance(id)?` for instance-scoped topics/messages instead.

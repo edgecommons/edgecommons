@@ -72,6 +72,7 @@ nothing in `src/proc.ts` is required by the library.
 ```json
 {
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "tickMs": 10000, "maxQueue": 256 } },
     "instances": [
       {

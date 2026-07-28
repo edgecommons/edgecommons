@@ -24,6 +24,7 @@ The processor loads **one JSON document** from `-c/--config`. The top level carr
   "metricEmission": { "target": "log", "namespace": "edgecommons" },
   "tags": { "site": "factory-1" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "tickMs": 10000 } },
     "instances": [
       {
@@ -81,6 +82,7 @@ summary:
   },
   "metricEmission": { "target": "messaging" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "defaults": { "tickMs": 5000, "maxQueue": 512 } },
     "instances": [
       {

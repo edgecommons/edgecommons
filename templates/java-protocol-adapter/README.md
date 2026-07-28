@@ -85,6 +85,7 @@ The **UNS identity** is declared at the top level (`hierarchy` + `identity`); ad
 "hierarchy": { "levels": ["site", "device"] },   // last level = the resolved thing name
 "identity":  { "site": "site1" },                // a value for every level above the last
 "component": {
+  "token": "<<BINNAME>>",
   "global":    { "defaults": { "pollIntervalMs": 5000 },
                  "healthThresholds": { "staleSignalSecs": 30 } },
   "instances": [ {

@@ -22,6 +22,7 @@ The shipped `test-configs/<<COMPONENTNAME>>.json` shape:
                  "measures": { "cpu": true, "memory": true } },
   "metricEmission": { "target": "log", "targetConfig": { "logFileName": "{ComponentFullName}.metric.log" } },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "publish_interval": 3, "message": "Hello world" },
     "instances": []
   }

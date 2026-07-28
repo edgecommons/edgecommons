@@ -7,7 +7,9 @@ Every topic this processor subscribes to or publishes, and its CLI flags. Addres
 pipeline model, see [explanation.md](../explanation.md).
 
 - `{device}` — the resolved Thing name (`-t`, or the last `hierarchy` level).
-- `{component}` — the component UNS token, `<<BINNAME>>`.
+- `{component}` — the component UNS token, `<<BINNAME>>`, set by `component.token`. It is a
+  separate identifier from the Greengrass component name (`<<COMPONENTFULLNAME>>`), which never
+  appears on the wire.
 - `{instance}` — a configured route id (`rollup`, …) for its own metric surface; the command inbox
   and `state` keepalive are component-scoped.
 

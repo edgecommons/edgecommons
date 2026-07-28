@@ -24,6 +24,7 @@ The component loads **one JSON document** from `-c/--config`. The top level carr
   "metricEmission": { "target": "log", "namespace": "edgecommons" },
   "tags": { "site": "factory-1" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "publish_interval": 3 },
     "instances": [ { "id": "main" } ]
   }
@@ -61,6 +62,7 @@ cargo run -- --platform HOST --transport MQTT ./test-configs/standalone-messagin
   "messaging": { "local": { "type": "mqtt", "host": "localhost", "port": 1883, "clientId": "<<BINNAME>>-line5" } },
   "metricEmission": { "target": "messaging" },
   "component": {
+    "token": "<<BINNAME>>",
     "global": { "publish_interval": 1 },
     "instances": [ { "id": "main", "publish_interval": 1 } ]
   }

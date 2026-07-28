@@ -35,6 +35,9 @@ ComponentConfiguration:
         targetConfig:
           logFileName: /greengrass/v2/logs/{ComponentFullName}.metric.log
       component:
+        # UNS component token. The Greengrass ComponentName is reverse-DNS PascalCase; the token the
+        # wire carries is lower-kebab, so it is set explicitly rather than derived from the name.
+        token: <<BINNAME>>
         global:
           defaults:
             tickMs: 10000

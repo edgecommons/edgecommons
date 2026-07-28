@@ -22,6 +22,7 @@
   },
   "tags": { "site": "factory-1" },
   "component": {
+    "token": "rust-component-skeleton",
     "global": { "publish_interval": 3 },
     "instances": [ { "id": "main" } ]
   }

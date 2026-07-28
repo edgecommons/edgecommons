@@ -8,7 +8,9 @@ data/control plane model, see [explanation.md](../explanation.md); for client re
 [how-to guides](../how-to-guides.md).
 
 - `{device}` — the resolved Thing name (`-t`, or the last `hierarchy` level).
-- `{component}` — the component UNS token, `<<BINNAME>>`.
+- `{component}` — the component UNS token, `<<BINNAME>>`, set by `component.token`. It is a
+  separate identifier from the Greengrass component name (`<<COMPONENTFULLNAME>>`), which never
+  appears on the wire.
 - `{instance}` — a configured device id (`device-1`, …). It always appears on `data`/`evt` topics,
   and optionally on a `cmd` topic to address one device (`…/{instance}/cmd/{verb}`); the `state`
   keepalive is component-scoped (no instance token in its topic).

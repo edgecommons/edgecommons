@@ -88,10 +88,12 @@
     ],
     "docs/reference/configuration.md": [
       "BINNAME",
+      "COMPONENTFULLNAME",
       "COMPONENTNAME"
     ],
     "docs/reference/messaging-interface.md": [
       "BINNAME",
+      "COMPONENTFULLNAME",
       "COMPONENTNAME"
     ],
     "docs/reference/metrics.md": [
@@ -108,6 +110,12 @@
     "DESIGN.md": [
       "COMPONENTFULLNAME",
       "COMPONENTNAME"
+    ],
+    "test-configs/config_1.json": [
+      "BINNAME"
+    ],
+    "test-configs/config_2.json": [
+      "BINNAME"
     ]
   },
   "renames": [

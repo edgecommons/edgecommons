@@ -39,7 +39,7 @@ instance implicitly.
 ## 4. Invoke the custom command
 
 ```
-publish ecv1/my-thing/<<COMPONENTNAME>>/cmd/set-greeting
+publish ecv1/my-thing/<<BINNAME>>/cmd/set-greeting
   {"header":{"name":"set-greeting","reply_to":"app/r","correlation_id":"1"},"body":{"greeting":"Hi there"}}
 subscribe app/r → {"ok":true,"result":{"previousGreeting":"Hello from <<COMPONENTNAME>>","greeting":"Hi there"}}
 ```
@@ -52,7 +52,7 @@ visible, on-the-wire effect.
 `ping`, `reload-config`, and `get-configuration` are live with zero code (the library's inbox):
 
 ```
-publish ecv1/my-thing/<<COMPONENTNAME>>/cmd/ping
+publish ecv1/my-thing/<<BINNAME>>/cmd/ping
   {"header":{"name":"ping","reply_to":"app/r","correlation_id":"2"},"body":{}}
 subscribe app/r → {"ok":true,"result":{"status":"RUNNING","uptimeSecs":42}}
 ```

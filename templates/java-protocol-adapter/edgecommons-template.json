@@ -36,6 +36,7 @@
       "PACKAGE"
     ],
     "README.md": [
+      "BINNAME",
       "COMPONENTFULLNAME",
       "COMPONENTNAME",
       "JARNAME"
@@ -68,6 +69,7 @@
       "COMPONENTNAME"
     ],
     "docs/sample-configurations.md": [
+      "BINNAME",
       "COMPONENTNAME",
       "JARNAME"
     ],
@@ -81,6 +83,7 @@
     ],
     "recipe.yaml": [
       "AUTHOR",
+      "BINNAME",
       "COMPONENTFULLNAME",
       "DESCRIPTION",
       "JARNAME",
@@ -139,6 +142,14 @@
       "JARNAME"
     ],
     "test-configs/standalone-messaging.json": [
+      "COMPONENTNAME"
+    ],
+    "test-configs/TestComponent.json": [
+      "BINNAME"
+    ],
+    "docs/reference/configuration.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME",
       "COMPONENTNAME"
     ]
   },

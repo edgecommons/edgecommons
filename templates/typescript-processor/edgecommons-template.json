@@ -101,6 +101,11 @@
     ],
     "test-configs/standalone-messaging.json": [
       "BINNAME"
+    ],
+    "docs/reference/configuration.md": [
+      "BINNAME",
+      "COMPONENTFULLNAME",
+      "COMPONENTNAME"
     ]
   },
   "renames": [],
