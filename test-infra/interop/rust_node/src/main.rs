@@ -13,6 +13,7 @@
 //!   interop-rust-node describe-requester  <component>
 //!   interop-rust-node gg-config-request <topic> <component> <output-json>
 //!   interop-rust-node gg-config-update <topic> <output-json>
+//!   interop-rust-node gg-scope-matrix <runId> <langsCsv>
 //! Local-only MQTT transport against localhost:1883. Messages are built without a
 //! config — the envelope legally omits `identity` unless one is stamped explicitly
 //! (the UNS roles); `tags.thing` no longer exists (UNS hard cut).
@@ -1317,6 +1318,540 @@ async fn run_gg_p1_matrix(args: &[String]) -> ! {
     std::process::exit(if ok { 0 } else { 1 });
 }
 
+/// The two custom verbs every `gg-scope-matrix` actor registers: the INSTANCE-scoped probe (the
+/// same verb the local `describe-responder` carries) and a COMPONENT-scoped discovery verb, so one
+/// component advertises both non-indifferent scopes at once.
+#[cfg(feature = "greengrass")]
+const GG_SCOPE_PROBE_VERB: &str = DESCRIBE_PROBE_VERB;
+
+#[cfg(feature = "greengrass")]
+const GG_SCOPE_DISCOVER_VERB: &str = "sb/discover";
+
+/// The BYTE-EXACT rejection message the inbox owes a request whose body names an instance that
+/// disagrees with the instance-addressed topic.
+#[cfg(feature = "greengrass")]
+const GG_SCOPE_CONFLICT_MESSAGE: &str = "instance in body conflicts with the addressed instance";
+
+/// The BYTE-EXACT rejection message the inbox owes an instance-addressed delivery of a
+/// COMPONENT-scoped verb.
+#[cfg(feature = "greengrass")]
+const GG_SCOPE_COMPONENT_SCOPE_MESSAGE: &str = "verb 'sb/discover' is component-scoped";
+
+/// Disambiguates reply topics minted inside the same nanosecond by one process.
+#[cfg(feature = "greengrass")]
+static GG_SCOPE_REPLY_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(feature = "greengrass")]
+fn gg_scope_ready_path(run_id: &str, actor: &str) -> String {
+    format!("/tmp/edgecommons_gg_ipc_scope_ready_{actor}_{run_id}")
+}
+
+/// The done file an actor writes once its own probe phase is over. Every actor then waits for the
+/// CANONICAL actors' done files, which is what keeps a responder alive while its peers still probe
+/// it.
+#[cfg(feature = "greengrass")]
+fn gg_scope_done_path(run_id: &str, actor: &str) -> String {
+    format!("/tmp/edgecommons_gg_ipc_scope_done_{actor}_{run_id}")
+}
+
+/// Poll until every expected actor has the file `path_of` names for it, or the deadline passes;
+/// returns the actors still missing (the same shape as `wait_for_gg_p1_ready`).
+#[cfg(feature = "greengrass")]
+async fn wait_for_gg_scope_files(
+    run_id: &str,
+    expected_actors: &[String],
+    wait_secs: f64,
+    path_of: fn(&str, &str) -> String,
+) -> Vec<String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs_f64(wait_secs);
+    loop {
+        let missing: Vec<String> = expected_actors
+            .iter()
+            .filter(|actor| !std::path::Path::new(&path_of(run_id, actor)).exists())
+            .cloned()
+            .collect();
+        if missing.is_empty() || std::time::Instant::now() >= deadline {
+            return missing;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// The component-scope UNS prefix of one actor's scope component. Probes address either
+/// `<base>/cmd/<verb>` (component-addressed) or `<base>/kep1/cmd/<verb>` (instance-addressed).
+#[cfg(feature = "greengrass")]
+fn gg_scope_base_topic(actor: &str) -> String {
+    format!("ecv1/{INTEROP_DEVICE}/interop-scope-{actor}")
+}
+
+/// A reply topic unique to ONE probe, so a late or duplicated reply can never be mistaken for the
+/// next probe's.
+#[cfg(feature = "greengrass")]
+fn gg_scope_reply_topic(run_id: &str, sender_actor: &str, target_actor: &str) -> String {
+    let unique = format!(
+        "{}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default(),
+        GG_SCOPE_REPLY_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    format!("edgecommons/interop/scope/{run_id}/reply/{sender_actor}/{target_actor}/{unique}")
+}
+
+/// The `describe` manifest every scope component must advertise, verbatim and in this order: the
+/// five scope-indifferent built-ins plus the two custom verbs, each entry carrying EXACTLY
+/// `{verb, builtIn, scope}` (`Value` equality compares key sets, so an extra member fails here).
+#[cfg(feature = "greengrass")]
+fn gg_scope_expected_commands() -> Value {
+    json!([
+        {"verb": "describe",          "builtIn": true,  "scope": "both"},
+        {"verb": "get-configuration", "builtIn": true,  "scope": "both"},
+        {"verb": "ping",              "builtIn": true,  "scope": "both"},
+        {"verb": "reload-config",     "builtIn": true,  "scope": "both"},
+        {"verb": "sb/discover",       "builtIn": false, "scope": "component"},
+        {"verb": "sb/probe",          "builtIn": false, "scope": "instance"},
+        {"verb": "status",            "builtIn": true,  "scope": "both"}
+    ])
+}
+
+/// One raw scoped-command round trip: subscribe the unique reply topic BEFORE publishing, publish
+/// the request with the provider (not through the runtime), wait up to 10 s, and ALWAYS
+/// unsubscribe — a leaked IPC subscription trips the device's shared-connection quota. Returns the
+/// reply body and whether the reply echoed the request's correlation id.
+#[cfg(feature = "greengrass")]
+async fn gg_scope_request(
+    svc: &Arc<DefaultMessagingService>,
+    reply_topic: &str,
+    topic: &str,
+    verb: &str,
+    body: Value,
+) -> Result<(Value, bool), String> {
+    let replies = Arc::new(std::sync::Mutex::new(Vec::<Message>::new()));
+    let received = replies.clone();
+    svc.subscribe(
+        reply_topic,
+        message_handler(move |_topic, reply| {
+            let received = received.clone();
+            async move {
+                received.lock().unwrap().push(reply);
+            }
+        }),
+        4,
+        1,
+    )
+    .await
+    .map_err(|error| format!("subscribe: {error}"))?;
+    let request = MessageBuilder::new(verb, "1.0")
+        .command(body)
+        .reply_to(reply_topic)
+        .build();
+    let correlation = request.header.correlation_id.clone();
+    let outcome = match svc.publish(topic, &request).await {
+        Err(error) => Err(format!("publish: {error}")),
+        Ok(()) => {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while std::time::Instant::now() < deadline && replies.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            let reply = replies.lock().unwrap().first().cloned();
+            match reply {
+                Some(reply) => {
+                    let correlation_match = reply.header.correlation_id == correlation;
+                    Ok((reply.body, correlation_match))
+                }
+                None => Err("timeout".to_string()),
+            }
+        }
+    };
+    let _ = svc.unsubscribe(reply_topic).await;
+    outcome
+}
+
+/// Probe 1 — `describe` on the component-addressed inbox: every manifest entry must carry a
+/// `scope`, and the manifest must be EXACTLY `gg_scope_expected_commands()`.
+#[cfg(feature = "greengrass")]
+async fn gg_scope_probe_describe(
+    svc: &Arc<DefaultMessagingService>,
+    run_id: &str,
+    sender_actor: &str,
+    target_actor: &str,
+    base_topic: &str,
+) -> (Value, Option<String>) {
+    let reply_topic = gg_scope_reply_topic(run_id, sender_actor, target_actor);
+    let topic = format!("{base_topic}/cmd/describe");
+    match gg_scope_request(
+        svc,
+        &reply_topic,
+        &topic,
+        "describe",
+        json!({ "from": LANG }),
+    )
+    .await
+    {
+        Err(error) => (
+            json!({"ok": false, "commands": null, "digest": null, "error": error}),
+            Some(error),
+        ),
+        Ok((body, correlation_match)) => {
+            let replied_ok = body.get("ok").and_then(Value::as_bool) == Some(true);
+            let result = body.get("result");
+            let commands = result
+                .and_then(|value| value.get("commands"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let digest = result
+                .and_then(|value| value.get("digest"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+            let ok = correlation_match
+                && replied_ok
+                && commands == gg_scope_expected_commands()
+                && digest.is_some();
+            let mut record = json!({"ok": ok, "commands": commands, "digest": digest});
+            if !ok {
+                record["error"] = json!(format!(
+                    "unexpected describe manifest (correlation_match={correlation_match}): {body}"
+                ));
+            }
+            (record, None)
+        }
+    }
+}
+
+/// Probe 2 — an instance-addressed delivery with NO `body.instance`: the addressed instance must
+/// reach the INSTANCE-scoped handler from the topic alone.
+#[cfg(feature = "greengrass")]
+async fn gg_scope_probe_instance_routing(
+    svc: &Arc<DefaultMessagingService>,
+    run_id: &str,
+    sender_actor: &str,
+    target_language: &str,
+    target_actor: &str,
+    base_topic: &str,
+) -> (Value, Option<String>) {
+    let reply_topic = gg_scope_reply_topic(run_id, sender_actor, target_actor);
+    let topic = format!("{base_topic}/kep1/cmd/{GG_SCOPE_PROBE_VERB}");
+    match gg_scope_request(
+        svc,
+        &reply_topic,
+        &topic,
+        GG_SCOPE_PROBE_VERB,
+        json!({ "from": LANG }),
+    )
+    .await
+    {
+        Err(error) => (
+            json!({
+                "ok": false, "addressed_instance": null, "reply_body": null, "error": error
+            }),
+            Some(error),
+        ),
+        Ok((body, _correlation_match)) => {
+            let replied_ok = body.get("ok").and_then(Value::as_bool) == Some(true);
+            let result = body.get("result").cloned().unwrap_or(Value::Null);
+            let addressed_instance = result.get("instance").cloned().unwrap_or(Value::Null);
+            let ok = replied_ok
+                && addressed_instance.as_str() == Some("kep1")
+                && result.get("probe").and_then(Value::as_str) == Some(target_language);
+            let mut record = json!({
+                "ok": ok,
+                "addressed_instance": addressed_instance,
+                "reply_body": result
+            });
+            if !ok {
+                record["error"] = json!(format!("unexpected instance-routing reply: {body}"));
+            }
+            (record, None)
+        }
+    }
+}
+
+/// The shared verdict of the two REJECTION probes: the reply must be a coded `BAD_ARGS` failure
+/// whose message is byte-exactly `expected_message`.
+#[cfg(feature = "greengrass")]
+fn gg_scope_rejection_record(
+    outcome: Result<(Value, bool), String>,
+    expected_message: &str,
+) -> (Value, Option<String>) {
+    match outcome {
+        Err(error) => (
+            json!({"ok": false, "code": null, "message": null, "error": error}),
+            Some(error),
+        ),
+        Ok((body, _correlation_match)) => {
+            let replied_ok = body.get("ok").and_then(Value::as_bool);
+            let error = body.get("error");
+            let code = error
+                .and_then(|value| value.get("code"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+            let message = error
+                .and_then(|value| value.get("message"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+            let ok = replied_ok == Some(false)
+                && code.as_deref() == Some("BAD_ARGS")
+                && message.as_deref() == Some(expected_message);
+            let mut record = json!({"ok": ok, "code": code, "message": message});
+            if !ok {
+                record["error"] = json!(format!(
+                    "expected BAD_ARGS '{expected_message}', got: {body}"
+                ));
+            }
+            (record, None)
+        }
+    }
+}
+
+/// Probe 3 — the topic names `kep1` while the body names `other`: the inbox must refuse the
+/// conflict rather than silently pick one.
+#[cfg(feature = "greengrass")]
+async fn gg_scope_probe_conflict(
+    svc: &Arc<DefaultMessagingService>,
+    run_id: &str,
+    sender_actor: &str,
+    target_actor: &str,
+    base_topic: &str,
+) -> (Value, Option<String>) {
+    let reply_topic = gg_scope_reply_topic(run_id, sender_actor, target_actor);
+    let topic = format!("{base_topic}/kep1/cmd/{GG_SCOPE_PROBE_VERB}");
+    let outcome = gg_scope_request(
+        svc,
+        &reply_topic,
+        &topic,
+        GG_SCOPE_PROBE_VERB,
+        json!({ "from": LANG, "instance": "other" }),
+    )
+    .await;
+    gg_scope_rejection_record(outcome, GG_SCOPE_CONFLICT_MESSAGE)
+}
+
+/// Probe 4 — a COMPONENT-scoped verb delivered to an instance topic: the inbox must refuse it.
+#[cfg(feature = "greengrass")]
+async fn gg_scope_probe_component_scope(
+    svc: &Arc<DefaultMessagingService>,
+    run_id: &str,
+    sender_actor: &str,
+    target_actor: &str,
+    base_topic: &str,
+) -> (Value, Option<String>) {
+    let reply_topic = gg_scope_reply_topic(run_id, sender_actor, target_actor);
+    let topic = format!("{base_topic}/kep1/cmd/{GG_SCOPE_DISCOVER_VERB}");
+    let outcome = gg_scope_request(
+        svc,
+        &reply_topic,
+        &topic,
+        GG_SCOPE_DISCOVER_VERB,
+        json!({ "from": LANG }),
+    )
+    .await;
+    gg_scope_rejection_record(outcome, GG_SCOPE_COMPONENT_SCOPE_MESSAGE)
+}
+
+/// gg-scope-matrix <runId> <langsCsv> — the 0.5.0 scoped-command wire contract over REAL
+/// Greengrass IPC, cross-language, as deployed components.
+///
+/// Every actor deploys `interop-scope-<actor>` carrying exactly two custom verbs — `sb/probe`
+/// (INSTANCE) and `sb/discover` (COMPONENT) — and every canonical actor then probes EVERY
+/// language's component four times: the `describe` manifest (a `scope` on every entry), an
+/// instance-addressed delivery with no `body.instance`, the topic/body conflict rejection, and a
+/// COMPONENT-scoped verb refusing instance addressing. The self-pair targets the second Rust
+/// component (`rustpeer`), so a language always probes across a process boundary.
+#[cfg(feature = "greengrass")]
+async fn run_gg_scope_matrix(args: &[String]) -> ! {
+    use std::collections::BTreeMap;
+
+    let run_id = args[2].clone();
+    let languages: Vec<String> = args[3]
+        .split(',')
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    let expected_actors: Vec<String> = std::env::var("EDGECOMMONS_GG_READY_LANGS")
+        .unwrap_or_else(|_| args[3].clone())
+        .split(',')
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    let actor = std::env::var("EDGECOMMONS_GG_READY_LANG").unwrap_or_else(|_| LANG.to_string());
+    let canonical_actor = actor != "rustpeer";
+    let ready_wait_secs: f64 = std::env::var("EDGECOMMONS_GG_READY_WAIT_SECS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(180.0);
+    let subscribe_delay_secs: f64 = std::env::var("EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(2.0);
+    let wait_secs: f64 = std::env::var("EDGECOMMONS_GG_WAIT_SECS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(90.0);
+
+    let svc = ipc_provider().await;
+    let path = write_command_runtime_config(&format!("interop-scope-{actor}"));
+    let gg = EdgeCommonsBuilder::new(format!(
+        "com.mbreissi.edgecommons.interop.{LANG}.ScopeResponder"
+    ))
+    .args(gg_log_runtime_args(&path))
+    .build()
+    .await
+    .expect("build Greengrass scope command responder");
+    let inbox = gg.commands().expect("runtime command inbox");
+    let probe_actor = actor.clone();
+    inbox
+        .register(
+            GG_SCOPE_PROBE_VERB,
+            CommandScope::Instance,
+            command_handler(move |_request, addressed_instance| {
+                let probe_actor = probe_actor.clone();
+                async move {
+                    Ok(Some(json!({
+                        "probe": LANG,
+                        "actor": probe_actor,
+                        "instance": addressed_instance
+                    })))
+                }
+            }),
+        )
+        .expect("register the instance-scoped probe verb");
+    let discover_actor = actor.clone();
+    inbox
+        .register(
+            GG_SCOPE_DISCOVER_VERB,
+            CommandScope::Component,
+            command_handler(move |_request, addressed_instance| {
+                let discover_actor = discover_actor.clone();
+                async move {
+                    Ok(Some(json!({
+                        "discover": LANG,
+                        "actor": discover_actor,
+                        "instance": addressed_instance
+                    })))
+                }
+            }),
+        )
+        .expect("register the component-scoped discover verb");
+
+    println!("READY");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    std::fs::write(gg_scope_ready_path(&run_id, &actor), "ready").expect("write scope ready");
+
+    let ready_missing = wait_for_gg_scope_files(
+        &run_id,
+        &expected_actors,
+        ready_wait_secs,
+        gg_scope_ready_path,
+    )
+    .await;
+    tokio::time::sleep(Duration::from_secs_f64(subscribe_delay_secs)).await;
+
+    let mut targets = BTreeMap::<String, Value>::new();
+    let mut errors = BTreeMap::<String, String>::new();
+    if ready_missing.is_empty() && canonical_actor {
+        for target_language in &languages {
+            let target_actor = gg_p1_target_actor(target_language, &actor);
+            let base_topic = gg_scope_base_topic(&target_actor);
+            let (describe, describe_error) =
+                gg_scope_probe_describe(&svc, &run_id, &actor, &target_actor, &base_topic).await;
+            let (instance_routing, instance_routing_error) = gg_scope_probe_instance_routing(
+                &svc,
+                &run_id,
+                &actor,
+                target_language,
+                &target_actor,
+                &base_topic,
+            )
+            .await;
+            let (conflict, conflict_error) =
+                gg_scope_probe_conflict(&svc, &run_id, &actor, &target_actor, &base_topic).await;
+            let (component_scope, component_scope_error) =
+                gg_scope_probe_component_scope(&svc, &run_id, &actor, &target_actor, &base_topic)
+                    .await;
+            // One unreachable target must never abort the run: its transport failures are
+            // recorded per target and the remaining languages are still probed.
+            for error in [
+                describe_error,
+                instance_routing_error,
+                conflict_error,
+                component_scope_error,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                errors
+                    .entry(format!("probe:{target_language}"))
+                    .or_insert(error);
+            }
+            targets.insert(
+                target_language.clone(),
+                json!({
+                    "target_actor": target_actor,
+                    "describe": describe,
+                    "instance_routing": instance_routing,
+                    "conflict": conflict,
+                    "component_scope": component_scope
+                }),
+            );
+        }
+    }
+
+    std::fs::write(gg_scope_done_path(&run_id, &actor), "done").expect("write scope done");
+    let canonical_expected: Vec<String> = expected_actors
+        .iter()
+        .filter(|expected| expected.as_str() != "rustpeer")
+        .cloned()
+        .collect();
+    let done_missing =
+        wait_for_gg_scope_files(&run_id, &canonical_expected, wait_secs, gg_scope_done_path).await;
+
+    let targets_ok = !canonical_actor
+        || languages.iter().all(|language| {
+            targets.get(language).is_some_and(|target| {
+                [
+                    "describe",
+                    "instance_routing",
+                    "conflict",
+                    "component_scope",
+                ]
+                .iter()
+                .all(|probe| {
+                    target
+                        .get(*probe)
+                        .and_then(|value| value.get("ok"))
+                        .and_then(Value::as_bool)
+                        == Some(true)
+                })
+            })
+        });
+    let ok = ready_missing.is_empty() && errors.is_empty() && targets_ok;
+    let result = json!({
+        "schema": "edgecommons.gg-ipc-scope.v1",
+        "ok": ok,
+        "run_id": run_id,
+        "actor": actor,
+        "language": LANG,
+        "canonical_actor": canonical_actor,
+        "ready_missing": ready_missing,
+        "done_missing": done_missing,
+        "targets": targets,
+        "errors": errors
+    });
+    let result_path = format!("/tmp/edgecommons_gg_ipc_scope_{actor}_{run_id}.json");
+    std::fs::write(&result_path, serde_json::to_vec(&result).unwrap()).expect("write scope result");
+    println!("{result}");
+    // Shut the runtime down and release the raw provider before exiting: every probe already
+    // unsubscribed its reply topic, and a leaked IPC subscription trips the shared-connection
+    // quota for the whole device.
+    drop(gg);
+    drop(svc);
+    let _ = std::fs::remove_file(path);
+    std::process::exit(if ok { 0 } else { 1 });
+}
+
 #[cfg(not(feature = "greengrass"))]
 async fn run_gg_binary_matrix(_args: &[String]) -> ! {
     eprintln!("gg-binary-matrix requires the greengrass cargo feature");
@@ -1332,6 +1867,12 @@ async fn run_gg_log_matrix(_args: &[String]) -> ! {
 #[cfg(not(feature = "greengrass"))]
 async fn run_gg_p1_matrix(_args: &[String]) -> ! {
     eprintln!("gg-p1-matrix requires the greengrass cargo feature");
+    std::process::exit(2);
+}
+
+#[cfg(not(feature = "greengrass"))]
+async fn run_gg_scope_matrix(_args: &[String]) -> ! {
+    eprintln!("gg-scope-matrix requires the greengrass cargo feature");
     std::process::exit(2);
 }
 
@@ -2647,6 +3188,7 @@ async fn main() {
         "gg-log-matrix" => run_gg_log_matrix(&args).await,
         "gg-binary-matrix" => run_gg_binary_matrix(&args).await,
         "gg-p1-matrix" => run_gg_p1_matrix(&args).await,
+        "gg-scope-matrix" => run_gg_scope_matrix(&args).await,
         "gg-config-request" => run_gg_config_request(&args).await,
         "gg-config-update" => run_gg_config_update(&args).await,
         "gg-config-update-file" => run_gg_config_update_file(&args).await,
@@ -2731,7 +3273,10 @@ async fn main() {
             let svc = provider("guard").await;
             // Reserved-class target selectable (D-U28): instance-scoped default or the
             // component-scoped ecv1/dev1/comp1/state — the guard must reject both.
-            let topic = args.get(2).map(String::as_str).unwrap_or("ecv1/dev1/comp1/main/state");
+            let topic = args
+                .get(2)
+                .map(String::as_str)
+                .unwrap_or("ecv1/dev1/comp1/main/state");
             match svc.publish_raw(topic, &json!({ "from": LANG })).await {
                 Err(EdgeCommonsError::ReservedTopic(detail)) => {
                     println!(

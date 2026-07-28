@@ -208,6 +208,23 @@ the Rust-to-Rust edge, avoiding an unobservable same-process self-delivery. Ever
 unconfirmed edge. Each responder fsyncs a bounded uniquely named local acceptance marker before
 activating its deferred token and removes that marker only after terminal settlement is attempted.
 
+Package the scoped-command matrix separately as well. It also carries its own component names, so
+it cannot overlap a binary, log, or P1 deployment:
+
+```powershell
+$scopePackage = .\test-infra\interop\gg_ipc\package.ps1 `
+  -RunId "scope-$(Get-Date -Format yyyyMMddHHmmss)" `
+  -Langs "python,java,rust,ts" `
+  -Role gg-scope-matrix
+```
+
+The role deploys the same five principals as the P1 matrix (`RustPeer` again carries only the
+Rust-to-Rust edge). Every actor's component registers two custom verbs through
+`register(verb, scope, handler)` — `sb/probe` declared `INSTANCE` and `sb/discover` declared
+`COMPONENT` — beside the scope-indifferent built-ins. Every actor writes
+`/tmp/edgecommons_gg_ipc_scope_<actor>_<run-id>.json`, and the packaged
+`verify-scope-results.py` is the pass/fail authority.
+
 Package the hierarchical ConfigComponent, four skeletons, catalogs, and one-shot verifier:
 
 ```powershell
@@ -387,6 +404,55 @@ Always remove this validation deployment and its temporary files after evidence 
 ```powershell
 ssh $ggHost "sudo /greengrass/v2/bin/greengrass-cli deployment create --remove=com.mbreissi.edgecommons.InteropP1Python --remove=com.mbreissi.edgecommons.InteropP1Java --remove=com.mbreissi.edgecommons.InteropP1Rust --remove=com.mbreissi.edgecommons.InteropP1RustPeer --remove=com.mbreissi.edgecommons.InteropP1Ts"
 ssh $ggHost "rm -rf $p1Remote /tmp/edgecommons-p1-results-$($p1Package.RunId) /tmp/edgecommons_gg_ipc_p1_*_$($p1Package.RunId).json"
+```
+
+### Scoped-command IPC matrix
+
+Run this matrix whenever command scope, command addressing, or the `describe` manifest changes.
+It deploys five real Greengrass principals and proves the four scoped-command claims across every
+requester/responder language pair. The local MQTT `describe` matrix does not substitute for it:
+only this procedure exercises the addressing rules through real Greengrass IPC deliveries.
+
+```powershell
+$scopeRemote = "/tmp/edgecommons-scope-$($scopePackage.RunId)"
+$scopeEvidence = Join-Path $scopePackage.OutputRoot "evidence"
+New-Item -ItemType Directory -Force -Path $scopeEvidence | Out-Null
+
+ssh $ggHost "mkdir -p $scopeRemote"
+scp -r "$($scopePackage.RecipeDir)" "$($ggHost):$scopeRemote/recipes"
+scp -r "$($scopePackage.ArtifactDir)" "$($ggHost):$scopeRemote/artifacts"
+ssh $ggHost "sudo /greengrass/v2/bin/greengrass-cli deployment create --recipeDir $scopeRemote/recipes --artifactDir $scopeRemote/artifacts --merge com.mbreissi.edgecommons.InteropScopePython=$($scopePackage.Version) --merge com.mbreissi.edgecommons.InteropScopeJava=$($scopePackage.Version) --merge com.mbreissi.edgecommons.InteropScopeRust=$($scopePackage.Version) --merge com.mbreissi.edgecommons.InteropScopeRustPeer=$($scopePackage.Version) --merge com.mbreissi.edgecommons.InteropScopeTs=$($scopePackage.Version)"
+```
+
+Wait for all five result files, then copy and verify them on the build machine:
+
+```powershell
+ssh $ggHost "mkdir -p /tmp/edgecommons-scope-results-$($scopePackage.RunId); cp /tmp/edgecommons_gg_ipc_scope_*_$($scopePackage.RunId).json /tmp/edgecommons-scope-results-$($scopePackage.RunId)/"
+scp -r "$($ggHost):/tmp/edgecommons-scope-results-$($scopePackage.RunId)/." $scopeEvidence
+py -3.14 $scopePackage.ResultVerifier --directory $scopeEvidence --run-id $scopePackage.RunId
+```
+
+The verifier must emit `ok:true` and 16 edges for each of its four claims:
+
+1. **Declared scope on the manifest.** Every `describe.commands[]` entry carries exactly
+   `{verb, builtIn, scope}` — the five built-ins as `both`, `sb/probe` as `instance`,
+   `sb/discover` as `component` — in verb-sorted order, with no `availability` member. The
+   responder's digest must additionally be identical in every language that pulled it, which a
+   single-language run cannot show.
+2. **Instance-topic addressing.** A command published to `.../<instance>/cmd/sb/probe` with no
+   `body.instance` routes, and the handler receives the topic's instance token.
+3. **Topic/body conflict.** The same topic with a disagreeing `body.instance` is rejected
+   `BAD_ARGS` with the byte-pinned message
+   `instance in body conflicts with the addressed instance`.
+4. **Component-scope refusal.** An instance-addressed delivery of the `COMPONENT`-scoped
+   `sb/discover` is rejected `BAD_ARGS` with the byte-pinned message
+   `verb 'sb/discover' is component-scoped`.
+
+Always remove this validation deployment and its temporary files after evidence has been copied:
+
+```powershell
+ssh $ggHost "sudo /greengrass/v2/bin/greengrass-cli deployment create --remove=com.mbreissi.edgecommons.InteropScopePython --remove=com.mbreissi.edgecommons.InteropScopeJava --remove=com.mbreissi.edgecommons.InteropScopeRust --remove=com.mbreissi.edgecommons.InteropScopeRustPeer --remove=com.mbreissi.edgecommons.InteropScopeTs"
+ssh $ggHost "rm -rf $scopeRemote /tmp/edgecommons-scope-results-$($scopePackage.RunId) /tmp/edgecommons_gg_ipc_scope_*_$($scopePackage.RunId).json"
 ```
 
 ### 6. Send a second-pass catalog update

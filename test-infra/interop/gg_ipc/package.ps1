@@ -4,7 +4,7 @@ param(
   [string]$OutputRoot = "",
   [string]$BinaryHex = "000102030a0d1f207f80feff",
   [string]$Langs = "python,java,rust,ts",
-  [ValidateSet("gg-binary-matrix", "gg-log-matrix", "gg-p1-matrix")]
+  [ValidateSet("gg-binary-matrix", "gg-log-matrix", "gg-p1-matrix", "gg-scope-matrix")]
   [string]$Role = "gg-binary-matrix"
 )
 
@@ -34,7 +34,16 @@ $artifactsDir = Join-Path $outputRootPath "artifacts"
 $stageDir = Join-Path $outputRootPath "stage"
 New-Item -ItemType Directory -Force -Path $recipesDir, $artifactsDir, $stageDir | Out-Null
 
-if ($Role -eq "gg-p1-matrix") {
+if ($Role -eq "gg-scope-matrix") {
+  $components = @{
+    python = "com.mbreissi.edgecommons.InteropScopePython"
+    java = "com.mbreissi.edgecommons.InteropScopeJava"
+    rust = "com.mbreissi.edgecommons.InteropScopeRust"
+    rustpeer = "com.mbreissi.edgecommons.InteropScopeRustPeer"
+    ts = "com.mbreissi.edgecommons.InteropScopeTs"
+  }
+  $verificationDescription = "Greengrass IPC scoped-command interop verifier."
+} elseif ($Role -eq "gg-p1-matrix") {
   $components = @{
     python = "com.mbreissi.edgecommons.InteropP1Python"
     java = "com.mbreissi.edgecommons.InteropP1Java"
@@ -205,9 +214,26 @@ $resultVerifier = $null
 if ($Role -eq "gg-p1-matrix") {
   $resultVerifier = Join-Path $outputRootPath "verify-p1-results.py"
   Copy-Item -LiteralPath (Join-Path $repoRoot "test-infra\interop\gg_ipc\verify_p1_results.py") -Destination $resultVerifier -Force
+} elseif ($Role -eq "gg-scope-matrix") {
+  $resultVerifier = Join-Path $outputRootPath "verify-scope-results.py"
+  Copy-Item -LiteralPath (Join-Path $repoRoot "test-infra\interop\gg_ipc\verify_scope_results.py") -Destination $resultVerifier -Force
 }
 
-$envPrefix = "export EDGECOMMONS_GG_READY_LANGS=python,java,rust,rustpeer,ts`n          export EDGECOMMONS_GG_READY_WAIT_SECS=240`n          export EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS=2`n          export EDGECOMMONS_GG_WAIT_SECS=90"
+# The readiness/completion barrier must name exactly the actors this package deploys: the
+# requested languages, plus the second Rust principal that carries the Rust-to-Rust edge.
+$readyActors = @()
+foreach ($lang in ($Langs -split "," | Where-Object { $_ })) {
+  $readyActors += $lang
+  if ($lang -eq "rust") { $readyActors += "rustpeer" }
+}
+$readyLangs = ($readyActors -join ",")
+
+# The scoped-command matrix runs four probes against every language before it signals done, so its
+# completion barrier has to outlast a full sweep that hits reply timeouts rather than cutting the
+# other actors' responders away underneath them.
+$waitSecs = if ($Role -eq "gg-scope-matrix") { 240 } else { 90 }
+
+$envPrefix = "export EDGECOMMONS_GG_READY_LANGS=$readyLangs`n          export EDGECOMMONS_GG_READY_WAIT_SECS=240`n          export EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS=2`n          export EDGECOMMONS_GG_WAIT_SECS=$waitSecs"
 
 $pythonLifecycle = @"
       Install:

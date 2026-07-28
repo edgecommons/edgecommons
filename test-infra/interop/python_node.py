@@ -65,6 +65,22 @@ Declared verb scope on the `describe` manifest (DESIGN-scoped-commands 2.3):
       Pull <component>'s built-in `describe` verb over its command inbox
       (ecv1/interop-device/<component>/cmd/describe) and print one JSON line
       {"ok": true, "reply_body": {"commands": [...], "digest": "sha256:...", ...}}.
+
+Deployed-component matrix roles (real Greengrass IPC, one process per language):
+
+  python_node.py gg-log-matrix <runId> <langsCsv>
+  python_node.py gg-binary-matrix <runId> <langsCsv> <expectedHex>
+  python_node.py gg-p1-matrix <runId> <langsCsv>
+
+  python_node.py gg-scope-matrix <runId> <langsCsv> [<ignoredHex>]
+      Scoped-command wire behavior (0.5.0) between deployed Greengrass components.
+      Registers exactly two custom verbs on the runtime's command inbox - `sb/probe`
+      (INSTANCE) and `sb/discover` (COMPONENT) - then probes every target language
+      four ways over raw IPC: the `describe` manifest's per-entry `scope`, an instance
+      addressed by the topic token alone, a topic/body instance conflict, and a
+      COMPONENT-scoped verb refusing instance addressing. Writes
+      /tmp/edgecommons_gg_ipc_scope_<actor>_<runId>.json, prints it as one JSON line,
+      and exits 0 only when every probe against every language passed.
 """
 import json
 import os
@@ -1099,6 +1115,337 @@ def run_gg_p1_matrix(run_id, langs_csv, _unused=None):
         provider.disconnect()
 
 
+# --- scoped commands over real Greengrass IPC (0.5.0 - DESIGN-scoped-commands 2.3) ------------
+#
+# The gg-scope-matrix role proves the scoped-command wire behavior between DEPLOYED Greengrass
+# components: `describe` carries a declared `scope` on every manifest entry, an INSTANCE-scoped
+# verb addressed by the topic token alone sees that token, a topic/body instance conflict is
+# refused with a pinned BAD_ARGS text, and a COMPONENT-scoped verb refuses instance addressing
+# outright. The two rejection texts are byte-exact cross-language contract, not diagnostics.
+GG_SCOPE_PROBE_VERB = "sb/probe"
+GG_SCOPE_DISCOVER_VERB = "sb/discover"
+GG_SCOPE_INSTANCE_TOKEN = "kep1"
+GG_SCOPE_CONFLICT_MESSAGE = "instance in body conflicts with the addressed instance"
+GG_SCOPE_COMPONENT_MESSAGE = f"verb '{GG_SCOPE_DISCOVER_VERB}' is component-scoped"
+GG_SCOPE_PROBE_KEYS = ("describe", "instance_routing", "conflict", "component_scope")
+
+# The manifest `describe` must return verbatim: the five scope-indifferent built-ins plus the two
+# custom verbs, ordered by verb, each entry carrying EXACTLY {verb, builtIn, scope}. Equality is
+# deep and key-exact, so a dropped `scope`, a stray extra key, or a different order all fail.
+GG_SCOPE_EXPECTED_COMMANDS = [
+    {"verb": "describe", "builtIn": True, "scope": "both"},
+    {"verb": "get-configuration", "builtIn": True, "scope": "both"},
+    {"verb": "ping", "builtIn": True, "scope": "both"},
+    {"verb": "reload-config", "builtIn": True, "scope": "both"},
+    {"verb": "sb/discover", "builtIn": False, "scope": "component"},
+    {"verb": "sb/probe", "builtIn": False, "scope": "instance"},
+    {"verb": "status", "builtIn": True, "scope": "both"},
+]
+
+
+def _gg_scope_ready_path(run_id, actor):
+    return f"/tmp/edgecommons_gg_ipc_scope_ready_{actor}_{run_id}"
+
+
+def _gg_scope_done_path(run_id, actor):
+    return f"/tmp/edgecommons_gg_ipc_scope_done_{actor}_{run_id}"
+
+
+def _gg_scope_result_path(run_id, actor):
+    return f"/tmp/edgecommons_gg_ipc_scope_{actor}_{run_id}.json"
+
+
+def _gg_scope_wait_for_ready(run_id, expected_actors):
+    ready_wait = float(os.environ.get("EDGECOMMONS_GG_READY_WAIT_SECS", "180"))
+    deadline = time.monotonic() + ready_wait
+    while time.monotonic() < deadline:
+        missing = [
+            actor for actor in expected_actors
+            if not os.path.exists(_gg_scope_ready_path(run_id, actor))
+        ]
+        if not missing:
+            return []
+        time.sleep(0.2)
+    return [
+        actor for actor in expected_actors
+        if not os.path.exists(_gg_scope_ready_path(run_id, actor))
+    ]
+
+
+def _gg_scope_wait_for_done(run_id, expected_actors, wait_secs):
+    """Stay alive until every canonical peer has finished probing.
+
+    Each actor is both a prober and the responder every other actor probes, so a process
+    that exited as soon as its own probes landed would strand the peers still running.
+    """
+    deadline = time.monotonic() + wait_secs
+    while time.monotonic() < deadline:
+        missing = [
+            actor for actor in expected_actors
+            if not os.path.exists(_gg_scope_done_path(run_id, actor))
+        ]
+        if not missing:
+            return []
+        time.sleep(0.2)
+    return [
+        actor for actor in expected_actors
+        if not os.path.exists(_gg_scope_done_path(run_id, actor))
+    ]
+
+
+def _gg_scope_base_topic(actor):
+    return f"ecv1/interop-device/interop-scope-{actor}"
+
+
+def run_gg_scope_matrix(run_id, langs_csv, _unused=None):
+    """Run the real IPC scoped-command matrix as a deployed Greengrass component.
+
+    Every actor registers one INSTANCE-scoped and one COMPONENT-scoped custom verb, then
+    probes every target language four ways.  The Rust self-pair is routed to the separate
+    ``rustpeer`` principal exactly as the P1 matrix does, so the Rust-to-Rust leg crosses
+    two distinct Greengrass principals instead of relying on self-delivery.
+    """
+    from edgecommons.messaging.providers.greengrass.greengrass_ipc import GreengrassIpcProvider
+
+    languages = [part for part in langs_csv.split(",") if part]
+    expected_actors = [
+        part for part in os.environ.get(
+            "EDGECOMMONS_GG_READY_LANGS", langs_csv
+        ).split(",") if part
+    ]
+    actor = os.environ.get("EDGECOMMONS_GG_READY_LANG", LANG)
+    canonical_actor = actor != "rustpeer"
+    subscribe_delay = float(os.environ.get("EDGECOMMONS_GG_SUBSCRIBE_DELAY_SECS", "2"))
+    wait_secs = float(os.environ.get("EDGECOMMONS_GG_WAIT_SECS", "90"))
+    reply_timeout = 10.0
+    provider = GreengrassIpcProvider(receive_own_messages=True)
+    errors = {}
+    runtime = None
+    config_path = None
+
+    def send_command(topic, name, command_body, target_actor):
+        """Publish one raw command; return (first reply or None, request correlation id).
+
+        The reply topic is unique per probe and subscribed BEFORE the publish, and it is
+        dropped again the moment the probe settles: a leaked IPC subscription counts
+        against the device's shared-connection quota for the rest of the run.
+        """
+        reply_topic = (
+            f"edgecommons/interop/scope/{run_id}/reply/{actor}/"
+            f"{target_actor}/{uuid.uuid4().hex}"
+        )
+        replies = []
+        reply_lock = threading.Lock()
+        first_reply = threading.Event()
+
+        def on_reply(_topic, reply):
+            with reply_lock:
+                replies.append({
+                    "correlation": reply.get_correlation_id(),
+                    "body": reply.get_body(),
+                })
+            first_reply.set()
+
+        provider.subscribe(reply_topic, on_reply, max_concurrency=1, max_messages=2)
+        try:
+            request = (
+                MessageBuilder.create(name, "1.0")
+                .with_command(command_body)
+                .with_reply_to(reply_topic)
+                .with_tags({})
+                .build()
+            )
+            correlation = request.get_correlation_id()
+            provider.publish(topic, request)
+            if not first_reply.wait(reply_timeout):
+                return None, correlation
+            with reply_lock:
+                return replies[0], correlation
+        finally:
+            provider.unsubscribe(reply_topic)
+
+    def probe_describe(base, target_actor):
+        """Probe 1 - the manifest carries a `scope` on every entry, ours included."""
+        reply, correlation = send_command(
+            f"{base}/cmd/describe", "describe", {"from": LANG}, target_actor
+        )
+        if reply is None:
+            return {"ok": False, "commands": None, "digest": None, "error": "timeout"}
+        body = reply["body"]
+        result = body.get("result") if isinstance(body, dict) else None
+        commands = result.get("commands") if isinstance(result, dict) else None
+        digest = result.get("digest") if isinstance(result, dict) else None
+        correlation_match = reply["correlation"] == correlation
+        ok = (
+            correlation_match
+            and isinstance(body, dict)
+            and body.get("ok") is True
+            and isinstance(commands, list)
+            and isinstance(digest, str)
+            and commands == GG_SCOPE_EXPECTED_COMMANDS
+        )
+        record = {
+            "ok": bool(ok),
+            "commands": commands,
+            "digest": digest if isinstance(digest, str) else None,
+        }
+        if not ok:
+            record["error"] = (
+                "correlation-mismatch" if not correlation_match else "manifest-mismatch"
+            )
+        return record
+
+    def probe_instance_routing(base, target_language, target_actor):
+        """Probe 2 - the topic token alone addresses the instance; the body names none."""
+        reply, _correlation = send_command(
+            f"{base}/{GG_SCOPE_INSTANCE_TOKEN}/cmd/{GG_SCOPE_PROBE_VERB}",
+            GG_SCOPE_PROBE_VERB,
+            {"from": LANG},
+            target_actor,
+        )
+        if reply is None:
+            return {
+                "ok": False, "addressed_instance": None, "reply_body": None,
+                "error": "timeout",
+            }
+        body = reply["body"]
+        result = body.get("result") if isinstance(body, dict) else None
+        addressed_instance = result.get("instance") if isinstance(result, dict) else None
+        ok = (
+            isinstance(body, dict)
+            and body.get("ok") is True
+            and isinstance(result, dict)
+            and addressed_instance == GG_SCOPE_INSTANCE_TOKEN
+            and result.get("probe") == target_language
+        )
+        record = {
+            "ok": bool(ok),
+            "addressed_instance": addressed_instance,
+            "reply_body": result,
+        }
+        if not ok:
+            record["error"] = "unexpected-reply"
+        return record
+
+    def probe_rejection(topic, verb, command_body, expected_message, target_actor):
+        """Probes 3 and 4 - a coded BAD_ARGS refusal whose message is byte-exact."""
+        reply, _correlation = send_command(topic, verb, command_body, target_actor)
+        if reply is None:
+            return {"ok": False, "code": None, "message": None, "error": "timeout"}
+        body = reply["body"]
+        error = body.get("error") if isinstance(body, dict) else None
+        code = error.get("code") if isinstance(error, dict) else None
+        message = error.get("message") if isinstance(error, dict) else None
+        ok = (
+            isinstance(body, dict)
+            and body.get("ok") is False
+            and code == "BAD_ARGS"
+            and message == expected_message
+        )
+        record = {"ok": bool(ok), "code": code, "message": message}
+        if not ok:
+            record["error"] = "unexpected-rejection"
+        return record
+
+    try:
+        config_path = _gg_p1_runtime_config(f"interop-scope-{actor}")
+        runtime = EdgeCommons(
+            f"com.mbreissi.edgecommons.interop.{LANG}.ScopeResponder",
+            _gg_p1_runtime_args(config_path),
+        )
+        inbox = runtime.get_commands()
+        if inbox is None:
+            raise RuntimeError("runtime did not expose command inbox")
+
+        def probe_handler(request, addressed_instance):
+            return {"probe": LANG, "actor": actor, "instance": addressed_instance}
+
+        def discover_handler(request, addressed_instance):
+            return {"discover": LANG, "actor": actor, "instance": addressed_instance}
+
+        inbox.register(GG_SCOPE_PROBE_VERB, CommandScope.INSTANCE, probe_handler)
+        inbox.register(GG_SCOPE_DISCOVER_VERB, CommandScope.COMPONENT, discover_handler)
+        print("READY", flush=True)
+        with open(_gg_scope_ready_path(run_id, actor), "w", encoding="utf-8") as f:
+            f.write(str(time.time()))
+
+        ready_missing = _gg_scope_wait_for_ready(run_id, expected_actors)
+        time.sleep(subscribe_delay)
+        targets = {}
+        if not ready_missing and canonical_actor:
+            for target_language in languages:
+                target_actor = _gg_p1_target_actor(target_language, actor)
+                base = _gg_scope_base_topic(target_actor)
+                record = {"target_actor": target_actor}
+                targets[target_language] = record
+                try:
+                    record["describe"] = probe_describe(base, target_actor)
+                    record["instance_routing"] = probe_instance_routing(
+                        base, target_language, target_actor
+                    )
+                    record["conflict"] = probe_rejection(
+                        f"{base}/{GG_SCOPE_INSTANCE_TOKEN}/cmd/{GG_SCOPE_PROBE_VERB}",
+                        GG_SCOPE_PROBE_VERB,
+                        {"from": LANG, "instance": "other"},
+                        GG_SCOPE_CONFLICT_MESSAGE,
+                        target_actor,
+                    )
+                    record["component_scope"] = probe_rejection(
+                        f"{base}/{GG_SCOPE_INSTANCE_TOKEN}/cmd/{GG_SCOPE_DISCOVER_VERB}",
+                        GG_SCOPE_DISCOVER_VERB,
+                        {"from": LANG},
+                        GG_SCOPE_COMPONENT_MESSAGE,
+                        target_actor,
+                    )
+                except Exception as exc:  # pragma: no cover - exercised on device
+                    # One unreachable target must not abort the rest of the matrix.
+                    errors[f"probe:{target_language}"] = str(exc)
+
+        with open(_gg_scope_done_path(run_id, actor), "w", encoding="utf-8") as f:
+            f.write(str(time.time()))
+        done_missing = _gg_scope_wait_for_done(
+            run_id,
+            [peer for peer in expected_actors if peer != "rustpeer"],
+            wait_secs,
+        )
+
+        probes_ok = (not canonical_actor) or all(
+            isinstance(targets.get(language), dict)
+            and all(
+                isinstance(targets[language].get(key), dict)
+                and targets[language][key].get("ok") is True
+                for key in GG_SCOPE_PROBE_KEYS
+            )
+            for language in languages
+        )
+        ok = bool(not ready_missing and not errors and probes_ok)
+        result = {
+            "schema": "edgecommons.gg-ipc-scope.v1",
+            "ok": ok,
+            "run_id": run_id,
+            "actor": actor,
+            "language": LANG,
+            "canonical_actor": canonical_actor,
+            "ready_missing": ready_missing,
+            "done_missing": done_missing,
+            "targets": targets,
+            "errors": errors,
+        }
+        with open(_gg_scope_result_path(run_id, actor), "w", encoding="utf-8") as f:
+            json.dump(result, f, sort_keys=True)
+        print(json.dumps(result, sort_keys=True), flush=True)
+        return 0 if ok else 1
+    finally:
+        if runtime is not None:
+            runtime.shutdown()
+        if config_path:
+            try:
+                os.unlink(config_path)
+            except OSError:
+                pass
+        provider.disconnect()
+
+
 def run_gg_log_matrix(run_id, langs_csv, _unused=None):
     from edgecommons.messaging.providers.greengrass.greengrass_ipc import GreengrassIpcProvider
 
@@ -1736,6 +2083,9 @@ if __name__ == "__main__":
         sys.exit(run_gg_binary_matrix(sys.argv[2], sys.argv[3], sys.argv[4]))
     elif role == "gg-p1-matrix":
         sys.exit(run_gg_p1_matrix(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else None))
+    elif role == "gg-scope-matrix":
+        sys.exit(run_gg_scope_matrix(sys.argv[2], sys.argv[3],
+                                     sys.argv[4] if len(sys.argv) > 4 else None))
     elif role == "uns-pub":
         sys.exit(run_uns_pub(sys.argv[2], sys.argv[3],
                              sys.argv[4] if len(sys.argv) > 4 else None))
