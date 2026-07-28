@@ -33,7 +33,8 @@ pub mod validate;
 pub mod workspace;
 
 pub use ports::{
-    BlobPort, DraftPort, GitPort, HostPort, IdentityPort, MergeResult, RunnerPort, TargetsPort,
+    BlobPort, DraftPort, GitPort, HostPort, IdentityPort, MergeResult, ReviewSubmission,
+    RunnerPort, TargetsPort,
 };
 
 /// The normative DeploymentDefinition JSON Schema (`edgecommons.io/v1alpha1`), embedded so

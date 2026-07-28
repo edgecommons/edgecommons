@@ -69,9 +69,10 @@ function DraftRow({
   draft, profile, touches,
 }: { draft: DraftSummary; profile: string; touches: boolean }) {
   const [status, setStatus] = useState<DraftStatus | null>(null);
-  const [apply, setApply] = useState<{ applied: boolean; url: string | null; reason?: string } | null>(null);
+  const [submitted, setSubmitted] =
+    useState<{ applied: boolean; opened?: boolean; url?: string | null; term?: string; reason?: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [applying, setApplying] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   async function review() {
     setBusy(true);
@@ -80,20 +81,18 @@ function DraftRow({
     finally { setBusy(false); }
   }
 
-  // Apply pushes the draft branch and opens its pull request, gated by CODEOWNERS on the host —
-  // the Studio never merges. It degrades to a stated instruction when no host is configured.
-  async function doApply() {
-    setApplying(true);
-    try {
-      const r = await api.applyDraft(draft.ref, draft.title);
-      setApply(r);
-      if (r.applied && r.url) window.open(r.url, "_blank", "noopener");
-    } catch (e) {
-      setApply({ applied: false, url: null, reason: (e as Error).message });
-    } finally {
-      setApplying(false);
-    }
+  // Submitting pushes the draft branch and opens the host's review request (a pull request, a merge
+  // request, … — derived from the remote, never assumed to be GitHub). The host's code owners gate
+  // the merge; the Studio never merges, and never throws the raw host page at the author — it hands
+  // back a link they can follow when they choose.
+  async function submit() {
+    setSubmitting(true);
+    try { setSubmitted(await api.submitForReview(draft.ref, draft.title)); }
+    catch (e) { setSubmitted({ applied: false, reason: (e as Error).message }); }
+    finally { setSubmitting(false); }
   }
+
+  const term = submitted?.term ?? "review request";
 
   return (
     <div className="ec-draft">
@@ -107,8 +106,8 @@ function DraftRow({
         <Button size="sm" kind="tertiary" disabled={busy} onClick={review}>
           {busy ? "Reviewing…" : "Review conflicts"}
         </Button>
-        <Button size="sm" kind="ghost" disabled={applying} onClick={doApply}>
-          {applying ? "Applying…" : "Apply — open pull request"}
+        <Button size="sm" kind="ghost" disabled={submitting} onClick={submit}>
+          {submitting ? "Submitting…" : "Submit for review"}
         </Button>
       </div>
 
@@ -132,12 +131,22 @@ function DraftRow({
         </>
       ))}
 
-      {apply && (apply.applied ? (
-        <InlineNotification kind="success" lowContrast hideCloseButton title="Pull request opened"
-          subtitle={apply.url ? `Review and merge on your Git host: ${apply.url}` : "Opened on your Git host."} />
+      {submitted && (submitted.applied ? (
+        <div className="ec-note">
+          <strong>
+            {submitted.opened ? `Opened a ${term}` : `Branch pushed — open the ${term}`}
+          </strong>{" "}
+          on your Git host, where its code owners gate the merge. The Studio never merges.
+          {submitted.url && (
+            <div style={{ marginTop: "0.4rem" }}>
+              <a href={submitted.url} target="_blank" rel="noopener">Open on your Git host →</a>
+            </div>
+          )}
+        </div>
       ) : (
         <p className="ec-sub">
-          {apply.reason ?? "Apply unavailable."} The Studio never merges — CODEOWNERS gates the merge.
+          {submitted.reason ?? "Submit unavailable."} The Studio never merges — the host's code owners
+          gate the merge.
         </p>
       ))}
     </div>

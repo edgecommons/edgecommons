@@ -254,12 +254,34 @@ fn the_current_branch_is_the_default_pr_base() {
 }
 
 #[test]
-fn apply_is_unavailable_without_a_github_remote() {
-    // A local clone with no remote (or a non-GitHub remote) cannot apply — the UI degrades to a
-    // stated manual instruction rather than a broken action.
+fn apply_is_unavailable_without_a_remote() {
+    // A local clone with no remote cannot apply — the UI degrades to a stated manual instruction.
+    let dir = repo();
+    assert!(!HostPort::available(&local_git(dir.path())));
+}
+
+#[test]
+fn a_configured_remote_makes_apply_available_and_parses_host_agnostically() {
     let dir = repo();
     let g = local_git(dir.path());
-    assert!(!HostPort::available(&g));
+    // A GitHub remote — but the same path works for any host; nothing here assumes github.com.
+    git(
+        dir.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:edgecommons/demo.git",
+        ],
+    );
+    assert!(HostPort::available(&g));
+    let r = ec_adapters::origin_remote(&g).expect("parsed remote");
+    assert_eq!(r.host, "github.com");
+    assert_eq!(r.path, "edgecommons/demo");
+    assert_eq!(
+        ec_adapters::review_page_url(&r, "draft/x-01").unwrap(),
+        "https://github.com/edgecommons/demo/pull/new/draft/x-01"
+    );
 }
 
 #[test]

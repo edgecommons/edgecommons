@@ -73,18 +73,34 @@ pub trait DraftPort {
 /// deployment swaps in a GitHub App user-to-server adapter behind this same trait; nothing above it
 /// changes.
 pub trait HostPort {
-    /// Whether apply is possible now: a Git host remote is configured and its CLI is available.
-    /// `false` degrades apply to a stated manual instruction, never a broken action.
+    /// Whether apply is possible now: a Git host remote is configured to push to. `false` degrades
+    /// apply to a stated manual instruction, never a broken action.
     fn available(&self) -> bool;
-    /// Push a draft branch to the host so a pull request can be opened for it.
+    /// Push a draft branch to the host so a review request can be opened for it.
     fn push_draft(&self, git_ref: &str) -> Result<(), PortError>;
-    /// Open a pull request for a draft and return its URL. Gated by CODEOWNERS on the host.
-    fn open_pull_request(
+    /// Open a review request (a pull request, merge request, … depending on the host) for a draft,
+    /// gated by the host's code-owner rules. **Host-agnostic:** the host, its URL scheme, its CLI,
+    /// and its vocabulary are all derived from the remote, never assumed to be GitHub.
+    fn open_review_request(
         &self,
         git_ref: &str,
         base: &str,
         title: &str,
-    ) -> Result<String, PortError>;
+    ) -> Result<ReviewSubmission, PortError>;
+}
+
+/// The outcome of opening a review request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewSubmission {
+    /// The review request's URL — opened automatically, or a create page for the operator to submit.
+    /// `None` for an unrecognised host: the branch is pushed, and the operator opens the request.
+    pub url: Option<String>,
+    /// The host's own term for a review request (`pull request`, `merge request`, …), so the UI can
+    /// use the word the operator's host uses.
+    pub term: String,
+    /// `true` when the Studio opened it automatically (a matching host CLI was available); `false`
+    /// when `url` is a create page the operator finishes (the branch is already pushed).
+    pub opened: bool,
 }
 
 /// The outcome of a merge-tree computation.

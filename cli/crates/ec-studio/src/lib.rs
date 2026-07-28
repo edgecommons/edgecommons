@@ -144,7 +144,6 @@ fn router(state: Arc<AppState>) -> Router {
         .route("/api/drafts", get(list_drafts).post(open_draft))
         .route("/api/drafts/edit", axum::routing::post(edit_layer))
         .route("/api/drafts/status", get(draft_status))
-        .route("/api/drafts/pr-url", get(draft_pr_url))
         .route("/api/drafts/apply", axum::routing::post(apply_draft))
         .fallback(get(serve_ui))
         .with_state(state)
@@ -534,21 +533,11 @@ async fn list_drafts(State(state): State<Arc<AppState>>) -> Response {
 }
 
 /// The pull-request-create URL for a draft, derived from a GitHub `origin` remote. `null` when the
-/// clone has no GitHub remote — apply then degrades to a stated instruction, never a broken link.
-#[derive(Deserialize)]
-struct RefQuery {
-    #[serde(rename = "ref")]
-    git_ref: String,
-}
-
-async fn draft_pr_url(State(state): State<Arc<AppState>>, Query(q): Query<RefQuery>) -> Response {
-    let url = ec_adapters::github_pr_url(&state.git(), &q.git_ref);
-    axum::Json(json!({ "url": url })).into_response()
-}
-
-/// Apply a draft: push its branch to the host and open the pull request (register #16). Gated by
-/// CODEOWNERS on the host — the Studio never merges. When no host is configured, it degrades to a
-/// stated manual instruction rather than a broken action. Outward-facing, so a `POST`.
+/// Submit a draft for review: push its branch and open the host's review request — a pull request, a
+/// merge request, … derived from the remote, never assumed to be GitHub (register #16). Gated by the
+/// host's code-owner rules — the Studio never merges. When no remote is configured, or the host has no
+/// supported CLI, it degrades: the branch is pushed and the create page (or a stated instruction) is
+/// returned. Outward-facing, so a `POST`.
 #[derive(Deserialize)]
 struct ApplyReq {
     #[serde(rename = "ref")]
@@ -564,9 +553,8 @@ async fn apply_draft(State(state): State<Arc<AppState>>, body: axum::Json<ApplyR
     if !host.available() {
         return axum::Json(json!({
             "applied": false,
-            "url": Value::Null,
-            "reason": "No GitHub remote or gh CLI on this clone — push the draft branch and open the \
-                       pull request on your Git host. Apply is gated by CODEOWNERS.",
+            "reason": "No Git remote is configured on this clone. Add one, or push the draft branch \
+                       and open a review request on your host — its code owners gate the merge.",
         }))
         .into_response();
     }
@@ -576,9 +564,15 @@ async fn apply_draft(State(state): State<Arc<AppState>>, body: axum::Json<ApplyR
         .unwrap_or_else(|| "main".to_string());
     match host
         .push_draft(&req.git_ref)
-        .and_then(|()| host.open_pull_request(&req.git_ref, &base, &req.title))
+        .and_then(|()| host.open_review_request(&req.git_ref, &base, &req.title))
     {
-        Ok(url) => axum::Json(json!({ "applied": true, "url": url })).into_response(),
+        Ok(sub) => axum::Json(json!({
+            "applied": true,
+            "opened": sub.opened,
+            "url": sub.url,
+            "term": sub.term,
+        }))
+        .into_response(),
         Err(e) => ApiError(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response(),
     }
 }
@@ -846,11 +840,6 @@ profiles:
             "layers/telemetry.json"
         );
 
-        // With no GitHub remote, the PR URL degrades to null rather than a broken link.
-        let (s, pr) = get(&app, &format!("/api/drafts/pr-url?ref={git_ref}")).await;
-        assert_eq!(s, StatusCode::OK);
-        assert_eq!(pr["url"], Value::Null);
-
         // …and status runs the conflict check (clean here — nothing moved under it).
         let (s, status) = get(
             &app,
@@ -878,8 +867,8 @@ profiles:
     }
 
     #[tokio::test]
-    async fn apply_without_a_host_degrades_to_a_manual_instruction() {
-        // No GitHub remote on the fixture, so apply cannot push/open a PR — it must say so, not fail.
+    async fn apply_without_a_remote_degrades_to_a_manual_instruction() {
+        // No remote on the fixture, so apply cannot push — it must say so, not fail.
         let (_d, state) = git_fixture();
         run_git(&state.loaded.root, &["branch", "draft/x-01", "HEAD"]);
         let app = router(state);
@@ -891,30 +880,8 @@ profiles:
         .await;
         assert_eq!(s, StatusCode::OK);
         assert_eq!(body["applied"], false);
-        assert_eq!(body["url"], Value::Null);
-        assert!(body["reason"].as_str().unwrap().contains("CODEOWNERS"));
-    }
-
-    #[tokio::test]
-    async fn a_github_remote_yields_a_pr_url() {
-        let (_d, state) = git_fixture();
-        run_git(
-            &state.loaded.root,
-            &[
-                "remote",
-                "add",
-                "origin",
-                "git@github.com:edgecommons/demo.git",
-            ],
-        );
-        run_git(&state.loaded.root, &["branch", "draft/x-01", "HEAD"]);
-        let app = router(state);
-        let (s, pr) = get(&app, "/api/drafts/pr-url?ref=draft/x-01").await;
-        assert_eq!(s, StatusCode::OK);
-        assert_eq!(
-            pr["url"],
-            "https://github.com/edgecommons/demo/pull/new/draft/x-01"
-        );
+        // Host-agnostic wording — no GitHub assumption; the host's code owners gate the merge.
+        assert!(body["reason"].as_str().unwrap().contains("code owners"));
     }
 
     #[test]

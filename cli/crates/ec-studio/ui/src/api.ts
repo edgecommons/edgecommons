@@ -130,7 +130,7 @@ export const api = {
     post<{ ok: boolean }>("/api/drafts/edit", { ref, path, contents }),
   draftStatus: (ref: string, profile: string) =>
     get<DraftStatus>(`/api/drafts/status?ref=${encodeURIComponent(ref)}&profile=${encodeURIComponent(profile)}`),
-  prUrl: (ref: string) => get<{ url: string | null }>(`/api/drafts/pr-url?ref=${encodeURIComponent(ref)}`),
-  applyDraft: (ref: string, title: string) =>
-    post<{ applied: boolean; url: string | null; reason?: string }>("/api/drafts/apply", { ref, title }),
+  submitForReview: (ref: string, title: string) =>
+    post<{ applied: boolean; opened?: boolean; url?: string | null; term?: string; reason?: string }>(
+      "/api/drafts/apply", { ref, title }),
 };

@@ -736,7 +736,12 @@ path begins enforcing. No redesign, no flag.
 Authoring is the write path, and it honours the concurrency contract §8.4 records: **optimistic
 concurrency, no locks, and conflict detection that is semantic at the effective-config level.** A draft
 is a **named change** — the author supplies a title, the ref (`draft/<slug>-<id>`) is derived, and the
-vocabulary is **propose → review → apply**. Apply is the Git host's PR merge, gated by CODEOWNERS.
+vocabulary is **propose → review → apply**. Apply opens a **review request** — a pull request, a merge
+request, … — on whatever Git host the remote points at, gated by that host's code-owner rules. **The
+host is never assumed to be GitHub:** the host kind, its review-request URL, its CLI, and even the word
+shown to the operator are all derived from the remote (`github.com`/GitHub Enterprise → `gh` pull
+requests; GitLab → `glab` merge requests; an unrecognised host → the branch is pushed and the operator
+opens the request). The Studio never merges.
 
 The lifecycle is a small verb group and a new write port, built as slices:
 
@@ -746,10 +751,14 @@ The lifecycle is a small verb group and a new write port, built as slices:
   the blob, build the tree in a throwaway index, `commit-tree`, move the ref — so the read-only server
   keeps serving while a draft is authored.
 - **The `DraftPort`** (§8.2, built) is the write half of the source of truth; the read `GitPort` needs
-  no write access. Its local adapter drives `git`; production is a Git host reached with a **bot/App
-  identity behind the same trait**, so per-user acting-as-user OAuth is a later adapter swap, not a
-  redesign (register #16). The committer is the Studio; a later slice sets the *author* to the real
-  actor from the identity port.
+  no write access. Its local adapter drives `git`. The committer is the Studio; a later slice sets the
+  *author* to the real actor from the identity port.
+- **The `HostPort`** (§8.2, built) is apply: `push_draft` then `open_review_request` → a
+  `ReviewSubmission` (url, the host's term, whether it was opened). Its adapter uses the operator's
+  existing `git`/`gh`/`glab` credentials, so it acts as the authenticated user and the host enforces
+  their permissions and code-owner rules. A hosted multi-user deployment swaps in a user-to-server App
+  adapter behind this same trait, so per-user acting-as-user auth is a later adapter swap, not a
+  redesign (register #16).
 
 **Semantic conflict detection (the load-bearing rule).** Because `render` is a deterministic pure
 function of the files at a commit, `status` renders four points — `base` (the draft's merge-base with
@@ -762,10 +771,12 @@ drafts touching *different files* that both feed one node — a clean merge with
 config. A textual merge Git cannot resolve is reported first, as a hard conflict, before the semantic
 pass runs.
 
-**Not yet built (later slices):** the node-anchored layer *editor* UI and its live declared-write panel;
-draft orchestration in the UI (the draft list, advisory presence, conflict surfacing, apply-as-PR); and
-the GitHub App credential adapter. The engine and its CLI surface exist and are proven end to end (a
-semantic conflict detected from a textually-clean, different-files merge, against a real Git repo).
+**Built (slices 1–4):** the engine + CLI, the node-anchored layer *editor* UI with its live
+declared-write panel, draft orchestration (the draft list, advisory presence, review, submit-for-review),
+and the host-agnostic apply adapter (`git`/`gh`/`glab`, GitHub/GitHub Enterprise/GitLab). Proven end to
+end, including a semantic conflict detected from a textually-clean, different-files merge against a real
+Git repo. **Not yet built:** the hosted multi-user user-to-server App adapter (behind the same
+`HostPort`; needs a registered App + a hosting/callback decision).
 
 ---
 

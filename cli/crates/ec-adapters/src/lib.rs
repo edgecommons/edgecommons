@@ -562,46 +562,154 @@ pub fn draft_changed_files(
         .collect()
 }
 
-/// The pull-request-create URL for a draft branch, derived from the `origin` remote when it is a
-/// GitHub remote. `None` when there is no GitHub remote (e.g. a purely local clone) — apply then
-/// degrades to a stated instruction rather than a broken link. The Studio never opens the PR itself
-/// here; acting as the user to push and open it is the credential-adapter slice.
-#[must_use]
-pub fn github_pr_url(git: &LocalGit, draft_ref: &str) -> Option<String> {
-    let url = git.git_ok(&["remote", "get-url", "origin"]).ok()?;
-    let (owner, repo) = parse_github_remote(url.trim())?;
-    Some(format!(
-        "https://github.com/{owner}/{repo}/pull/new/{draft_ref}"
-    ))
+/// A Git remote broken into its host and project path — host-agnostic, so the same adapter drives
+/// GitHub, GitHub Enterprise, GitLab (incl. self-hosted and subgroups), and others.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteInfo {
+    /// The host, e.g. `github.com`, `github.acme.com`, `gitlab.com`, `git.internal`.
+    pub host: String,
+    /// The project path, e.g. `edgecommons/bottling-company-test` (GitLab may nest: `grp/sub/repo`).
+    pub path: String,
 }
 
-/// The `gh pr create` arguments for a draft — pure, so the command is testable without running it.
-/// The body states the change was proposed via the Studio and that CODEOWNERS gates the merge.
+/// The kind of Git host, which decides the review-request URL scheme, CLI, and vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostKind {
+    /// GitHub.com or GitHub Enterprise — pull requests, driven by `gh`.
+    GitHub,
+    /// GitLab.com or self-hosted GitLab — merge requests, driven by `glab`.
+    GitLab,
+    /// A host we do not recognise: push works, but the review request is opened by the operator.
+    Other,
+}
+
+impl HostKind {
+    /// The host's own term for a review request — shown in the UI so the word matches the host.
+    #[must_use]
+    pub fn review_term(self) -> &'static str {
+        match self {
+            HostKind::GitHub => "pull request",
+            HostKind::GitLab => "merge request",
+            HostKind::Other => "review request",
+        }
+    }
+}
+
+/// Classify a host. Known SaaS domains are exact; self-hosted is inferred from the host name
+/// (`github.*`/GHE, `*gitlab*`), and anything else is `Other` — pushed, but opened by the operator.
 #[must_use]
-pub fn pr_create_args(git_ref: &str, base: &str, title: &str) -> Vec<String> {
-    [
-        "pr",
-        "create",
-        "--head",
-        git_ref,
-        "--base",
-        base,
-        "--title",
-        title,
-        "--body",
-        "Proposed via Deployment Studio. Review and merge here — CODEOWNERS gates the merge.",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect()
+pub fn host_kind(host: &str) -> HostKind {
+    let h = host.to_ascii_lowercase();
+    if h == "github.com" || h.starts_with("github.") || h.contains("github") {
+        HostKind::GitHub
+    } else if h == "gitlab.com" || h.starts_with("gitlab.") || h.contains("gitlab") {
+        HostKind::GitLab
+    } else {
+        HostKind::Other
+    }
+}
+
+/// Parse any Git remote URL (https, `git@host:path`, `ssh://git@host/path`) into host + project
+/// path. Not host-specific — the point of the port is that the host is pluggable.
+#[must_use]
+pub fn parse_remote(url: &str) -> Option<RemoteInfo> {
+    let url = url.trim();
+    let (host, path) = if let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .or_else(|| url.strip_prefix("ssh://"))
+    {
+        // Drop any `user@` before the host, then split host / path on the first slash.
+        let rest = rest.rsplit_once('@').map_or(rest, |(_, r)| r);
+        rest.split_once('/')?
+    } else if let Some(rest) = url.strip_prefix("git@") {
+        // scp-style: `git@host:owner/repo`.
+        rest.split_once(':')?
+    } else {
+        return None;
+    };
+    let path = path
+        .trim_end_matches('/')
+        .strip_suffix(".git")
+        .unwrap_or(path.trim_end_matches('/'));
+    if host.is_empty() || path.is_empty() || !path.contains('/') {
+        return None;
+    }
+    Some(RemoteInfo {
+        host: host.to_string(),
+        path: path.to_string(),
+    })
+}
+
+/// The `origin` remote parsed to host + path, or `None` for a purely local clone.
+#[must_use]
+pub fn origin_remote(git: &LocalGit) -> Option<RemoteInfo> {
+    parse_remote(&git.git_ok(&["remote", "get-url", "origin"]).ok()?)
+}
+
+/// The host's web page to open a review request for `branch` — pull-request or merge-request create
+/// page depending on the host. `None` for an unrecognised host (the operator opens it themselves).
+#[must_use]
+pub fn review_page_url(remote: &RemoteInfo, branch: &str) -> Option<String> {
+    match host_kind(&remote.host) {
+        HostKind::GitHub => Some(format!(
+            "https://{}/{}/pull/new/{branch}",
+            remote.host, remote.path
+        )),
+        HostKind::GitLab => Some(format!(
+            "https://{}/{}/-/merge_requests/new?merge_request%5Bsource_branch%5D={branch}",
+            remote.host, remote.path
+        )),
+        HostKind::Other => None,
+    }
+}
+
+/// The CLI arguments to open a review request, per host CLI — pure, so testable without running them.
+/// `gh pr create` / `glab mr create`; the body names CODEOWNERS (or the host's approval rules) as the
+/// gate. `None` for a host with no supported CLI.
+#[must_use]
+pub fn review_create_args(
+    kind: HostKind,
+    git_ref: &str,
+    base: &str,
+    title: &str,
+) -> Option<Vec<String>> {
+    let body = "Proposed via Deployment Studio. Review and merge here — the host's code owners gate the merge.";
+    let args: Vec<&str> = match kind {
+        HostKind::GitHub => vec![
+            "pr", "create", "--head", git_ref, "--base", base, "--title", title, "--body", body,
+        ],
+        HostKind::GitLab => vec![
+            "mr",
+            "create",
+            "--source-branch",
+            git_ref,
+            "--target-branch",
+            base,
+            "--title",
+            title,
+            "--description",
+            body,
+            "--yes",
+        ],
+        HostKind::Other => return None,
+    };
+    Some(args.into_iter().map(str::to_string).collect())
+}
+
+fn host_cli(kind: HostKind) -> Option<&'static str> {
+    match kind {
+        HostKind::GitHub => Some("gh"),
+        HostKind::GitLab => Some("glab"),
+        HostKind::Other => None,
+    }
 }
 
 impl ec_deploy::ports::HostPort for LocalGit {
     fn available(&self) -> bool {
-        // Apply needs a Git-host CLI and a host remote to act against. We check for GitHub
-        // specifically, since that is the host this adapter drives; a different host is a different
-        // adapter behind the same port.
-        which("gh").is_some() && github_pr_url(self, "_probe").is_some()
+        // Apply needs somewhere to push. Any remote qualifies: for a known host we open the review
+        // request, for an unknown one we push and hand off. No remote → apply is unavailable.
+        origin_remote(self).is_some()
     }
 
     fn push_draft(&self, git_ref: &str) -> Result<(), PortError> {
@@ -609,54 +717,58 @@ impl ec_deploy::ports::HostPort for LocalGit {
         self.git_ok(&["push", "-u", "origin", git_ref]).map(|_| ())
     }
 
-    fn open_pull_request(
+    fn open_review_request(
         &self,
         git_ref: &str,
         base: &str,
         title: &str,
-    ) -> Result<String, PortError> {
-        let args = pr_create_args(git_ref, base, title);
-        // `gh` runs in the repo and acts as the authenticated user; the host enforces their
-        // permissions and CODEOWNERS. The Studio never merges — it only opens the request.
-        let out = std::process::Command::new("gh")
-            .current_dir(&self.root.0)
-            .args(&args)
-            .output()
-            .map_err(|e| PortError::Unavailable(format!("gh: {e}")))?;
-        if !out.status.success() {
-            return Err(PortError::Other(
-                String::from_utf8_lossy(&out.stderr).trim().to_string(),
-            ));
+    ) -> Result<ec_deploy::ports::ReviewSubmission, PortError> {
+        let remote =
+            origin_remote(self).ok_or_else(|| PortError::Unavailable("no origin remote".into()))?;
+        let kind = host_kind(&remote.host);
+        let term = kind.review_term().to_string();
+        let page = review_page_url(&remote, git_ref);
+
+        // If the host's CLI is present, open the request as the authenticated user; the host enforces
+        // their permissions and code-owner rules. The Studio never merges — it only opens the request.
+        if let (Some(cli), Some(args)) = (
+            host_cli(kind).filter(|c| which(c).is_some()),
+            review_create_args(kind, git_ref, base, title),
+        ) {
+            let out = std::process::Command::new(cli)
+                .current_dir(&self.root.0)
+                .args(&args)
+                .output()
+                .map_err(|e| PortError::Unavailable(format!("{cli}: {e}")))?;
+            if out.status.success() {
+                if let Some(url) = String::from_utf8_lossy(&out.stdout)
+                    .split_whitespace()
+                    .find(|t| t.starts_with("https://"))
+                {
+                    return Ok(ec_deploy::ports::ReviewSubmission {
+                        url: Some(url.to_string()),
+                        term,
+                        opened: true,
+                    });
+                }
+            }
+            // CLI present but the create failed (e.g. not authenticated): fall through to the page,
+            // so the operator can finish it — the branch is already pushed.
         }
-        // `gh pr create` prints the PR URL; take the first URL it emits.
-        String::from_utf8_lossy(&out.stdout)
-            .split_whitespace()
-            .find(|t| t.starts_with("https://"))
-            .map(str::to_string)
-            .ok_or_else(|| PortError::Other("gh did not return a pull-request URL".into()))
+        Ok(ec_deploy::ports::ReviewSubmission {
+            url: page,
+            term,
+            opened: false,
+        })
     }
 }
 
-/// The branch the working tree is on — the default base for a draft's pull request.
+/// The branch the working tree is on — the default target for a draft's review request.
 #[must_use]
 pub fn current_branch(git: &LocalGit) -> Option<String> {
     git.git_ok(&["rev-parse", "--abbrev-ref", "HEAD"])
         .ok()
         .filter(|b| b != "HEAD")
-}
-
-/// Parse `owner/repo` from a GitHub remote URL (https or ssh); `None` if it is not GitHub.
-fn parse_github_remote(url: &str) -> Option<(String, String)> {
-    let rest = url
-        .strip_prefix("https://github.com/")
-        .or_else(|| url.strip_prefix("git@github.com:"))
-        .or_else(|| url.strip_prefix("ssh://git@github.com/"))?;
-    let rest = rest.strip_suffix(".git").unwrap_or(rest);
-    let (owner, repo) = rest.split_once('/')?;
-    if owner.is_empty() || repo.is_empty() {
-        return None;
-    }
-    Some((owner.to_string(), repo.to_string()))
 }
 
 /// Render a definition **at a Git ref** (a commit or a tree-ish, so a merge-tree OID works). The
@@ -885,38 +997,105 @@ mod tests {
     }
 
     #[test]
-    fn github_remotes_parse_to_owner_repo() {
+    fn remotes_parse_host_and_path_for_any_host() {
+        // GitHub, GitHub Enterprise, GitLab (incl. a subgroup), https + ssh + scp forms.
+        let g = |u: &str| parse_remote(u).unwrap();
         assert_eq!(
-            parse_github_remote("https://github.com/edgecommons/edgecommons.git"),
-            Some(("edgecommons".into(), "edgecommons".into()))
+            g("https://github.com/edgecommons/edgecommons.git").host,
+            "github.com"
         );
         assert_eq!(
-            parse_github_remote("git@github.com:edgecommons/bottling-company-test.git"),
-            Some(("edgecommons".into(), "bottling-company-test".into()))
+            g("https://github.com/edgecommons/edgecommons.git").path,
+            "edgecommons/edgecommons"
+        );
+        assert_eq!(g("git@github.com:edgecommons/bct.git").host, "github.com");
+        assert_eq!(
+            g("https://github.acme.internal/team/repo.git").host,
+            "github.acme.internal"
         );
         assert_eq!(
-            parse_github_remote("https://github.com/o/r"),
-            Some(("o".into(), "r".into()))
+            g("git@gitlab.com:group/subgroup/app.git").path,
+            "group/subgroup/app"
         );
-        // Not GitHub, or malformed: no URL invented.
-        assert_eq!(parse_github_remote("https://gitlab.com/o/r.git"), None);
-        assert_eq!(parse_github_remote("git@github.com:onlyowner"), None);
+        assert_eq!(
+            g("ssh://git@git.corp.example/eng/site").host,
+            "git.corp.example"
+        );
+        // Not a project path, or unparseable: no remote invented.
+        assert_eq!(parse_remote("git@github.com:onlyowner"), None);
+        assert_eq!(parse_remote("/tmp/local-bare"), None);
     }
 
     #[test]
-    fn pr_create_args_target_the_draft_branch() {
-        let args = pr_create_args("draft/lower-x-01", "main", "Lower x");
-        assert_eq!(args[0], "pr");
-        assert_eq!(args[1], "create");
-        // The head is the draft branch, the base is the target, the title is the change name.
-        let head = args.iter().position(|a| a == "--head").unwrap();
-        assert_eq!(args[head + 1], "draft/lower-x-01");
-        let base = args.iter().position(|a| a == "--base").unwrap();
-        assert_eq!(args[base + 1], "main");
-        let title = args.iter().position(|a| a == "--title").unwrap();
-        assert_eq!(args[title + 1], "Lower x");
-        // The body names CODEOWNERS as the gate — the Studio never merges.
-        assert!(args.iter().any(|a| a.contains("CODEOWNERS")));
+    fn host_kind_recognises_github_gitlab_and_self_hosted() {
+        assert_eq!(host_kind("github.com"), HostKind::GitHub);
+        assert_eq!(host_kind("github.acme.internal"), HostKind::GitHub); // GHE
+        assert_eq!(host_kind("gitlab.com"), HostKind::GitLab);
+        assert_eq!(host_kind("gitlab.corp.example"), HostKind::GitLab); // self-hosted GitLab
+        assert_eq!(host_kind("bitbucket.org"), HostKind::Other);
+    }
+
+    #[test]
+    fn review_urls_and_terms_are_host_specific_not_github() {
+        let gh = RemoteInfo {
+            host: "github.com".into(),
+            path: "o/r".into(),
+        };
+        let ghe = RemoteInfo {
+            host: "github.acme.internal".into(),
+            path: "o/r".into(),
+        };
+        let gl = RemoteInfo {
+            host: "gitlab.com".into(),
+            path: "grp/sub/app".into(),
+        };
+        let other = RemoteInfo {
+            host: "bitbucket.org".into(),
+            path: "o/r".into(),
+        };
+
+        assert_eq!(
+            review_page_url(&gh, "draft/x-01").unwrap(),
+            "https://github.com/o/r/pull/new/draft/x-01"
+        );
+        // GitHub Enterprise uses the SELF-HOSTED host, not github.com.
+        assert!(
+            review_page_url(&ghe, "draft/x-01")
+                .unwrap()
+                .starts_with("https://github.acme.internal/o/r/pull/new/")
+        );
+        // GitLab is a merge request, with GitLab's URL scheme.
+        assert!(
+            review_page_url(&gl, "draft/x-01")
+                .unwrap()
+                .contains("/-/merge_requests/new?")
+        );
+        // An unrecognised host: no URL invented — the operator opens the request.
+        assert_eq!(review_page_url(&other, "draft/x-01"), None);
+
+        assert_eq!(host_kind("github.com").review_term(), "pull request");
+        assert_eq!(host_kind("gitlab.com").review_term(), "merge request");
+        assert_eq!(host_kind("bitbucket.org").review_term(), "review request");
+    }
+
+    #[test]
+    fn review_create_args_are_per_cli() {
+        let gh = review_create_args(HostKind::GitHub, "draft/x-01", "main", "Lower x").unwrap();
+        assert_eq!(&gh[..2], ["pr", "create"]);
+        assert_eq!(
+            gh[gh.iter().position(|a| a == "--head").unwrap() + 1],
+            "draft/x-01"
+        );
+
+        let gl = review_create_args(HostKind::GitLab, "draft/x-01", "main", "Lower x").unwrap();
+        assert_eq!(&gl[..2], ["mr", "create"]);
+        assert_eq!(
+            gl[gl.iter().position(|a| a == "--source-branch").unwrap() + 1],
+            "draft/x-01"
+        );
+
+        // No supported CLI for an unknown host.
+        assert_eq!(review_create_args(HostKind::Other, "d", "main", "t"), None);
     }
 
     #[test]
