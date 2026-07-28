@@ -622,11 +622,9 @@ pub fn parse_remote(url: &str) -> Option<RemoteInfo> {
         // Drop any `user@` before the host, then split host / path on the first slash.
         let rest = rest.rsplit_once('@').map_or(rest, |(_, r)| r);
         rest.split_once('/')?
-    } else if let Some(rest) = url.strip_prefix("git@") {
-        // scp-style: `git@host:owner/repo`.
-        rest.split_once(':')?
     } else {
-        return None;
+        // scp-style: `git@host:owner/repo`.
+        url.strip_prefix("git@")?.split_once(':')?
     };
     let path = path
         .trim_end_matches('/')
