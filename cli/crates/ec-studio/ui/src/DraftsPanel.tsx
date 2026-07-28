@@ -69,8 +69,10 @@ function DraftRow({
   draft, profile, touches,
 }: { draft: DraftSummary; profile: string; touches: boolean }) {
   const [status, setStatus] = useState<DraftStatus | null>(null);
-  const [pr, setPr] = useState<{ url: string | null } | null>(null);
+  const [submitted, setSubmitted] =
+    useState<{ applied: boolean; opened?: boolean; url?: string | null; term?: string; reason?: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   async function review() {
     setBusy(true);
@@ -79,11 +81,18 @@ function DraftRow({
     finally { setBusy(false); }
   }
 
-  async function openPr() {
-    const r = await api.prUrl(draft.ref);
-    setPr(r);
-    if (r.url) window.open(r.url, "_blank", "noopener");
+  // Submitting pushes the draft branch and opens the host's review request (a pull request, a merge
+  // request, … — derived from the remote, never assumed to be GitHub). The host's code owners gate
+  // the merge; the Studio never merges, and never throws the raw host page at the author — it hands
+  // back a link they can follow when they choose.
+  async function submit() {
+    setSubmitting(true);
+    try { setSubmitted(await api.submitForReview(draft.ref, draft.title)); }
+    catch (e) { setSubmitted({ applied: false, reason: (e as Error).message }); }
+    finally { setSubmitting(false); }
   }
+
+  const term = submitted?.term ?? "review request";
 
   return (
     <div className="ec-draft">
@@ -97,7 +106,9 @@ function DraftRow({
         <Button size="sm" kind="tertiary" disabled={busy} onClick={review}>
           {busy ? "Reviewing…" : "Review conflicts"}
         </Button>
-        <Button size="sm" kind="ghost" onClick={openPr}>Open pull request</Button>
+        <Button size="sm" kind="ghost" disabled={submitting} onClick={submit}>
+          {submitting ? "Submitting…" : "Submit for review"}
+        </Button>
       </div>
 
       {status && (status.clean ? (
@@ -120,12 +131,24 @@ function DraftRow({
         </>
       ))}
 
-      {pr && pr.url === null && (
+      {submitted && (submitted.applied ? (
+        <div className="ec-note">
+          <strong>
+            {submitted.opened ? `Opened a ${term}` : `Branch pushed — open the ${term}`}
+          </strong>{" "}
+          on your Git host, where its code owners gate the merge. The Studio never merges.
+          {submitted.url && (
+            <div style={{ marginTop: "0.4rem" }}>
+              <a href={submitted.url} target="_blank" rel="noopener">Open on your Git host →</a>
+            </div>
+          )}
+        </div>
+      ) : (
         <p className="ec-sub">
-          No GitHub remote on this clone — push <code>{draft.ref}</code> and open a pull request on your
-          Git host. Apply is gated by CODEOWNERS; the Studio never merges.
+          {submitted.reason ?? "Submit unavailable."} The Studio never merges — the host's code owners
+          gate the merge.
         </p>
-      )}
+      ))}
     </div>
   );
 }

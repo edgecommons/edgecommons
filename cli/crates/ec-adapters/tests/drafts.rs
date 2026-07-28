@@ -6,7 +6,7 @@ use std::process::Command;
 
 use ec_adapters::{LocalGit, check_draft};
 use ec_deploy::ports::LocalRoot;
-use ec_deploy::ports::{DraftPort, GitPort};
+use ec_deploy::ports::{DraftPort, GitPort, HostPort};
 
 // The real HOST shape: a CONFIG_COMPONENT provider, so each component's effective config is rendered
 // into `config-catalog.json` / `config-component-config.json`. That is what makes a config edit visible
@@ -242,4 +242,89 @@ fn a_same_line_edit_on_both_sides_is_a_textual_conflict() {
 
     let check = check_draft(&g, "", "host", dref, "main").unwrap();
     assert_eq!(check.textual, vec!["layers/telemetry.json".to_string()]);
+}
+
+#[test]
+fn the_current_branch_is_the_default_pr_base() {
+    let dir = repo();
+    assert_eq!(
+        ec_adapters::current_branch(&local_git(dir.path())).as_deref(),
+        Some("main")
+    );
+}
+
+#[test]
+fn apply_is_unavailable_without_a_remote() {
+    // A local clone with no remote cannot apply — the UI degrades to a stated manual instruction.
+    let dir = repo();
+    assert!(!HostPort::available(&local_git(dir.path())));
+}
+
+#[test]
+fn a_configured_remote_makes_apply_available_and_parses_host_agnostically() {
+    let dir = repo();
+    let g = local_git(dir.path());
+    // A GitHub remote — but the same path works for any host; nothing here assumes github.com.
+    git(
+        dir.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:edgecommons/demo.git",
+        ],
+    );
+    assert!(HostPort::available(&g));
+    let r = ec_adapters::origin_remote(&g).expect("parsed remote");
+    assert_eq!(r.host, "github.com");
+    assert_eq!(r.path, "edgecommons/demo");
+    assert_eq!(
+        ec_adapters::review_page_url(&r, "draft/x-01").unwrap(),
+        "https://github.com/edgecommons/demo/pull/new/draft/x-01"
+    );
+}
+
+#[test]
+fn a_draft_branch_pushes_to_a_local_remote() {
+    // The push path is exercised against a **local bare remote** — no network, no real Git host —
+    // so the credential adapter's push is proven without any outward side effect.
+    let dir = repo();
+    let p = dir.path();
+    let g = local_git(p);
+
+    let bare = tempfile::tempdir().unwrap();
+    git(bare.path(), &["init", "--bare", "-qb", "main"]);
+    git(
+        p,
+        &["remote", "add", "origin", &bare.path().to_string_lossy()],
+    );
+
+    let dref = "draft/raise-interval-01";
+    g.open(dref, "main").unwrap();
+    g.write_file(
+        dref,
+        "layers/telemetry.json",
+        "{ \"component\": { \"global\": { \"publishIntervalMs\": 250 } } }\n".as_bytes(),
+        "edit",
+    )
+    .unwrap();
+
+    g.push_draft(dref)
+        .expect("push the draft to the local remote");
+
+    // The bare remote now carries the draft branch.
+    let refs = String::from_utf8(
+        Command::new("git")
+            .arg("-C")
+            .arg(bare.path())
+            .args(["for-each-ref", "--format=%(refname:short)", "refs/heads/"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert!(
+        refs.lines().any(|l| l.trim() == dref),
+        "pushed refs: {refs}"
+    );
 }

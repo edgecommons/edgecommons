@@ -32,7 +32,10 @@ pub mod render;
 pub mod validate;
 pub mod workspace;
 
-pub use ports::{BlobPort, DraftPort, GitPort, IdentityPort, MergeResult, RunnerPort, TargetsPort};
+pub use ports::{
+    BlobPort, DraftPort, GitPort, HostPort, IdentityPort, MergeResult, ReviewSubmission,
+    RunnerPort, TargetsPort,
+};
 
 /// The normative DeploymentDefinition JSON Schema (`edgecommons.io/v1alpha1`), embedded so
 /// `deployment validate` stage one runs offline by construction.
