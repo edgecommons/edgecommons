@@ -168,9 +168,13 @@ fn dispatch(cli: &Cli) -> Result<Report, Fatal> {
         Command::Deployment(DeploymentCmd::Lock { definition, source }) => {
             commands::deployment::lock(definition, source.as_deref(), cli.quiet)
         }
-        // Consequence-grouped diff is not built yet.
-        Command::Deployment(DeploymentCmd::Diff { .. }) => {
-            Err(commands::not_implemented("deployment"))
+        Command::Deployment(DeploymentCmd::Diff {
+            definition,
+            against,
+            env,
+            target,
+        }) => {
+            commands::deployment::diff_cmd(definition, against, env.as_deref(), *target, cli.json)
         }
         Command::Deployment(DeploymentCmd::Draft(cmd)) => match cmd {
             crate::cli::DraftCmd::Open { title, repo, base } => {

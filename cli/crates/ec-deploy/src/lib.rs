@@ -8,18 +8,20 @@
 //!
 //! # Status
 //!
-//! The model, workspace, semantic validator, **HOST renderer**, and release builder are
-//! implemented and golden-proven against the Dallas fixture (`deployment-studio` repo),
-//! whose render byte-matches the adopted `bottling-company-test` site. The Kubernetes and
-//! Greengrass renderers, `deployment lock`, and `deployment diff` are not built yet;
-//! `ec-cli` reports [`ec_diag::ExitCode::NotImplemented`] for those rather than pretending
-//! a verb exists.
+//! The model, workspace, semantic validator, all three renderers (**HOST**, **Greengrass**,
+//! **Kubernetes**), the release builder, `lock`, the draft engine, and the consequence-grouped
+//! `diff` are implemented and golden-proven against the Dallas fixture, whose render byte-matches
+//! the adopted `bottling-company-test` site. Every declared `deployment` verb is built.
+//!
+//! Not built: the later drift stages (delivery, runtime), which need control-plane evidence rather
+//! than a second render — see [`diff`] for where that boundary sits.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 pub mod codeowners;
+pub mod diff;
 pub mod draft;
 pub mod greengrass;
 pub mod kubernetes;

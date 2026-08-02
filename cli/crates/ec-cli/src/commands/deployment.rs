@@ -1,8 +1,9 @@
 //! `edgecommons deployment …` — the kernel verbs over the local adapters (DESIGN-cli §8).
 //!
-//! `validate`, `render`, and `plan` run with no server and no network (RM-012); `release`
-//! additionally reads local Git provenance through the adapter. `lock` is the one verb that
-//! reaches the network (§8.7). `diff` is not built yet and reports NotImplemented.
+//! `validate`, `render`, `plan`, and `diff` run with no server and no network (RM-012); `release`
+//! and `diff` additionally read local Git provenance through the adapter — `diff` renders the
+//! definition at a ref without touching the working tree, so it is safe to run mid-edit. `lock` is
+//! the one verb that reaches the network (§8.7).
 
 use std::path::Path;
 
@@ -373,6 +374,82 @@ pub fn plan(definition: &Path, env: &str, target: Platform) -> Result<Report, Fa
         serde_json::to_string_pretty(&output.plan).map_err(|e| Fatal::Internal(e.to_string()))?;
     text.push('\n');
     print!("{text}");
+    Ok(report)
+}
+
+/// `deployment diff --against <ref>` — the delta between the definition as it stands now and as it
+/// stood at a Git ref, **grouped by consequence** (§8.1) rather than by file. This is the
+/// `definition → release` stage of the drift taxonomy (Studio decision 6A); it is a pure function of
+/// two renders, so it runs offline, with no network and no target credentials.
+pub fn diff_cmd(
+    definition: &Path,
+    against: &str,
+    env: Option<&str>,
+    target: Platform,
+    json: bool,
+) -> Result<Report, Fatal> {
+    let loaded = load(definition)?;
+    let mut report = Report::new();
+    schema_stage(&loaded.definition_text, &mut report)?;
+    let profile = loaded
+        .profile_for_family(target_family(target))
+        .map_err(Fatal::Usage)?;
+    let ws = loaded.workspace(&profile).map_err(Fatal::Usage)?;
+    semantic_stage(&ws, &mut report);
+    if report.error_count() > 0 {
+        return Ok(report);
+    }
+
+    // The environment to render: the one named, or the profile's only one.
+    let env = match env {
+        Some(e) => e.to_string(),
+        None => match ws.definition.environments.as_slice() {
+            [only] => only.name.clone(),
+            envs => {
+                return Err(Fatal::Usage(format!(
+                    "the profile declares {} environments; name one with --env",
+                    envs.len()
+                )));
+            }
+        },
+    };
+
+    let after = run_render(&loaded, &env, target)?;
+    // The same definition rendered at the ref, read through the Git port — the working tree is
+    // never touched, so a diff is safe to run mid-edit.
+    let git = ec_adapters::LocalGit {
+        root: ec_deploy::ports::LocalRoot(loaded.root.clone()),
+    };
+    let dir_prefix = ec_adapters::repo_relative(&loaded.root, &loaded.root);
+    let before = ec_adapters::render_at_ref(&git, &dir_prefix, against, &profile)
+        .map_err(|e| Fatal::Usage(format!("rendering {against}: {e}")))?;
+
+    let delta = ec_deploy::diff::diff_renders(&before, &after, &after.plan);
+
+    if json {
+        let mut text =
+            serde_json::to_string_pretty(&delta).map_err(|e| Fatal::Internal(e.to_string()))?;
+        text.push('\n');
+        print!("{text}");
+        return Ok(report);
+    }
+
+    if delta.is_empty() {
+        println!("No change against {against} ({} profile, {env}).", profile);
+        return Ok(report);
+    }
+    println!(
+        "{} change(s) against {against} across {} node(s), by consequence:",
+        delta.changes.len(),
+        delta.nodes().len()
+    );
+    for (consequence, changes) in delta.by_consequence() {
+        println!("\n{consequence:?} ({})", changes.len());
+        for c in changes {
+            println!("  [{:?}] {}", c.kind, c.summary);
+            println!("        {}", c.path);
+        }
+    }
     Ok(report)
 }
 

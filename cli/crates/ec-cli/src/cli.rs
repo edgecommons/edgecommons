@@ -330,8 +330,14 @@ pub enum DeploymentCmd {
     /// Diff this render against a release ref, grouped by consequence.
     Diff {
         definition: PathBuf,
+        /// The Git ref to compare against (a release tag, a branch, a commit).
         #[arg(long)]
         against: String,
+        /// The environment to render. Defaults to the profile's only environment.
+        #[arg(long)]
+        env: Option<String>,
+        #[arg(long, value_enum)]
+        target: Platform,
     },
     /// Promote one release stream.
     Release {

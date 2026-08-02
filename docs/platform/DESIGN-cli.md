@@ -452,7 +452,7 @@ plan | diff` must do the entire model→artifact job **with no server and no net
 | `lock` | definition + the release index | Resolves each pinned component version to an immutable digest and writes a lock file. **The only verb that touches the network** (§8.7). |
 | `render --env <e> --target <t>` | definition, env, target | Native artifacts for the target **plus** the normalized plan. Writes to a render path; nothing is committed. |
 | `plan` | definition, env, target | The normalized plan JSON alone — the common currency for validation, policy, CI, and the UI. |
-| `diff --against <release-ref>` | a Git ref | The delta grouped **by consequence**: restart, storage, network, identity, permission, config, artifact, apply-order. |
+| `diff --against <ref> --target <t>` | a Git ref | The delta grouped **by consequence**: restart, storage, network, identity, permission, config, artifact, apply-order. Renders the definition **at the ref** through the Git port, so the working tree is untouched and a diff is safe to run mid-edit (§8.11). |
 | `release --stream artifact\|config` | definition + lock + the stream being promoted | Promotes **one stream**; writes a release manifest and a `ReleaseLock` that *correlates* the artifact and config streams without fusing them (§8.5). |
 
 ### 8.2 The hexagonal core and the five ports
@@ -767,6 +767,44 @@ draft orchestration in the UI (the draft list, advisory presence, conflict surfa
 the GitHub App credential adapter. The engine and its CLI surface exist and are proven end to end (a
 semantic conflict detected from a textually-clean, different-files merge, against a real Git repo).
 
+
+### 8.11 `diff` — consequences, and where convergence begins (Studio decision 6A)
+
+An operator does not want a file delta; they want to know **what will happen to the plant**. So `diff`
+classifies every changed rendered artifact into exactly one consequence bucket (§8.1) and reports the
+buckets. It renders the definition **at a Git ref** through the read port and compares that against the
+current render, so it never touches the working tree.
+
+Classification uses the most specific signal each platform offers, because the renderers emit different
+shapes:
+
+| Rendered artifact | Bucket |
+|---|---|
+| `<node>/supervisord.conf` | `Restart` — or `ApplyOrder` when *only* ordering moved (sections compared order-insensitively, `priority=` ignored) |
+| `<node>/*-messaging.json` | `Network` |
+| `<node>/config-catalog.json`, `config-component-config.json` | `Config`, or `Restart` when a component on that node does not hot-reload |
+| `<node>/<component>.yaml` (Kubernetes) | the most disruptive **object kind** that actually differs: `Deployment`→`Restart`, `PersistentVolumeClaim`→`Storage`, `Role*`→`Permission`, `ServiceAccount`→`Identity`, `Service`→`Network`, `ConfigMap`→`Config` |
+| `<node>/deployment.json` (Greengrass) | `Artifact` when a `componentVersion` moved (parsed, not line-matched), else `Config` |
+| `requirements.json`, `plan.json` | not reported — derived summaries; reporting them double-counts |
+
+Two rules keep it honest. **Restart impact follows the config source, never the platform** (D-CLI-14):
+it is read from the plan, not assumed. And where one artifact serves several components, or where a
+file shape is not understood, the classification is **conservative — it reports the restart**.
+Over-reporting a restart is noise; under-reporting one bounces a process the operator was told would
+stay up.
+
+**This is the `definition → release` stage of the drift taxonomy, and only that stage.** The later
+stages need evidence a second render cannot provide:
+
+- **delivery** — did the target actually take it? Control-plane-derived (Kubernetes annotations,
+  Greengrass deployment status). **HOST has no control plane, so its delivery verdict is
+  `unverified`** — a distinct state, never "none", never inferred, never a pass — and every verdict
+  names its evidence source (Studio register #7). No receipt files, no agents, no collectors.
+- **runtime** — is it behaving? Observed through the Console's live state, and shown in the Studio
+  only paired with an intent comparison (register #13).
+- **apply** itself runs behind the Runner port, which holds the target credentials; the Studio holds
+  none (D-CLI-8, D-CLI-10). Partial failure is first-class: Greengrass deploys per thing, so an
+  `ApplyReport` is per node.
 ---
 
 ## 9. `registry` and `doctor`

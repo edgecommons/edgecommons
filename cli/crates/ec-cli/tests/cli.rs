@@ -1185,28 +1185,154 @@ fn doctor_checks_greengrass_tools_only_when_greengrass_is_selected() {
     );
 }
 
+/// A committed one-node site, so `deployment diff` has a ref to compare against. Kept minimal on
+/// purpose: the classification rules are proven in `ec-deploy`; this fixture exists to prove the
+/// *wiring* — render-now against render-at-a-ref, through the Git port, without touching the
+/// working tree.
+fn diff_site() -> tempfile::TempDir {
+    const DEF: &str = r#"
+apiVersion: edgecommons.io/v1alpha1
+kind: DeploymentDefinition
+metadata: { name: diff-demo, description: x }
+hierarchy:
+  levels: [site, device]
+  scopes: [{ id: site/lab, parent: null }]
+topology:
+  nodes:
+    - key: box-01
+      scope: site/lab
+      components: [{ name: telemetry-processor, layer: layers/telemetry.json }]
+profiles:
+  host:
+    family: HOST
+    environments: [{ name: local, bindings: bindings/local.json }]
+    defaults: { configSource: FILE }
+    nodes:
+      box-01:
+        components:
+          telemetry-processor:
+            artifact: { source: { kind: sibling, repo: telemetry-processor } }
+            launch: { order: 30 }
+"#;
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(p)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@e.c")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@e.c")
+            .output()
+            .expect("git");
+        assert!(out.status.success(), "git {args:?}");
+    };
+    std::fs::create_dir_all(p.join("bindings")).unwrap();
+    std::fs::create_dir_all(p.join("layers")).unwrap();
+    std::fs::write(p.join("bindings/local.json"), "{}\n").unwrap();
+    std::fs::write(
+        p.join("layers/telemetry.json"),
+        "{ \"component\": { \"global\": { \"publishIntervalMs\": 500 } } }\n",
+    )
+    .unwrap();
+    std::fs::write(p.join("definition.yaml"), DEF).unwrap();
+    git(&["init", "-qb", "main"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "baseline"]);
+    dir
+}
+
 #[test]
-fn the_unbuilt_verbs_say_so_rather_than_crashing() {
-    // Declared in the surface, not built in this binary: exit 5, and say so plainly rather than
-    // failing obscurely or pretending to be a usage error. `deployment diff` is the last one.
-    for args in [vec!["deployment", "diff", "def.yaml", "--against", "v1"]] {
-        let o = run(&args, &repo_root());
-        assert_eq!(
-            code(&o),
-            5,
-            "`{}` must exit 5 (not implemented)",
-            args.join(" ")
+fn diff_reports_no_change_against_the_commit_it_was_rendered_from() {
+    let dir = diff_site();
+    let o = run(
+        &[
+            "deployment",
+            "diff",
+            "definition.yaml",
+            "--against",
+            "HEAD",
+            "--target",
+            "HOST",
+        ],
+        dir.path(),
+    );
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    assert!(
+        stdout(&o).contains("No change against HEAD"),
+        "{}",
+        stdout(&o)
+    );
+}
+
+#[test]
+fn diff_groups_a_launch_change_by_consequence_not_by_file() {
+    let dir = diff_site();
+    // Move the component's launch order: the supervisor bundle is re-emitted, and the operator
+    // should be told the *consequence*, not handed a file delta.
+    let def = dir.path().join("definition.yaml");
+    let text = std::fs::read_to_string(&def)
+        .unwrap()
+        .replace("order: 30", "order: 35");
+    std::fs::write(&def, text).unwrap();
+
+    let o = run(
+        &[
+            "--json",
+            "deployment",
+            "diff",
+            "definition.yaml",
+            "--against",
+            "HEAD",
+            "--target",
+            "HOST",
+        ],
+        dir.path(),
+    );
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let v: serde_json::Value = serde_json::from_str(&stdout(&o)).unwrap();
+    let changes = v["changes"].as_array().expect("changes array");
+    assert!(!changes.is_empty(), "a launch move must be reported");
+    // Only ordering moved, so it is apply-order — not a restart. (`Consequence` serializes
+    // lowercase, the same wire vocabulary `plan.json` already uses.)
+    assert_eq!(changes[0]["consequence"], "applyorder");
+    assert_eq!(changes[0]["node"], "box-01");
+}
+
+#[test]
+fn every_declared_deployment_verb_is_built() {
+    // `deployment diff` was the last declared-but-unbuilt verb; it is built now, so *no* deployment
+    // verb may answer exit 5 (not implemented). Pointed at a definition that does not exist, diff
+    // must fail as a plain usage error (exit 2) — not as "not implemented", and not by crashing.
+    let o = run(
+        &[
+            "deployment",
+            "diff",
+            "def.yaml",
+            "--against",
+            "v1",
+            "--target",
+            "HOST",
+        ],
+        &repo_root(),
+    );
+    assert_ne!(code(&o), 5, "diff is built; it must not report exit 5");
+    assert_eq!(
+        code(&o),
+        2,
+        "a missing definition is a usage error: {}",
+        stderr(&o)
+    );
+    // Whatever it says, it must not leak our internal plumbing at the user: no roadmap ids, no
+    // phase numbers, no design-doc paths.
+    let e = stderr(&o);
+    for internal in ["RM-0", "Phase P", "DESIGN-cli", "§"] {
+        assert!(
+            !e.contains(internal),
+            "user-facing output leaks `{internal}`: {e}"
         );
-        let e = stderr(&o);
-        assert!(e.contains("not available"), "{e}");
-        // The message must not leak our internal plumbing at the user: no roadmap ids, no
-        // phase numbers, no design-doc paths.
-        for internal in ["RM-0", "Phase P", "DESIGN-cli", "§"] {
-            assert!(
-                !e.contains(internal),
-                "user-facing output leaks `{internal}`: {e}"
-            );
-        }
     }
 }
 
