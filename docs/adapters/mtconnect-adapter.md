@@ -1,6 +1,6 @@
 # MTConnect adapter design
 
-Status: **proposed design; no implementation exists**
+Status: **implemented — repository `edgecommons/mtconnect-adapter`**
 
 Research snapshot: **2026-07-27**
 
@@ -9,8 +9,9 @@ Selected language: **Rust**
 Protocol strategy: **owned thin MTConnect REST/streaming client on stock HTTP + XML libraries; no
 third-party MTConnect runtime dependency exists in any EdgeCommons language**
 
-This document is subordinate to the [shared adapter contract](README.md). A future repository copies
-the decisions into its generated root `DESIGN.md`.
+This document is subordinate to the [shared adapter contract](README.md). The component
+repository's root `DESIGN.md` carries these decisions together with its local register
+(D-MtconnectAdapter-L*) and the remediation register (D-R1..D-R16).
 
 ## 1. What it is — and, per mandate, what it is not
 
@@ -96,17 +97,16 @@ zero-procurement verification story of any adapter in this set.
 
 ## 4. CLI initialization
 
-Use the shared contract's Rust scaffold command ([ADP-1](README.md#adp-1-cli-scaffolding-is-mandatory))
+The shared contract's Rust scaffold command ([ADP-1](README.md#adp-1-cli-scaffolding-is-mandatory))
 with `--name com.mbreissi.edgecommons.MtconnectAdapter --language RUST --dir mtconnect-adapter
---bin-name mtconnect-adapter`. The generated structure is the floor (ADP-2). The owned client lives
-in an `mtconnect/` module set (or a small workspace crate) with **no EdgeCommons imports**:
+--bin-name mtconnect-adapter` generates the floor (ADP-2). The owned client lives
+in an `mtconnect/` module set with **no EdgeCommons imports**:
 `client.rs` (HTTP/stream), `model.rs` (probe tree), `observations.rs` (streams parsing),
 `sequence.rs` (buffer/recovery state), behind the generated `DeviceBackend`/`DeviceSession` seam.
 
-Unlike the three earlier designs, this one scaffolds against the **post-conformance** templates
-(core PR #78): renderable panels, the hierarchical `sb/browse` mode, `#/$defs/instance`, the
-top-level `PAUSED` code, and the eight-measure `southbound_health` family are generated, not gaps
-to re-implement.
+The scaffold baseline is the **post-conformance** templates: renderable panels, the hierarchical
+`sb/browse` mode, `#/$defs/instance`, the top-level `PAUSED` code, and the eight-measure
+`southbound_health` family are generated, not gaps to re-implement.
 
 ## 5. Architecture
 
@@ -128,7 +128,11 @@ instance with per-instance reconnect visibility (ADP-3).
 Each instance (`connection: {agentId, deviceUuid}`) verifies at connect that the probe contains its
 `deviceUuid`, compiles its configured signal set against the device's data items, and then serves
 the common supervisor loop. `connectionState = 1` means: agent reachable, probe verified, and the
-stream (or poll loop) delivering within the heartbeat/staleness window.
+stream (or poll loop) delivering within the heartbeat/staleness window. The agent runtime's
+`connected` flag is the **sole** connectivity authority — written only by the acquisition path's
+ingest/mark-down pair — and an instance reports connecting/backoff, not online, until the shared
+acquisition ingests its first Streams document: a cached probe model is proof the agent answered
+once, never proof it is delivering now.
 
 `endpoint_description()` is `mtconnect://<host>[:<port>]/<percent-encoded-device-uuid>` — derived,
 non-secret, and used unchanged everywhere (ADP-4).
@@ -144,9 +148,19 @@ with the multipart reader accepting both verified content-types. Every received 
    `/current` snapshot (republish as fresh values), resume from the snapshot's `nextSequence`;
 3. `instanceId` changed (agent restarted) → full resync: re-probe, re-verify the model digest,
    snapshot, resume; a probe-model change invalidates browse cursors and raises a config-drift
-   event rather than silently remapping signals.
+   event rather than silently remapping signals. **Nothing from the restarted agent's document is
+   published until the re-probe and recompile complete**, and a probe that fails during recovery
+   fails the cycle rather than serving new data through stale bindings.
 
-Poll mode: `/current` at `pollIntervalMs` with the same snapshot semantics. `sb/read` always uses
+Ladder-1 exits (heartbeat missed, transport lost, malformed framing, end of stream) mark the agent
+down; ladder-2/3 exits do not — those documents prove the agent alive, and their recovery I/O marks
+down by itself on failure. A stream counts as established only once it has delivered a first
+liveness part: one that opens and delivers nothing is an establish failure and backs off, and past
+the failure limit acquisition degrades to polling with a degraded-state event.
+
+Poll mode: `/current` at `pollIntervalMs` with the same snapshot semantics. An HTTP-200
+`MTConnectErrors` answer to `/current` surfaces as `MTC_AGENT_ERROR:<code>`, refreshes no liveness,
+and the third consecutive erroring cycle marks the agent down. `sb/read` always uses
 `/current` (optionally `path=`-scoped); `repoll` forces a snapshot publish and is refused with
 top-level `PAUSED` while paused.
 
@@ -172,29 +186,56 @@ per-device uniqueness); `signal.id` remains the configured stable EdgeCommons id
 - **Samples** → JSON numbers (3D/`TimeSeries` representations → JSON arrays; `resetTriggered`
   and `duration` ride as per-sample extras).
 - **Events** → strings/enums verbatim; numeric event types as numbers.
-- **Condition** → the condition state (`Normal`/`Warning`/`Fault`/`Unavailable`) as the value,
-  with `nativeCode`/text in extras; quality per §6.
+- **Condition** → the condition state as the value, **aggregated across the data item's concurrent
+  activations** (keyed `conditionId` ▷ `nativeCode` ▷ a single fallback slot): the worst asserted
+  state publishes, so clearing one of two activations cannot promote the signal while the other
+  stands, and a mixed batch is order-independent. The triggering transition rides the extras
+  (`conditionId`, `nativeCode`, `conditionText`) beside `activeConditions` — the count of
+  activations behind the published state; quality per §6.
 - **`UNAVAILABLE`** → a `BAD` sample with `value: null` and `qualityRaw: "UNAVAILABLE"` — the §2
   SOUTHBOUND explicit-null rule does not apply (this is a *bad* null, not a good one).
 - Per-sample **`sequence`** always rides as an extra field (the shipped `Sample.extra` path),
   giving consumers exact once-only ordering across reconnects.
+- The synthetic passive-quality readings of §6 carry a **`passive`** extra
+  (`stale`|`expired`|`unreachable`|`recovered`) plus the held `sequence`, so consumers can always
+  tell synthetic quality motion from agent data.
+
+An observation missing its `dataItemId`, a `sequence` parsable as an integer ≥ 1, or a non-empty
+`timestamp` is rejected — dropped and counted by `MtconnectParse.rejectedObservations` — never
+defaulted.
 
 Timestamps, per the SOUTHBOUND four-slot model: the observation timestamp is the **agent's
 capture stamp** — published as `serverTs`. `sourceTs` is absent (MTConnect does not distinguish a
 device-authored time from the agent/adapter capture chain). The adapter's own receive time rides
-the per-sample `receivedTs` extra — MTConnect is a mediated protocol, so capture and receive
-genuinely differ and both are published.
+the per-sample `receivedTs` extra, stamped when the agent's document is ingested — payload
+arrival, never internal queue drain — because MTConnect is a mediated protocol, so capture and
+receive genuinely differ and both are published.
 
 ## 6. Quality mapping
 
 | Condition | Quality | `qualityRaw` |
 |---|---|---|
-| Observation delivered, value not `UNAVAILABLE`, no `Fault` condition bound to the signal's config | `GOOD` | `MTC_OK` (+ condition state for condition signals) |
-| Value held past one missed heartbeat/poll but before `staleSignalSecs`; or bound condition `Warning` | `UNCERTAIN` | `MTC_STALE:<ageMs>` / `MTC_CONDITION:WARNING:<nativeCode>` |
-| `UNAVAILABLE`, bound condition `Fault`, agent unreachable, parse failure, or staleness expiry | `BAD` | `UNAVAILABLE` / `MTC_CONDITION:FAULT:<nativeCode>` / `MTC_PARSE:<code>` |
+| Observation delivered, value not `UNAVAILABLE`, no `Fault` condition bound to the signal's config | `GOOD` | `MTC_OK` (`MTC_OK:NORMAL` for a condition signal whose aggregate is Normal) |
+| Value held past one missed heartbeat/poll but before `staleSignalSecs`; or (bound or own) condition `Warning` | `UNCERTAIN` | `MTC_STALE:<ageMs>` / `MTC_CONDITION:WARNING[:<nativeCode>]` |
+| `UNAVAILABLE` | `BAD` | `UNAVAILABLE` |
+| (Bound or own) condition `Fault` | `BAD` | `MTC_CONDITION:FAULT[:<nativeCode>]` |
+| Staleness expiry — value held past `staleSignalSecs` | `BAD` | `MTC_STALE:<ageMs>` |
+| Agent unreachable | `BAD` | `MTC_AGENT_UNREACHABLE` |
+| Parse failure (`sb/read` per-entry) | `BAD` | `MTC_PARSE` |
+
+The staleness rows run on the **liveness clock**: MTConnect is on-change, so an unchanged value
+under live liveness is current, and `<ageMs>` is the time since the agent last vouched for
+currency — a Streams document (data or heartbeat) or a successful `/current` — never a per-signal
+change age. The window for row 2 is `heartbeatMs` (streaming) / `2 × pollIntervalMs` (polling);
+`staleSignalSecs` is the expiry on the same clock. Rows 2, 5, and 6 are realized as **synthetic
+republishes of the held value** — transitions only, carrying the `passive` marker and the held
+`sequence`, bypassing batch windows — and recovery restores the held quality and `qualityRaw`
+verbatim. The `staleSignals` health metric keeps its separate meaning (per-signal value silence)
+and is not reset by synthetic readings.
 
 A signal MAY declare `conditionBinding: ["<conditionDataItemId>", …]` to degrade its quality from
-named condition data items; unbound conditions affect only their own signals.
+named condition data items — each bound item contributes its activation **aggregate**, and the
+worst wins; unbound conditions affect only their own signals.
 
 ## 7. Commands (ADP-6 mapping)
 
@@ -217,9 +258,8 @@ failure codes: `MTC_UNAVAILABLE`, `MTC_NO_SUCH_DATAITEM`, `MTC_PARSE`, `MTC_AGEN
 
 ## 8. Edge-console panels
 
-The [shared panel contract](edge-console-panels.md) is normative, and — unlike the three earlier
-designs — its renderer capabilities are **shipped** (edge-console `feat/descriptor-renderer-v2`):
-these are current bindings, not a joint-release target. Views (no discovery view — MTConnect has no
+The [shared panel contract](edge-console-panels.md) is normative, and edge-console's renderer
+capabilities realize it: these are current bindings. Views (no discovery view — MTConnect has no
 network discovery):
 
 | Order/id/title | Widgets |
@@ -246,11 +286,15 @@ data items currently delivered by the active stream/poll set; `writeErrors` is s
 |---|---|---|
 | `MtconnectStream` | `agentId`, `result` | `documents`, `observations`, `heartbeats`, `reconnects`, `gaps`, `outOfRange`, `latencyMs` |
 | `MtconnectProbe` | `agentId`, `result` | `probes`, `modelChanges`, `latencyMs` |
-| `MtconnectParse` | `instance`, `result` | `documentsParsed`, `parseErrors` |
+| `MtconnectParse` | `instance`, `result` | `documentsParsed`, `parseErrors`, `rejectedObservations` |
+
+`rejectedObservations` counts observations refused for a missing required field (`dataItemId`,
+`sequence` ≥ 1, non-empty `timestamp`) — rejected, never defaulted. Instance-queue drops and
+coalesces are runtime counters and log lines, not measures: the family set above is closed.
 
 Events: agent connect/disconnect, `instanceId` change, data loss (`OUT_OF_RANGE`), probe-model
-drift, condition Fault transitions (rate-limited), config rejection. Sequence numbers, UUIDs, and
-data-item ids are event fields, never metric dimensions.
+drift, condition Fault transitions (of the activation **aggregate**, rate-limited), config
+rejection. Sequence numbers, UUIDs, and data-item ids are event fields, never metric dimensions.
 
 ## 10. Security and platform behavior
 
@@ -312,6 +356,12 @@ platform claims still require the standard per-platform gates (ADP-9).
 - **D-MTC-10:** Assets, JSON representation, and MQTT-sink consumption are explicit follow-on
   capabilities with their own designs.
 
+The component repository's `DESIGN.md` carries two further registers that bind alongside this one:
+the local decisions (D-MtconnectAdapter-L1..L13 — client layout, selection, shaping, channel
+depth, `componentPath`) and the remediation register (D-R1..D-R16 — connectivity authority,
+delivery lanes, condition activations, `/current` error policy, required-field strictness, the
+staleness clock, edition, shaper route identity).
+
 ## 13. Research references (verified live 2026-07-27)
 
 - [MTConnect standard downloads — free, all versions](https://www.mtconnect.org/standard-download20181)
@@ -325,3 +375,10 @@ platform claims still require the standard per-platform gates (ADP-9).
 - Negative findings, same date: PyPI `mtconnect` 0.3.3 (dead, agent-role), npm
   `@mx-interface/mtconnect-ts` 1.0.5 (unlicensed manifest), zero crates.io results, no maintained
   Java client; NIST SMS testbed DNS-dead.
+
+## Appendix — revision history
+
+| Date | Change |
+|---|---|
+| 2026-08-03 | Status: implemented. §5.1 one connectivity authority; §5.2 resync-before-publish, mark-down scope, establish accounting, `/current` errors policy; §5.3 condition aggregation, new extras, required-field rejection, `receivedTs` as arrival; §6 token-complete quality table on the liveness clock; §9 `rejectedObservations`; §12 pointer to the component registers. |
+| 2026-07-27 | Initial design. |

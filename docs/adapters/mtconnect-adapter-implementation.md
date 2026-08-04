@@ -1,38 +1,53 @@
 # MTConnect adapter — low-level implementation design
 
-Status: **proposed for review; no implementation exists**
+Status: **implemented — repository `edgecommons/mtconnect-adapter`**
 
 Parent: [mtconnect-adapter.md](mtconnect-adapter.md) (the HLD; its decision register D-MTC-1..10 is
-binding) and the [shared adapter contract](README.md). Target baseline: the post-conformance Rust
-`protocol-adapter` template (core `feat/adapter-core-enablers`), whose generated seams this document
+binding) and the [shared adapter contract](README.md). Baseline: the post-conformance Rust
+`protocol-adapter` template, whose generated seams this document
 names explicitly. Language: Rust, edition 2024, tokio, `reqwest` (rustls) + `quick-xml`.
 
 ## 1. Repository layout (scaffold + owned modules)
 
 `edgecommons component new … --language RUST --kind protocol-adapter` generates the floor
-(`src/{main,app,supervisor,device,commands,metrics}.rs`, simulator, tests, packs, docs). The owned
+(simulator, tests, packs, docs). The owned
 client is an in-crate module tree — a thin client does not warrant a workspace crate (deviation
-from PROFINET's crate split, justified by size; revisit if `mtconnect/` exceeds ~3 kLOC):
+from PROFINET's crate split, justified by size):
 
 ```text
 src/
-  app.rs  supervisor.rs  commands.rs  metrics.rs      # generated, extended in place
-  device.rs                                           # generated seam, extended (§4)
+  app.rs          # config types, backoff, health, connectivity, the publish mapping,
+                  # structured-shutdown helpers (join_all_within + the staged budgets)
+  driver.rs       # the device drivers: connect/poll/publish/reconnect orchestration, the
+                  # control-channel service, shaping + passive-quality wiring — behind the
+                  # `Wire` publish/emit seam, inside the coverage denominator
+  supervisor.rs   # the thin live shell: construction, spawning, the shutdown invocation,
+                  # and FacadeWire (the facade-backed `Wire`)
+  device.rs       # the DeviceSession/DeviceBackend seam, the MTConnect backend/session,
+                  # the condition ledger, credential resolution (§4)
+  commands.rs     # the sb/* verbs and panel descriptors
+  metrics.rs      # southbound_health + operational families + the HLD §9 families
+  reload.rs       # pre-commit reload verdict + the live per-instance signal registry
+  shaping.rs      # per-signal publish shaping (batch windows + deadband), pure, virtual-clock
+  staleness.rs    # passive quality: PassiveLink + QualityWatchdog, pure, virtual-clock
   mtconnect/
-    mod.rs          # pub facade: AgentRuntime, AgentHandle, types re-exports
+    mod.rs          # AgentRuntime + the two-lane instance queue (§3); types re-exports
     config.rs       # AgentConfig, DeviceConfig, SignalConfig (serde, validated)
     client.rs       # HTTP: probe/current/sample one-shots; auth/TLS; redirects off
     stream.rs       # multipart stream reader + heartbeat supervision
     multipart.rs    # owned bounded multipart splitter (both content-types)
     xml.rs          # namespace-tolerant pull parsing: Devices/Streams/Errors docs
     model.rs        # ProbeModel tree + canonical digest + browse projection
-    observations.rs # Observation, category/type decode, UNAVAILABLE handling
+    observations.rs # Observation, category/type decode, required-field rejection
     sequence.rs     # SequenceState machine: stream/recover/resync/poll
+    selection.rs    # probe-derived selection: served_set + channel derivation
+    stats.rs        # monotonic acquisition counters behind the metric families
     error.rs        # MtcError taxonomy → command codes / qualityRaw (§9)
 ```
 
-**Isolation rule (enforced in review + a CI grep): `src/mtconnect/**` imports nothing from
-`edgecommons`.** All EdgeCommons awareness lives in `device.rs`/`supervisor.rs`/`commands.rs`.
+**Isolation rule (enforced by `tests/isolation.rs`): `src/mtconnect/**` imports nothing from
+`edgecommons`.** All EdgeCommons awareness lives above the seam
+(`device.rs`/`driver.rs`/`supervisor.rs`/`commands.rs`).
 
 ## 2. Core types (signatures are normative; field lists may grow additively)
 
@@ -70,13 +85,17 @@ pub struct DataItemMeta { pub id: String, pub category: Category, // SAMPLE|EVEN
     pub type_: String, pub sub_type: Option<String>, pub units: Option<String>,
     pub native_units: Option<String>, pub component_path: String, pub representation: Repr }
 
-// observations.rs — one parsed observation from a Streams document
+// observations.rs — one parsed observation from a Streams document.
+// dataItemId, a sequence ≥ 1, and a non-empty timestamp are REQUIRED: an observation missing
+// one is rejected (DecodeReject) and counted, never defaulted.
 pub struct Observation {
     pub data_item_id: String,
     pub sequence: u64,
-    pub timestamp: String,             // RFC3339 as sent by the agent (→ sourceTs)
+    pub timestamp: String,             // verbatim as sent by the agent — the capture stamp (→ serverTs)
     pub value: ObsValue,               // Scalar(Value) | Unavailable | Condition(CondState)
-    pub extras: SmallVec<(­&'static str, Value)>, // resetTriggered, duration, nativeCode, …
+    pub extras: SmallVec<[(&'static str, Value); 4]>, // resetTriggered, duration, nativeCode,
+                                       // conditionId/nativeSeverity/qualifier/conditionText, …
+    pub received: Option<String>,      // arrival stamp, set at document ingest (→ receivedTs)
 }
 
 // sequence.rs
@@ -87,25 +106,48 @@ pub struct SequenceState { pub instance_id: Option<u64>, pub next: u64,
 
 ## 3. Task and channel topology
 
-One tokio task set per **agent** (the shared runtime), plus the template's generated per-instance
-supervisor tasks. Ownership: `app.rs` builds `Arc<AgentRuntime>` per configured agent before
-instance supervisors start (mirrors the template's construction order; readiness stays false until
-handles install — ADP-3 activation ordering is generated).
+One tokio task set per **agent** (the shared runtime), plus one device task per instance
+(`driver::run_device`, spawned by the supervisor shell). Ownership: `Arc<AgentRuntime>` is built
+per configured agent before device tasks start (mirrors the template's construction order;
+readiness stays false until handles install — ADP-3 activation ordering is generated). Every
+spawned handle is retained and joined by the staged shutdown in `app.rs` (devices 6 s → agents +
+tickers 4 s → metric flush 2 s; stragglers aborted and named).
 
 ```text
 AgentRuntime (per agent)
   ├─ acq_task: owns reqwest client + SequenceState; runs the §5 state machine
-  ├─ tx: per-instance bounded mpsc<InstanceEvent> (cap 1024, latest-value coalescing
-  │      for Scalar observations on overflow + drop counter; Condition/lifecycle
-  │      events are loss-intolerant → send().await backpressure into acq_task)
-  └─ ctl: mpsc<AgentCtl> (Reconnect, Pause(uuid), Resume(uuid), Snapshot(reply), Shutdown)
+  ├─ tx: per-instance TWO-LANE queue (InstanceTx)
+  │      data lane     — cap 1024 (INSTANCE_QUEUE_DEPTH): ordinary Obs deliveries;
+  │                      on overflow, latest-value coalescing per dataItemId, then
+  │                      drop-and-count of the oldest — freshness over completeness
+  │      critical lane — cap 256 (CRITICAL_QUEUE_DEPTH), reserved for the loss-intolerant
+  │                      classes; when full the sender waits a bounded CRITICAL_SEND_BUDGET
+  │                      (5 s), cancellation-aware, then drops-and-counts — see D-R2 below
+  └─ ctl: mpsc<AgentCtl> (Reconnect, Snapshot(reply), Shutdown, …)
 
 InstanceEvent = Obs(Observation) | Snapshot(Vec<Observation>) | AgentUp(AgentInfo)
              | AgentDown(reason) | DataLoss{skipped: u64} | ModelDrift{old, new_digest}
+             | StreamDegraded{failures: u32}
+
+loss-intolerant ⇔ AgentUp | AgentDown | DataLoss | ModelDrift | StreamDegraded | Snapshot(_)
 ```
 
+Ordinary flow is delivered per observation (`Obs`); `Snapshot` means a genuine re-baseline
+(connect, resync, resume) — the distinction is what lets the publish-side deadband anchor survive
+across cycles and re-arm only on a true re-baseline. Every drop, either lane, folds into the
+runtime's `dropped_events`/`queue_counters()` and is logged; a coalesce is not a loss and is
+counted separately.
+
+**D-R2 (bounded critical lane).** The critical lane is bounded rather than an unbounded
+`send().await`, settled with the user: the shared publish path is the one true cross-agent
+coupling, so unbounded backpressure against a dead broker/nucleus would freeze ALL acquisition
+indefinitely while the backpressured events could not be published anyway. The bound is a reserved
+cap (256) that data volume can never consume, a 5 s bounded wait so real consumer lag still
+backpressures properly, drop-and-count past the bound, and cancellation-awareness so shutdown
+always preempts the wait.
+
 The generated `DeviceSession` for an instance is a **handle**: `{agent: Arc<AgentRuntime>,
-uuid, model: ArcSwap<ProbeModel>, rx}` — it owns no socket (ADP-3/D-MTC-3). `read_now`/`repoll`
+uuid, model, rx}` — it owns no socket (ADP-3/D-MTC-3). `read_now`/`repoll`
 route through `ctl` as `Snapshot` requests scoped to the instance's dataItemIds; the acq_task
 serializes them with streaming work (single-owner rule; command handlers never touch HTTP).
 
@@ -121,12 +163,16 @@ pub struct Reading {
     pub quality: Quality, pub quality_raw: Option<String>,
     pub source_ts: Option<String>,            // machine ts — absent for MTConnect
     pub capture_ts: Option<String>,           // observation timestamp (agent capture stamp)
-    pub received_ts: Option<String>,          // adapter receive (auto-stamped by the worker)
-    pub extra: Option<serde_json::Map<String, Value>>, // sequence, resetTriggered, …
+    pub received_ts: Option<String>,          // payload arrival at the adapter (worker
+                                              // read-completion fallback if unstamped)
+    pub extra: Option<serde_json::Map<String, Value>>, // sequence, resetTriggered, passive, …
+    pub channel: Option<String>,              // explicit UNS channel override
+    pub component_path: Option<String>,       // canonical untruncated path (→ update-level
+                                              // componentPath extra; "" device-level, None unmodelled)
 }
 ```
 
-Publish path (in `device.rs`, replacing the template's `_publish_reading` equivalent): build
+Publish path (`app.rs`'s `build_sample`, carried by the drivers through the `Wire` seam): build
 `Sample` via the core facade — `Sample::null_value()` **with `quality: Bad` and
 `quality_raw: "UNAVAILABLE"`** for unavailable observations (the shipped facade gates only the
 null *permission* on `explicit_null`; quality is free), ordinary `Sample::new(v)` otherwise; attach
@@ -142,28 +188,41 @@ tests move together with this extension (contract rule: command reads must not s
 ```text
 Connecting ──probe ok──▶ Snapshot(/current) ──▶ Streaming(next = header.nextSequence)
 Streaming:
-  GET {base}/sample?interval={i}&heartbeat={h}&from={next}[&path={xpath}]
+  GET {base}/sample?interval=250&heartbeat={h}&from={next}      (STREAM_INTERVAL_MS = 250;
+                                                                 unfiltered — demux is local)
   loop parts:
     Streams doc  → publish obs where seq ≥ from, seq > last_published[dataItemId];
-                   next = doc.header.nextSequence
+                   next = doc.header.nextSequence; liveness touched
     empty doc    → heartbeat: refresh liveness deadline only
     Errors doc(OUT_OF_RANGE) → Recovering
-  deadline = now + 2×heartbeat_ms missed → drop stream → Streaming (same next)   [ladder 1]
-Recovering:  emit DataLoss{skipped = firstSequence.saturating_sub(next)};
+  silence ≥ 2×heartbeat_ms → mark down → drop stream → Streaming (same next)     [ladder 1]
+  transport lost / malformed / EOF → mark down → re-establish                     [ladder 1]
+Recovering:  emit DataLoss{skipped = firstSequence.saturating_sub(next)};  (NO mark-down: the
+             OUT_OF_RANGE document proves the agent alive — D-R3)
              Snapshot(/current) → publish as fresh; next = snapshot.nextSequence
              → Streaming                                                          [ladder 2]
-InstanceId change (any doc header) → Resyncing: re-probe; digest≠cached → ModelDrift event,
+InstanceId change (any doc header) → Resyncing (NO mark-down — D-R3): re-probe FIRST — nothing
+             from the restarted agent's document is published until the re-probe and recompile
+             complete, and a failed probe fails the cycle; digest≠cached → ModelDrift event,
              browse cursors invalidated (viewGeneration=digest), signals recompiled against the
              new model (missing dataItemId → that signal → permanent BAD MTC_NO_SUCH_DATAITEM);
              then Snapshot → Streaming                                            [ladder 3]
-Polling (StreamPolicy::PollOnly, or after N consecutive stream-establish failures with an event):
+Establish accounting (D-R4): a stream is established only after its first liveness part; a
+             zero-part exit is an establish failure and waits the backoff. After
+             STREAM_ESTABLISH_FAILURE_LIMIT (3) consecutive failures → StreamDegraded event →
+Polling (StreamPolicy::PollOnly, or degraded as above):
   /current every poll_interval_ms; same snapshot/dedupe rules; Streaming retried per reconnect cfg.
+  HTTP-200 MTConnectErrors on /current → AgentError (parsed-OK in the counters, no liveness
+  refresh); the 3rd consecutive erroring cycle (CURRENT_ERROR_DOWN_STREAK) marks down (D-R9).
 Backoff: capped exponential + full jitter (template's generated policy) on connect/probe failure.
 ```
 
 Dedupe rule is per data item (`last_published`), not global — one stream serves many devices and
 `/current` snapshots overlap the stream window. Pause (D-MTC-7/HLD §7): acq continues, cache
-updates, per-instance publish gate closes; resume forces `Snapshot` first.
+updates, per-instance publish gate closes; resume forces `Snapshot` first, reading the **live**
+inventory at resume time — a signal a reload added during the pause is in the snapshot. Only the
+acquisition path's ingest/mark-down pair writes `connected` (D-R1/D-R5); a command-path snapshot
+refreshes `last_liveness` but never flips the flag.
 
 ## 6. HTTP + multipart + XML details
 
@@ -177,11 +236,13 @@ updates, per-instance publish gate closes; resume forces `Snapshot` first.
   No crate dependency: streaming x-mixed-replace parsers are scarce/unmaintained (assessment), and
   the grammar is 2 headers + delimiter.
 - **xml.rs**: `quick_xml::Reader` pull parsing, **matching local names only** and recording the
-  namespace URI version (1.3–2.7 tolerance); three document parsers (`Devices`, `Streams`,
-  `Errors`) that skip-and-count unknown elements (forward-compat, `MtconnectParse.unknownElements`
-  measure); depth cap 64, attribute count/length caps; no DTD/entity resolution (quick-xml default;
-  asserted by test with an XXE fixture). Header struct: `{instanceId, bufferSize, firstSequence,
-  lastSequence, nextSequence, version, sender}`.
+  namespace URI version (1.3–2.7 tolerance; a *prefixed* MTConnect declaration — `xmlns:m="…"` —
+  is detected exactly like a default one, so qualifying the elements cannot bypass the 1.3 floor);
+  three document parsers (`Devices`, `Streams`, `Errors`) that skip unknown elements
+  (forward-compat); depth cap 64 (`MAX_DEPTH`), attribute count/length caps, and a 250 000-element
+  document cap (`MAX_NODES`) independent of `maxDocumentBytes`; no DTD/entity resolution
+  (quick-xml default; asserted by test with an XXE fixture). Header struct: `{instanceId,
+  bufferSize, firstSequence, lastSequence, nextSequence, version, sender}`.
 - **model.rs digest**: canonical serialization = pre-order (element local-name, sorted attributes)
   of the instance's `Device` subtree only → sha256 → `probeDigest`/browse `viewGeneration`.
 
@@ -210,9 +271,11 @@ Generated routing (`body.instance`, `NO_SUCH_INSTANCE`/`BAD_ARGS`) is untouched.
 ## 8. Config schema (`config.schema.json` deltas from the generated floor)
 
 `component.global`: `agents[]` (closed AgentConfig shape; ≥1; unique ids/urls), `defaults`
-(`publishMode`, `batchMs`, `staleSignalSecs`, `maxDocumentBytes`, reconnect). `#/$defs/device`
+(`pollIntervalMs`, `publishMode`, `batchMs`, `maxDocumentBytes`, reconnect), and
+`healthThresholds.staleSignalSecs`. `#/$defs/device`
 (aliased by the generated `#/$defs/instance`): `{id, adapter: "mtconnect", connection:
-{agentId, deviceUuid}, signals: [SignalConfig…], writes: {allow: {type: array, maxItems: 0}}}` —
+{agentId, deviceUuid}, signals: [SignalConfig…], selection?, writes: {allow: {type: array,
+maxItems: 0}}}` —
 all objects `additionalProperties: false`. Cross-invariants in the semantic validator: every
 `connection.agentId` resolves; device uuids unique per agent; `conditionBinding` ids distinct from
 the signal's own `dataItemId`; deadband only on SAMPLE-category signals. Reload per ADP-4:
@@ -239,10 +302,22 @@ Generated `Health` gains nothing new structurally: `signalsSubscribed` = size of
 compiled, currently-delivered signal set (stream or poll) while `connectionState==1`, else 0;
 `writeErrors` stays 0 (asserted by test). New families (HLD §9) emit through the generated
 family-pattern seam in `metrics.rs`: `MtconnectStream`/`MtconnectProbe`/`MtconnectParse` with
-`(total, interval)` counter pairs, dimensions `agentId`/`instance`/`result` only. Events via the
-generated event helper: `MtconnectAgentEvent` (up/down/instanceId), `MtconnectDataLossEvent`
+`(total, interval)` counter pairs, dimensions `agentId`/`instance`/`result` only; `MtconnectParse`
+carries `documentsParsed`, `parseErrors`, and `rejectedObservations` (required-field rejects —
+D-R10/D-R11). Events via the
+generated event helper: `MtconnectAgentEvent` (up/down/degraded), `MtconnectDataLossEvent`
 (skipped count, sequence window), `MtconnectModelDriftEvent` (old/new digest),
-`MtconnectConditionEvent` (Fault transitions, rate-limited 1/min per dataItemId).
+`MtconnectConditionEvent` (transitions of the activation **aggregate** into Fault, rate-limited
+1/min per dataItemId; context carries `conditionId` and `activeConditions`).
+
+Passive quality (HLD §6 rows on the liveness clock) is wired in `staleness.rs` + `driver.rs`:
+`DeviceSession::passive_input` reports the link facts (`unreachable`, `liveness_age`,
+`liveness_window`) straight from the connectivity authority; the per-instance `QualityWatchdog` is
+fed every reading that reaches the wire and evaluated on every poll tick and link transition,
+emitting the synthetic transitions (held value + `passive` marker) that `publish_readings` carries
+to the wire, bypassing shaping. Synthetic readings feed neither the watchdog nor
+`DeviceMetrics.last_update` (D-R13), so recovery restores the held verdict and the `staleSignals`
+metric keeps meaning value silence.
 
 ## 11. Panels
 
@@ -256,38 +331,41 @@ pins the full manifest + absence of `writeVerb` + the `sb/write` availability st
 | Layer | Vehicle | Key cases |
 |---|---|---|
 | multipart.rs | unit + `cargo fuzz` target | both content-types, split boundaries across chunks, oversize part, missing length, junk between parts |
-| xml.rs | unit + fuzz + goldens | goldens per ns version 1.3/1.7/2.0/2.7 (free XSD-derived fixtures), XXE fixture inert, unknown-element skip counting, header extraction |
+| xml.rs | unit + fuzz + goldens | goldens per ns version 1.3/1.7/2.0/2.7 (free XSD-derived fixtures), XXE fixture inert, unknown-element skip, prefixed-declaration floor, caps (depth/attrs/nodes), header extraction |
 | sequence.rs | virtual-clock unit | ladder 1/2/3, dedupe overlap (snapshot ∩ stream), heartbeat expiry math, PollOnly, N-failure poll degradation |
 | device seam | fake AgentRuntime | Reading extension, UNAVAILABLE null+BAD publish, extras (`sequence`) on the wire body, pause cache-update/no-publish |
 | commands | generated harness + fake runtime | write refusal + availability, browse paged/hierarchical/cold-cache, read scoped snapshot, PAUSED |
-| integration | `tests/agent_integration.rs`, env-gated `EC_MTC_AGENT` (compose file pinning `mtconnect/agent:2.7.0.12` + in-tree SHDR simulator) | probe/stream E2E, agent restart (instanceId), buffer-wrap with `bufferSize=128`, multi-device demux, TLS |
+| driver orchestration | `src/driver.rs` in-module suite: fake `DeviceBackend`/`DeviceSession` over a recording `Wire` | pause clears windows / resume snapshots the live inventory, shaping-generation swaps flush on the old policy, passive transitions reach the wire, cancellation flushes before detach |
+| shaping / staleness | virtual-clock unit tables | window/deadband/lifecycle rules; the passive ladder (stale → expired → unreachable → recovered), verbatim restoration, synthetic-reading shape |
+| integration | `tests/agent_integration.rs`, env-gated `EC_MTC_AGENT` (compose file pinning `mtconnect/agent:2.7.0.12` + in-tree SHDR simulator); `EC_REQUIRE_LIVE` turns the self-skip into a hard failure | probe/stream E2E, agent restart (instanceId), buffer-wrap with `bufferSize=128`, multi-device demux, TLS |
 | soak (manual/advisory) | `demo.mtconnect.org` | long-run stream, content-type tolerance |
-| wire | local MQTT | exact envelope + extras assertions |
+| wire | local MQTT | exact envelope + extras assertions (incl. `passive`, `conditionId`/`activeConditions`, `componentPath`, `sequence` on synthetic readings) |
 
-Coverage: component + `mtconnect/` inside the 90% gate; fuzz targets and the env-gated integration
-excluded per the template's documented pattern (live-seam pragma rules).
+Coverage: component + `mtconnect/` inside the 90% gate, `driver.rs` included; excluded are only
+`supervisor.rs` (the thin live shell), `main.rs`, and the env-gated live suites, each exclusion
+pinned to a reason in the CI workflow.
 
-## 13. Milestones (each ends green + committed)
+## 13. Delivery status
 
-1. **M1 scaffold+model**: CLI scaffold; `config.rs`/`xml.rs`(Devices)/`model.rs` + digest;
-   sim-backed suite green.
-2. **M2 client+snapshot**: `client.rs`, `/probe`+`/current`, poll-mode acquisition end-to-end
-   against cppagent-docker; Reading extension + publish path.
-3. **M3 streaming**: `multipart.rs`+`stream.rs`+`sequence.rs` ladders; fuzz targets; integration
-   restart/overrun cases.
-4. **M4 commands+panels**: full verb surface, browse dual-mode, write refusal/availability,
-   panel manifest snapshot; wire gate.
-5. **M5 hardening**: TLS/auth, config reload swap, metrics/events complete, coverage to gate,
-   docs (Diátaxis) current-state, HOST validation; then the platform gates per org matrix.
+The design above is implemented in `edgecommons/mtconnect-adapter`, whose root `DESIGN.md` is the
+component's design-fidelity contract (this document's decisions plus the local
+D-MtconnectAdapter-L* and remediation D-R* registers). Release gates recorded open there: the
+extended wire gate over local MQTT and the Greengrass/Kubernetes platform legs.
 
-## 14. Open questions for review
+## 14. Settled design points
 
-1. In-crate `src/mtconnect/` vs workspace crate — LLD picks in-crate (size); flip if you want the
-   PROFINET-style layout uniformly.
-2. Default `interval` for streaming (proposed: per-signal `publish` min, floor 250 ms) — or a
-   fixed agent-level `streamIntervalMs`?
-3. `path=` server-side filtering: propose ON when configured signals cover <30% of the device's
-   data items, else stream unfiltered and demux locally — acceptable heuristic, or config-explicit
-   only?
-4. Condition observations: R1 publishes state as value with extras; should `Warning`→`UNCERTAIN`
-   quality apply to the condition signal itself (proposed: yes) in addition to bound signals?
+1. **In-crate `src/mtconnect/` module tree**, not a workspace crate — a thin client does not
+   warrant the PROFINET-style split.
+2. **The streaming `interval` is a fixed 250 ms floor** (`STREAM_INTERVAL_MS`); per-signal cadence
+   is the publish-shaping engine's job, above the session.
+3. **The stream is unfiltered and demultiplexed locally.** `path=` scoping applies only to
+   command-path `/current` reads (`sb/read`), where the request names its data items.
+4. **Condition quality applies to the condition signal itself**, from the activation aggregate —
+   `WARNING` → `UNCERTAIN`, `FAULT` → `BAD` — in addition to degrading bound signals.
+
+## Appendix — revision history
+
+| Date | Change |
+|---|---|
+| 2026-08-03 | Status: implemented. §1 real module layout (`driver.rs`, `shaping.rs`, `staleness.rs`, `reload.rs`, `selection.rs`, `stats.rs`); §2 required-field rejection and the arrival stamp; §3 two-lane bounded queue with the D-R2 decision; §5 mark-down scope, establish accounting, resync-before-publish, `/current` errors policy; §6 prefixed-declaration floor and the element cap; §10 `rejectedObservations` + passive-quality wiring; §12 current suites and coverage split; §§13–14 delivery status and settled points. |
+| 2026-07-27 | Initial design. |
