@@ -33,13 +33,25 @@ function configJson(version: number): string {
 }
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 /**
- * (Re)write the mount's config key in place. Deliberately not a stage-and-rename: Windows refuses to
- * rename onto a file the source's own re-read currently holds open. A torn read is harmless here — it
- * fails to parse and is rejected-and-kept (FR-CFG-5), never counted as a reload — so both assertions
- * below hold either way.
+ * Atomically (re)place the mount's config key, the way the kubelet does, so the source's re-read always
+ * sees a whole document rather than a half-written file. The rename is retried briefly rather than
+ * attempted once: Windows refuses to replace a file while the source's own re-read holds it open, and
+ * that read lasts microseconds.
  */
 async function publish(mount: string, text: string): Promise<void> {
-  await fsp.writeFile(path.join(mount, "config.json"), text);
+  const staged = path.join(mount, "config.json.staged");
+  await fsp.writeFile(staged, text);
+  const target = path.join(mount, "config.json");
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    try {
+      await fsp.rename(staged, target);
+      return;
+    } catch (e) {
+      if (Date.now() >= deadline) throw e;
+      await sleep(25);
+    }
+  }
 }
 /**
  * Generate `rounds` bursts of directory entry events that leave the config *content* unchanged — the

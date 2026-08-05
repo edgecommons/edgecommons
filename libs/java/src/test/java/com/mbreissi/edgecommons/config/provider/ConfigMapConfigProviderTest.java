@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -42,13 +43,36 @@ class ConfigMapConfigProviderTest {
     }
 
     /**
-     * (Re)writes the mount's config key in place. Deliberately not a stage-and-rename: Windows refuses
-     * to rename onto a file the provider's own re-read currently holds open. A torn read is harmless
-     * here — it fails to parse and is rejected-and-kept (FR-CFG-5), never counted as a reload — so both
-     * assertions below hold either way.
+     * Atomically (re)places the mount's config key, the way the kubelet does, so the provider's re-read
+     * always sees a whole document — either the old one or the new one, never a half-written file. That
+     * matters here: an unreadable read delegates to {@code reloadFromProvider} (the FR-CFG-5
+     * reject-and-keep path), so a torn read would count as a reload and skew these assertions.
+     *
+     * <p>The rename is retried briefly rather than attempted once: Windows refuses to replace a file
+     * while the provider's own re-read holds it open, and that read lasts microseconds.
      */
     private static void publish(Path mount, String json) throws IOException {
-        write(mount.resolve("config.json"), json);
+        Path staged = mount.resolve("config.json.staged");
+        write(staged, json);
+        Path key = mount.resolve("config.json");
+        IOException last = null;
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        do {
+            try {
+                Files.move(staged, key,
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                return;
+            } catch (IOException e) {
+                last = e; // the reader holds the handle (Windows); it will let go shortly
+                try {
+                    Thread.sleep(25);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        } while (System.nanoTime() < deadline);
+        throw new IOException("could not publish the ConfigMap key: " + key, last);
     }
 
     /**
