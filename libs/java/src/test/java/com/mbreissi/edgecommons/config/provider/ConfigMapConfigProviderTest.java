@@ -41,12 +41,14 @@ class ConfigMapConfigProviderTest {
         return "{\"component\":{\"name\":\"x\"},\"version\":" + version + "}";
     }
 
-    /** Atomically (re)places the mount's config key, the way the kubelet does — no torn reads. */
+    /**
+     * (Re)writes the mount's config key in place. Deliberately not a stage-and-rename: Windows refuses
+     * to rename onto a file the provider's own re-read currently holds open. A torn read is harmless
+     * here — it fails to parse and is rejected-and-kept (FR-CFG-5), never counted as a reload — so both
+     * assertions below hold either way.
+     */
     private static void publish(Path mount, String json) throws IOException {
-        Path staged = mount.resolve("config.json.staged");
-        write(staged, json);
-        Files.move(staged, mount.resolve("config.json"),
-                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        write(mount.resolve("config.json"), json);
     }
 
     /**

@@ -41,10 +41,13 @@ def _version_of(manager: ConfigMapConfigManager):
 
 
 def _publish(mount, text: str) -> None:
-    """Atomically (re)place the mount's config key, the way the kubelet does — no torn reads."""
-    staged = mount / "config.json.staged"
-    _write(staged, text)
-    os.replace(staged, mount / "config.json")
+    """(Re)write the mount's config key in place.
+
+    Deliberately not a stage-and-replace: Windows refuses to replace a file the manager's own re-read
+    currently holds open. A torn read is harmless here — it fails to parse and is rejected-and-kept
+    (FR-CFG-5), never counted as a reload — so both assertions below hold either way.
+    """
+    _write(mount / "config.json", text)
 
 
 def _churn(mount, text: str, rounds: int = 6) -> None:
