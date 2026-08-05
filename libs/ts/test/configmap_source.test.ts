@@ -32,6 +32,28 @@ function configJson(version: number): string {
   return JSON.stringify({ component: { name: "x" }, version });
 }
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+/** Atomically (re)place the mount's config key, the way the kubelet does — no torn reads. */
+async function publish(mount: string, text: string): Promise<void> {
+  const staged = path.join(mount, "config.json.staged");
+  await fsp.writeFile(staged, text);
+  await fsp.rename(staged, path.join(mount, "config.json"));
+}
+/**
+ * Generate `rounds` bursts of directory entry events that leave the config *content* unchanged — the
+ * kubelet's projected-volume churn: republishing the key byte-for-byte (and with different
+ * whitespace) plus creating and removing sibling projection entries.
+ */
+async function churn(mount: string, text: string, rounds = 8): Promise<void> {
+  for (let i = 0; i < rounds; i++) {
+    await publish(mount, text);
+    const sibling = path.join(mount, `..2026_${i}`);
+    await fsp.mkdir(sibling);
+    await fsp.rmdir(sibling);
+    // Same document, different bytes: the dedupe compares the PARSED document.
+    await publish(mount, text.replace(/,/g, " ,  "));
+    await sleep(60);
+  }
+}
 async function waitFor(pred: () => boolean, timeoutMs = 8000, stepMs = 50): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -208,6 +230,53 @@ describe("ConfigMapConfigSource: reject-and-keep on reload", () => {
     await sleep(500);
     expect(updates.length).toBe(0);
     expect(warn).toHaveBeenCalled();
+    await watch!.close();
+  });
+});
+
+// ---------- content dedupe ----------
+
+describe("ConfigMapConfigSource: content dedupe", () => {
+  it("emits no reload for an unchanged mount across many filesystem events", async () => {
+    // The kubelet touches projected volumes on its sync loop, so an unchanged mount produces a
+    // continuous stream of entry events. Not one of them is a configuration change.
+    const mount = tmpDir();
+    fs.mkdirSync(path.join(mount, "..data"));
+    fs.writeFileSync(path.join(mount, "config.json"), configJson(1));
+
+    const src = new ConfigMapConfigSource(mount, "config.json");
+    // The initial load seeds the dedupe baseline — without it the first touch re-emits the document
+    // the component already applied.
+    expect(await src.load()).toEqual({ component: { name: "x" }, version: 1 });
+    const updates: unknown[] = [];
+    const watch = await src.watch((doc) => updates.push(doc));
+    await sleep(300); // let the directory watch arm
+
+    await churn(mount, configJson(1));
+    await sleep(500); // drain any in-flight read
+
+    expect(updates).toEqual([]);
+    await watch!.close();
+  });
+
+  it("emits exactly one reload for a genuine change across an event burst", async () => {
+    // A ConfigMap update lands as a burst of entry events (the ..data swap stages, renames, and the
+    // kubelet keeps touching the mount afterwards). The component must see ONE reload.
+    const mount = tmpDir();
+    fs.mkdirSync(path.join(mount, "..data"));
+    fs.writeFileSync(path.join(mount, "config.json"), configJson(1));
+
+    const src = new ConfigMapConfigSource(mount, "config.json");
+    expect(await src.load()).toEqual({ component: { name: "x" }, version: 1 });
+    const updates: unknown[] = [];
+    const watch = await src.watch((doc) => updates.push(doc));
+    await sleep(300);
+
+    await publish(mount, configJson(2));
+    await churn(mount, configJson(2)); // the rest of the burst carries the SAME new content
+    await sleep(500);
+
+    expect(updates).toEqual([{ component: { name: "x" }, version: 2 }]);
     await watch!.close();
   });
 });

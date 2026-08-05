@@ -25,6 +25,15 @@
 //! OS watch is lost (registration failed during a swap window, or the directory was replaced) it
 //! re-registers after a short backoff rather than silently going dead (FR-CFG-2).
 //!
+//! ## Content dedupe
+//! A filesystem event is not a configuration change. The kubelet touches projected volumes on its
+//! sync loop, so an unchanged mount produces a steady stream of entry events; the `..data` swap
+//! itself produces a burst of them. Every event therefore re-reads the key, but the parsed document
+//! is emitted **only when it differs from the last emitted one** — compared as parsed JSON, so a
+//! whitespace-only or key-reordered rewrite is not a change. The baseline is seeded by the initial
+//! [`ConfigSource::load`], so the first event after startup on an unchanged mount emits nothing. This
+//! also collapses a swap burst into a single emission, which is why no debounce timer is needed.
+//!
 //! ## Reject-and-keep (FR-CFG-5)
 //! On a reload, a malformed read (a mid-swap window or a bad ConfigMap edit) must never crash a
 //! running pod: the read is logged and skipped, so the previously-applied config stays in effect. A
@@ -101,6 +110,9 @@ pub struct ConfigMapConfigSource {
     stop: Arc<AtomicBool>,
     /// Retains the watch thread handle so it can be joined on drop.
     thread: Mutex<Option<JoinHandle<()>>>,
+    /// The last document handed downstream — seeded by [`ConfigSource::load`] and updated on each
+    /// emission, so a re-read that parses to the same value is not re-emitted (see the module docs).
+    last_emitted: Arc<Mutex<Option<Value>>>,
 }
 
 impl ConfigMapConfigSource {
@@ -129,6 +141,7 @@ impl ConfigMapConfigSource {
             config_file,
             stop: Arc::new(AtomicBool::new(false)),
             thread: Mutex::new(None),
+            last_emitted: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -178,12 +191,18 @@ impl ConfigSource for ConfigMapConfigSource {
                 self.config_file.display()
             ))
         })?;
-        serde_json::from_slice(&bytes).map_err(|e| {
+        let value: Value = serde_json::from_slice(&bytes).map_err(|e| {
             EdgeCommonsError::Config(format!(
                 "Error parsing ConfigMap configuration '{}': {e}",
                 self.config_file.display()
             ))
-        })
+        })?;
+        // Seed the dedupe baseline, so the first kubelet touch after startup does not re-emit the
+        // document the component already applied.
+        if let Ok(mut slot) = self.last_emitted.lock() {
+            *slot = Some(value.clone());
+        }
+        Ok(value)
     }
 
     fn source_name(&self) -> &str {
@@ -195,10 +214,11 @@ impl ConfigSource for ConfigMapConfigSource {
         let dir = self.mount_dir.clone();
         let config_file = self.config_file.clone();
         let stop = self.stop.clone();
+        let last_emitted = self.last_emitted.clone();
 
         let handle = std::thread::Builder::new()
             .name("edgecommons-configmap-watch".into())
-            .spawn(move || watch_loop(dir, config_file, out_tx, stop))
+            .spawn(move || watch_loop(dir, config_file, out_tx, stop, last_emitted))
             .ok()?;
 
         if let Ok(mut slot) = self.thread.lock() {
@@ -233,6 +253,7 @@ fn watch_loop(
     config_file: PathBuf,
     out_tx: mpsc::UnboundedSender<Value>,
     stop: Arc<AtomicBool>,
+    last_emitted: Arc<Mutex<Option<Value>>>,
 ) {
     while !stop.load(Ordering::SeqCst) {
         // Channel-based watcher so the inner loop can detect watcher death and re-arm.
@@ -256,7 +277,7 @@ fn watch_loop(
         }
         tracing::debug!(dir = %dir.display(), "ConfigMap directory watch armed");
 
-        match inner_loop(&ev_rx, &config_file, &out_tx, &stop) {
+        match inner_loop(&ev_rx, &config_file, &out_tx, &stop, &last_emitted) {
             LoopExit::Stopped => return,
             LoopExit::ReceiverGone => return, // EdgeCommons dropped — stop quietly.
             LoopExit::Rearm => {
@@ -278,13 +299,15 @@ enum LoopExit {
 }
 
 /// The inner event loop for a single armed watcher: on *any* directory entry event (including the
-/// `..data` swap) re-read the config and forward it, reject-and-keep on a malformed read. Polls with
-/// a timeout so the stop flag is observed promptly.
+/// `..data` swap) re-read the config and forward it **if its parsed content differs from the last
+/// emitted document**, reject-and-keep on a malformed read. Polls with a timeout so the stop flag is
+/// observed promptly.
 fn inner_loop(
     ev_rx: &std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
     config_file: &Path,
     out_tx: &mpsc::UnboundedSender<Value>,
     stop: &Arc<AtomicBool>,
+    last_emitted: &Mutex<Option<Value>>,
 ) -> LoopExit {
     loop {
         if stop.load(Ordering::SeqCst) {
@@ -292,8 +315,15 @@ fn inner_loop(
         }
         match ev_rx.recv_timeout(POLL_INTERVAL) {
             Ok(Ok(_event)) => {
-                // Any entry change (including the ..data symlink swap) triggers a re-read.
+                // Any entry change (including the ..data symlink swap) triggers a re-read; only a
+                // changed document is forwarded.
                 if let Some(value) = ConfigMapConfigSource::read_and_parse(config_file) {
+                    if !record_if_changed(last_emitted, &value) {
+                        tracing::trace!(
+                            "ConfigMap entry event with unchanged content; no reload emitted"
+                        );
+                        continue;
+                    }
                     if out_tx.send(value).is_err() {
                         return LoopExit::ReceiverGone;
                     }
@@ -306,6 +336,27 @@ fn inner_loop(
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => return LoopExit::Rearm,
         }
+    }
+}
+
+/// Compare `candidate` against the last emitted document and, when it differs, record it as the new
+/// baseline.
+///
+/// # Returns
+/// `true` when `candidate` is a genuine change and must be emitted; `false` when it is identical to
+/// the last emitted document (a kubelet touch on an unchanged mount, or a later event of the same
+/// `..data` swap burst) and must be swallowed. A poisoned baseline mutex fails open (`true`), so a
+/// lock failure can never make hot-reload go silently dead.
+fn record_if_changed(last_emitted: &Mutex<Option<Value>>, candidate: &Value) -> bool {
+    match last_emitted.lock() {
+        Ok(mut slot) => {
+            if slot.as_ref() == Some(candidate) {
+                return false;
+            }
+            *slot = Some(candidate.clone());
+            true
+        }
+        Err(_) => true,
     }
 }
 
@@ -387,6 +438,34 @@ mod tests {
         assert!(err.to_string().contains("config.json"));
     }
 
+    #[tokio::test]
+    async fn load_fails_loudly_for_malformed_json_on_initial_load() {
+        // A malformed key is reject-and-keep on RELOAD but a loud failure on the initial load.
+        let mount = tempfile::tempdir().unwrap();
+        write(&mount.path().join("config.json"), "{ not json ]");
+        let source = ConfigMapConfigSource::new(
+            Some(mount.path().to_path_buf()),
+            Some("config.json".into()),
+        )
+        .unwrap();
+        let err = source.load().await.unwrap_err();
+        assert!(err.to_string().contains("Error parsing"), "got: {err}");
+    }
+
+    #[test]
+    fn record_if_changed_fails_open_when_the_baseline_is_poisoned() {
+        // A poisoned baseline must never make hot-reload go silently dead: the change is emitted.
+        let baseline = Arc::new(Mutex::new(Some(serde_json::json!({"version": 1}))));
+        let poisoner = baseline.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.lock().unwrap();
+            panic!("poison the baseline");
+        })
+        .join();
+        assert!(baseline.is_poisoned());
+        assert!(record_if_changed(&baseline, &serde_json::json!({"version": 1})));
+    }
+
     #[test]
     fn applies_default_mount_dir_and_key_when_none() {
         // Defaults: /etc/edgecommons + config.json. The dir need not exist to construct.
@@ -464,6 +543,103 @@ mod tests {
         let file = mount.path().join("config.json");
         write(&file, "");
         assert!(ConfigMapConfigSource::read_and_parse(&file).is_none());
+    }
+
+    /// Collect every value delivered during `window`.
+    fn drain_for(rx: &mut UnboundedReceiver<Value>, window: Duration) -> Vec<Value> {
+        let deadline = Instant::now() + window;
+        let mut seen = Vec::new();
+        while Instant::now() < deadline {
+            match rx.try_recv() {
+                Ok(v) => seen.push(v),
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(25))
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => break,
+            }
+        }
+        seen
+    }
+
+    /// Generate `rounds` bursts of directory entry events that leave the config content unchanged —
+    /// the kubelet's projected-volume churn: rewriting the key byte-for-byte (and with different
+    /// whitespace) plus creating and removing sibling projection entries.
+    fn churn(mount: &Path, contents: &str, rounds: usize) {
+        for i in 0..rounds {
+            write(&mount.join("config.json"), contents);
+            let sibling = mount.join(format!("..2026_{i}"));
+            let _ = std::fs::create_dir(&sibling);
+            let _ = std::fs::remove_dir(&sibling);
+            // Same document, different bytes: dedupe compares the PARSED value, so this is not a change.
+            write(&mount.join("config.json"), &contents.replace(',', " ,  "));
+            std::thread::sleep(Duration::from_millis(60));
+        }
+    }
+
+    // ---------- content dedupe ----------
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unchanged_mount_emits_no_reload_across_many_events() {
+        // The defect: the kubelet touches projected volumes on its sync loop, so an unchanged mount
+        // produces a continuous stream of entry events. Not one of them is a configuration change.
+        let mount = tempfile::tempdir().unwrap();
+        let contents = config_json(1);
+        write(&mount.path().join("config.json"), &contents);
+        std::fs::create_dir(mount.path().join("..data")).unwrap();
+
+        let source = ConfigMapConfigSource::new(
+            Some(mount.path().to_path_buf()),
+            Some("config.json".into()),
+        )
+        .unwrap();
+        // The initial load seeds the dedupe baseline — without it the first touch re-emits the
+        // document the component already applied.
+        assert_eq!(source.load().await.unwrap()["version"], 1);
+        let mut rx = source.watch().unwrap();
+        std::thread::sleep(Duration::from_millis(800)); // let the watch arm
+
+        churn(mount.path(), &contents, 8);
+
+        let emitted = drain_for(&mut rx, Duration::from_secs(2));
+        assert!(
+            emitted.is_empty(),
+            "an unchanged mount must emit no reload; got {} emission(s), first: {:?}",
+            emitted.len(),
+            emitted.first()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn genuine_change_emits_exactly_one_reload_across_an_event_burst() {
+        // A ConfigMap update lands as a burst of entry events (the ..data swap stages, renames, and
+        // the kubelet keeps touching the mount afterwards). The component must see ONE reload.
+        let mount = tempfile::tempdir().unwrap();
+        let first = config_json(1);
+        write(&mount.path().join("config.json"), &first);
+        std::fs::create_dir(mount.path().join("..data")).unwrap();
+
+        let source = ConfigMapConfigSource::new(
+            Some(mount.path().to_path_buf()),
+            Some("config.json".into()),
+        )
+        .unwrap();
+        assert_eq!(source.load().await.unwrap()["version"], 1);
+        let mut rx = source.watch().unwrap();
+        std::thread::sleep(Duration::from_millis(800)); // let the watch arm
+
+        let second = config_json(2);
+        write(&mount.path().join("config.json"), &second);
+        churn(mount.path(), &second, 8); // the rest of the burst carries the SAME new content
+
+        let emitted = drain_for(&mut rx, Duration::from_secs(2));
+        assert_eq!(
+            emitted.len(),
+            1,
+            "one change must emit exactly one reload; got {} emission(s), first: {:?}",
+            emitted.len(),
+            emitted.first()
+        );
+        assert_eq!(emitted[0]["version"], 2);
     }
 
     // ---------- directory-watch re-arm across swaps (FR-CFG-2) ----------

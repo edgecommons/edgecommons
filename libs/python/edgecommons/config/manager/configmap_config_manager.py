@@ -16,6 +16,15 @@ shows up as events on the ``..data`` entry, not on ``config.json``. The director
 it watches the persistent mount directory, reacts to *any* entry event, and re-arms if the watch is
 invalidated (FR-CFG-2).
 
+**Content dedupe.**
+A filesystem event is not a configuration change. The kubelet touches projected volumes on its sync
+loop, so an unchanged mount produces a steady stream of entry events; the ``..data`` swap itself
+produces a burst of them. Every event therefore re-reads the key, but the reload seam is entered
+*only when the re-read document differs from the last one applied* — compared as parsed JSON, so a
+whitespace-only or key-reordered rewrite is not a change. The baseline is seeded by the initial load,
+so the first event after startup on an unchanged mount reloads nothing. This also collapses a swap
+burst into a single reload, which is why no debounce timer is needed.
+
 **Reject-and-keep (FR-CFG-5).**
 On a reload, a malformed file (a mid-swap read, or a bad ConfigMap edit) must never crash a running
 pod: a parse/read failure is logged and the previous config is kept. The *initial* load still fails
@@ -90,6 +99,9 @@ class ConfigMapConfigManager(ConfigManager):
         self._config_file_path = os.path.join(self._mount_dir, self._key)
         self._config_source = f"ConfigMap (mountDir: {self._mount_dir}, key: {self._key})"
         self._config_provider_family = "CONFIGMAP"
+        #: The last document applied — seeded by the initial load and updated on each reload, so a
+        #: re-read that parses to the same document is not re-applied (see the module docs).
+        self._last_emitted = None
         self._warn_if_subpath_mount()
         # Initial load — fails loudly (parity with FILE) if the key is missing/unreadable.
         self.init()
@@ -112,7 +124,11 @@ class ConfigMapConfigManager(ConfigManager):
     def _load_configuration(self) -> dict:
         try:
             with open(self._config_file_path) as f:
-                return json.load(f)
+                loaded = json.load(f)
+            # Seed the dedupe baseline, so the first kubelet touch after startup does not re-apply
+            # the document the component already holds.
+            self._last_emitted = loaded
+            return loaded
         except (EnvironmentError, json.JSONDecodeError) as e:
             logger.fatal(
                 "Error reading ConfigMap configuration '%s': %s", self._config_file_path, e
@@ -121,11 +137,35 @@ class ConfigMapConfigManager(ConfigManager):
                 f"Error reading ConfigMap configuration '{self._config_file_path}': {e}"
             ) from e
 
+    def _read_candidate(self):
+        """Re-read and parse the ConfigMap key for the dedupe comparison only.
+
+        Returns:
+            the parsed document, or ``None`` if it could not be read or parsed (a mid-swap window, an
+            empty file, or a bad edit) — the caller then delegates to
+            :meth:`~edgecommons.config.manager.config_manager.ConfigManager.reload_from_provider`,
+            which applies the reject-and-keep path (FR-CFG-5).
+        """
+        try:
+            with open(self._config_file_path) as f:
+                return json.load(f)
+        except (EnvironmentError, json.JSONDecodeError) as e:
+            logger.debug("ConfigMap re-read for change detection failed (%s); delegating to reload", e)
+            return None
+
     def _reload(self) -> None:
-        """Reload callback: re-read the ConfigMap key and apply it. Reject-and-keep on a
-        transient/malformed read (a mid-swap window or a bad edit) so a running pod never crashes on
-        reload (FR-CFG-5)."""
+        """Reload callback: re-read the ConfigMap key and, *if its content differs from the last
+        applied document*, apply it. An entry event that leaves the content unchanged (the kubelet's
+        projected-volume churn, or a later event of the same ``..data`` swap burst) is swallowed.
+        Reject-and-keep on a transient/malformed read (a mid-swap window or a bad edit) so a running
+        pod never crashes on reload (FR-CFG-5)."""
+        candidate = self._read_candidate()
+        if candidate is not None and candidate == self._last_emitted:
+            logger.debug("ConfigMap entry event with unchanged content; no reload applied")
+            return
         logger.info("ConfigMap changed: applying new config from %s", self._config_file_path)
+        if candidate is not None:
+            self._last_emitted = candidate
         if not self.reload_from_provider():
             logger.warning("ConfigMap reload failed (keeping previous config).")
 

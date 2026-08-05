@@ -33,6 +33,14 @@ the `..data` rename**; the TS impl likely needs to watch the *directory* and re-
 `rename`/delete, or switch to `chokidar`/polling — do not assume `fs.watch` already has the correct shape. Reuse the `MountedDirSource` dotfile filter (`MountedDirSource.java:54-57`) to skip `..data` /
 `..2026_*`.
 
+**A filesystem event is not a configuration change.** The kubelet touches projected volumes on its sync
+loop, so an unchanged mount produces a continuous stream of entry events, and a single `..data` swap
+produces a burst of them. Every event re-reads the key, but a reload is delivered downstream only when
+the re-read document differs from the last one delivered — compared as *parsed* JSON, so a
+whitespace-only or key-reordered rewrite is free. The baseline is seeded by the initial load, so the
+first touch after startup delivers nothing. Content dedupe also collapses a swap burst into one reload,
+which is why the watchers carry no debounce timer.
+
 **The `subPath` gotcha:** a ConfigMap mounted with `subPath` is **never** updated by the kubelet —
 hot-reload is silently dead. The provider must document "mount the whole volume, not a `subPath`" and
 **SHOULD warn** when it cannot guarantee reload. Ops fallback for forced `subPath`/env/immutable: a

@@ -77,7 +77,11 @@ the vault on-disk format/conformance vectors.
   file-watch/`applyConfig` hot-reload path and **MUST** watch the *mount directory* (not the file
   inode) and **re-arm the watch after the kubelet's atomic `..data` symlink swap**. *Acceptance:* a
   ConfigMap edit propagates to a running pod (within kubelet sync latency) without restart, verified in
-  all four langs; the watcher survives `IN_DELETE_SELF`.
+  all four langs; the watcher survives `IN_DELETE_SELF`. The source **MUST** deliver a reload only when
+  the re-read document differs (as parsed JSON) from the last one it delivered, so the kubelet's
+  entry-event churn on an unchanged mount reloads nothing and one edit reloads once. *Acceptance:* an
+  unchanged mount produces zero reloads across many filesystem events; a single edit produces exactly
+  one reload across the swap event burst.
 - **FR-CFG-3 (subPath guard).** The CONFIGMAP source **MUST** document that `subPath` mounts never
   hot-reload and **SHOULD** detect and warn when it appears to be reading a `subPath` mount.
   *Acceptance:* docs state the restriction; a warning is emitted when reload cannot be guaranteed.
