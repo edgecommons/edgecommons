@@ -137,14 +137,21 @@ export class MetricEmitter implements MetricService, ConfigurationChangeListener
   private readonly targetDefault?: string;
   /** The platform-profile default metric-log path (local path on HOST/KUBERNETES); retained for hot-reload. */
   private readonly logPathDefault?: string;
+  /**
+   * The configuration the live target was built from, retained so a failed rebuild can restore an
+   * equivalent target after the old one has been released (see {@link onConfigurationChange}).
+   */
+  private appliedConfig: Config;
 
   private constructor(
     target: MetricTarget,
+    config: Config,
     messaging: IMessagingService | undefined,
     targetDefault: string | undefined,
     logPathDefault: string | undefined,
   ) {
     this.target = target;
+    this.appliedConfig = config;
     this.messaging = messaging;
     this.targetDefault = targetDefault;
     this.logPathDefault = logPathDefault;
@@ -164,7 +171,7 @@ export class MetricEmitter implements MetricService, ConfigurationChangeListener
     logPathDefault?: string,
   ): Promise<MetricEmitter> {
     const target = await buildTarget(config, messaging, targetDefault, logPathDefault);
-    return new MetricEmitter(target, messaging, targetDefault, logPathDefault);
+    return new MetricEmitter(target, config, messaging, targetDefault, logPathDefault);
   }
 
   defineMetric(metric: Metric): void {
@@ -204,23 +211,45 @@ export class MetricEmitter implements MetricService, ConfigurationChangeListener
   }
 
   /**
-   * Rebuild the metric target from the new config (keeping the previous one on error). The
-   * platform-profile default is preserved across reloads, so the precedence still holds. On a
-   * successful swap the previous target is shut down so a pull-based target's HTTP listener (or a
-   * durable target's engine) never leaks its port/resources (FR-MET-2).
+   * Rebuild the metric target from the new config. The platform-profile default is preserved across
+   * reloads, so the precedence still holds.
+   *
+   * The live target is **released before the replacement is built** (FR-MET-2): a target that owns an
+   * exclusive resource — the `prometheus` HTTP listener's port — cannot be bound a second time while
+   * the old one still holds it, so building first made every rebuild on a fixed port fail with
+   * `EADDRINUSE` and silently keep a stale target.
+   *
+   * If the replacement cannot be built, an equivalent target is rebuilt from the configuration the
+   * released one came from, so a bad edit still leaves metric emission running. Resolves `false` when
+   * the new configuration was not applied.
    */
   async onConfigurationChange(config: Config): Promise<boolean> {
+    const previousConfig = this.appliedConfig;
+    await this.target.shutdown().catch(() => undefined);
     try {
-      const target = await buildTarget(config, this.messaging, this.targetDefault, this.logPathDefault);
-      const previous = this.target;
-      this.target = target;
-      if (previous !== target) {
-        await previous.shutdown().catch(() => undefined);
-      }
+      this.target = await buildTarget(config, this.messaging, this.targetDefault, this.logPathDefault);
+      this.appliedConfig = config;
       return true;
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.warn(`failed to rebuild metric target on config change; keeping previous: ${String(e)}`);
+      console.warn(
+        `failed to rebuild metric target on config change; restoring the previous one: ${String(e)}`,
+      );
+      try {
+        this.target = await buildTarget(
+          previousConfig,
+          this.messaging,
+          this.targetDefault,
+          this.logPathDefault,
+        );
+        this.appliedConfig = previousConfig;
+      } catch (restoreError) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `could not restore the previous metric target; metric emission stays inactive until the ` +
+            `next configuration change: ${String(restoreError)}`,
+        );
+      }
       return false;
     }
   }

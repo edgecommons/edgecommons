@@ -125,7 +125,11 @@ the vault on-disk format/conformance vectors.
   `emitMetricNow` update the registry, `flush()` / `emitMetricNow()` are no-ops w.r.t. delivery, and
   `close()` stops the HTTP listener. This inversion **MUST** be documented and **MUST NOT** break the
   `MetricTarget` contract for other targets. *Acceptance:* docs state the no-op semantics; other
-  targets unaffected; a test asserts `/metrics` reflects emitted values post-`flush`.
+  targets unaffected; a test asserts `/metrics` reflects emitted values post-`flush`. Where a config
+  change rebuilds the target (Rust/TS), the live target **MUST** be released before its replacement is
+  built, so a rebuild can re-bind the same port; a rebuild that fails **MUST** restore an equivalent
+  target from the previous configuration. *Acceptance:* a config change on a fixed prometheus port
+  rebuilds successfully; a rebuild that cannot bind leaves emission running on the previous target.
 - **FR-MET-3 (dimension→label mapping).** A documented policy **MUST** map edgecommons dimensions
   (10-dimension cap, `coreName`/`largeFleetWorkaround`) onto Prometheus labels (the CloudWatch-isms
   have no Prometheus analog). *Acceptance:* the mapping is documented and implemented consistently.

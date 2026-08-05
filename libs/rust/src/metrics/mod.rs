@@ -104,6 +104,10 @@ pub struct MetricEmitter {
     /// The resolved runtime platform, retained so the metric target can be rebuilt with the same
     /// platform-profile default on config hot-reload (mirrors how logging/health thread it).
     platform: Platform,
+    /// The configuration the live target was built from, retained so a failed rebuild can restore an
+    /// equivalent target after the old one has been released (see
+    /// [`MetricEmitter::on_configuration_change`]).
+    applied_config: Mutex<Arc<Config>>,
 }
 
 impl MetricEmitter {
@@ -167,6 +171,7 @@ impl MetricEmitter {
             messaging,
             reserved,
             platform,
+            applied_config: Mutex::new(Arc::new(config.clone())),
         })
     }
 
@@ -182,6 +187,25 @@ impl MetricEmitter {
             .lock()
             .map_err(|_| EdgeCommonsError::Metrics("metric target mutex poisoned".to_string()))?
             .clone())
+    }
+
+    /// Snapshot the configuration the live target was built from (cheap `Arc` clone).
+    fn applied_config(&self) -> Result<Arc<Config>> {
+        Ok(self
+            .applied_config
+            .lock()
+            .map_err(|_| EdgeCommonsError::Metrics("metric config mutex poisoned".to_string()))?
+            .clone())
+    }
+
+    /// Make `target` (built from `config`) the live target.
+    fn install(&self, target: Arc<dyn MetricTarget>, config: Arc<Config>) {
+        if let Ok(mut slot) = self.target.lock() {
+            *slot = target;
+        }
+        if let Ok(mut slot) = self.applied_config.lock() {
+            *slot = config;
+        }
     }
 }
 
@@ -485,8 +509,22 @@ impl MetricService for MetricEmitter {
 
 #[async_trait]
 impl crate::config::ConfigurationChangeListener for MetricEmitter {
-    /// Rebuild the metric target from the new config (keeping the previous one on error).
+    /// Rebuild the metric target from the new config.
+    ///
+    /// The live target is **released before the replacement is built**: a target that owns an
+    /// exclusive resource — the `prometheus` HTTP listener's port — cannot be bound a second time
+    /// while the old one still holds it, so building first made every rebuild on a fixed port fail
+    /// with "address already in use" and silently keep a stale target.
+    ///
+    /// If the replacement cannot be built, an equivalent target is rebuilt from the configuration the
+    /// released one came from, so a bad edit still leaves metric emission running. Returns `false`
+    /// when the new configuration was not applied.
     async fn on_configuration_change(&self, config: Arc<Config>) -> bool {
+        let previous_config = self.applied_config().ok();
+        if let Ok(previous) = self.current_target() {
+            previous.shutdown().await;
+        }
+
         match build_target(
             &config,
             self.messaging.clone(),
@@ -496,14 +534,29 @@ impl crate::config::ConfigurationChangeListener for MetricEmitter {
         .await
         {
             Ok(target) => {
-                if let Ok(mut slot) = self.target.lock() {
-                    *slot = target;
-                }
+                self.install(target, config);
                 tracing::info!("metric target reconfigured after config change");
                 true
             }
             Err(e) => {
-                tracing::warn!(error = %e, "failed to rebuild metric target on config change; keeping previous");
+                tracing::warn!(error = %e, "failed to rebuild metric target on config change; restoring the previous one");
+                if let Some(previous_config) = previous_config {
+                    match build_target(
+                        &previous_config,
+                        self.messaging.clone(),
+                        self.reserved.clone(),
+                        self.platform,
+                    )
+                    .await
+                    {
+                        Ok(restored) => self.install(restored, previous_config),
+                        Err(e) => tracing::error!(
+                            error = %e,
+                            "could not restore the previous metric target; metric emission stays \
+                             inactive until the next configuration change"
+                        ),
+                    }
+                }
                 false
             }
         }
@@ -513,7 +566,154 @@ impl crate::config::ConfigurationChangeListener for MetricEmitter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ConfigurationChangeListener;
     use serde_json::json;
+
+    /// Reserve and immediately release an ephemeral port, so a test can ask for a *fixed* port that
+    /// is free right now (port 0 would give each rebuild a fresh port and prove nothing).
+    #[cfg(feature = "metrics-prometheus")]
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind(("127.0.0.1", 0))
+            .expect("reserve an ephemeral port")
+            .local_addr()
+            .expect("read the reserved port")
+            .port()
+    }
+
+    /// `GET /metrics` from the target bound on `port`, returning the response body. The target binds
+    /// the wildcard `0.0.0.0`, so dial loopback.
+    #[cfg(feature = "metrics-prometheus")]
+    fn scrape(port: u16) -> std::io::Result<String> {
+        use std::io::{Read, Write};
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port))?;
+        stream.write_all(
+            b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        )?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response)?;
+        Ok(response)
+    }
+
+    #[cfg(feature = "metrics-prometheus")]
+    fn prometheus_config(namespace: &str, port: u16) -> Config {
+        Config::from_value(
+            "com.example.C",
+            "thing-1",
+            json!({
+                "metricEmission": {
+                    "target": "prometheus",
+                    "namespace": namespace,
+                    "targetConfig": { "port": port }
+                }
+            }),
+        )
+        .unwrap()
+    }
+
+    #[cfg(feature = "metrics-prometheus")]
+    async fn emit_one(emitter: &MetricEmitter) {
+        emitter.define_metric(
+            MetricBuilder::create("requests")
+                .add_measure("count", "Count", 60)
+                .build(),
+        );
+        let mut values = HashMap::new();
+        values.insert("count".to_string(), 1.0);
+        emitter.emit_metric("requests", values).await.unwrap();
+    }
+
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    async fn rebuild_on_a_config_change_rebinds_the_same_prometheus_port() {
+        // The live target must be released BEFORE its replacement is built: binding first fails with
+        // "address already in use" on a fixed port, and the stale target is silently kept.
+        let port = free_port();
+        let emitter = MetricEmitter::new(&prometheus_config("first", port), None)
+            .await
+            .unwrap();
+
+        let applied = emitter
+            .on_configuration_change(Arc::new(prometheus_config("second", port)))
+            .await;
+        assert!(applied, "rebuilding on the same port must succeed");
+
+        // The NEW target is the live one and it is bound: its namespace shows up in a scrape.
+        emit_one(&emitter).await;
+        let body = scrape(port).expect("the rebuilt target must serve the same port");
+        assert!(
+            body.contains("second_count"),
+            "expected the rebuilt target's namespace, got:\n{body}"
+        );
+        emitter.shutdown().await;
+    }
+
+    #[cfg(feature = "metrics-prometheus")]
+    #[tokio::test]
+    async fn a_failed_rebuild_restores_the_previous_target() {
+        // Releasing first means a rebuild that cannot succeed would otherwise leave no target at all.
+        // The previous one is rebuilt instead, so metric emission keeps running after a bad edit.
+        let port = free_port();
+        let emitter = MetricEmitter::new(&prometheus_config("first", port), None)
+            .await
+            .unwrap();
+
+        // Hold a port the new target cannot have, so its build fails.
+        let blocker = std::net::TcpListener::bind(("0.0.0.0", 0)).expect("bind the blocker");
+        let blocked_port = blocker.local_addr().unwrap().port();
+
+        let applied = emitter
+            .on_configuration_change(Arc::new(prometheus_config("second", blocked_port)))
+            .await;
+        assert!(!applied, "a rebuild that cannot bind must not be applied");
+
+        // The previous target is back on its own port, still emitting under its own namespace.
+        emit_one(&emitter).await;
+        let body = scrape(port).expect("the previous target must be restored on its port");
+        assert!(
+            body.contains("first_count"),
+            "expected the restored target's namespace, got:\n{body}"
+        );
+        emitter.shutdown().await;
+        drop(blocker);
+    }
+
+    #[tokio::test]
+    async fn a_failed_restore_after_a_failed_rebuild_is_reported() {
+        // Both the replacement and the restore need a messaging service; without one neither can be
+        // built, so the emitter reports it rather than pretending the previous target is still live.
+        let dir = std::env::temp_dir().join(format!("edgecommons-restore-{}", uuid::Uuid::new_v4()));
+        let log_config = Config::from_value(
+            "com.example.C",
+            "thing-1",
+            json!({
+                "metricEmission": {
+                    "target": "log",
+                    "targetConfig": { "logFileName": dir.join("m.log").to_string_lossy() }
+                }
+            }),
+        )
+        .unwrap();
+        let emitter = MetricEmitter::new(&log_config, None).await.unwrap();
+
+        // The live target came from a configuration that can no longer be rebuilt.
+        let unbuildable = || {
+            Config::from_value(
+                "com.example.C",
+                "thing-1",
+                json!({ "metricEmission": { "target": "cloudwatchcomponent" } }),
+            )
+            .unwrap()
+        };
+        *emitter.applied_config.lock().unwrap() = Arc::new(unbuildable());
+
+        assert!(
+            !emitter
+                .on_configuration_change(Arc::new(unbuildable()))
+                .await,
+            "a rebuild that cannot be built must not be applied"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[tokio::test]
     async fn log_target_emits_and_defines() {
