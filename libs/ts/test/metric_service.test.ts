@@ -165,20 +165,43 @@ describe("MetricEmitter lifecycle", () => {
     expect(svc.published[0].topic).toBe("ecv1/thing-1/C/metric/requests");
   });
 
-  it("onConfigurationChange keeps the previous target on rebuild error", async () => {
+  it("onConfigurationChange restores the previous target on rebuild error", async () => {
     // Start with a valid messaging target.
     const svc = new RecordingMessagingService();
     const e = await MetricEmitter.create(cfg({ target: "messaging" }), svc);
     const prev = targetOf(e);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    // No messaging service is retained? It is. Force an error: messaging target on an
-    // emitter created WITHOUT messaging would throw. Recreate that scenario:
-    const eNoMsg = await MetricEmitter.create(cfg({ target: "log", targetConfig: { logFileName: tmpLog() } }));
-    const prevNoMsg = targetOf(eNoMsg);
+    // Force an error: the `messaging` target on an emitter created WITHOUT a messaging service.
+    const logFile = tmpLog();
+    const eNoMsg = await MetricEmitter.create(cfg({ target: "log", targetConfig: { logFileName: logFile } }));
+    eNoMsg.defineMetric(MetricBuilder.create("requests").addMeasure("count", "Count", 60).build());
+
     expect(await eNoMsg.onConfigurationChange(cfg({ target: "messaging" }))).toBe(false);
-    expect(targetOf(eNoMsg)).toBe(prevNoMsg);
+
+    // The released target is rebuilt from the configuration it came from, so emission keeps working.
+    expect(targetOf(eNoMsg)).toBeInstanceOf(LogTarget);
+    await eNoMsg.emitMetricNow("requests", { count: 1 });
+    await eNoMsg.flushMetrics();
+    expect(fs.readFileSync(logFile, "utf8")).toContain("requests");
     expect(warn).toHaveBeenCalled();
+    // An emitter that was not reconfigured is untouched.
     expect(targetOf(e)).toBe(prev);
+  });
+
+  it("onConfigurationChange reports when the previous target cannot be restored either", async () => {
+    // Both the replacement and the restore need the messaging service; without it neither can be
+    // built, so the emitter says so loudly rather than pretending the previous target is still live.
+    const svc = new RecordingMessagingService();
+    const e = await MetricEmitter.create(cfg({ target: "messaging" }), svc);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // Drop the retained messaging service, so rebuilding EITHER configuration fails.
+    (e as unknown as { messaging?: unknown }).messaging = undefined;
+
+    expect(await e.onConfigurationChange(cfg({ target: "messaging" }))).toBe(false);
+
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    expect(warnings.some((w) => w.includes("restoring the previous one"))).toBe(true);
+    expect(warnings.some((w) => w.includes("could not restore the previous metric target"))).toBe(true);
   });
 });
 

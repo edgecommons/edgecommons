@@ -40,6 +40,57 @@ def _version_of(manager: ConfigMapConfigManager):
     return manager.get_global_config().get("version")
 
 
+def _publish(mount, text: str) -> None:
+    """Atomically (re)place the mount's config key, the way the kubelet does.
+
+    The manager's re-read then always sees a whole document — either the old one or the new one, never
+    a half-written file. That matters here: an unreadable read delegates to ``reload_from_provider``
+    (the FR-CFG-5 reject-and-keep path), so a torn read would count as a reload and skew the
+    assertions. The replace is retried briefly rather than attempted once: Windows refuses it while the
+    manager's own re-read holds the file open, and that read lasts microseconds.
+    """
+    staged = mount / "config.json.staged"
+    _write(staged, text)
+    target = mount / "config.json"
+    deadline = time.time() + 5.0
+    while True:
+        try:
+            os.replace(staged, target)
+            return
+        except OSError:
+            if time.time() >= deadline:
+                raise
+            time.sleep(0.025)
+
+
+def _churn(mount, text: str, rounds: int = 6) -> None:
+    """Generate ``rounds`` bursts of directory entry events that leave the config *content*
+    unchanged — the kubelet's projected-volume churn: republishing the key byte-for-byte (and with
+    different whitespace) plus creating and removing sibling projection entries. The sleep exceeds
+    the watcher's poll interval so each round is seen as its own event."""
+    for i in range(rounds):
+        _publish(mount, text)
+        sibling = mount / f"..2026_{i}"
+        os.mkdir(sibling)
+        os.rmdir(sibling)
+        # Same document, different bytes: the dedupe compares the PARSED document.
+        _publish(mount, text.replace(",", " ,  "))
+        time.sleep(0.25)
+
+
+def _count_reloads(manager: ConfigMapConfigManager) -> list:
+    """Wrap ``reload_from_provider`` so reloads are counted while still really happening."""
+    calls = []
+    original = manager.reload_from_provider
+
+    def counted():
+        calls.append(1)
+        return original()
+
+    manager.reload_from_provider = counted
+    return calls
+
+
 def _wait_until(predicate, timeout: float = 10.0, interval: float = 0.1) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -160,6 +211,46 @@ def test_reload_keeps_previous_on_empty_file(tmp_path):
         _write(tmp_path / "config.json", "")
         m._reload()  # must not raise
         assert _version_of(m) == 1
+    finally:
+        m.close()
+
+
+# ---------- content dedupe ----------
+
+
+def test_unchanged_mount_emits_no_reload_across_many_events(tmp_path):
+    # The kubelet touches projected volumes on its sync loop, so an unchanged mount produces a
+    # continuous stream of entry events. Not one of them is a configuration change. (The construction
+    # load seeds the dedupe baseline — without it the first touch re-applies the document the
+    # component already holds.)
+    _write(tmp_path / "config.json", _config_json(1))
+    os.mkdir(tmp_path / "..data")  # makes the mount look whole-volume (no subPath warning path)
+    m = ConfigMapConfigManager(THING, COMPONENT, str(tmp_path), "config.json")
+    try:
+        calls = _count_reloads(m)
+        time.sleep(0.5)  # let the directory watch settle before churning
+        _churn(tmp_path, _config_json(1))
+        time.sleep(1.0)  # drain any in-flight poll cycle
+        assert calls == [], f"an unchanged mount must emit no reload; got {len(calls)}"
+        assert _version_of(m) == 1
+    finally:
+        m.close()
+
+
+def test_genuine_change_emits_exactly_one_reload_across_an_event_burst(tmp_path):
+    # A ConfigMap update lands as a burst of entry events (the ..data swap stages, renames, and the
+    # kubelet keeps touching the mount afterwards). The component must see ONE reload.
+    _write(tmp_path / "config.json", _config_json(1))
+    os.mkdir(tmp_path / "..data")
+    m = ConfigMapConfigManager(THING, COMPONENT, str(tmp_path), "config.json")
+    try:
+        calls = _count_reloads(m)
+        time.sleep(0.5)
+        _publish(tmp_path, _config_json(2))
+        _churn(tmp_path, _config_json(2))  # the rest of the burst carries the SAME new content
+        time.sleep(1.0)
+        assert len(calls) == 1, f"one change must emit exactly one reload; got {len(calls)}"
+        assert _version_of(m) == 2
     finally:
         m.close()
 

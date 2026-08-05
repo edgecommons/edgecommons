@@ -241,6 +241,28 @@ describe("MetricEmitter selects the prometheus target", () => {
     await emitter.shutdown();
   });
 
+  it("rebuilds on the same port when the configuration changes", async () => {
+    // The live target must be released BEFORE its replacement is built: binding first fails with
+    // EADDRINUSE on a fixed port, and the stale target is silently kept.
+    const port = await freePort();
+    const promConfig = (namespace: string): Config =>
+      Config.fromValue("com.example.C", "thing-1", {
+        metricEmission: { target: "prometheus", namespace, targetConfig: { port, path: "/metrics" } },
+      });
+
+    const emitter = await MetricEmitter.create(promConfig("first"));
+    expect(await emitter.onConfigurationChange(promConfig("second"))).toBe(true);
+
+    // The NEW target is the live one and it is bound: its namespace shows up in a scrape.
+    emitter.defineMetric(MetricBuilder.create("requests").addMeasure("count", "Count", 60).build());
+    await emitter.emitMetric("requests", { count: 3 });
+    const { status, body } = await httpGet(port, "/metrics");
+    expect(status).toBe(200);
+    expect(body).toContain("second_count");
+
+    await emitter.shutdown();
+  });
+
   it("an explicit config target overrides the prometheus profile default (log wins)", async () => {
     // target=log explicitly, even with a prometheus profile default -> NO http listener bound.
     const config = Config.fromValue("com.example.C", "thing-1", {

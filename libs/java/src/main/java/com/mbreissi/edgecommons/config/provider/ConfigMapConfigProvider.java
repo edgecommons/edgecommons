@@ -39,6 +39,16 @@ import java.nio.file.Paths;
  * both: it watches the persistent mount directory, reacts to <em>any</em> entry event, and re-arms if the
  * watch is invalidated (FR-CFG-2).
  *
+ * <h2>Content dedupe</h2>
+ * A filesystem event is not a configuration change. The kubelet touches projected volumes on its sync
+ * loop, so an unchanged mount produces a steady stream of entry events; the {@code ..data} swap itself
+ * produces a burst of them. Every event therefore re-reads the key, but the reload seam is entered
+ * <em>only when the re-read document differs from the last one handed to the {@link ConfigManager}</em>
+ * — compared as parsed JSON, so a whitespace-only or key-reordered rewrite is not a change. The
+ * baseline is seeded by the initial {@link #loadConfiguration()}, so the first event after startup on
+ * an unchanged mount reloads nothing. This also collapses a swap burst into a single reload, which is
+ * why no debounce timer is needed.
+ *
  * <h2>Reject-and-keep</h2>
  * On a reload, a malformed file (mid-swap read, or a bad ConfigMap edit) must never crash a running pod
  * (FR-CFG-5). A parse failure is logged and the previous config is kept; a parseable-but-schema-invalid
@@ -75,6 +85,12 @@ final class ConfigMapConfigProvider extends ConfigProvider implements FileWatche
     private final Path configFile;
     private final DirectoryWatcher watcher;
     private boolean started;
+    /**
+     * The last document handed to the {@link ConfigManager} — seeded by {@link #loadConfiguration()}
+     * and updated on each reload, so a re-read that parses to the same document is not re-applied
+     * (see the class docs). {@code volatile}: written by the watcher thread, read by both.
+     */
+    private volatile JsonObject lastEmitted;
 
     /**
      * Creates a ConfigMap config provider.
@@ -124,7 +140,11 @@ final class ConfigMapConfigProvider extends ConfigProvider implements FileWatche
         LOGGER.debug("Loading configuration from ConfigMap '{}'", configFile);
         try {
             byte[] bytes = Files.readAllBytes(configFile);
-            return gson.fromJson(new String(bytes, StandardCharsets.UTF_8), JsonObject.class);
+            JsonObject loaded = gson.fromJson(new String(bytes, StandardCharsets.UTF_8), JsonObject.class);
+            // Seed the dedupe baseline, so the first kubelet touch after startup does not re-apply the
+            // document the component already holds.
+            this.lastEmitted = loaded;
+            return loaded;
         } catch (JsonSyntaxException | IOException e) {
             LOGGER.fatal("Error reading ConfigMap configuration '{}': {}", configFile, e.toString());
             throw new RuntimeException("Error reading ConfigMap configuration '" + configFile + "': " + e, e);
@@ -144,12 +164,42 @@ final class ConfigMapConfigProvider extends ConfigProvider implements FileWatche
     }
 
     /**
-     * Reload callback: re-read the ConfigMap key and apply it. Reject-and-keep on a transient/malformed
-     * read (a mid-swap window or a bad edit) so a running pod never crashes on reload (FR-CFG-5).
+     * Reload callback: re-read the ConfigMap key and, <em>if its content differs from the last document
+     * handed to the {@link ConfigManager}</em>, apply it. An entry event that leaves the content
+     * unchanged (the kubelet's projected-volume churn, or a later event of the same {@code ..data} swap
+     * burst) is swallowed. Reject-and-keep on a transient/malformed read (a mid-swap window or a bad
+     * edit) so a running pod never crashes on reload (FR-CFG-5): the read is delegated to the config
+     * manager, which logs it and keeps the previous configuration.
      */
     @Override
     public void onChange() {
+        JsonObject candidate = readCandidate();
+        if (candidate != null && candidate.equals(lastEmitted)) {
+            LOGGER.debug("ConfigMap entry event with unchanged content; no reload applied");
+            return;
+        }
         LOGGER.info("ConfigMap changed: applying new config from {}", configFile);
+        if (candidate != null) {
+            this.lastEmitted = candidate;
+        }
         parentConfigManager.reloadFromProvider();
+    }
+
+    /**
+     * Re-reads and parses the ConfigMap key for the dedupe comparison only.
+     *
+     * @return the parsed document, or {@code null} if it could not be read or parsed (a mid-swap
+     *         window, an empty file, or a bad edit) — the caller then delegates to the config manager,
+     *         which applies the reject-and-keep path (FR-CFG-5)
+     */
+    private JsonObject readCandidate() {
+        try {
+            byte[] bytes = Files.readAllBytes(configFile);
+            return gson.fromJson(new String(bytes, StandardCharsets.UTF_8), JsonObject.class);
+        } catch (JsonSyntaxException | IOException e) {
+            LOGGER.debug("ConfigMap re-read for change detection failed ({}); delegating to reload",
+                    e.toString());
+            return null;
+        }
     }
 }

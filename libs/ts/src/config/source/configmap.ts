@@ -20,6 +20,15 @@
  * source therefore watches the mount directory, reacts to *any* entry event (so the `..data` swap
  * triggers a reload), and **re-arms** if the watch is ever invalidated (FR-CFG-2).
  *
+ * **Content dedupe.** A filesystem event is not a configuration change. The kubelet touches projected
+ * volumes on its sync loop, so an unchanged mount produces a steady stream of entry events; the
+ * `..data` swap itself produces a burst of them. Every event therefore re-reads the key, but
+ * `onUpdate` is called **only when the parsed document differs from the last emitted one** — compared
+ * as parsed JSON, so a whitespace-only or key-reordered rewrite is not a change. The baseline is
+ * seeded by the initial {@link load}, so the first event after startup on an unchanged mount emits
+ * nothing. This also collapses a swap burst into a single emission, which is why no debounce timer is
+ * needed.
+ *
  * **Reject-and-keep (FR-CFG-5).** On a reload, a malformed read (mid-swap window, or a bad ConfigMap
  * edit) must never crash a running pod: a read/parse/empty failure is logged and the previous config
  * is kept (`onUpdate` is not called). The *initial* {@link load} still fails loudly, like
@@ -37,6 +46,7 @@
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
+import { isDeepStrictEqual } from "util";
 
 import { EdgeCommonsError } from "../../errors";
 import { logger } from "../../logging";
@@ -57,6 +67,11 @@ export class ConfigMapConfigSource implements ConfigSource {
   private readonly mountDir: string;
   private readonly key: string;
   private readonly configFile: string;
+  /**
+   * The last document handed to `onUpdate` — seeded by {@link load} and updated on each emission, so
+   * a re-read that parses to the same document is not re-emitted (see the class docs).
+   */
+  private lastEmitted: unknown;
 
   /**
    * @param mountDir the ConfigMap mount directory, or `undefined` for `/etc/edgecommons`
@@ -99,13 +114,18 @@ export class ConfigMapConfigSource implements ConfigSource {
         `failed to read ConfigMap config '${this.configFile}': ${(e as Error).message}`,
       );
     }
+    let value: unknown;
     try {
-      return JSON.parse(text);
+      value = JSON.parse(text);
     } catch (e) {
       throw EdgeCommonsError.config(
         `failed to parse ConfigMap config '${this.configFile}': ${(e as Error).message}`,
       );
     }
+    // Seed the dedupe baseline, so the first kubelet touch after startup does not re-emit the
+    // document the component already applied.
+    this.lastEmitted = value;
+    return value;
   }
 
   sourceName(): string {
@@ -117,8 +137,10 @@ export class ConfigMapConfigSource implements ConfigSource {
     let closed = false;
     let rearmTimer: NodeJS.Timeout | undefined;
 
-    // Re-read the configured key and apply it. Reject-and-keep on a transient/malformed read (a
-    // mid-swap window or a bad edit) so a running pod never crashes on reload (FR-CFG-5).
+    // Re-read the configured key and apply it if its content differs from the last emitted document
+    // (an entry event that leaves the content unchanged is swallowed). Reject-and-keep on a
+    // transient/malformed read (a mid-swap window or a bad edit) so a running pod never crashes on
+    // reload (FR-CFG-5).
     const reload = (): void => {
       fs.readFile(this.configFile, "utf8", (err, data) => {
         if (closed) return;
@@ -137,6 +159,11 @@ export class ConfigMapConfigSource implements ConfigSource {
           logger.warn("ConfigMap reload yielded empty configuration (keeping previous config).");
           return;
         }
+        if (isDeepStrictEqual(value, this.lastEmitted)) {
+          logger.debug("ConfigMap entry event with unchanged content; no reload emitted.");
+          return;
+        }
+        this.lastEmitted = value;
         onUpdate(value);
       });
     };

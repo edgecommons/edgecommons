@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -39,6 +40,57 @@ class ConfigMapConfigProviderTest {
 
     private static String configJson(int version) {
         return "{\"component\":{\"name\":\"x\"},\"version\":" + version + "}";
+    }
+
+    /**
+     * Atomically (re)places the mount's config key, the way the kubelet does, so the provider's re-read
+     * always sees a whole document — either the old one or the new one, never a half-written file. That
+     * matters here: an unreadable read delegates to {@code reloadFromProvider} (the FR-CFG-5
+     * reject-and-keep path), so a torn read would count as a reload and skew these assertions.
+     *
+     * <p>The rename is retried briefly rather than attempted once: Windows refuses to replace a file
+     * while the provider's own re-read holds it open, and that read lasts microseconds.
+     */
+    private static void publish(Path mount, String json) throws IOException {
+        Path staged = mount.resolve("config.json.staged");
+        write(staged, json);
+        Path key = mount.resolve("config.json");
+        IOException last = null;
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        do {
+            try {
+                Files.move(staged, key,
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                return;
+            } catch (IOException e) {
+                last = e; // the reader holds the handle (Windows); it will let go shortly
+                try {
+                    Thread.sleep(25);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        } while (System.nanoTime() < deadline);
+        throw new IOException("could not publish the ConfigMap key: " + key, last);
+    }
+
+    /**
+     * Generates {@code rounds} bursts of directory entry events that leave the config <em>content</em>
+     * unchanged — the kubelet's projected-volume churn: republishing the key byte-for-byte (and with
+     * different whitespace) plus creating and removing sibling projection entries.
+     */
+    private static void churn(Path mount, String json, int rounds) throws Exception {
+        for (int i = 0; i < rounds; i++) {
+            publish(mount, json);
+            Path sibling = mount.resolve("..2026_" + i);
+            Files.createDirectory(sibling);
+            Files.delete(sibling);
+            // Same document, different bytes: the dedupe compares the PARSED document, so this is
+            // not a change.
+            publish(mount, json.replace(",", " ,  "));
+            Thread.sleep(60);
+        }
     }
 
     // ---------- load ----------
@@ -183,6 +235,57 @@ class ConfigMapConfigProviderTest {
         try {
             assertDoesNotThrow(provider::onChange);
             verify(cm).reloadFromProvider();
+        } finally {
+            provider.close();
+        }
+    }
+
+    // ---------- content dedupe ----------
+
+    @Test
+    void unchangedMountAppliesNoReloadAcrossManyEvents(@TempDir Path mount) throws Exception {
+        // The kubelet touches projected volumes on its sync loop, so an unchanged mount produces a
+        // continuous stream of entry events. Not one of them is a configuration change.
+        ConfigManager cm = mock(ConfigManager.class);
+        write(mount.resolve("config.json"), configJson(1));
+        Files.createDirectory(mount.resolve("..data"));
+
+        ConfigMapConfigProvider provider =
+                new ConfigMapConfigProvider(cm, mount.toString(), "config.json");
+        try {
+            // The bootstrap load seeds the dedupe baseline — without it the first touch re-applies
+            // the document the component already holds.
+            assertEquals(1, provider.loadConfiguration().get("version").getAsInt());
+            provider.start();
+            Thread.sleep(2_000); // let the directory watch arm before churning
+
+            churn(mount, configJson(1), 8);
+
+            verify(cm, after(4_000).never()).reloadFromProvider();
+        } finally {
+            provider.close();
+        }
+    }
+
+    @Test
+    void genuineChangeAppliesExactlyOneReloadAcrossAnEventBurst(@TempDir Path mount) throws Exception {
+        // A ConfigMap update lands as a burst of entry events (the ..data swap stages, renames, and
+        // the kubelet keeps touching the mount afterwards). The component must see ONE reload.
+        ConfigManager cm = mock(ConfigManager.class);
+        write(mount.resolve("config.json"), configJson(1));
+        Files.createDirectory(mount.resolve("..data"));
+
+        ConfigMapConfigProvider provider =
+                new ConfigMapConfigProvider(cm, mount.toString(), "config.json");
+        try {
+            assertEquals(1, provider.loadConfiguration().get("version").getAsInt());
+            provider.start();
+            Thread.sleep(2_000); // let the directory watch arm before the change
+
+            publish(mount, configJson(2));
+            churn(mount, configJson(2), 8); // the rest of the burst carries the SAME new content
+
+            verify(cm, after(4_000).times(1)).reloadFromProvider();
         } finally {
             provider.close();
         }

@@ -77,7 +77,11 @@ the vault on-disk format/conformance vectors.
   file-watch/`applyConfig` hot-reload path and **MUST** watch the *mount directory* (not the file
   inode) and **re-arm the watch after the kubelet's atomic `..data` symlink swap**. *Acceptance:* a
   ConfigMap edit propagates to a running pod (within kubelet sync latency) without restart, verified in
-  all four langs; the watcher survives `IN_DELETE_SELF`.
+  all four langs; the watcher survives `IN_DELETE_SELF`. The source **MUST** deliver a reload only when
+  the re-read document differs (as parsed JSON) from the last one it delivered, so the kubelet's
+  entry-event churn on an unchanged mount reloads nothing and one edit reloads once. *Acceptance:* an
+  unchanged mount produces zero reloads across many filesystem events; a single edit produces exactly
+  one reload across the swap event burst.
 - **FR-CFG-3 (subPath guard).** The CONFIGMAP source **MUST** document that `subPath` mounts never
   hot-reload and **SHOULD** detect and warn when it appears to be reading a `subPath` mount.
   *Acceptance:* docs state the restriction; a warning is emitted when reload cannot be guaranteed.
@@ -121,7 +125,11 @@ the vault on-disk format/conformance vectors.
   `emitMetricNow` update the registry, `flush()` / `emitMetricNow()` are no-ops w.r.t. delivery, and
   `close()` stops the HTTP listener. This inversion **MUST** be documented and **MUST NOT** break the
   `MetricTarget` contract for other targets. *Acceptance:* docs state the no-op semantics; other
-  targets unaffected; a test asserts `/metrics` reflects emitted values post-`flush`.
+  targets unaffected; a test asserts `/metrics` reflects emitted values post-`flush`. Where a config
+  change rebuilds the target (Rust/TS), the live target **MUST** be released before its replacement is
+  built, so a rebuild can re-bind the same port; a rebuild that fails **MUST** restore an equivalent
+  target from the previous configuration. *Acceptance:* a config change on a fixed prometheus port
+  rebuilds successfully; a rebuild that cannot bind leaves emission running on the previous target.
 - **FR-MET-3 (dimension→label mapping).** A documented policy **MUST** map edgecommons dimensions
   (10-dimension cap, `coreName`/`largeFleetWorkaround`) onto Prometheus labels (the CloudWatch-isms
   have no Prometheus analog). *Acceptance:* the mapping is documented and implemented consistently.
