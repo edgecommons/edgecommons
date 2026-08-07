@@ -2,6 +2,7 @@ import boto3
 import json
 import time
 from threading import Thread, Event, Lock
+from edgecommons.config.canonicalize import as_integral_int
 from edgecommons.config.manager.config_manager import ConfigManager
 from edgecommons.metrics.targets.metric_target import MetricTarget
 from edgecommons.metrics.targets.cloudwatch_durable import CloudWatchDrain, serialize_datum
@@ -88,10 +89,17 @@ class CloudWatch(MetricTarget):
         CloudWatch buffer, resolving ``{ComponentName}``/``{ThingName}`` in the path."""
         path = buffer.get("path", _DEFAULT_PATH_TEMPLATE)
         path = self.config_manager.resolve_template(path)
-        max_disk = int(buffer.get("maxDiskBytes", _DEFAULT_MAX_DISK_BYTES))
+        # D-NC2: these probes have no error channel, so a fractional, negative, out-of-range or
+        # non-numeric value falls back to its default — it is never truncated or clamped. A
+        # configured 0 is a real value and is honoured, hence the explicit None checks.
+        max_disk = as_integral_int(buffer.get("maxDiskBytes"))
+        if max_disk is None:
+            max_disk = _DEFAULT_MAX_DISK_BYTES
         on_full = buffer.get("onFull", "dropOldest")
         fsync = buffer.get("fsync", "perBatch")
-        segment_bytes = int(buffer.get("segmentBytes", min(max_disk, 8 * 1024 * 1024)))
+        segment_bytes = as_integral_int(buffer.get("segmentBytes"))
+        if segment_bytes is None:
+            segment_bytes = min(max_disk, 8 * 1024 * 1024)
         stream = {
             "name": _DEFAULT_STREAM_NAME,
             "sink": {"type": "callback"},

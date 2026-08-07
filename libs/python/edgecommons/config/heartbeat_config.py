@@ -1,5 +1,7 @@
 import json
 
+from edgecommons.config.canonicalize import require_non_negative_int
+
 
 # {
 #     "enabled": true,
@@ -43,9 +45,16 @@ class HeartbeatConfiguration:
 
         if heartbeat_json is not None:
             self._enabled = heartbeat_json.get("enabled", self._enabled)
-            self._interval_secs = heartbeat_json.get("intervalSecs", self._interval_secs)
-            if not isinstance(self._interval_secs, (int, float)) or self._interval_secs < 1:
-                self._interval_secs = HeartbeatConfiguration.__DEFAULT_HEARTBEAT_INTERVAL_SECS
+            if "intervalSecs" in heartbeat_json:
+                # D-NC2: an integral value in any numeric encoding is accepted; a fractional or
+                # negative one is rejected loudly rather than silently truncated/clamped.
+                self._interval_secs = require_non_negative_int(
+                    heartbeat_json.get("intervalSecs"), "heartbeat.intervalSecs"
+                )
+                if self._interval_secs < 1:
+                    self._interval_secs = (
+                        HeartbeatConfiguration.__DEFAULT_HEARTBEAT_INTERVAL_SECS
+                    )
             measures = heartbeat_json.get("measures", {})
             self._include_cpu = measures.get("cpu", self._include_cpu)
             self._include_memory = measures.get("memory", self._include_memory)

@@ -22,6 +22,8 @@ config omits the ``health`` section entirely. Mirrors the canonical Java ``Healt
 import json
 from typing import Optional
 
+from edgecommons.config.canonicalize import require_non_negative_int
+
 
 class HealthConfiguration:
     """Parsed ``health`` config section with schema-aligned defaults."""
@@ -46,7 +48,12 @@ class HealthConfiguration:
         if health_json is not None:
             if "enabled" in health_json and health_json.get("enabled") is not None:
                 self._enabled = bool(health_json.get("enabled"))
-            self._port = int(health_json.get("port", self._port))
+            if "port" in health_json:
+                # D-NC2: an integral value in any numeric encoding is accepted; a fractional or
+                # negative one is rejected loudly rather than silently truncated/clamped.
+                self._port = require_non_negative_int(
+                    health_json.get("port"), "health.port"
+                )
             self._liveness_path = health_json.get("livenessPath", self._liveness_path)
             self._readiness_path = health_json.get("readinessPath", self._readiness_path)
             self._startup_path = health_json.get("startupPath", self._startup_path)

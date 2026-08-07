@@ -8,6 +8,8 @@ import { existsSync, mkdirSync, readFileSync } from "fs";
 import { dirname } from "path";
 import { randomUUID } from "crypto";
 
+import { requireNonNegativeInteger } from "../config/numbers";
+
 import { KEY_LEN, random } from "./crypto";
 import { CredentialError } from "./errors";
 import {
@@ -194,7 +196,9 @@ export async function openFromConfig(
 ): Promise<DefaultCredentialService> {
   const vaultCfg = cfg.vault ?? {};
   const path = vaultCfg.path ?? "vault";
-  const keep = vaultCfg.keepVersions ?? 2;
+  // The shared numeric contract: any numeric encoding of an integral value is accepted; a
+  // fractional, negative, or out-of-range one is rejected rather than silently rewritten.
+  const keep = requireNonNegativeInteger(vaultCfg.keepVersions, "credentials.vault.keepVersions") ?? 2;
 
   const vault = await openVault(path, keep, vaultCfg.keyProvider ?? {}, defaultKeyProvider);
 
@@ -218,7 +222,7 @@ export async function openFromConfig(
     source,
     namespace,
     syncSecrets(central!),
-    central!.refreshIntervalSecs ?? 300,
+    requireNonNegativeInteger(central!.refreshIntervalSecs, "credentials.central.refreshIntervalSecs") ?? 300,
     central!.bootstrapOnStart ?? true,
   );
   return new DefaultCredentialService(vault, namespace, engine, audit);

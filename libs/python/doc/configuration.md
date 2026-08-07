@@ -115,6 +115,30 @@ The `component` section is reserved for application-specific configuration:
 - **`component.global`**: Configuration shared across all component instances
 - **`component.instances`**: Array of instance-specific configurations
 
+### Numbers in configuration
+
+An integer-typed setting accepts any numeric encoding with an integral value, regardless of the
+configuration source: `5000`, `5000.0`, and `5e3` all configure the same value. The configuration
+manager delivers numbers in canonical form, so a number whose value is integral and inside the
+signed/unsigned 64-bit integer range reaches your component as an `int` — in `get_full_config()`,
+`get_global_config()`, `get_instance_config(id)`, the tags, and the effective configuration
+published on the `cfg` topic. `isinstance(value, int)` therefore holds for every integral setting,
+whichever source the document came from.
+
+A fractional value in an integer-typed setting is rejected rather than rounded or truncated, and a
+negative value in a non-negative setting is rejected rather than clamped. Numbers in float-typed
+settings, fractional values in component-defined fields, and integral values outside the 64-bit
+range are delivered exactly as written. Strings and booleans are never coerced into numbers.
+
+Component code holding raw configuration JSON obtained outside the manager can apply the identical
+rule itself:
+
+```python
+from edgecommons.config import canonicalize_json_numbers
+
+document = canonicalize_json_numbers(raw_document)   # pure; the argument is not mutated
+```
+
 ## 4. Template Variable System
 
 The configuration system supports template variables that are automatically resolved:

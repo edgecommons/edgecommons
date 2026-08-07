@@ -2,15 +2,37 @@
 
 Phase 1: ``file`` key provider + local vault. Phase 2: ``awsSecretsManager`` central source + sync.
 ``namespace`` (``<thingName>/<componentName>``) is applied transparently to every key.
+
+Integer fields use the library's shared numeric reader
+(:mod:`edgecommons.config.canonicalize`), so they accept any numeric encoding of an integral
+value — config stores do not agree on one — and reject a fractional, negative, or out-of-range
+value loudly instead of truncating it.
 """
 import os
 import threading
+
+from edgecommons.config.canonicalize import require_non_negative_integral
 
 from .audit import log_sink
 from .errors import CredentialError
 from .keyprovider import EnvKeyProvider, FileKeyProvider, KmsKeyProvider, Pkcs11KeyProvider
 from .service import DefaultCredentialService
 from .vault import LocalVault
+
+
+def _integer(cfg: dict, key: str, default: int, path: str) -> int:
+    """Read ``cfg[key]`` as a non-negative integer, or ``default`` when it is absent.
+
+    Shares the library's numeric rule (D-NC2): an integral value in any encoding is accepted; a
+    fractional, negative, out-of-range, or non-numeric value raises a :class:`CredentialError`
+    carrying the canonical message rather than being silently truncated or clamped.
+    """
+    if key not in cfg:
+        return default
+    try:
+        return require_non_negative_integral(cfg.get(key), path)
+    except ValueError as e:
+        raise CredentialError(str(e)) from e
 
 
 def _sync_entries(sync_cfg: dict):
@@ -90,7 +112,7 @@ def open_from_config(
     cfg = credentials_cfg or {}
     vault_cfg = cfg.get("vault", {})
     path = vault_cfg.get("path", "vault")
-    keep_versions = int(vault_cfg.get("keepVersions", 2))
+    keep_versions = _integer(vault_cfg, "keepVersions", 2, "credentials.vault.keepVersions")
     provider = build_key_provider(
         vault_cfg.get("keyProvider", {}) or {},
         f"{path}.key",
@@ -119,7 +141,7 @@ def open_from_config(
     engine = SyncEngine(
         vault, lock, source, namespace,
         _sync_entries(central.get("sync", {})),
-        int(central.get("refreshIntervalSecs", 300)),
+        _integer(central, "refreshIntervalSecs", 300, "credentials.central.refreshIntervalSecs"),
         bool(central.get("bootstrapOnStart", True)),
     )
     return DefaultCredentialService(vault, namespace=namespace, sync=engine, lock=lock, audit=audit)

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://aws.com/schemas/edgecommons-config.json",
   "title": "EdgeCommons Configuration Schema",
-  "description": "Canonical cross-language JSON Schema for AWS IoT Greengrass EdgeCommons library configuration. This is the SINGLE SOURCE OF TRUTH for all language libraries (java/python/rust/ts). Do not edit the per-library copies directly — edit this file and run schema/sync-schema.(ps1|sh) to propagate it. CI verifies the copies match (sync-schema --check). NOTE: numeric fields use type 'number' (not 'integer') on purpose — Greengrass delivers config numbers as doubles (e.g. 300.0) and the libraries parse them leniently, so the schema must accept integer-valued floats.",
+  "description": "Canonical cross-language JSON Schema for AWS IoT Greengrass EdgeCommons library configuration. This is the SINGLE SOURCE OF TRUTH for all language libraries (java/python/rust/ts). Do not edit the per-library copies directly — edit this file and run schema/sync-schema.(ps1|sh) to propagate it. CI verifies the copies match (sync-schema --check). NOTE: numeric fields use type 'number' (not 'integer') on purpose — a Greengrass config store returns JSON numbers as doubles (e.g. 300.0), so the schema must accept integer-valued floats. The libraries canonicalize an integral float to an integer at config intake; a genuinely fractional value in an integer-typed setting is rejected, never truncated.",
   "type": "object",
   "properties": {
     "logging": {

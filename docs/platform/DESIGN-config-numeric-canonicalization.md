@@ -1,8 +1,8 @@
 # DESIGN — numeric canonicalization at the config boundary
 
-> Status: **accepted** — decision register **D-NC1**…**D-NC5** below. Java (canonical) and Rust are
-> implemented on `fix/greengrass-numeric-config`; Python and TypeScript follow. Per-language
-> implementation status is stated in §5.
+> Status: **accepted** — decision register **D-NC1**…**D-NC5** below. All four languages are
+> implemented on `fix/greengrass-numeric-config`. Per-language implementation status is stated
+> in §5.
 
 ## Problem
 
@@ -93,16 +93,39 @@ becoming `5`. Silently rewriting a user's configuration is a worse defect than t
 In the normal pipeline the schema gate rejects these values first (every field concerned is schema
 -typed `integer` with `minimum: 1`), so the tightening bites only on direct-construction paths.
 
-### D-NC3 — TypeScript needs no code change; the divergence is accepted
+### D-NC3 — TypeScript needs no canonicalization pass; the divergence is accepted
 
-JavaScript has a single number type: the decoded `5000.0` **is** `5000` (`JSON.parse('5000.0') === 5000`).
-The distinction the other three languages must repair is unrepresentable, so the delivered document
-is already canonical for every integral value and there is nothing to rewrite. TypeScript's
-deliverable is a contract test pinning the invariant plus this note.
+JavaScript has a single number type: the decoded `5000.0` **is** `5000` (`JSON.parse('5000.0') === 5000`,
+and it re-serializes as `5000`). The distinction the other three languages must repair is
+unrepresentable, so the delivered document is already canonical for every integral value and there
+is nothing to rewrite. TypeScript therefore runs **no canonicalization pass** — writing one would be
+a no-op dressed up as parity. Its deliverable is a contract test pinning the invariant plus this
+note.
 
-The inherent limit — JavaScript cannot represent integers beyond 2^53 exactly — is pre-existing and
-unchanged. It is the same double-precision ceiling the Greengrass store itself imposes, so
-TypeScript is not the weakest link on that path. Documented as a platform limit, not fixed.
+Verified against the delivery path rather than assumed. Every configuration source parses JSON
+(`JSON.parse` for FILE / ENV / CONFIGMAP / SHADOW / CONFIG_COMPONENT), and the Greengrass leg is no
+exception: `GreengrassConfigSource.load` calls `IpcMessagingProvider.getConfiguration`, which returns
+the IPC SDK's `resp.value`, and that SDK's eventstream deserializer is
+`JSON.parse(payload_text)` followed by an identity `deserializeGetConfigurationResponse` — no
+per-field conversion, no numeric type to preserve. Nothing on the path can surface a distinct
+"float". The protobuf codec agrees: `encodeEcValue` selects `IntValue` on `Number.isInteger`, so an
+integral tag value encodes identically whatever the store wrote (D-NC5 holds in TypeScript with no
+work).
+
+The inherent limit — JavaScript cannot represent integers beyond 2^53 exactly, and cannot hold the
+top of the unsigned 64-bit window at all (`18446744073709551615` parses to `2^64` and is refused
+like any other out-of-window value) — is pre-existing and unchanged. It is the same
+double-precision ceiling the Greengrass store itself imposes, so TypeScript is not the weakest link
+on that path. Documented as a platform limit, not fixed.
+
+**What TypeScript did need: D-NC2.** The no-op verdict covers the canonicalization pass only.
+TypeScript carried the same silent-rewriting defect the other legs removed: `config/model.ts` read
+every integer-typed setting through a `Math.trunc` helper — the exact analogue of Rust's `f as u64`
+and Java's `getAsBigDecimal().intValue()`, turning `5.5` into `5`, and letting a negative value fall
+through a range guard to the schema default. `parameters/config.ts` truncated `refreshIntervalSecs`
+the same way. Those reads are now on the shared rule (§5), which also makes the published
+user-facing statement ("a fractional value in an integer-typed setting is rejected rather than
+rounded or truncated") true in TypeScript. **TypeScript is "no pass needed", not "exempt".**
 
 ### D-NC4 — no string or boolean coercion
 
@@ -288,17 +311,117 @@ path end to end, with the candidate validator observing the canonical document);
 `messaging/message.rs::config_tags_encode_the_same_ec_value_type_on_every_platform` (D-NC5 at the
 protobuf codec); and `tests/config_hot_reload.rs` (the broker-gated full-runtime reload leg).
 
-### Python — follow-up
+### Python — implemented
 
-The same recursive pass at `ConfigManager` intake — the single point every candidate flows through,
-before schema and candidate validation. `float` values whose `is_integer()` holds and that fall
-inside the shared window become `int`; everything else is untouched. `bool` must be excluded
-explicitly from any numeric `isinstance` check (it subclasses `int`); converting floats only avoids
-the trap. Python integers are unbounded — the window exists purely for parity of the rule.
+| Piece | Where |
+|---|---|
+| The pass and the strict reads | `libs/python/edgecommons/config/canonicalize.py` — `canonicalize_json_numbers(document)` (public, re-exported as `edgecommons.config.canonicalize_json_numbers`), plus `require_non_negative_int` / `require_non_negative_integral` / `as_integral_int` |
+| Pipeline intake | `ConfigManager._effective_from_source_payload` — the single point `init()`, `configuration_changed`, and the `reload-config` re-fetch all pass through, ahead of `ConfigurationValidator.validate`, the candidate validators, and the snapshot. A `CONFIG_COMPONENT` bundle is canonicalized envelope-first, so every layer fragment is canonical before the deep merge |
+| Snapshot intake | `ConfigManager._prepare_snapshot` — canonicalizes the effective document and both retained layers as it copies them, so `get_full_config()`, `get_effective_config()`, `get_global_config()`, `get_instance_config(..)`, the tags, and the typed section models are canonical. Extends the guarantee to `_apply_config`, the legacy seam that bypasses the pipeline |
+| D-NC2 sites | `heartbeat_config.py` (`heartbeat.intervalSecs`), `health_config.py` (`health.port`), `metric_config.py` (`metricEmission.targetConfig.port`, `metricEmission.targetConfig.intervalSecs`), `enhanced_logging_config.py` (`logging.fileLogging.backupCount`), `logs.py::_positive_int` (`logging.publish.maxRecordBytes`, `logging.publish.queue.maxRecords`), `credentials/config.py` (`credentials.vault.keepVersions`, `credentials.central.refreshIntervalSecs`), `parameters/config.py` (`parameters.refreshIntervalSecs`), `metrics/targets/cloudwatch.py` (the `buffer.maxDiskBytes` / `buffer.segmentBytes` probes) |
 
-### TypeScript — no code change (D-NC3)
+Implementation notes:
 
-Contract test only, plus the divergence note above.
+- Python is dynamically typed, so the defect does not crash the way it does in Rust — it drifts.
+  An integral double flows on as a `float` into the delivered `component.*` subtrees, into
+  `isinstance(value, int)` checks in component code, into the published `cfg` document, and into
+  the envelope tags. The pass converts a `float` whose `is_integer()` holds and whose value is
+  inside the shared window to `int`; everything else is untouched. Python integers are unbounded,
+  so the window exists purely for parity of the rule; the comparison against it is exact, because
+  Python compares an `int` with a `float` by value.
+- `bool` is excluded explicitly from every numeric check — it subclasses `int`, so a naive
+  `isinstance(v, (int, float))` would treat `True` as the number 1. Converting floats only is what
+  avoids the trap.
+- The pass is pure: it deep-copies and rewrites the copy, so a provider's (or a caller's) document
+  is never mutated behind its back and the committed snapshot stays isolated from later edits to
+  the source object. That copy replaces the `copy.deepcopy` the snapshot builder already did, so
+  the isolation guarantee is unchanged.
+- **Python had a hard failure of its own, not just document drift.** `logs.py::_positive_int` was
+  `isinstance(value, int)`-only, so `logging.publish.maxRecordBytes` / `queue.maxRecords` delivered
+  as doubles raised and took the whole logging section — and with it startup, or a reload — down.
+  It now shares the rule and accepts either encoding.
+- The rejections raise `ValueError`, Python's counterpart to Java's `IllegalArgumentException`, and
+  reach the caller the same way: a startup failure from `init()`, and a rejected candidate
+  (previous generation retained) from `configuration_changed`. The credentials and parameters
+  subsystems re-raise the identical message inside their own `CredentialError` / `ParameterError`
+  so each module keeps its documented error type.
+
+D-NC2 rejection messages — the canonical Java wording, verbatim:
+
+```text
+configuration value '<path>' must be a number, but was <value>
+configuration value '<path>' must be a finite number, but was <value>
+configuration value '<path>' must be a whole number, but was <value>
+configuration value '<path>' must not be negative, but was <value>
+configuration value '<path>' is out of range for a 32-bit integer: <value>
+configuration value '<path>' is out of range for a 64-bit integer: <value>    (the unsigned reader)
+configuration value '<path>' must be positive, but was <value>                (logging.publish sizes)
+```
+
+**Bound on the SHADOW report path.** Rust holds the verbatim `ComponentConfig` string a SHADOW
+source reports back, so canonicalization cannot reach it. Python has no such verbatim path: it
+re-serializes the accepted snapshot (`json.dumps(get_effective_config())`), which already
+normalized the desired document's formatting before this change and now also reports integral
+numbers in integer form.
+
+Python tests: `libs/python/tests/test_config_numeric_canonicalization.py` — the §3 table, nesting,
+key immutability, idempotency, purity, `-0.0`, the 2^53 boundary, the unsigned-window edges
+(including 2^64 staying a float), `bool` non-coercion, and every rejection message; then the
+pipeline, which reproduces the Greengrass delivery shape with no device (the `Map<String, Object>`
+the IPC SDK returns, values as Python `float`) and pushes it through a real `GreengrassConfigManager`
+whose only stub is the IPC client: the delivered instance/global subtrees, tags, library sections,
+`get_full_config()` and the redacted `cfg` document are canonical, a genuinely fractional value
+survives as a `float`, candidate validators and change listeners observe the canonical document, a
+lineage bundle is canonical before the merge, and a store poisoned before the fix is read correctly
+with no `RESET` — including a further config update applied live against it.
+
+### TypeScript — implemented (no pass, D-NC3; the shared rule at every integer-typed read, D-NC2)
+
+| Piece | Where |
+|---|---|
+| Canonicalization | **None, deliberately** (D-NC3) — `JSON.parse` has already delivered the canonical value on every source, Greengrass IPC included |
+| The strict reads | `libs/ts/src/config/numbers.ts` — `requireNonNegativeInteger(value, path)` for a setting with an error channel and `asNonNegativeInteger(value)` for a probe without one; both re-exported from `config/index.ts`, as Java exports `ConfigNumbers` |
+| D-NC2 sites | `config/model.ts` (`logging.fileLogging.backupCount`, `logging.publish.maxRecordBytes`, `logging.publish.queue.maxRecords`, `heartbeat.intervalSecs`, `health.port`, and the `metricEmission.targetConfig` probes `intervalSecs` / `port` / `buffer.maxDiskBytes`), `parameters/config.ts` (`refreshIntervalSecs`), `credentials/config.ts` (`vault.keepVersions`, `central.refreshIntervalSecs`) — the single `Math.trunc`-based `asInt` helper is deleted, not wrapped |
+
+Implementation notes:
+
+- A rejection is an `EdgeCommonsError` of kind `Config` thrown out of `Config.fromValue`, which the
+  runtime already treats the way Java does: a startup failure on first load, and a rejected
+  candidate with the previous generation retained on hot reload (`edgecommons.ts` catches it and
+  logs *"reloaded config could not be parsed; keeping previous"*).
+- The accessor split follows **Rust**, not Java: the free-form `metricEmission.targetConfig` reads
+  have no error channel and their documented contract is to fall back to the schema default, so they
+  use the probe. Sharing the rule is what matters — `6.5` falls back to the default `5`, it never
+  becomes `6`. (Java parses those two fields in a constructor and therefore rejects them; that
+  asymmetry between Java and Rust predates this work.)
+- An absent or `null` setting reads as absent and the caller applies its schema default — Rust's
+  `de_integral_opt_u64` shape.
+- The window is the shared one, expressed in the only terms JavaScript has: a value at or above
+  `2^64` is rejected. There is no separate 2^53 gate, because a value above 2^53 was already
+  rounded by `JSON.parse` before any library code ran — see the platform limit under D-NC3.
+- `credentials.vault.cacheTtlSecs` has no TypeScript consumer, so there is no read to tighten; the
+  Rust field of that name is read by its `SyncEngine`.
+
+Rejection messages (Java's wording, with JavaScript's range term):
+
+```text
+configuration value '<path>' must be a number, but was <value>
+configuration value '<path>' must be a finite number, but was <value>
+configuration value '<path>' must be a whole number, but was <value>
+configuration value '<path>' must not be negative, but was <value>
+configuration value '<path>' is out of range for a 64-bit integer: <value>
+```
+
+TypeScript tests: `libs/ts/test/config_numeric_canonicalization.test.ts` — a store-shaped document
+(every number written `x.0`, in the library sections, `component.global`, and `component.instances[]`)
+parsed from JSON **text**, because that is what the wire does; it deep-equals *and* re-serializes
+byte-identically to its integer form, survives the schema gate, and arrives canonical through
+`Config.fromValue` with fractional values (`0.5`, `1.5`) untouched. A strict typed consumer standing
+in for a Rust adapter's `serde` struct parses the delivered instance subtree and still refuses a
+genuinely fractional one; the published `cfg` document is canonical; the envelope tags of a
+store-shaped and a file-shaped document encode to identical protobuf bytes carrying `IntValue`; and
+the D-NC2 rejections and probe fallbacks are pinned value by value, including that `6.5` yields the
+default and never `6`.
 
 ## §6 — schema
 
