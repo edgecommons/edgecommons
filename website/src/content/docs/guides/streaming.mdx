@@ -478,10 +478,9 @@ compression. Do not rely on compression being applied.
 
 <Aside type="note" title="Numeric fields accept integer-valued floats">
 Every numeric `buffer` / `batch` / `delivery` field accepts an integer **or** an integer-valued float
-— `1048576` and `1048576.0` are equivalent. Greengrass stores all config numbers as doubles, so
-values delivered through `GG_CONFIG` arrive as floats; the core's lenient deserializers accept both,
-so the same config parses whether it comes from `GG_CONFIG`, a `FILE`, or a ConfigMap. (A
-non-integer float like `1.5` for an integer field is still rejected.)
+— `1048576` and `1048576.0` are equivalent — so the same config parses whatever source delivered it.
+A non-integer float such as `1.5` in an integer field is rejected. See
+[Numbers in configuration](/guides/configuration/#numbers-in-configuration).
 </Aside>
 
 ## Delivery semantics

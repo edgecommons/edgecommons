@@ -7,8 +7,10 @@
 //!
 //! ## Overview
 //! Phase 1 ships three sources: `awsSsm` (remote; behind the `parameters-aws` feature), `mountedDir`
-//! (K8s ConfigMap/Secret volumes, Docker secrets), and `env`. Numeric fields parse leniently because
-//! Greengrass delivers config numbers as doubles.
+//! (K8s ConfigMap/Secret volumes, Docker secrets), and `env`. Integer fields use the library's
+//! shared numeric readers ([`crate::config::canonicalize`]), so they accept any numeric encoding of
+//! an integral value — config stores do not agree on one — and reject a fractional, negative, or
+//! out-of-range value loudly instead of truncating it.
 //!
 //! The cache decision is **source-aware** (a remote source persists encrypted so values survive
 //! restarts/offline; a local source uses memory because the backend is itself always available), but
@@ -21,22 +23,9 @@ use serde::{Deserialize, Deserializer};
 use super::service::{DefaultParameterService, ParameterService};
 use super::source::{EnvSource, MountedDirSource, ParameterSource};
 use crate::Result;
+use crate::config::canonicalize::de_integral_u64;
 use crate::credentials::{KeyProviderConfig, LocalVault, build_key_provider};
 use crate::error::EdgeCommonsError;
-
-// Greengrass stores config numbers as doubles (e.g. 300.0). Accept an int or an integer-valued
-// float for the numeric fields below.
-fn lenient_u64<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
-    match serde_json::Value::deserialize(d)? {
-        serde_json::Value::Number(n) => n
-            .as_u64()
-            .or_else(|| n.as_f64().map(|f| f as u64))
-            .ok_or_else(|| serde::de::Error::custom("expected a non-negative integer")),
-        other => Err(serde::de::Error::custom(format!(
-            "expected a number, got {other}"
-        ))),
-    }
-}
 
 /// The `parameters` config section.
 #[derive(Debug, Clone, Deserialize)]
@@ -44,7 +33,7 @@ fn lenient_u64<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::E
 pub struct ParametersConfig {
     pub source: ParamSourceConfig,
     pub cache: CacheConfig,
-    #[serde(deserialize_with = "lenient_u64")]
+    #[serde(deserialize_with = "de_integral_u64")]
     pub refresh_interval_secs: u64,
     pub bootstrap_on_start: bool,
     pub sync: ParamSyncSelect,

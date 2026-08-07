@@ -96,10 +96,14 @@ subsystem stays dormant) unless its config section is present. The thirteen top-
 | `health` | Kubernetes HTTP health/readiness endpoint. |
 
 <Aside type="note" title="Numbers vs integers">
-Most numeric fields are typed `number` (not `integer`) **on purpose**: Greengrass delivers config
-numbers as doubles (for example `300.0`), and the libraries parse them leniently. A handful of fields
-are still declared `integer` in the schema (`heartbeat.intervalSecs`, `health.port`,
-`logging.fileLogging.backupCount`, the MQTT/Prometheus ports).
+A field typed `integer` in the schema — `heartbeat.intervalSecs`, `health.port`,
+`logging.fileLogging.backupCount`, `logging.publish.maxRecordBytes`,
+`logging.publish.queue.maxRecords`, and the MQTT/Prometheus ports — requires a whole number, but
+accepts any numeric encoding of one: `5000`, `5000.0`, and `5e3` are the same value. A fractional
+value in one of these fields is rejected. Fields typed `number` accept fractional values.
+
+Whatever the encoding in the source document, every SDK delivers integral numbers to your component
+in integer form. See [Numbers in configuration](/guides/configuration/#numbers-in-configuration).
 </Aside>
 
 ## Precedence and platform defaults

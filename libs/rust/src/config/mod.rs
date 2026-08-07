@@ -9,6 +9,9 @@
 //! [`model::Config`] snapshot. Template placeholders are resolved by [`template`].
 //!
 //! ## Semantics & Architecture
+//! - Raw documents are numerically canonicalized at intake ([`canonicalize`]), so an
+//!   integral number reaches schema validation, candidate validators, the snapshot,
+//!   and component subtrees in integer form whatever encoding the source used.
 //! - The snapshot is published as `Arc<Config>` and (in later sub-steps) swapped
 //!   atomically via `ArcSwap`, with change notification over a `tokio::sync::watch`
 //!   channel — never in-place mutation of shared state.
@@ -33,9 +36,10 @@
 //! None in normal operation.
 //!
 //! ## Related Modules
-//! - [`model`], [`validation`], [`template`], [`source`].
+//! - [`model`], [`validation`], [`template`], [`source`], [`canonicalize`].
 
 pub mod candidate;
+pub mod canonicalize;
 pub(crate) mod effective;
 pub(crate) mod identity;
 pub(crate) mod layered;
@@ -49,6 +53,7 @@ pub use candidate::{
     ConfigurationValidationResult, DEFAULT_CANDIDATE_VALIDATION_TIMEOUT,
     MAX_CANDIDATE_VALIDATION_TIMEOUT,
 };
+pub use canonicalize::canonicalize_json_numbers;
 pub use model::Config;
 
 use std::sync::Arc;

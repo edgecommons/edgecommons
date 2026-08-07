@@ -107,8 +107,12 @@ public class MetricConfiguration
                 if (jsonConfig.has("targetConfig"))
                 {
                     JsonObject targetConfig = jsonConfig.get("targetConfig").getAsJsonObject();
+                    // D-NC2: integral in any numeric encoding is accepted; fractional/negative is
+                    // rejected loudly rather than silently truncated/clamped.
                     if (targetConfig.has("intervalSecs"))
-                        intervalSecs = (targetConfig.get("intervalSecs").getAsBigDecimal()).intValue();
+                        intervalSecs = ConfigNumbers.requireNonNegativeInt(
+                                targetConfig.get("intervalSecs"),
+                                "metricEmission.targetConfig.intervalSecs");
                     if (intervalSecs < 1)
                         intervalSecs = DEFAULT_INTERVAL_SECS;
                     if (targetConfig.has("buffer") && targetConfig.get("buffer").isJsonObject())
@@ -125,8 +129,10 @@ public class MetricConfiguration
             if (jsonConfig.has("targetConfig"))
             {
                 JsonObject targetConfig = jsonConfig.get("targetConfig").getAsJsonObject();
+                // D-NC2: see the intervalSecs read above.
                 if (targetConfig.has("port"))
-                    prometheusPort = targetConfig.get("port").getAsBigDecimal().intValue();
+                    prometheusPort = ConfigNumbers.requireNonNegativeInt(
+                            targetConfig.get("port"), "metricEmission.targetConfig.port");
                 if (targetConfig.has("path"))
                     prometheusPath = targetConfig.get("path").getAsString();
             }

@@ -15,6 +15,12 @@
 //!   forwards the fresh document on the channel.
 //! - `Send + Sync`; async via `async_trait`. Errors map to
 //!   [`crate::error::EdgeCommonsError::Ipc`].
+//! - **Numbers arrive as doubles.** The Nucleus is a Java process and its config store
+//!   keeps JSON numbers as `Double`, so a deployed `5000` comes back as `5000.0`. This
+//!   source returns the document as delivered; the config pipeline canonicalizes it at
+//!   intake ([`crate::config::canonicalize`]), which is why an integer-typed setting
+//!   parses the same here as it does from a ConfigMap or a file. The repair is on the
+//!   read side, so a store that already holds doubles needs no reset.
 //!
 //! ## Status
 //! Implemented and **validated on a live Greengrass core** (non-root): `load` reads

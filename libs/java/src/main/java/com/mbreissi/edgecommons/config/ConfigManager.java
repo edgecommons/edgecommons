@@ -44,6 +44,15 @@ import static org.apache.logging.log4j.core.config.builder.api.ConfigurationBuil
  * Manages configuration for Greengrass components including global settings, instance-specific configurations,
  * logging, metrics, heartbeat, and tag configurations. This class provides methods to access and modify
  * component configurations and handles configuration change notifications.
+ *
+ * <p><b>Numeric contract (D-NC1).</b> Every configuration document is canonicalized on the way in —
+ * at construction and in {@link #tryApplyConfig} — so a number whose value is integral and inside
+ * the shared 64-bit window is delivered as an integer regardless of which store the document came
+ * from. That guarantee covers {@link #getFullConfig()}, {@link #getGlobalConfig()},
+ * {@link #getInstanceConfig(String)}, {@link #getTagConfig()}, the typed section accessors,
+ * component-supplied candidate validators, and the effective configuration published on the UNS
+ * {@code cfg} class. Fractional values, values outside the window, strings, and booleans are left
+ * byte-identical. See {@link ConfigNumbers}.
  */
 public class ConfigManager
 {
@@ -186,14 +195,22 @@ public class ConfigManager
         this.candidateValidators = List.copyOf(candidateValidators == null ? List.of() : candidateValidators);
         this.candidateValidationTimeout = requireCandidateValidationTimeout(candidateValidationTimeout);
 
+        // Numeric canonicalization at the intake boundary (D-NC1): the startup document is
+        // canonicalized ONCE, before component validators and before the snapshot is built, so the
+        // committed generation — and therefore every consumer of it: the library's config classes,
+        // getFullConfig()/getGlobalConfig()/getInstanceConfig(..), the envelope tags, and the
+        // published `cfg` document — carries integral numbers in integer form whatever the config
+        // store did to them. The source object is never mutated.
+        JsonObject canonicalConfig = ConfigNumbers.canonicalized(requireConfig(fullConfig));
+
         List<ConfigurationValidationError> initialErrors = CandidateValidationRunner.validate(
-                this.candidateValidators, requireConfig(fullConfig), null,
+                this.candidateValidators, canonicalConfig, null,
                 ConfigurationValidationPhase.INITIAL, this.candidateValidationTimeout);
         if (!initialErrors.isEmpty()) {
             this.lastCandidateValidationErrors = initialErrors;
             throw new IllegalStateException("Initial configuration rejected: " + formatValidationErrors(initialErrors));
         }
-        installSnapshot(prepareSnapshot(fullConfig, 1));
+        installSnapshot(prepareSnapshot(canonicalConfig, 1));
         reconfigureLogging();
 
         // Resolve the component's UNS identity ONCE, from this component's own config
@@ -248,7 +265,11 @@ public class ConfigManager
             }
             final JsonObject isolatedCandidate;
             try {
-                isolatedCandidate = requireConfig(config).deepCopy();
+                // Isolate the candidate from the caller AND canonicalize its numbers (D-NC1)
+                // before any gate runs, so schema validation, the component validators, and the
+                // committed snapshot all see the same canonical document — the reload path gets
+                // exactly the guarantee the constructor gives the startup path.
+                isolatedCandidate = ConfigNumbers.canonicalized(requireConfig(config));
                 ConfigurationValidator.validate(isolatedCandidate);
             } catch (ConfigurationValidator.ConfigurationValidationException | RuntimeException e) {
                 lastCandidateValidationErrors = List.of(new ConfigurationValidationError(

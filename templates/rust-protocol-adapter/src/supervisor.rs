@@ -23,16 +23,14 @@ use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::app::{
-    connectivity_of, sample_timestamps, set_paused, stamp_received, Backoff, DeviceConfig,
-    DeviceControl, Health, LinkState,
+    connectivity_of, sample_timestamps, set_paused, stale_signal_secs, stamp_received, Backoff,
+    DeviceConfig, DeviceControl, Health, LinkState,
 };
 use crate::device::{BrowseError, DeviceBackend, Quality, SimBackend};
 use crate::metrics::DeviceMetrics;
 
 /// How often the periodic metrics emit runs, in the poll loop.
 const METRICS_INTERVAL: Duration = Duration::from_secs(30);
-/// The `component.global.healthThresholds.staleSignalSecs` default (SOUTHBOUND.md §4/§5).
-const DEFAULT_STALE_SIGNAL_SECS: u64 = 30;
 
 // =================================================================================================
 // App
@@ -63,12 +61,7 @@ impl App {
         let config = gg.config();
         let metrics = gg.metrics();
 
-        let stale_signal_secs = config
-            .global()
-            .get("healthThresholds")
-            .and_then(|h| h.get("staleSignalSecs"))
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(DEFAULT_STALE_SIGNAL_SECS);
+        let stale_signal_secs = stale_signal_secs(config.global());
 
         let mut devices = Vec::new();
         for id in config.instance_ids() {

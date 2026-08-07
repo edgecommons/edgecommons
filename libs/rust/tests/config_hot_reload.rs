@@ -148,6 +148,83 @@ async fn file_config_hot_reloads_and_notifies_listeners() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A Greengrass-shaped reload payload through the FULL runtime (D-NC1): the config
+/// store the Java Nucleus owns returns every JSON number as a double, so the reload
+/// document carries `5000.0` where the recipe wrote `5000`. The applied snapshot must
+/// be canonical and the listener must see it — this is the hot-reload leg that the
+/// component-killing defect broke.
+#[tokio::test]
+async fn a_reload_payload_whose_numbers_are_doubles_produces_a_canonical_snapshot() {
+    if skipped() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("edgecommons-canon-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("config.json");
+    let log_path = dir.join("metric.log");
+
+    let document = |poll_ms: serde_json::Value| {
+        serde_json::json!({
+            "metricEmission": { "target": "log", "targetConfig": { "logFileName": log_path.to_string_lossy() } },
+            "component": {
+                "global": { "v": 1 },
+                "instances": [ { "id": "plc-1", "pollIntervalMs": poll_ms } ]
+            }
+        })
+    };
+    std::fs::write(
+        &config_path,
+        serde_json::to_vec_pretty(&document(serde_json::json!(1000))).unwrap(),
+    )
+    .unwrap();
+
+    let gg = build_runtime("com.example.CanonicalReload", &dir, &config_path).await;
+    let listener = Arc::new(RecordingListener {
+        last_v: Mutex::new(None),
+        count: AtomicUsize::new(0),
+    });
+    gg.add_config_change_listener(listener.clone());
+
+    // The Greengrass-shaped rewrite: same logical value, double encoding.
+    std::fs::write(
+        &config_path,
+        serde_json::to_vec_pretty(&document(serde_json::json!(5000.0))).unwrap(),
+    )
+    .unwrap();
+
+    let mut reloaded = false;
+    for _ in 0..100 {
+        if listener.count.load(Ordering::SeqCst) >= 1 {
+            reloaded = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        reloaded,
+        "the doubles-shaped reload should have been applied"
+    );
+
+    let cfg = gg.config();
+    let instance = cfg.instance("plc-1").expect("instance survives the reload");
+    assert_eq!(
+        instance["pollIntervalMs"],
+        serde_json::json!(5000),
+        "the applied snapshot is canonical"
+    );
+    assert_ne!(instance["pollIntervalMs"], serde_json::json!(5000.0));
+    // The shape a scaffolded adapter parses: a plain u64 field, no annotation.
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Device {
+        poll_interval_ms: u64,
+    }
+    let device: Device = serde_json::from_value(instance.clone()).expect("plain u64 parses");
+    assert_eq!(device.poll_interval_ms, 5000);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[tokio::test]
 async fn multi_instance_config_is_exposed_through_the_runtime() {
     if skipped() {

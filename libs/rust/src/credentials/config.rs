@@ -6,8 +6,10 @@
 //!
 //! ## Overview
 //! Phase 1 ships the `file` key provider; phase 2 adds the `awsSecretsManager` central source
-//! (behind the `credentials-aws` feature). Numeric fields parse leniently because Greengrass
-//! delivers config numbers as doubles.
+//! (behind the `credentials-aws` feature). Integer fields use the library's shared numeric
+//! readers ([`crate::config::canonicalize`]), so they accept any numeric encoding of an integral
+//! value — config stores do not agree on one — and reject a fractional, negative, or
+//! out-of-range value loudly instead of truncating it.
 
 use serde::{Deserialize, Deserializer};
 
@@ -15,25 +17,8 @@ use super::keyprovider::{DEFAULT_KEK_ENV_VAR, EnvKeyProvider, FileKeyProvider};
 use super::service::DefaultCredentialService;
 use super::vault::LocalVault;
 use crate::Result;
+use crate::config::canonicalize::{de_integral_u64, de_integral_usize};
 use crate::error::EdgeCommonsError;
-
-// Greengrass stores config numbers as doubles (e.g. 300.0). Accept an int or an integer-valued
-// float for the numeric fields below.
-fn lenient_u64<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
-    match serde_json::Value::deserialize(d)? {
-        serde_json::Value::Number(n) => n
-            .as_u64()
-            .or_else(|| n.as_f64().map(|f| f as u64))
-            .ok_or_else(|| serde::de::Error::custom("expected a non-negative integer")),
-        other => Err(serde::de::Error::custom(format!(
-            "expected a number, got {other}"
-        ))),
-    }
-}
-
-fn lenient_usize<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<usize, D::Error> {
-    lenient_u64(d).map(|v| v as usize)
-}
 
 /// The `credentials` config section.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -65,9 +50,9 @@ impl Default for AuditConfig {
 pub struct VaultConfig {
     pub path: String,
     pub key_provider: KeyProviderConfig,
-    #[serde(deserialize_with = "lenient_usize")]
+    #[serde(deserialize_with = "de_integral_usize")]
     pub keep_versions: usize,
-    #[serde(deserialize_with = "lenient_u64")]
+    #[serde(deserialize_with = "de_integral_u64")]
     pub cache_ttl_secs: u64,
 }
 
@@ -125,7 +110,7 @@ pub struct CentralConfig {
     pub region: Option<String>,
     /// Override the Secrets Manager endpoint (floci/LocalStack/VPC endpoint).
     pub endpoint_url: Option<String>,
-    #[serde(deserialize_with = "lenient_u64")]
+    #[serde(deserialize_with = "de_integral_u64")]
     pub refresh_interval_secs: u64,
     pub bootstrap_on_start: bool,
     pub sync: SyncSelect,

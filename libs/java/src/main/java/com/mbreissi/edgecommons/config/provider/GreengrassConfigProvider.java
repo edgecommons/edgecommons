@@ -15,6 +15,17 @@ import software.amazon.awssdk.aws.greengrass.model.GetConfigurationResponse;
 
 import java.util.Map;
 
+/**
+ * Loads the component configuration from the Greengrass Nucleus over IPC.
+ *
+ * <p>The Nucleus configuration store keeps JSON numbers as doubles, so a configured
+ * {@code intervalSecs: 30} arrives in the IPC response map as the Java {@code Double} {@code 30.0}
+ * and lands in this provider's Gson tree as {@code 30.0}. That is repaired once, for every config
+ * source, at configuration intake — see
+ * {@link com.mbreissi.edgecommons.config.ConfigNumbers} and
+ * {@link com.mbreissi.edgecommons.config.ConfigManager} — so nothing here needs to normalize it and
+ * the document is passed on exactly as the Nucleus delivered it.
+ */
 public final class GreengrassConfigProvider extends ConfigProvider
 {
     private static final Logger LOGGER = LogManager.getLogger(GreengrassConfigProvider.class);

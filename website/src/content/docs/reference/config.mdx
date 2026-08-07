@@ -49,6 +49,17 @@ language. Note the divergence on a **missing instance id**.
 The return types mirror each language's JSON value: Java `JsonObject` (Gson), Python `dict`, Rust
 `&serde_json::Value` / `Option<&Value>`, TypeScript `unknown` / `unknown | undefined`.
 
+### Numbers in the returned document
+
+Every value these methods return carries numbers in canonical form: a number whose value is integral
+and inside the signed/unsigned 64-bit integer range is delivered as an integer, regardless of the
+config source and identically in all four languages. Fractional values, and integral values outside
+that range, are delivered exactly as written.
+
+An integer-typed setting therefore accepts any numeric encoding of an integral value — `5000`,
+`5000.0`, and `5e3` are the same setting — while a fractional value in an integer-typed setting is
+rejected rather than truncated.
+
 ### Reading config
 
 <Tabs syncKey="lang">
