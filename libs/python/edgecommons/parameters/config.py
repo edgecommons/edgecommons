@@ -6,8 +6,10 @@ cache (persistent-encrypted for remote sources, in-memory for already-local ones
 bootstrapping the declared names/paths into the cache.
 
 Phase 1 ships three sources: ``awsSsm`` (remote; needs boto3), ``mountedDir`` (K8s ConfigMap/Secret
-volumes, Docker secrets), and ``env``. Numeric fields parse leniently because Greengrass delivers
-config numbers as doubles.
+volumes, Docker secrets), and ``env``. Integer fields use the library's shared numeric reader
+(:mod:`edgecommons.config.canonicalize`), so they accept any numeric encoding of an integral value —
+config stores do not agree on one — and reject a fractional, negative, or out-of-range value loudly
+instead of truncating it.
 
 Mirrors the Rust reference (``libs/rust/src/parameters/config.rs``). Uses plain dicts (no
 dataclasses) and an ``open_from_config(parameters_cfg, namespace="")`` entry, matching the
@@ -16,6 +18,8 @@ credentials module's style.
 import logging
 import threading
 from typing import List, Tuple
+
+from edgecommons.config.canonicalize import require_non_negative_integral
 
 from ..credentials import LocalVault, build_key_provider
 from .errors import ParameterError
@@ -28,15 +32,20 @@ logger = logging.getLogger("edgecommons.parameters")
 _REMOTE_KINDS = ("awsSsm",)
 
 
-def _lenient_int(value, default: int) -> int:
-    """Greengrass delivers config numbers as doubles (300.0). Accept int or integer-valued float."""
+def _integral_int(value, default: int, path: str) -> int:
+    """Read ``value`` as a non-negative integer, or ``default`` when it is absent.
+
+    Shares the library's numeric rule (D-NC2): an integral value in any encoding is accepted —
+    ``300`` and ``300.0`` are the same setting — while a fractional, negative, out-of-range, or
+    non-numeric value raises a :class:`ParameterError` carrying the canonical message rather than
+    being silently truncated or clamped.
+    """
     if value is None:
         return default
-    if isinstance(value, bool):
-        raise ParameterError("expected a number")
-    if isinstance(value, (int, float)):
-        return int(value)
-    raise ParameterError(f"expected a number, got {value!r}")
+    try:
+        return require_non_negative_integral(value, path)
+    except ValueError as e:
+        raise ParameterError(str(e)) from e
 
 
 def _path_entries(paths) -> List[Tuple[str, bool]]:
@@ -96,7 +105,9 @@ def open_from_config(parameters_cfg: dict, namespace: str = "") -> DefaultParame
     sync_names = list(sync_cfg.get("names", []) or [])
     sync_paths = _path_entries(sync_cfg.get("paths", []))
 
-    refresh_interval_secs = _lenient_int(cfg.get("refreshIntervalSecs"), 300)
+    refresh_interval_secs = _integral_int(
+        cfg.get("refreshIntervalSecs"), 300, "parameters.refreshIntervalSecs"
+    )
     bootstrap = bool(cfg.get("bootstrapOnStart", True))
 
     # Source-aware default: remote sources persist encrypted (survive restart/offline); local

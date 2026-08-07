@@ -25,6 +25,7 @@ import time
 from typing import Dict, Optional, Any
 from pathlib import Path
 
+from edgecommons.config.canonicalize import require_non_negative_integral
 from edgecommons.logs import LogPublishConfig
 
 #: The case-insensitive token (FR-LOG-4) that selects the stdout-JSON sink. Mirrors
@@ -145,7 +146,15 @@ class EnhancedLoggingConfiguration:
         self._file_logging_enabled = file_cfg.get('enabled', False)
         self._log_file_path = file_cfg.get('filePath')
         self._max_file_size = file_cfg.get('maxFileSize', '10MB')
-        self._backup_count = file_cfg.get('backupCount', 5)
+        # D-NC2: an integral value in any numeric encoding is accepted; a fractional or negative
+        # one is rejected loudly rather than silently truncated/clamped.
+        self._backup_count = (
+            require_non_negative_integral(
+                file_cfg.get('backupCount'), 'logging.fileLogging.backupCount'
+            )
+            if 'backupCount' in file_cfg
+            else 5
+        )
         
         # Per-logger settings
         self._logger_levels = {}

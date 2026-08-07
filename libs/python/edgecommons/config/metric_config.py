@@ -2,6 +2,8 @@ import json
 import logging
 import copy
 
+from edgecommons.config.canonicalize import require_non_negative_int
+
 
 class MetricConfiguration:
     # Default configuration values
@@ -69,9 +71,12 @@ class MetricConfiguration:
             # effective target can be prometheus via the platform-profile default even when the
             # config omits `target` (so `target` is still "log" here), and these keys are
             # prometheus-only so reading them is harmless for the other targets.
-            self._prometheus_port = int(
-                target_config.get("port", self.DEFAULT_PROMETHEUS_PORT)
-            )
+            # D-NC2: an integral value in any numeric encoding is accepted; a fractional or
+            # negative one is rejected loudly rather than silently truncated/clamped.
+            if "port" in target_config:
+                self._prometheus_port = require_non_negative_int(
+                    target_config.get("port"), "metricEmission.targetConfig.port"
+                )
             self._prometheus_path = target_config.get(
                 "path", self.DEFAULT_PROMETHEUS_PATH
             )
@@ -98,9 +103,12 @@ class MetricConfiguration:
 
             if target == "cloudwatch":
                 cw_config = target_config.get("cloudwatch", target_config)
-                self._interval_secs = int(
-                    cw_config.get("intervalSecs", self._interval_secs)
-                )
+                # D-NC2: see the port read above.
+                if "intervalSecs" in cw_config:
+                    self._interval_secs = require_non_negative_int(
+                        cw_config.get("intervalSecs"),
+                        "metricEmission.targetConfig.intervalSecs",
+                    )
                 if self._interval_secs < 1:
                     self._interval_secs = self.DEFAULT_INTERVAL_SECS
                 buffer = cw_config.get("buffer")

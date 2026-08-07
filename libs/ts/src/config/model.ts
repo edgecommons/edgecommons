@@ -8,19 +8,19 @@
  * — resolved once, fail-fast). It is immutable; on hot reload a new snapshot
  * replaces the old one atomically.
  *
- * Numeric fields accept a JSON float (Greengrass delivers config numbers as
- * doubles, e.g. `5.0`), matching the Rust `de_lenient_opt_u64` behavior.
+ * Integer-typed settings follow the shared numeric contract in `config/numbers.ts`
+ * (D-NC2): an integral value in any numeric encoding is accepted — `5000`, `5000.0`,
+ * and `5e3` are the same setting, whatever the configuration store did to the
+ * document — while a fractional, negative, or out-of-range value is rejected loudly
+ * rather than truncated or clamped. Rejection throws from {@link Config.fromValue},
+ * which is a startup failure on first load and a rejected candidate (previous
+ * generation retained) on hot reload.
  */
 import { logger } from "../logging";
 import { MessageIdentity } from "../message";
 import type { HierLevel } from "../message";
+import { asNonNegativeInteger, requireNonNegativeInteger } from "./numbers";
 import { sanitize } from "./template";
-
-/** Read a value as an integer, accepting an integer or a (truncated) float. */
-function asInt(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
-  return undefined;
-}
 
 function obj(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -39,7 +39,7 @@ export class FileLoggingConfig {
     this.enabled = raw.enabled === true;
     this.filePath = typeof raw.filePath === "string" ? raw.filePath : undefined;
     this.rawMaxFileSize = typeof raw.maxFileSize === "string" ? raw.maxFileSize : undefined;
-    this.rawBackupCount = asInt(raw.backupCount);
+    this.rawBackupCount = requireNonNegativeInteger(raw.backupCount, "logging.fileLogging.backupCount");
   }
 
   /** `maxFileSize` for size-based rotation; default `10MB`. */
@@ -85,11 +85,11 @@ export class LoggingPublishConfig {
     this.minLevel = parseLogPublishLevel(raw.minLevel);
     this.captureNative = raw.captureNative === undefined ? true : raw.captureNative === true;
     this.captureConsole = raw.captureConsole === true;
-    const maxRecordBytes = asInt(raw.maxRecordBytes);
+    const maxRecordBytes = requireNonNegativeInteger(raw.maxRecordBytes, "logging.publish.maxRecordBytes");
     this.maxRecordBytes = maxRecordBytes !== undefined && maxRecordBytes > 0 ? maxRecordBytes : 8192;
 
     const queue = obj(raw.queue);
-    const maxRecords = asInt(queue.maxRecords);
+    const maxRecords = requireNonNegativeInteger(queue.maxRecords, "logging.publish.queue.maxRecords");
     this.queue = {
       maxRecords: maxRecords !== undefined && maxRecords > 0 ? maxRecords : 1000,
       onFull: "dropOldest",
@@ -174,7 +174,10 @@ function parseMeasures(raw: Record<string, unknown>): Measures {
 export class HeartbeatConfig {
   /** Whether the heartbeat (state keepalive + `sys` measures metric) runs. Default `true`. */
   enabled: boolean;
-  /** Tick interval in seconds; default 5, minimum 1 (out-of-range values fall back to 5). */
+  /**
+   * Tick interval in seconds; default 5, minimum 1 (a configured value below the minimum falls
+   * back to 5). A fractional or negative value is rejected, never truncated or clamped.
+   */
   intervalSecs: number;
   measures: Measures;
   /**
@@ -186,7 +189,7 @@ export class HeartbeatConfig {
 
   constructor(raw: Record<string, unknown>) {
     this.enabled = raw.enabled === undefined ? true : raw.enabled === true;
-    const interval = asInt(raw.intervalSecs);
+    const interval = requireNonNegativeInteger(raw.intervalSecs, "heartbeat.intervalSecs");
     this.intervalSecs = interval !== undefined && interval >= 1 ? interval : 5;
     this.measures = parseMeasures(obj(raw.measures));
     this.destination = typeof raw.destination === "string" ? raw.destination : "local";
@@ -256,15 +259,23 @@ export class MetricConfig {
     return this.targetConfigStr("destination") ?? "ipc";
   }
 
-  /** `targetConfig.intervalSecs` (cloudwatch batch flush); default 5, minimum 1. */
+  /**
+   * `targetConfig.intervalSecs` (cloudwatch batch flush); default 5, minimum 1. A non-integral,
+   * negative, out-of-range, or non-numeric value falls back to the default (this accessor has no
+   * error channel) — it is never truncated.
+   */
   intervalSecs(): number {
-    const n = asInt(this.targetConfig?.intervalSecs);
+    const n = asNonNegativeInteger(this.targetConfig?.intervalSecs);
     return n !== undefined && n >= 1 ? n : 5;
   }
 
-  /** `targetConfig.port` — the prometheus target's HTTP port (bound `0.0.0.0`); default `9090`. */
+  /**
+   * `targetConfig.port` — the prometheus target's HTTP port (bound `0.0.0.0`); default `9090`. A
+   * non-integral, out-of-range, or non-numeric value falls back to the default (this accessor has
+   * no error channel) — it is never truncated.
+   */
   prometheusPort(): number {
-    const n = asInt(this.targetConfig?.port);
+    const n = asNonNegativeInteger(this.targetConfig?.port);
     return n !== undefined && n >= 1 && n <= 65535 ? n : 9090;
   }
 
@@ -290,7 +301,8 @@ export class MetricConfig {
         typeof buf.path === "string"
           ? buf.path
           : "/var/lib/edgecommons/metrics/{ComponentName}/cw",
-      maxDiskBytes: asInt(buf.maxDiskBytes) ?? 128 * 1024 * 1024,
+      // No error channel here either: an unusable value falls back to the default, never truncated.
+      maxDiskBytes: asNonNegativeInteger(buf.maxDiskBytes) ?? 128 * 1024 * 1024,
       onFull:
         buf.onFull === "block" || buf.onFull === "rejectNew" ? buf.onFull : "dropOldest",
       fsync: buf.fsync === "interval" || buf.fsync === "always" ? buf.fsync : "perBatch",
@@ -329,7 +341,7 @@ export class HealthConfig {
 
   constructor(raw: Record<string, unknown>) {
     this.enabled = typeof raw.enabled === "boolean" ? raw.enabled : undefined;
-    this.port = asInt(raw.port) ?? 8081;
+    this.port = requireNonNegativeInteger(raw.port, "health.port") ?? 8081;
     this.livenessPath = typeof raw.livenessPath === "string" ? raw.livenessPath : "/livez";
     this.readinessPath = typeof raw.readinessPath === "string" ? raw.readinessPath : "/readyz";
     this.startupPath = typeof raw.startupPath === "string" ? raw.startupPath : "/startupz";

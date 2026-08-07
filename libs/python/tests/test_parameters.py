@@ -148,9 +148,9 @@ def test_path_entry_accepts_string_or_object(monkeypatch):
     assert s.get("/other/b") == "2"
 
 
-def test_lenient_numeric_refresh_interval(monkeypatch):
-    # Greengrass delivers numbers as doubles (300.0). open_from_config must accept it without error;
-    # a 0 interval keeps the test from spawning a background thread.
+def test_integral_numeric_refresh_interval(monkeypatch):
+    # A store that keeps numbers as doubles delivers 300 as 300.0. open_from_config must accept it
+    # without error; a 0 interval keeps the test from spawning a background thread.
     monkeypatch.setenv("GGTEST_LENIENT_X", "v")
     cfg = {
         "source": {"type": "env", "prefix": "GGTEST_LENIENT_"},
@@ -160,9 +160,30 @@ def test_lenient_numeric_refresh_interval(monkeypatch):
     s = open_from_config(cfg)
     assert s.get("/x") == "v"
     # An integer-valued float is accepted (300.0 -> 300) without raising.
-    cfg["refreshIntervalSecs"] = 300.0
-    from edgecommons.parameters.config import _lenient_int
-    assert _lenient_int(300.0, 0) == 300
+    from edgecommons.parameters.config import _integral_int
+    assert _integral_int(300.0, 0, "parameters.refreshIntervalSecs") == 300
+    assert _integral_int(300, 0, "parameters.refreshIntervalSecs") == 300
+    # Absent falls back to the default.
+    assert _integral_int(None, 300, "parameters.refreshIntervalSecs") == 300
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (300.5, "must be a whole number, but was 300.5"),
+        (-1, "must not be negative, but was -1"),
+        (True, "must be a number, but was true"),
+        ("300", 'must be a number, but was "300"'),
+    ],
+)
+def test_refresh_interval_rejects_rather_than_truncating(value, expected):
+    # D-NC2: the reader never truncates 300.5 to 300 or clamps -1 to 0; it refuses, in the
+    # subsystem's own error type, carrying the canonical message.
+    from edgecommons.parameters.config import _integral_int
+
+    with pytest.raises(ParameterError) as excinfo:
+        _integral_int(value, 0, "parameters.refreshIntervalSecs")
+    assert "configuration value 'parameters.refreshIntervalSecs' " + expected == str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------
@@ -553,13 +574,13 @@ def test_config_build_awssm_source_branch(monkeypatch):
     assert s.stats().source == "awsSsm"
 
 
-def test_lenient_int_rejects_bool_and_string():
-    from edgecommons.parameters.config import _lenient_int
-    assert _lenient_int(None, 42) == 42
+def test_integral_int_rejects_bool_and_string():
+    from edgecommons.parameters.config import _integral_int
+    assert _integral_int(None, 42, "parameters.refreshIntervalSecs") == 42
     with pytest.raises(ParameterError):
-        _lenient_int(True, 0)
+        _integral_int(True, 0, "parameters.refreshIntervalSecs")
     with pytest.raises(ParameterError):
-        _lenient_int("300", 0)
+        _integral_int("300", 0, "parameters.refreshIntervalSecs")
 
 
 def test_path_entries_rejects_invalid_entry():

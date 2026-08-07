@@ -14,6 +14,7 @@ from edgecommons.platform.resolver import (
     ENV_K8S_POD_NAMESPACE,
     profile_logging_format,
 )
+from edgecommons.config.canonicalize import canonicalize_json_numbers
 from edgecommons.config.heartbeat_config import HeartbeatConfiguration
 from edgecommons.config.health_config import HealthConfiguration
 from edgecommons.config.metric_config import MetricConfiguration
@@ -102,6 +103,21 @@ def _identity_error(detail: str) -> ValueError:
 
 
 class ConfigManager:
+    """Base configuration manager: loads one effective configuration document from a source,
+    validates it, and installs it as an atomic generation that the whole component reads.
+
+    **Numeric contract (D-NC1).** Every document is canonicalized on the way in — at
+    :meth:`_effective_from_source_payload`, the single point startup and every hot reload pass
+    through, and again at the snapshot boundary — so a number whose value is integral and inside
+    the shared 64-bit window is delivered as an ``int`` regardless of which store the document
+    came from. That guarantee covers :meth:`get_full_config`, :meth:`get_effective_config`,
+    :meth:`get_global_config`, :meth:`get_instance_config`, :meth:`get_tag_config`, the typed
+    section accessors, component-supplied candidate validators, and the effective configuration
+    published on the UNS ``cfg`` class. Fractional values, values outside the window, strings,
+    and booleans are left byte-identical. See
+    :mod:`edgecommons.config.canonicalize`.
+    """
+
     def __init__(
         self,
         component_name: str,
@@ -210,7 +226,12 @@ class ConfigManager:
     ) -> _ConfigSnapshot:
         """Parse a complete candidate off-side without touching live state."""
 
-        raw_config = copy.deepcopy(config)
+        # Numeric canonicalization at the snapshot boundary (D-NC1). The pipeline already
+        # canonicalized this candidate; doing it again here is deliberate defense in depth (the
+        # pass is idempotent) and extends the guarantee to every direct caller — notably
+        # ``_apply_config``, the legacy test seam that bypasses the pipeline. Canonicalization
+        # deep-copies, so the caller's document is still isolated from the committed snapshot.
+        raw_config = canonicalize_json_numbers(config)
         component_config = copy.deepcopy(
             raw_config.get("component", {"global": {}, "instances": []})
         )
@@ -231,8 +252,10 @@ class ConfigManager:
         return _ConfigSnapshot(
             generation=generation,
             raw_config=raw_config,
-            component_layer=copy.deepcopy(component_layer),
-            base_layer=copy.deepcopy(base_layer),
+            # Canonicalized too (and thereby deep-copied), so a snapshot never mixes a canonical
+            # effective document with a raw layer.
+            component_layer=canonicalize_json_numbers(component_layer),
+            base_layer=canonicalize_json_numbers(base_layer),
             base_source=base_source,
             tag_config=tag_config,
             heartbeat_config=HeartbeatConfiguration(raw_config.get("heartbeat")),
@@ -734,6 +757,19 @@ class ConfigManager:
         self,
         source_payload,
     ):
+        """Turn one source payload into the effective configuration document.
+
+        The single point ``init()`` and every hot reload (``configuration_changed``, and the
+        ``reload-config`` re-fetch through it) pass through, so it is where numeric
+        canonicalization runs (D-NC1): ahead of the schema gate, the component-supplied
+        candidate validators, and the committed snapshot, which therefore all see the same
+        canonical document. A ``CONFIG_COMPONENT`` payload is canonicalized envelope-first, so
+        the catalog/lineage metadata and every layer fragment are canonical before the merge.
+        """
+        # Read-side and unconditional: a store already holding doubles (the Greengrass store is
+        # cumulative — redeploying the original recipe does not clear it) is repaired here on the
+        # very next read, with no reset and without rewriting the store.
+        source_payload = canonicalize_json_numbers(source_payload)
         if self._config_provider_family == "CONFIG_COMPONENT":
             parsed = parse_config_component_payload(
                 source_payload,

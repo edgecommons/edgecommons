@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Optional
 
+from edgecommons.config.canonicalize import require_non_negative_integral
 from edgecommons.messaging.message_builder import MessageBuilder
 from edgecommons.messaging.qos import Qos
 from edgecommons.uns import Uns, UnsClass
@@ -581,9 +582,16 @@ def _bool(value: Any, path: str) -> bool:
 
 
 def _positive_int(value: Any, path: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise ValueError(f"{path} must be a positive integer")
-    return value
+    """Read a strictly positive integer setting (D-NC2).
+
+    Accepts an integral value in any numeric encoding — config stores do not agree on one, and
+    a store that keeps numbers as 64-bit floats delivers ``8192`` as ``8192.0``. A fractional,
+    negative, out-of-range, or non-numeric value is rejected loudly, never truncated.
+    """
+    number = require_non_negative_integral(value, path)
+    if number <= 0:
+        raise ValueError(f"configuration value '{path}' must be positive, but was {number}")
+    return number
 
 
 def _string_choice(value: Any, path: str, choices: set) -> str:

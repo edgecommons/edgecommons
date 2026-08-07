@@ -28,6 +28,7 @@ export {
   HealthConfig,
 } from "./model";
 export { resolve, sanitize } from "./template";
+export { asNonNegativeInteger, requireNonNegativeInteger } from "./numbers";
 export { validate } from "./validation";
 export type { ConfigSource } from "./source";
 export { buildConfigSource } from "./source";

@@ -9,6 +9,7 @@
  * Phase 1 ships three sources: `awsSsm` (remote; `@aws-sdk/client-ssm` via dynamic import),
  * `mountedDir` (K8s ConfigMap/Secret volumes, Docker secrets), and `env`.
  */
+import { requireNonNegativeInteger } from "../config/numbers";
 import { logger } from "../logging";
 import { buildKeyProvider, KeyProviderConfig, LocalVault } from "../credentials";
 
@@ -47,7 +48,12 @@ export interface ParametersConfig {
     /** KEK custodian for the persistent cache (reuses the credentials key-provider config). */
     keyProvider?: KeyProviderConfig;
   };
-  /** Greengrass delivers config numbers as doubles (300.0); coerced leniently to an integer. */
+  /**
+   * Background refresh interval in seconds (`0` disables). Read through the library's shared
+   * numeric contract, so it accepts any numeric encoding of an integral value — configuration
+   * stores do not agree on one — and rejects a fractional, negative, or out-of-range value
+   * instead of truncating it.
+   */
   refreshIntervalSecs?: number;
   bootstrapOnStart?: boolean;
   sync?: { names?: string[]; paths?: PathEntry[] };
@@ -103,7 +109,8 @@ export async function openFromConfig(cfg: ParametersConfig = {}): Promise<Defaul
   const syncNames = cfg.sync?.names ?? [];
   const syncPaths: SyncPath[] = (cfg.sync?.paths ?? []).map(pathEntry);
 
-  const refreshIntervalSecs = Math.trunc(cfg.refreshIntervalSecs ?? 300);
+  const refreshIntervalSecs =
+    requireNonNegativeInteger(cfg.refreshIntervalSecs, "parameters.refreshIntervalSecs") ?? 300;
   const bootstrapOnStart = cfg.bootstrapOnStart ?? true;
 
   // Source-aware default: remote sources persist encrypted (survive restart/offline); local

@@ -38,6 +38,19 @@ use crate::device::{BrowseError, BrowsePage, ConnectionConfig, Reading};
 
 
 /// One device == one entry of `component.instances[]`.
+///
+/// ## Numbers in this struct
+///
+/// Integer settings are typed as plain integers with no lenient `deserialize_with`
+/// annotation, and that is deliberate: `edgecommons` canonicalizes configuration
+/// numbers at its intake boundary, so a setting whose value is a whole number reaches
+/// [`Config::instance`] as an integer JSON number no matter how the configuration
+/// source encoded it — a mounted ConfigMap's literal `5000` and the Greengrass config
+/// store's `5000.0` both arrive as `5000`. A value that is genuinely not a whole
+/// number (`5000.5`) is left alone and `serde` rejects it here, loudly, naming the
+/// field. Do not "fix" that by widening a field to `f64` or by adding a truncating
+/// deserializer: silently rewriting an operator's configuration is worse than
+/// refusing it.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeviceConfig {
@@ -78,6 +91,40 @@ fn default_adapter() -> String {
 }
 fn default_poll_ms() -> u64 {
     5_000
+}
+
+/// The `component.global.healthThresholds.staleSignalSecs` default (SOUTHBOUND.md §4/§5).
+pub const DEFAULT_STALE_SIGNAL_SECS: u64 = 30;
+
+/// `component.global.healthThresholds.staleSignalSecs`, or the default when unset.
+///
+/// Reading a number out of a loose config subtree with `Value::as_u64` is only safe
+/// because `edgecommons` canonicalizes configuration numbers at intake: whatever the
+/// configuration source encoded, a whole-number setting is an integer JSON number by
+/// the time it reaches [`Config::global`]. Without that, a store that returns doubles
+/// would make this probe return `None` and the threshold would fall back to the
+/// default while the operator's value sat in the config, unread — a wrong value with
+/// no error anywhere. A value that is genuinely not a whole number is out of contract:
+/// it is reported and the default applies; it is never truncated.
+#[must_use]
+pub fn stale_signal_secs(global: &serde_json::Value) -> u64 {
+    let Some(configured) = global
+        .get("healthThresholds")
+        .and_then(|h| h.get("staleSignalSecs"))
+    else {
+        return DEFAULT_STALE_SIGNAL_SECS;
+    };
+    match configured.as_u64() {
+        Some(secs) => secs,
+        None => {
+            tracing::warn!(
+                value = %configured,
+                default_secs = DEFAULT_STALE_SIGNAL_SECS,
+                "component.global.healthThresholds.staleSignalSecs must be a whole number of seconds; using the default"
+            );
+            DEFAULT_STALE_SIGNAL_SECS
+        }
+    }
 }
 
 /// Reconnect backoff. Exponential with full jitter and a cap — so a site whose PLC reboots does
@@ -330,6 +377,94 @@ mod tests {
         assert_eq!(d.poll_interval_ms, 1_000);
         // `connection` is deliberately open: every protocol needs different keys.
         assert_eq!(d.connection.extra["unitId"], 3);
+    }
+
+    /// The document a component actually receives depends on where its configuration
+    /// came from: a mounted ConfigMap carries the literal `5000`, and the Greengrass
+    /// config store round-trips every number through a Java `double` and returns
+    /// `5000.0`. `edgecommons` canonicalizes at intake, so this adapter's plain
+    /// integer fields parse from both — with no annotation and no source change.
+    fn config_from(instance: serde_json::Value) -> Config {
+        Config::from_value(
+            "com.example.Adapter",
+            "gw-01",
+            json!({
+                "component": {
+                    "global": { "healthThresholds": { "staleSignalSecs": 45.0 } },
+                    "instances": [ instance ]
+                }
+            }),
+        )
+        .expect("a snapshot")
+    }
+
+    #[test]
+    fn a_device_parses_from_a_greengrass_shaped_instance_config() {
+        let cfg = config_from(json!({
+            "id": "plc-1",
+            "connection": { "endpoint": "sim://plc-1", "unitId": 3.0 },
+            "pollIntervalMs": 5000.0
+        }));
+        let d: DeviceConfig =
+            serde_json::from_value(cfg.instance("plc-1").expect("instance").clone())
+                .expect("a whole-number setting parses whatever the store encoded");
+        assert_eq!(d.poll_interval_ms, 5_000);
+        assert_eq!(
+            d.connection.extra["unitId"],
+            json!(3),
+            "the open `connection` subtree is canonical too"
+        );
+    }
+
+    #[test]
+    fn a_fractional_poll_interval_is_refused_rather_than_truncated() {
+        let cfg = config_from(json!({
+            "id": "plc-1",
+            "connection": { "endpoint": "sim://plc-1" },
+            "pollIntervalMs": 5000.5
+        }));
+        let err = serde_json::from_value::<DeviceConfig>(
+            cfg.instance("plc-1").expect("instance").clone(),
+        )
+        .expect_err("a fractional millisecond count is not a valid poll interval")
+        .to_string();
+        assert!(
+            err.contains("invalid type: floating point `5000.5`, expected u64"),
+            "the refusal names the offending value: {err}"
+        );
+    }
+
+    #[test]
+    fn the_stale_signal_threshold_reads_a_whole_number_from_any_source() {
+        let cfg = config_from(json!({ "id": "plc-1", "connection": { "endpoint": "sim://x" } }));
+        assert_eq!(
+            stale_signal_secs(cfg.global()),
+            45,
+            "the operator's value is used, not the default"
+        );
+        assert_eq!(
+            stale_signal_secs(&json!({ "healthThresholds": { "staleSignalSecs": 60 } })),
+            60
+        );
+    }
+
+    #[test]
+    fn the_stale_signal_threshold_defaults_when_unset_or_out_of_contract() {
+        assert_eq!(stale_signal_secs(&json!({})), DEFAULT_STALE_SIGNAL_SECS);
+        assert_eq!(
+            stale_signal_secs(&json!({ "healthThresholds": {} })),
+            DEFAULT_STALE_SIGNAL_SECS
+        );
+        // Not a whole number of seconds: the default applies, and 30.9 is NOT truncated to 30
+        // by accident — it is reported and ignored.
+        assert_eq!(
+            stale_signal_secs(&json!({ "healthThresholds": { "staleSignalSecs": 30.9 } })),
+            DEFAULT_STALE_SIGNAL_SECS
+        );
+        assert_eq!(
+            stale_signal_secs(&json!({ "healthThresholds": { "staleSignalSecs": "30" } })),
+            DEFAULT_STALE_SIGNAL_SECS
+        );
     }
 
     #[test]

@@ -63,7 +63,10 @@ public class HeartbeatConfiguration
             }
             if (jsonConfig.has("intervalSecs"))
             {
-                intervalSecs = (jsonConfig.get("intervalSecs").getAsBigDecimal()).intValue();
+                // D-NC2: an integral value in any numeric encoding is accepted; a fractional or
+                // negative one is rejected loudly rather than silently truncated/clamped.
+                intervalSecs = ConfigNumbers.requireNonNegativeInt(
+                        jsonConfig.get("intervalSecs"), "heartbeat.intervalSecs");
                 if (intervalSecs < 1)
                     intervalSecs = 5;
             }

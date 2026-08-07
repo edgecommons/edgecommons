@@ -2252,8 +2252,115 @@ mod reload_tests {
         assert_eq!(config.load_full().raw["component"]["global"]["v"], 99);
     }
 
+    /// The hot-reload leg of D-NC1, with no device and no broker: a Greengrass-shaped
+    /// reload payload (every number a double) arrives through the SAME wrapper the
+    /// runtime installs at `EdgeCommonsBuilder::build` — so the reload path's schema
+    /// gate, candidate validators, and applied snapshot all see the canonical
+    /// document, and listeners are notified with it.
+    // The budget guard is a std Mutex held across awaits on purpose: it serializes whole tests,
+    // and #[tokio::test] runs each on its own current-thread runtime, so nothing else is blocked
+    // by it.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn a_greengrass_shaped_reload_payload_produces_a_canonical_snapshot() {
+        // The candidate-validator worker budget is process-wide and a co-scheduled test can
+        // saturate it; serialize with every other test that runs a validator so none of them
+        // is starved of permits and times out for a scheduling reason. Held across the awaits
+        // deliberately (see the #[allow] above): the guard must cover the whole validation.
+        let _budget = config::candidate::budget_test_guard();
+        let original =
+            Config::from_value("C", "t", json!({ "component": { "global": { "v": 1 } } })).unwrap();
+        let config = Arc::new(ArcSwap::from_pointee(original));
+        let source = Arc::new(FakeSource::new(vec![Ok(json!({
+            "heartbeat": { "intervalSecs": 10.0 },
+            "health": { "port": 8082.0 },
+            "component": {
+                "global": { "healthThresholds": { "staleSignalSecs": 30.0 } },
+                "instances": [ { "id": "plc-1", "pollIntervalMs": 5000.0 } ]
+            }
+        }))]));
+        let layered = config::layered::LayeredConfigSource::new(
+            source,
+            crate::cli::ConfigSourceSpec::Greengrass {
+                component: None,
+                key: "ComponentConfig".to_string(),
+            },
+            "C",
+        );
+        let seen = Arc::new(AtomicUsize::new(0));
+        let listeners: ConfigListeners =
+            Arc::new(std::sync::Mutex::new(vec![
+                Arc::new(CountingListener(Arc::clone(&seen)))
+                    as Arc<dyn config::ConfigurationChangeListener>,
+            ]));
+
+        // The candidate validator sees the canonical document, not the store's doubles.
+        let observed: Arc<StdMutex<Option<Value>>> = Arc::new(StdMutex::new(None));
+        let recorder = Arc::clone(&observed);
+        let lifecycle = lifecycle_with(
+            "canonical-candidate",
+            move |candidate: Value, _prior: Option<Value>, _phase| {
+                *recorder.lock().unwrap() = Some(candidate);
+                Ok(config::ConfigurationValidationResult::accept())
+            },
+        );
+
+        let ok = reload_from_provider(
+            &layered,
+            &config,
+            &listeners,
+            &empty_apply_listener(),
+            &lifecycle,
+            "C",
+            "t",
+        )
+        .await;
+
+        assert!(ok, "the Greengrass-shaped reload is accepted");
+        let candidate = observed
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the candidate validator ran");
+        assert_eq!(
+            candidate["component"]["instances"][0]["pollIntervalMs"],
+            json!(5000),
+            "candidate validators receive the canonical document"
+        );
+        assert_eq!(
+            candidate["component"]["global"]["healthThresholds"]["staleSignalSecs"],
+            json!(30)
+        );
+        let applied = config.load_full();
+        assert_eq!(
+            applied.global()["healthThresholds"]["staleSignalSecs"],
+            json!(30),
+            "a `Value::as_u64` probe over component.global now finds the value"
+        );
+        assert_eq!(
+            applied.instance("plc-1").unwrap()["pollIntervalMs"],
+            json!(5000)
+        );
+        assert_ne!(
+            applied.instance("plc-1").unwrap()["pollIntervalMs"],
+            json!(5000.0)
+        );
+        assert_eq!(applied.parsed.heartbeat.interval_secs, Some(10));
+        assert_eq!(applied.parsed.health.port(), 8082);
+        assert_eq!(seen.load(Ordering::SeqCst), 1, "listeners were notified");
+    }
+
+    // The budget guard is a std Mutex held across awaits on purpose: it serializes whole tests,
+    // and #[tokio::test] runs each on its own current-thread runtime, so nothing else is blocked
+    // by it.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn validator_rejection_keeps_exact_prior_generation_and_skips_listeners() {
+        // The candidate-validator worker budget is process-wide and a co-scheduled test can
+        // saturate it; serialize with every other test that runs a validator so none of them
+        // is starved of permits and times out for a scheduling reason. Held across the awaits
+        // deliberately (see the #[allow] above): the guard must cover the whole validation.
+        let _budget = config::candidate::budget_test_guard();
         let original = Arc::new(
             Config::from_value(
                 "C",
@@ -2312,8 +2419,17 @@ mod reload_tests {
         );
     }
 
+    // The budget guard is a std Mutex held across awaits on purpose: it serializes whole tests,
+    // and #[tokio::test] runs each on its own current-thread runtime, so nothing else is blocked
+    // by it.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn schema_validation_precedes_candidate_callback() {
+        // The candidate-validator worker budget is process-wide and a co-scheduled test can
+        // saturate it; serialize with every other test that runs a validator so none of them
+        // is starved of permits and times out for a scheduling reason. Held across the awaits
+        // deliberately (see the #[allow] above): the guard must cover the whole validation.
+        let _budget = config::candidate::budget_test_guard();
         let original = Arc::new(Config::from_value("C", "t", json!({ "component": {} })).unwrap());
         let config = Arc::new(ArcSwap::from(original.clone()));
         let calls = Arc::new(AtomicUsize::new(0));

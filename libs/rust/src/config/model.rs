@@ -14,6 +14,12 @@
 //! - `Config` is immutable and cloneable; no interior mutability.
 //! - Error handling: [`Config::from_value`] returns [`crate::error::Result`] on
 //!   deserialization failure.
+//! - **Numbers are canonical in a snapshot.** [`Config::from_value`] runs
+//!   [`super::canonicalize::canonicalize_json_numbers`] over the document first, so
+//!   every number with an integral value is an integer JSON number in `raw`,
+//!   `parsed`, `tags`, and the `component.*` subtrees. Integer-typed fields therefore
+//!   accept any numeric encoding of an integral value, and a fractional value in one
+//!   fails loudly rather than being truncated.
 //!
 //! ## Usage Example
 //! ```
@@ -26,63 +32,30 @@
 //!
 //! ## Design Choices
 //! Loose subtrees (`component.global`, instances) stay as `serde_json::Value` so
-//! component-specific config needs no library changes.
+//! component-specific config needs no library changes. Numeric canonicalization is
+//! what makes that safe across sources: a component deserializes those subtrees with
+//! its own plain `serde` structs and its `u64` fields parse everywhere, with no
+//! per-field annotation.
 //!
 //! ## Safety & Panics
 //! None.
 //!
 //! ## Related Modules
-//! - [`super`], [`super::template`], [`super::validation`].
+//! - [`super`], [`super::canonicalize`], [`super::template`], [`super::validation`].
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
+use super::canonicalize::{
+    as_integral_u64, canonicalize_json_numbers, de_integral_opt_u64, de_integral_u64, de_opt_f64,
+};
 use crate::error::Result;
 
 /// The schema default for `messaging.requestTimeoutSeconds` (seconds) — the
 /// framework-owned `request()` deadline (UNS-CANONICAL-DESIGN §5 / D-U5).
 pub const DEFAULT_REQUEST_TIMEOUT_SECONDS: u64 = 30;
-
-/// Read a JSON value as `u64`, accepting an integer **or** a (truncated) float.
-///
-/// Greengrass stores configuration numbers as doubles, so an integer like `5`
-/// arrives over IPC as `5.0`; `serde_json`'s `as_u64` rejects floats, so accept
-/// both representations to stay robust across config sources.
-fn value_as_u64(value: &Value) -> Option<u64> {
-    value.as_u64().or_else(|| value.as_f64().map(|f| f as u64))
-}
-
-/// `serde` deserializer for an optional `u64` config field that may be encoded as a
-/// JSON float (see [`value_as_u64`]). Absent or `null` yields `None`.
-fn de_lenient_opt_u64<'de, D>(deserializer: D) -> std::result::Result<Option<u64>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = Option::<Value>::deserialize(deserializer)?;
-    Ok(value.as_ref().and_then(value_as_u64))
-}
-
-/// `serde` deserializer for a required/defaulted `u64` config field that may be
-/// encoded as a JSON float (see [`value_as_u64`]).
-fn de_lenient_u64<'de, D>(deserializer: D) -> std::result::Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = Value::deserialize(deserializer)?;
-    value_as_u64(&value).ok_or_else(|| serde::de::Error::custom("expected integer"))
-}
-
-/// `serde` deserializer for an optional `f64` config field that accepts any JSON
-/// number (integer or float). Absent, `null`, or non-numeric yields `None`.
-fn de_lenient_opt_f64<'de, D>(deserializer: D) -> std::result::Result<Option<f64>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = Option::<Value>::deserialize(deserializer)?;
-    Ok(value.as_ref().and_then(Value::as_f64))
-}
 
 /// `logging` section.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -215,7 +188,7 @@ impl<'de> Deserialize<'de> for LoggingPublishQueueOnFull {
 pub struct LoggingPublishQueueConfig {
     #[serde(
         default = "default_log_queue_max_records",
-        deserialize_with = "de_lenient_u64"
+        deserialize_with = "de_integral_u64"
     )]
     pub max_records: u64,
     pub on_full: LoggingPublishQueueOnFull,
@@ -260,7 +233,7 @@ pub struct LoggingPublishConfig {
     pub capture_console: bool,
     #[serde(
         default = "default_log_max_record_bytes",
-        deserialize_with = "de_lenient_u64"
+        deserialize_with = "de_integral_u64"
     )]
     pub max_record_bytes: u64,
     pub queue: LoggingPublishQueueConfig,
@@ -289,7 +262,7 @@ pub struct FileLogging {
     pub enabled: bool,
     pub file_path: Option<String>,
     pub max_file_size: Option<String>,
-    #[serde(default, deserialize_with = "de_lenient_opt_u64")]
+    #[serde(default, deserialize_with = "de_integral_opt_u64")]
     pub backup_count: Option<u64>,
 }
 
@@ -323,7 +296,7 @@ pub struct HeartbeatConfig {
     /// Whether the heartbeat (state keepalive + `sys` measures metric) runs.
     /// Default `true`.
     pub enabled: bool,
-    #[serde(default, deserialize_with = "de_lenient_opt_u64")]
+    #[serde(default, deserialize_with = "de_integral_opt_u64")]
     pub interval_secs: Option<u64>,
     pub measures: Measures,
     /// Publish destination of the state keepalive only (`"local"` — the default —
@@ -406,8 +379,8 @@ fn default_log_queue_max_records() -> u64 {
 pub struct HealthConfig {
     /// Explicit enable toggle. `None` defers to the platform-profile default.
     pub enabled: Option<bool>,
-    /// TCP port (schema default 8081); accepts integer-valued floats from Greengrass.
-    #[serde(default, deserialize_with = "de_lenient_opt_u64")]
+    /// TCP port (schema default 8081); accepts any numeric encoding of an integral value.
+    #[serde(default, deserialize_with = "de_integral_opt_u64")]
     pub port: Option<u64>,
     /// Liveness route (schema default `/livez`).
     pub liveness_path: Option<String>,
@@ -505,11 +478,13 @@ impl MetricConfig {
     }
 
     /// `targetConfig.intervalSecs` (cloudwatch batch flush); default 5, minimum 1.
+    /// A non-integral, negative, out-of-range, or non-numeric value falls back to the
+    /// default (this accessor has no error channel) — it is never truncated.
     pub fn interval_secs(&self) -> u64 {
         self.target_config
             .as_ref()
             .and_then(|tc| tc.get("intervalSecs"))
-            .and_then(value_as_u64)
+            .and_then(as_integral_u64)
             .filter(|&n| n >= 1)
             .unwrap_or(5)
     }
@@ -539,11 +514,13 @@ impl MetricConfig {
             .unwrap_or_else(|| "/var/lib/edgecommons/metrics/{ComponentName}/cw".to_string())
     }
 
-    /// `targetConfig.buffer.maxDiskBytes`; default ~128 MiB.
+    /// `targetConfig.buffer.maxDiskBytes`; default ~128 MiB. A non-integral,
+    /// negative, out-of-range, or non-numeric value falls back to the default
+    /// (this accessor has no error channel) — it is never truncated.
     pub fn buffer_max_disk_bytes(&self) -> u64 {
         self.buffer()
             .and_then(|b| b.get("maxDiskBytes"))
-            .and_then(value_as_u64)
+            .and_then(as_integral_u64)
             .unwrap_or(134_217_728)
     }
 
@@ -566,12 +543,13 @@ impl MetricConfig {
     }
 
     /// `targetConfig.port` (prometheus target HTTP port); default `9090`. Out-of-range
-    /// (`0` or `> 65535`) or non-numeric values fall back to the default.
+    /// (`0` or `> 65535`), non-integral, and non-numeric values fall back to the
+    /// default (this accessor has no error channel) — they are never truncated.
     pub fn prometheus_port(&self) -> u16 {
         self.target_config
             .as_ref()
             .and_then(|tc| tc.get("port"))
-            .and_then(value_as_u64)
+            .and_then(as_integral_u64)
             .and_then(|p| u16::try_from(p).ok())
             .filter(|&p| p != 0)
             .unwrap_or(9090)
@@ -612,7 +590,7 @@ pub struct MessagingSectionConfig {
     /// `messaging.requestTimeoutSeconds` (UNS-CANONICAL-DESIGN §5 / D-U5): the
     /// default `request()` deadline in seconds (fractions allowed); `0` disables.
     /// Absent = the schema default 30.
-    #[serde(default, deserialize_with = "de_lenient_opt_f64")]
+    #[serde(default, deserialize_with = "de_opt_f64")]
     pub request_timeout_seconds: Option<f64>,
 }
 
@@ -659,6 +637,13 @@ impl Config {
     ) -> Result<Self> {
         let component_name = component_name.into();
         let thing_name = thing_name.into();
+        // D-NC1: canonicalize BEFORE parsing and before the document is stored, so
+        // every `Value` reachable from this snapshot — `raw`, `parsed`, `global()`,
+        // `instance()`, `tags` — carries integral numbers in integer form whatever
+        // encoding the source used. Idempotent: the pipeline already canonicalized
+        // the candidate, and a direct caller (a component test) gets it here.
+        let mut raw = raw;
+        canonicalize_json_numbers(&mut raw);
         let parsed: RawConfig = serde_json::from_value(raw.clone())?;
         let identity = super::identity::resolve(&raw, &thing_name, &component_name)?;
         // D-U25: includeRoot needs a level ABOVE the device to prepend — with a
@@ -1193,5 +1178,179 @@ mod tests {
         assert!(cfg.instance("a").is_some());
         assert!(cfg.instance("missing").is_none());
         assert!(cfg.global().is_null() || cfg.global().is_object());
+    }
+}
+
+/// The Greengrass-shaped-configuration contract (D-NC1): the config store the Java
+/// Nucleus owns round-trips every JSON number through a `double`, so a deployed
+/// `5000` comes back as `5000.0`. These tests reproduce that document shape with no
+/// device and pin that a snapshot canonicalizes it — including the loose
+/// `component.*` subtrees a component deserializes with its own plain structs, which
+/// is where the reported startup crash lived.
+#[cfg(test)]
+mod greengrass_shaped_config_tests {
+    use super::*;
+    use serde::Deserialize;
+    use serde_json::json;
+
+    /// A full document in the shape the Greengrass config store returns: every number
+    /// is a double, in library sections, in `tags`, and in `component.*`.
+    fn greengrass_shaped_document() -> Value {
+        json!({
+            "heartbeat": { "intervalSecs": 10.0 },
+            "health": { "port": 8082.0 },
+            "logging": { "publish": {
+                "maxRecordBytes": 4096.0,
+                "queue": { "maxRecords": 500.0 }
+            }, "fileLogging": { "backupCount": 3.0 } },
+            "metricEmission": { "target": "cloudwatch", "targetConfig": {
+                "intervalSecs": 15.0,
+                "buffer": { "maxDiskBytes": 1048576.0 }
+            } },
+            "messaging": { "requestTimeoutSeconds": 45.0 },
+            "tags": { "site": "dallas", "line": 3.0, "ratio": 0.5 },
+            "component": {
+                "global": { "healthThresholds": { "staleSignalSecs": 30.0 } },
+                "instances": [
+                    { "id": "plc-1", "pollIntervalMs": 5000.0, "slot": 0.0, "timeoutMs": 2500.0 }
+                ]
+            }
+        })
+    }
+
+    /// The shape a scaffolded adapter parses each `component.instances[]` entry with —
+    /// a plain `serde` struct with an integer-typed field and no lenient annotation.
+    /// This is `templates/rust-protocol-adapter`'s `DeviceConfig` in miniature, and the
+    /// exact struct shape that produced `invalid type: floating point 5000.0, expected
+    /// u64` on the device.
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct DeviceConfig {
+        id: String,
+        poll_interval_ms: u64,
+        slot: u8,
+        timeout_ms: u64,
+    }
+
+    #[test]
+    fn a_greengrass_shaped_document_parses_and_the_snapshot_is_canonical() {
+        let cfg = Config::from_value("c", "t", greengrass_shaped_document()).unwrap();
+
+        // Library sections.
+        assert_eq!(cfg.parsed.heartbeat.interval_secs, Some(10));
+        assert_eq!(cfg.parsed.health.port(), 8082);
+        assert_eq!(cfg.parsed.logging.publish.max_record_bytes, 4096);
+        assert_eq!(cfg.parsed.logging.publish.queue.max_records, 500);
+        assert_eq!(
+            cfg.parsed
+                .logging
+                .file_logging
+                .as_ref()
+                .unwrap()
+                .backup_count(),
+            3
+        );
+        assert_eq!(cfg.parsed.metric_emission.interval_secs(), 15);
+        assert_eq!(
+            cfg.parsed.metric_emission.buffer_max_disk_bytes(),
+            1_048_576
+        );
+        assert_eq!(
+            cfg.messaging_request_timeout(),
+            Some(std::time::Duration::from_secs(45))
+        );
+
+        // `json!(5000) != json!(5000.0)`, so these are real assertions about encoding.
+        let instance = cfg.instance("plc-1").expect("instance is present");
+        assert_eq!(instance["pollIntervalMs"], json!(5000));
+        assert_ne!(instance["pollIntervalMs"], json!(5000.0));
+        assert_eq!(instance["timeoutMs"], json!(2500));
+        assert_eq!(instance["slot"], json!(0));
+        assert_eq!(
+            cfg.global()["healthThresholds"]["staleSignalSecs"],
+            json!(30)
+        );
+        // The raw document a component reads through `Config::raw` is canonical too.
+        assert_eq!(
+            cfg.raw["component"]["instances"][0]["pollIntervalMs"],
+            json!(5000)
+        );
+    }
+
+    #[test]
+    fn a_scaffolded_adapters_plain_serde_struct_now_parses_the_greengrass_shape() {
+        let cfg = Config::from_value("c", "t", greengrass_shaped_document()).unwrap();
+        let device: DeviceConfig = serde_json::from_value(cfg.instance("plc-1").unwrap().clone())
+            .expect("an unannotated u64 field parses a Greengrass-shaped instance subtree");
+        assert_eq!(device.id, "plc-1");
+        assert_eq!(device.poll_interval_ms, 5000);
+        assert_eq!(device.slot, 0);
+        assert_eq!(device.timeout_ms, 2500);
+    }
+
+    #[test]
+    fn a_fractional_value_still_fails_loudly_with_the_serde_type_error() {
+        let mut doc = greengrass_shaped_document();
+        doc["component"]["instances"][0]["pollIntervalMs"] = json!(5000.5);
+        let cfg = Config::from_value("c", "t", doc).unwrap();
+        // Untouched by the pass: a fractional value is not an integer in any encoding.
+        assert_eq!(
+            cfg.instance("plc-1").unwrap()["pollIntervalMs"],
+            json!(5000.5)
+        );
+        let err = serde_json::from_value::<DeviceConfig>(cfg.instance("plc-1").unwrap().clone())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("invalid type: floating point `5000.5`, expected u64"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_negative_value_fails_loudly_rather_than_saturating_to_zero() {
+        let mut doc = greengrass_shaped_document();
+        doc["component"]["instances"][0]["pollIntervalMs"] = json!(-5.0);
+        let cfg = Config::from_value("c", "t", doc).unwrap();
+        assert_eq!(cfg.instance("plc-1").unwrap()["pollIntervalMs"], json!(-5));
+        let err = serde_json::from_value::<DeviceConfig>(cfg.instance("plc-1").unwrap().clone())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("invalid value: integer `-5`, expected u64"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn tags_are_canonical_so_the_same_config_types_the_same_on_every_platform() {
+        let cfg = Config::from_value("c", "t", greengrass_shaped_document()).unwrap();
+        assert_eq!(cfg.parsed.tags.get("line"), Some(&json!(3)));
+        assert_ne!(cfg.parsed.tags.get("line"), Some(&json!(3.0)));
+        // A genuinely fractional tag stays a float — only integral values move.
+        assert_eq!(cfg.parsed.tags.get("ratio"), Some(&json!(0.5)));
+        assert_eq!(cfg.parsed.tags.get("site"), Some(&json!("dallas")));
+    }
+
+    #[test]
+    fn a_snapshot_of_a_canonical_document_is_byte_identical() {
+        // Idempotency at the snapshot boundary: the pipeline canonicalizes, then
+        // `from_value` canonicalizes again. Both snapshots must agree.
+        let once = Config::from_value("c", "t", greengrass_shaped_document()).unwrap();
+        let twice = Config::from_value("c", "t", once.raw.clone()).unwrap();
+        assert_eq!(once.raw, twice.raw);
+    }
+
+    #[test]
+    fn a_poisoned_store_needs_no_reset_the_reader_repairs_it() {
+        // The Greengrass config store is cumulative: once a config update has written
+        // `5000.0`, redeploying the untouched recipe does not clear it. The fix is
+        // read-side and unconditional, so the very next start of the component parses
+        // the already-poisoned store correctly — no RESET, no store rewrite.
+        let poisoned_store = greengrass_shaped_document();
+        let cfg = Config::from_value("c", "t", poisoned_store).unwrap();
+        let device: DeviceConfig =
+            serde_json::from_value(cfg.instance("plc-1").unwrap().clone()).unwrap();
+        assert_eq!(device.poll_interval_ms, 5000);
     }
 }

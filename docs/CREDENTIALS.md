@@ -333,8 +333,11 @@ credentials:
   A dedicated credentials-manager component (or the one self-managing component) sets
   `syncOwner: true`. The advisory lock makes this safe even if more than one declares ownership.
 - `central.type: none` with no owner anywhere → standalone local-only vault (secrets via `put`).
-- Every numeric field uses the same **lenient (float-tolerant) parsing** the streaming config
-  now uses, since Greengrass delivers config numbers as doubles.
+- Every integer field accepts any numeric encoding of an integral value (`300` and `300.0` are the
+  same setting) and rejects a fractional, negative, or out-of-range value rather than truncating it.
+  The document reaching these fields is already canonical — the config boundary rewrites integral
+  numbers into integer form whatever the store did to them (`docs/platform/DESIGN-config-numeric-canonicalization.md`,
+  D-NC1/D-NC2) — so the tolerance here only matters on direct-construction paths.
 
 ## 9. Integration with existing subsystems
 

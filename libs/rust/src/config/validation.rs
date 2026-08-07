@@ -153,4 +153,26 @@ mod tests {
         let cfg = json!({ "heartbeat": { "intervalSecs": "five" } });
         assert!(validate(&cfg).is_err());
     }
+
+    #[test]
+    fn accepts_a_greengrass_shaped_document_whose_numbers_are_doubles() {
+        // JSON Schema `"type": "integer"` accepts an integral float, which is why a
+        // Greengrass-delivered document reaches the deserializers rather than being
+        // stopped here. Pinned so the gate's behavior on the fixed path is explicit.
+        let cfg = json!({
+            "heartbeat": { "enabled": true, "intervalSecs": 5.0 },
+            "health": { "port": 8081.0 },
+            "component": { "global": {}, "instances": [] }
+        });
+        assert!(validate(&cfg).is_ok());
+    }
+
+    #[test]
+    fn still_rejects_a_fractional_value_in_an_integer_typed_field() {
+        let cfg = json!({
+            "heartbeat": { "intervalSecs": 5.5 },
+            "component": { "global": {}, "instances": [] }
+        });
+        assert!(validate(&cfg).is_err());
+    }
 }

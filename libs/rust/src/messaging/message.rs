@@ -2630,6 +2630,48 @@ mod tests {
     }
 
     #[test]
+    fn config_tags_encode_the_same_ec_value_type_on_every_platform() {
+        // D-NC5 / §5.2(1): an integral tag value used to encode `DoubleValue` when the
+        // config came from the Greengrass store and `IntValue` everywhere else, for the
+        // same logical configuration. Config-boundary canonicalization removes the skew:
+        // both encodings of the same document produce the identical `EcValue` tags.
+        let greengrass_shaped = Config::from_value(
+            "com.example.MyComp",
+            "thing-9",
+            json!({ "tags": { "line": 3.0, "ratio": 0.5, "site": "dallas" } }),
+        )
+        .unwrap();
+        let configmap_shaped = Config::from_value(
+            "com.example.MyComp",
+            "thing-9",
+            json!({ "tags": { "line": 3, "ratio": 0.5, "site": "dallas" } }),
+        )
+        .unwrap();
+
+        let encode = |cfg: &Config| {
+            MessageBuilder::new("N", "1.0")
+                .from_config(cfg)
+                .payload(json!({}))
+                .build()
+                .to_proto()
+                .unwrap()
+                .tags
+        };
+        let from_gg = encode(&greengrass_shaped);
+        assert_eq!(from_gg, encode(&configmap_shaped));
+        assert_eq!(
+            from_gg.get("line").unwrap().kind,
+            Some(pb::ec_value::Kind::IntValue(3)),
+            "an integral tag encodes IntValue whatever the store did to it"
+        );
+        assert_eq!(
+            from_gg.get("ratio").unwrap().kind,
+            Some(pb::ec_value::Kind::DoubleValue(0.5)),
+            "a genuinely fractional tag stays a double"
+        );
+    }
+
+    #[test]
     fn instance_token_applies_to_config_identity_only() {
         let cfg = Config::from_value("c", "thing-9", json!({})).unwrap();
         let m = MessageBuilder::new("N", "1.0")

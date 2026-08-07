@@ -5,6 +5,12 @@
 //! documents and pass through unchanged. `CONFIG_COMPONENT` replies and pushes
 //! are lineage bundles; their ordered `layers[].config` fragments are validated
 //! for lineage ownership and merged into the single effective runtime document.
+//!
+//! Every effective document leaving this wrapper — on the initial load, on a watch
+//! push, and on a `reload-config` re-fetch — is numerically canonicalized
+//! ([`super::canonicalize`], D-NC1). This is the pipeline intake point: schema
+//! validation, candidate validators, and the [`super::model::Config`] snapshot all
+//! see the same canonical document, whatever numeric encoding the store used.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -14,6 +20,7 @@ use serde_json::{Map, Value};
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::cli::ConfigSourceSpec;
+use crate::config::canonicalize::canonicalize_json_numbers;
 use crate::config::identity::short_component_name;
 use crate::config::template::sanitize;
 use crate::error::{EdgeCommonsError, Result};
@@ -156,6 +163,12 @@ fn effective_from_source_payload(
     payload: Value,
     requested_component: &str,
 ) -> Result<Value> {
+    // D-NC1 pipeline intake: canonicalize the payload BEFORE anything reads it, so
+    // the lineage envelope's own numbers (`lineageVersion`) and every layer fragment
+    // are canonical, and so the effective document handed to schema validation,
+    // candidate validators, and `Config::from_value` is the same canonical document.
+    let mut payload = payload;
+    canonicalize_json_numbers(&mut payload);
     if matches!(spec, ConfigSourceSpec::ConfigComponent) {
         let bundle = parse_lineage_bundle(payload, requested_component)?;
         return Ok(merge_lineage_bundle(bundle));
@@ -550,6 +563,88 @@ mod tests {
                 || err.to_string().contains("validation")
                 || err.to_string().contains("required")
         );
+    }
+
+    #[test]
+    fn a_direct_source_payload_is_numerically_canonicalized_at_intake() {
+        // The GG_CONFIG shape: the Nucleus stores JSON numbers as doubles. The
+        // effective document leaving this wrapper feeds schema validation, the
+        // candidate validators, and `Config::from_value` — all three must see the
+        // canonical form (D-NC1 placement 2).
+        let effective = effective_from_source_payload(
+            &ConfigSourceSpec::File {
+                path: "config.json".into(),
+            },
+            json!({
+                "heartbeat": { "intervalSecs": 10.0 },
+                "tags": { "line": 3.0 },
+                "component": { "instances": [ { "id": "plc-1", "pollIntervalMs": 5000.0 } ] }
+            }),
+            "direct",
+        )
+        .unwrap();
+        assert_eq!(
+            effective,
+            json!({
+                "heartbeat": { "intervalSecs": 10 },
+                "tags": { "line": 3 },
+                "component": { "instances": [ { "id": "plc-1", "pollIntervalMs": 5000 } ] }
+            })
+        );
+    }
+
+    #[test]
+    fn a_lineage_bundle_is_canonicalized_envelope_and_layers() {
+        // A CONFIG_COMPONENT bundle can be served by a component whose own config came
+        // from a Greengrass store, so both the envelope (`lineageVersion`) and each
+        // layer fragment can arrive as doubles.
+        let effective = effective_from_source_payload(
+            &ConfigSourceSpec::ConfigComponent,
+            json!({
+                "lineageVersion": 1.0,
+                "catalogVersion": "v1",
+                "component": "opcua-adapter",
+                "layers": [
+                    {
+                        "id": "site",
+                        "kind": "scope",
+                        "scope": { "site": "dallas" },
+                        "config": { "heartbeat": { "intervalSecs": 10.0 } }
+                    },
+                    {
+                        "id": "comp",
+                        "kind": "component",
+                        "component": "opcua-adapter",
+                        "config": {
+                            "component": {
+                                "instances": [ { "id": "plc-1", "pollIntervalMs": 5000.0 } ]
+                            }
+                        }
+                    }
+                ]
+            }),
+            "opcua-adapter",
+        )
+        .unwrap();
+        assert_eq!(
+            effective,
+            json!({
+                "heartbeat": { "intervalSecs": 10 },
+                "component": { "instances": [ { "id": "plc-1", "pollIntervalMs": 5000 } ] }
+            })
+        );
+    }
+
+    #[test]
+    fn canonicalization_at_intake_is_idempotent() {
+        let spec = ConfigSourceSpec::File {
+            path: "config.json".into(),
+        };
+        let payload = json!({ "component": { "global": { "v": 30.0, "f": 1.5 } } });
+        let once = effective_from_source_payload(&spec, payload, "direct").unwrap();
+        let twice = effective_from_source_payload(&spec, once.clone(), "direct").unwrap();
+        assert_eq!(once, twice);
+        assert_eq!(once["component"]["global"]["f"], json!(1.5));
     }
 
     #[test]

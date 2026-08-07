@@ -325,11 +325,52 @@ fn valid_rejection_code(code: &str) -> bool {
             .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || *byte == b'_')
 }
 
+/// Serializes the tests that share the process-wide validator budget and
+/// waits until every permit has been returned before the caller proceeds.
+///
+/// Cargo runs tests in parallel by default, and
+/// `repeated_timeouts_never_exceed_the_process_worker_budget` intentionally
+/// saturates the four-permit budget with detached, timed-out workers that
+/// release their permits asynchronously. Without this guard a co-scheduled
+/// test is starved of permits, so its validators spuriously time out and it
+/// fails only under CI's parallelism. Holding the returned guard for the
+/// test's duration prevents overlap; the drain loop reclaims any permit a
+/// prior test's not-yet-unwound worker still holds.
+///
+/// Crate-visible because the budget is process-wide: **every** test that runs a
+/// candidate validator must hold it, including the reload-path tests in [`crate`],
+/// not only this module's own.
+#[cfg(test)]
+pub(crate) fn budget_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static BUDGET_TEST_GUARD: Mutex<()> = Mutex::new(());
+    let guard = BUDGET_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut permits = Vec::new();
+        while let Some(permit) = worker_budget().try_acquire() {
+            permits.push(permit);
+        }
+        let acquired = permits.len();
+        drop(permits); // restore the budget to full before proceeding
+        if acquired == MAX_VALIDATOR_WORKERS {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "validator worker budget was never restored to full"
+        );
+        std::thread::yield_now();
+    }
+    guard
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Condvar;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Condvar, Mutex};
 
     fn named<F>(name: &str, validator: F) -> NamedValidator
     where
@@ -339,42 +380,6 @@ mod tests {
             name: name.to_string(),
             validator: Arc::new(validator),
         }
-    }
-
-    /// Serializes the tests that share the process-wide validator budget and
-    /// waits until every permit has been returned before the caller proceeds.
-    ///
-    /// Cargo runs tests in parallel by default, and
-    /// `repeated_timeouts_never_exceed_the_process_worker_budget` intentionally
-    /// saturates the four-permit budget with detached, timed-out workers that
-    /// release their permits asynchronously. Without this guard a co-scheduled
-    /// test is starved of permits, so its validators spuriously time out and it
-    /// fails only under CI's parallelism. Holding the returned guard for the
-    /// test's duration prevents overlap; the drain loop reclaims any permit a
-    /// prior test's not-yet-unwound worker still holds.
-    fn budget_test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static BUDGET_TEST_GUARD: Mutex<()> = Mutex::new(());
-        let guard = BUDGET_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            let mut permits = Vec::new();
-            while let Some(permit) = worker_budget().try_acquire() {
-                permits.push(permit);
-            }
-            let acquired = permits.len();
-            drop(permits); // restore the budget to full before proceeding
-            if acquired == MAX_VALIDATOR_WORKERS {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "validator worker budget was never restored to full"
-            );
-            std::thread::yield_now();
-        }
-        guard
     }
 
     #[test]
@@ -445,26 +450,55 @@ mod tests {
             })
         };
 
-        for _ in 0..12 {
+        let timed_out = |timeout: Duration| {
             let errors = validate_candidate(
                 std::slice::from_ref(&validator),
                 &serde_json::json!({}),
                 None,
                 ConfigurationValidationPhase::Reload,
-                Duration::from_millis(5),
+                timeout,
             );
-            assert_eq!(errors[0].code, "VALIDATION_TIMEOUT");
-        }
-        assert_eq!(entered.load(Ordering::SeqCst), MAX_VALIDATOR_WORKERS);
-        assert_eq!(max_live.load(Ordering::SeqCst), MAX_VALIDATOR_WORKERS);
+            errors[0].code.clone()
+        };
 
+        // Saturate the budget. A fixed iteration count is load-sensitive: a worker
+        // that is not scheduled before its (deliberately tiny) deadline is cancelled
+        // BEFORE it enters the validator and hands its permit straight back, so on a
+        // busy machine a fixed count can stop short of saturation and the assertion
+        // below would fail for a scheduling reason rather than a budget one. Drive to
+        // the actual state instead, under a generous ceiling.
+        let saturate_by = Instant::now() + Duration::from_secs(30);
+        let mut saturation_codes = Vec::new();
+        while entered.load(Ordering::SeqCst) < MAX_VALIDATOR_WORKERS && Instant::now() < saturate_by
+        {
+            saturation_codes.push(timed_out(Duration::from_millis(50)));
+        }
+        // With every permit now held by a parked worker, further generations must
+        // schedule NO worker at all — the budget is a hard process-wide ceiling.
+        let mut exhausted_codes = Vec::new();
+        for _ in 0..8 {
+            exhausted_codes.push(timed_out(Duration::from_millis(5)));
+        }
+        let entered_total = entered.load(Ordering::SeqCst);
+        let max_live_total = max_live.load(Ordering::SeqCst);
+
+        // Release the parked workers BEFORE asserting: a failed assertion must not
+        // leave permits held for the rest of the process, which would cascade into
+        // every other test that runs a validator.
         let (lock, condition) = &*gate;
         *lock.lock().unwrap() = true;
         condition.notify_all();
-        let deadline = Instant::now() + Duration::from_secs(1);
+        let deadline = Instant::now() + Duration::from_secs(5);
         while live.load(Ordering::SeqCst) != 0 && Instant::now() < deadline {
             std::thread::yield_now();
         }
-        assert_eq!(live.load(Ordering::SeqCst), 0);
+        let live_total = live.load(Ordering::SeqCst);
+
+        for code in saturation_codes.iter().chain(exhausted_codes.iter()) {
+            assert_eq!(code, "VALIDATION_TIMEOUT");
+        }
+        assert_eq!(entered_total, MAX_VALIDATOR_WORKERS);
+        assert_eq!(max_live_total, MAX_VALIDATOR_WORKERS);
+        assert_eq!(live_total, 0);
     }
 }

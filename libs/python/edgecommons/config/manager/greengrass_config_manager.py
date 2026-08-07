@@ -8,6 +8,16 @@ logger = logging.getLogger("GreengrassConfigManager")
 
 
 class GreengrassConfigManager(ConfigManager):
+    """Loads the component configuration from the Greengrass Nucleus over IPC.
+
+    The Nucleus configuration store keeps JSON numbers as doubles, so a configured
+    ``intervalSecs: 30`` arrives in the IPC response as the Python ``float`` ``30.0``. That is
+    repaired once, for every configuration source, at configuration intake — see
+    :mod:`edgecommons.config.canonicalize` and
+    :class:`~edgecommons.config.manager.config_manager.ConfigManager` — so nothing here needs to
+    normalize it and the document is passed on exactly as the Nucleus delivered it.
+    """
+
     def __init__(
         self,
         thing_name: str,
