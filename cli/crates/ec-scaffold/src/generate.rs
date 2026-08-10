@@ -1,9 +1,14 @@
 //! The generation pipeline (DESIGN-cli §5.4).
 //!
-//! Order is load-bearing: copy → prune packs and unmet conditionals → substitute → rename →
-//! prune empty dirs → **verify no `<<TOKEN>>` survives**. That last step is a hard error and
-//! is kept from the Python CLI deliberately: it is the check that turns template/CLI drift
-//! into a failed scaffold rather than a broken project the author discovers at build time.
+//! Order is load-bearing: copy (stripping [`TEMPLATE_SUFFIX`]) → prune packs and unmet
+//! conditionals → substitute → rename → prune empty dirs → **verify no `<<TOKEN>>`
+//! survives**. That last step is a hard error and is kept from the Python CLI deliberately:
+//! it is the check that turns template/CLI drift into a failed scaffold rather than a broken
+//! project the author discovers at build time.
+//!
+//! A manifest addresses the template tree by its **source** names (`substitutions`, `packs`,
+//! `conditional`); the copy step maps each source name through [`emitted_path`], so every
+//! later stage — renames, the drift gate — sees the emitted name.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -33,6 +38,29 @@ pub const EDGECOMMONS_VERSION: &str = env!("EC_LIBRARY_VERSION");
 pub const EDGECOMMONS_REV: &str = env!("EC_LIBRARY_REV");
 
 const GIT_URL: &str = "https://github.com/edgecommons/edgecommons";
+
+/// The suffix marking a template file whose **source** name must differ from the name it is
+/// emitted under.
+///
+/// It exists for exactly one reason, and it is not cosmetic. Cargo parses **every** file literally
+/// named `Cargo.toml` inside a git-dependency checkout when it enumerates that checkout's packages.
+/// The Rust templates' manifests carry `<<EDGECOMMONS_DEP>>` in dependency position, which is not
+/// valid TOML, so shipping them under that name made every downstream repo that pins this one by
+/// git rev fail `cargo build --locked` on a parse error in a file that is not even a package.
+/// Making the placeholder valid TOML would be worse — cargo would then *discover* the template
+/// as a real package, with a placeholder name and placeholder dependencies. A file not named
+/// `Cargo.toml` is invisible to cargo, categorically.
+pub const TEMPLATE_SUFFIX: &str = ".template";
+
+/// The path a template file is emitted at: its source path with [`TEMPLATE_SUFFIX`] stripped.
+///
+/// `Cargo.toml.template` becomes `Cargo.toml`; every other path is returned unchanged. This is the
+/// one place the mapping lives, so `component new` and `template show` cannot disagree about what
+/// a scaffold contains.
+#[must_use]
+pub fn emitted_path(rel: &str) -> &str {
+    rel.strip_suffix(TEMPLATE_SUFFIX).unwrap_or(rel)
+}
 
 /// Everything `component new` needs.
 #[derive(Debug, Clone)]
@@ -391,7 +419,7 @@ pub fn generate(
             }
             _ => bytes,
         };
-        let dest = target.join(&rel);
+        let dest = target.join(emitted_path(&rel));
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -399,9 +427,10 @@ pub fn generate(
     }
 
     // A manifest that names a file the template does not ship is drift; catch it rather than
-    // silently generating a project missing its substitutions.
+    // silently generating a project missing its substitutions. Checked against the *emitted*
+    // name, which is what the copy step above wrote.
     for rel in template.manifest.substitutions.keys() {
-        if !is_pruned(rel) && !target.join(rel).exists() {
+        if !is_pruned(rel) && !target.join(emitted_path(rel)).exists() {
             return Err(Fatal::Internal(format!(
                 "manifest for `{}` references `{rel}`, which the template does not ship",
                 template.id()
@@ -725,6 +754,63 @@ mod tests {
         .unwrap();
         assert!(target.join("recipe.yaml").exists());
         assert!(target.join("gdk-config.json").exists());
+    }
+
+    #[test]
+    fn the_template_suffix_is_stripped_only_from_the_end() {
+        assert_eq!(emitted_path("Cargo.toml.template"), "Cargo.toml");
+        assert_eq!(emitted_path("src/main.rs"), "src/main.rs");
+        assert_eq!(emitted_path(".cargo/config.toml"), ".cargo/config.toml");
+        // Not a suffix: the name is emitted verbatim.
+        assert_eq!(emitted_path("template/x.rs"), "template/x.rs");
+    }
+
+    #[test]
+    fn every_rust_template_emits_a_parseable_cargo_manifest() {
+        // Two properties in one, both regressions of the same defect:
+        //   * nothing named `Cargo.toml` is shipped in-tree (asserted in `catalog`), and
+        //   * the scaffold still gets one, and it is valid TOML with the dependency resolved.
+        // Missing the second is the worse failure of the pair: a project with no manifest.
+        for t in catalog::discover()
+            .into_iter()
+            .filter(|t| t.manifest.language == Language::Rust)
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("MyComponent");
+            let i = inputs(DepSource::Local, t.manifest.platforms.clone());
+            let report = generate_embedded(&t, &i, &target, false).unwrap();
+            assert_eq!(report.error_count(), 0, "{}", report.render_human());
+
+            let manifest = target.join("Cargo.toml");
+            assert!(
+                manifest.exists(),
+                "template {} emitted no Cargo.toml",
+                t.id()
+            );
+            assert!(
+                !target.join("Cargo.toml.template").exists(),
+                "template {} left the template-only name behind",
+                t.id()
+            );
+            let text = std::fs::read_to_string(&manifest).unwrap();
+            let doc: toml_edit::DocumentMut = text
+                .parse()
+                .unwrap_or_else(|e| panic!("template {} emitted invalid TOML: {e}", t.id()));
+            assert_eq!(doc["package"]["name"].as_str(), Some("my-component"));
+            assert!(
+                doc["dependencies"]["edgecommons"].get("path").is_some(),
+                "the local dep form must be resolved: {text}"
+            );
+
+            // And no emitted file anywhere keeps the template-only suffix.
+            for f in walk(&target) {
+                assert!(
+                    !f.ends_with(TEMPLATE_SUFFIX),
+                    "template {} emitted `{f}`",
+                    t.id()
+                );
+            }
+        }
     }
 
     #[test]

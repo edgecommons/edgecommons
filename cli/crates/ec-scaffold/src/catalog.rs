@@ -152,10 +152,32 @@ mod tests {
         let t = find(Language::Rust, Kind::Service).expect("rust/service");
         let fs = files(&t.dir);
         let names: Vec<&str> = fs.iter().map(|(p, _)| p.as_str()).collect();
-        assert!(names.contains(&"Cargo.toml"), "{names:?}");
+        // The Rust manifest ships under a name cargo will not parse; the pipeline emits it as
+        // `Cargo.toml` (see `generate::emitted_path`).
+        assert!(names.contains(&"Cargo.toml.template"), "{names:?}");
         assert!(names.contains(&"src/main.rs"), "{names:?}");
         // Nested directories must be walked, not just the top level.
         assert!(names.iter().any(|n| n.starts_with("src/")));
+    }
+
+    #[test]
+    fn no_embedded_template_ships_a_file_named_cargo_toml() {
+        // The gate for the defect that made this repo unconsumable under `--locked`: cargo
+        // parses EVERY file literally named `Cargo.toml` inside a git-dependency checkout, and
+        // a template manifest is placeholder-bearing, not valid TOML. A template that needs a
+        // cargo manifest therefore ships it as `Cargo.toml.template`.
+        for t in discover() {
+            for (path, _) in files(&t.dir) {
+                assert_ne!(
+                    std::path::Path::new(&path)
+                        .file_name()
+                        .and_then(|n| n.to_str()),
+                    Some("Cargo.toml"),
+                    "template `{}` ships `{path}`; ship it as `Cargo.toml.template` instead",
+                    t.id()
+                );
+            }
+        }
     }
 
     #[test]
