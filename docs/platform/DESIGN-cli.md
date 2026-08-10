@@ -188,8 +188,8 @@ of the CLI, not a runtime warning (today a bad command class merely warns and di
   "description": "Rust component built on the edgecommons Rust library.",
   "platforms": ["GREENGRASS", "HOST", "KUBERNETES"],   // what this template can emit
   "requires": ["EDGECOMMONS_DEP"],   // tokens that must resolve non-empty
-  "substitutions": {                 // file -> tokens; replaces <<TOKEN>>
-    "Cargo.toml": ["BINNAME", "DESCRIPTION", "EDGECOMMONS_DEP"]
+  "substitutions": {                 // source file -> tokens; replaces <<TOKEN>>
+    "Cargo.toml.template": ["BINNAME", "DESCRIPTION", "EDGECOMMONS_DEP"]
   },
   "renames": [                       // {TOKEN} interpolation in paths
     { "from": "src/main/java/com/mbreissi/testcomponent", "to": "src/main/java/{PACKAGEPATH}" }
@@ -208,12 +208,23 @@ of the CLI, not a runtime warning (today a bad command class merely warns and di
 Flag namespaces for `conditional`: `platform:<P>`, `dep:<local|registry>`, `kind:<K>`. The manifest is
 itself validated against an embedded JSON Schema at CLI build time, so manifest drift cannot ship.
 
+Every manifest path names the file as it exists **in the template tree**. A source name ending in
+`.template` is emitted with that suffix stripped, which is how the Rust templates ship their cargo
+manifest as `Cargo.toml.template` and scaffold it as `Cargo.toml`. The suffix is not decoration:
+cargo parses every file literally named `Cargo.toml` inside a git-dependency checkout, so a
+placeholder-bearing `templates/rust*/Cargo.toml` made this repo fail `cargo build --locked` in every
+downstream component that pins it by git rev. Giving the placeholder valid TOML would be worse —
+cargo would then discover the template as a real package. Only cargo scans dependency checkouts this
+way, so `pom.xml`, `package.json`, and `pyproject.toml` keep their names.
+
 ### 5.4 Generation pipeline
 
 Behavior-preserving with respect to today's `_apply_manifest`, in this order: resolve inputs (wizard or
-flags) → copy the embedded tree → prune packs and unmet conditionals → substitute `<<TOKEN>>` → apply
-renames → prune empty dirs → **verify no `<<...>>` survives** (a hard error today; keep it) → run the
-artifact lint from §6.3 over what was emitted.
+flags) → copy the embedded tree, stripping a `.template` suffix from each emitted path → prune
+packs and unmet conditionals → substitute `<<TOKEN>>` → apply renames → prune empty dirs →
+**verify no `<<...>>` survives** (a hard error today; keep it) → run the artifact lint from §6.3 over
+what was emitted. Renames and the lint see emitted names; `substitutions`, `packs`, and `conditional`
+address source names.
 
 ### 5.5 Platform packs fix a real asymmetry
 

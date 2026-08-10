@@ -447,9 +447,12 @@ pub fn template_show(id: &str, json: bool) -> Outcome {
         )));
     };
     let files = catalog::files(&t.dir);
+    // The listing answers "what will my scaffold contain", so it reports emitted names: the
+    // manifest is a template artifact and never shipped, and a `.template` source name is
+    // reported as the name it is written under (`Cargo.toml.template` -> `Cargo.toml`).
     let mut names: Vec<&str> = files
         .iter()
-        .map(|(p, _)| p.as_str())
+        .map(|(p, _)| ec_scaffold::generate::emitted_path(p.as_str()))
         .filter(|p| *p != catalog::MANIFEST_NAME)
         .collect();
     names.sort_unstable();

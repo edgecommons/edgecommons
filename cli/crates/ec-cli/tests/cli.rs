@@ -141,7 +141,15 @@ fn template_show_reports_packs_and_files() {
     let v: serde_json::Value = serde_json::from_str(&stdout(&o)).unwrap();
     assert_eq!(v["language"], "RUST");
     let files = v["files"].as_array().unwrap();
+    // The listing reports what the scaffold will contain, so the Rust manifest appears under
+    // its emitted name even though it ships as `Cargo.toml.template`.
     assert!(files.iter().any(|f| f == "Cargo.toml"));
+    assert!(
+        !files
+            .iter()
+            .any(|f| f.as_str().is_some_and(|f| f.ends_with(".template"))),
+        "template-only names must not be listed: {files:?}"
+    );
     // The manifest is a template artifact and is never shipped to the user.
     assert!(!files.iter().any(|f| f == "edgecommons-template.json"));
     assert!(v["packs"]["HOST"].is_array(), "a HOST pack must exist");

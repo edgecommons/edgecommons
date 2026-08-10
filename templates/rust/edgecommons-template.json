@@ -20,7 +20,7 @@
       "BINNAME",
       "COMPONENTFULLNAME"
     ],
-    "Cargo.toml": [
+    "Cargo.toml.template": [
       "BINNAME",
       "DESCRIPTION",
       "EDGECOMMONS_DEP",
