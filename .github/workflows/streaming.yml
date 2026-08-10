@@ -40,6 +40,9 @@ jobs:
         with:
           workspaces: libs/rust-streamlog
       - run: cargo test
+      # The C-ABI config intake (esl_open) is only compiled with `cabi`; its tests are the standalone
+      # half of the numeric-canonicalization contract (D-NC6).
+      - run: cargo test --features cabi --lib ffi::tests
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo build --features cabi --release
       - run: cargo clippy --features cabi,kinesis --all-targets -- -D warnings

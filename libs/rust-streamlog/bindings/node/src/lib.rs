@@ -107,8 +107,10 @@ impl StreamService {
     /// with the core's default factory). Native Kinesis/Kafka sinks are unaffected.
     #[napi(factory)]
     pub fn open(config_json: String) -> Result<StreamService> {
-        let cfg: StreamingConfig =
-            serde_json::from_str(&config_json).map_err(|e| err(1, format!("config: {e}")))?;
+        // Config intake (D-NC6): canonicalizes the document's numbers, so a store that encodes
+        // integers as doubles opens like one that writes integer literals.
+        let cfg: StreamingConfig = StreamingConfig::from_json_str(&config_json)
+            .map_err(|e| err(1, format!("config: {e}")))?;
         let factory = |name: &str, sink: &SinkConfig| -> edgestreamlog::Result<Option<Box<dyn Sink>>> {
             if let SinkConfig::Callback { .. } = sink {
                 if let Some(cb) = sink_callback_for(name) {

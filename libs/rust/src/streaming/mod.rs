@@ -56,7 +56,12 @@ fn map_err(e: edgestreamlog::EdgeStreamError) -> EdgeCommonsError {
 pub fn streaming_config(config: &Config) -> Result<StreamingConfig> {
     match config.raw.get("streaming") {
         None => Ok(StreamingConfig::default()),
-        Some(value) => serde_json::from_value(value.clone()).map_err(EdgeCommonsError::from),
+        // Through the core's config intake this subtree is already canonical (D-NC1), so the
+        // streaming crate's own intake (D-NC6) is an idempotent no-op here — kept because it is
+        // the crate's documented entry point and costs one pass over a startup-sized document.
+        Some(value) => {
+            StreamingConfig::from_json_value(value.clone()).map_err(EdgeCommonsError::from)
+        }
     }
 }
 
@@ -296,6 +301,35 @@ mod tests {
             SinkConfig::Kinesis { stream_name, .. } => assert_eq!(stream_name, "ts-{ThingName}"),
             other => panic!("expected Kinesis sink, got {other:?}"),
         }
+    }
+
+    /// The streaming crate canonicalizes at its own intake (D-NC6), so a `streaming` subtree that
+    /// never went through the core's config intake (D-NC1) — a store-shaped document, every number
+    /// a double — still parses. `Config::from_value` canonicalizes, so `raw` is poisoned afterwards
+    /// to stand in for any path that reaches this function with a document the core did not repair.
+    #[test]
+    fn a_store_shaped_streaming_section_parses_even_if_the_snapshot_was_bypassed() {
+        let mut cfg = Config::from_value("com.example.C", "thing-7", json!({})).unwrap();
+        cfg.raw = json!({
+            "streaming": {
+                "streams": [{
+                    "name": "telemetry",
+                    "sink": { "type": "kinesis", "streamName": "ts-{ThingName}" },
+                    "buffer": {
+                        "path": "/tmp/telemetry",
+                        "segmentBytes": 65536.0,
+                        "maxDiskBytes": 1048576.0
+                    },
+                    "batch": { "maxRecords": 50.0 },
+                    "delivery": { "pollIntervalMs": 10.0, "maxRetries": -1.0 }
+                }]
+            }
+        });
+        let parsed = streaming_config(&cfg).expect("a store-shaped section must parse");
+        assert_eq!(parsed.streams[0].buffer.segment_bytes, 65536);
+        assert_eq!(parsed.streams[0].buffer.max_disk_bytes, 1_048_576);
+        assert_eq!(parsed.streams[0].batch.max_records, 50);
+        assert_eq!(parsed.streams[0].delivery.max_retries, -1);
     }
 
     #[test]

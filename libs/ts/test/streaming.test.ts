@@ -78,6 +78,42 @@ describe("streaming native binding", () => {
     expect(StreamService.streamNames(config(tmpdir()))).toEqual(["telemetry"]);
   });
 
+  // A store that round-trips JSON numbers as doubles (the Greengrass Nucleus) delivers `65536.0`.
+  // JavaScript cannot express that distinction through JSON.stringify — the wire text is what
+  // carries it — so these build the document as text, the way the host receives it. The native
+  // binding canonicalizes the numbers at intake.
+  function storeShapedConfig(dir: string, segmentBytes: string): string {
+    const bufferPath = path.join(dir, "telemetry").replace(/\\/g, "/");
+    return `{"streams":[{"name":"telemetry",
+      "sink":{"type":"kinesis","streamName":"x"},
+      "buffer":{"path":"${bufferPath}","segmentBytes":${segmentBytes},
+                "maxDiskBytes":1073741824.0,"maxAgeSecs":3600.0,
+                "fsyncIntervalMs":1000.0,"maxBufferedRecords":128.0,"onFull":"block"},
+      "batch":{"maxRecords":500.0,"maxBytes":4194304.0},
+      "delivery":{"maxRetries":-1.0,"pollIntervalMs":1000.0}}]}`;
+  }
+
+  it("opens a store-shaped config whose numbers are doubles", () => {
+    const svc = StreamService.open(storeShapedConfig(tmpdir(), "65536.0"));
+    try {
+      const h = svc.stream("telemetry");
+      h.append("pump-7", 1000, Buffer.from("reading"));
+      h.flush();
+      expect(svc.stats("telemetry").appendedTotal).toBe(1);
+    } finally {
+      svc.close();
+    }
+  });
+
+  it("refuses a fractional value instead of truncating it", () => {
+    try {
+      StreamService.open(storeShapedConfig(tmpdir(), "65536.5"));
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect((e as EdgeStreamError).code).toBe(ERR_CONFIG);
+    }
+  });
+
   it("metrics bridge defines + emits per stream", async () => {
     const cfg = Config.fromValue("comp", "thing", {});
     const emitted: Array<[string, Record<string, number>]> = [];

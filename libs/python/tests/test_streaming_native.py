@@ -59,6 +59,43 @@ def test_bad_config():
     assert ei.value.code == ERR_CONFIG
 
 
+def _store_shaped_config(tmp_path, segment_bytes):
+    """The document a store that round-trips JSON numbers as doubles delivers: every number a float."""
+    path = str(tmp_path / "telemetry").replace("\\", "/")
+    return json.dumps({
+        "streams": [{
+            "name": "telemetry",
+            "sink": {"type": "kinesis", "streamName": "x"},
+            "buffer": {"path": path, "segmentBytes": segment_bytes,
+                       "maxDiskBytes": 1073741824.0, "maxAgeSecs": 3600.0,
+                       "fsyncIntervalMs": 1000.0, "maxBufferedRecords": 128.0,
+                       "onFull": "block"},
+            "batch": {"maxRecords": 500.0, "maxBytes": 4194304.0},
+            "delivery": {"maxRetries": -1.0, "pollIntervalMs": 1000.0},
+        }]
+    })
+
+
+def test_open_accepts_a_store_shaped_config(tmp_path):
+    """The native binding canonicalizes numbers at intake, so ``65536.0`` opens like ``65536``."""
+    from edgecommons.streaming import StreamService
+
+    config = _store_shaped_config(tmp_path, 65536.0)
+    with StreamService.open(config) as svc, svc.stream("telemetry") as h:
+        h.append("pump-7", 1000, b"reading")
+        h.flush()
+        assert svc.stats("telemetry").appended_total == 1
+
+
+def test_open_refuses_a_fractional_value(tmp_path):
+    """A genuinely fractional byte count is refused, not truncated to a value nobody configured."""
+    from edgecommons.streaming import EdgeStreamError, StreamService
+
+    with pytest.raises(EdgeStreamError) as ei:
+        StreamService.open(_store_shaped_config(tmp_path, 65536.5))
+    assert ei.value.code == ERR_CONFIG
+
+
 def test_stream_names(tmp_path):
     from edgecommons.streaming import StreamService
 
