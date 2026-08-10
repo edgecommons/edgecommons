@@ -84,8 +84,10 @@ impl StreamService {
     /// Open every stream in `config_json` (the `streaming` section; templates pre-resolved).
     #[staticmethod]
     fn open(py: Python<'_>, config_json: &str) -> PyResult<Self> {
+        // Config intake (D-NC6): canonicalizes the document's numbers, so a store that encodes
+        // integers as doubles opens like one that writes integer literals.
         let cfg: StreamingConfig =
-            serde_json::from_str(config_json).map_err(|e| err(1, format!("config: {e}")))?;
+            StreamingConfig::from_json_str(config_json).map_err(|e| err(1, format!("config: {e}")))?;
         // Release the GIL while opening: building the Kinesis sink loads the AWS config and the
         // export engine thread starts, both of which emit tracing events. Those are forwarded to
         // Python logging by PyLogLayer via `Python::attach`, which needs the GIL — holding it here
@@ -111,8 +113,9 @@ impl StreamService {
     /// A callback that raises is treated as `Failed{retryable:true}` (the batch is retried; no commit).
     #[staticmethod]
     fn open_with_callback(py: Python<'_>, config_json: &str, callback: Py<PyAny>) -> PyResult<Self> {
+        // Config intake (D-NC6) — see `open`.
         let cfg: StreamingConfig =
-            serde_json::from_str(config_json).map_err(|e| err(1, format!("config: {e}")))?;
+            StreamingConfig::from_json_str(config_json).map_err(|e| err(1, format!("config: {e}")))?;
         // The Python callable is shared by every callback stream's sink. `Py<PyAny>` is Send+Sync;
         // wrapping in Arc lets the `Fn` factory hand each CallbackSink its own cheap clone without
         // needing a GIL token (the factory runs under `py.detach`, GIL released).

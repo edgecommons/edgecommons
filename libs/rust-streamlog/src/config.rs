@@ -1,54 +1,100 @@
 //! Configuration types (serde; map to the YAML schema in the design doc). Phase 1 covers
 //! the buffer; batch/delivery/sink config arrive with the export milestones.
+//!
+//! ## Numeric canonicalization at intake (D-NC6)
+//!
+//! Configuration stores do not agree on how they encode a JSON number: a FILE or ConfigMap
+//! document carries the literal `1048576`, while the Greengrass Nucleus config store round-trips
+//! every number through a Java `double` and hands back `1048576.0`. `serde` will not coerce a
+//! float into a `u64`, so the same logical configuration parsed on one platform and failed on
+//! another.
+//!
+//! [`canonicalize_json_numbers`] removes that difference **once, at this crate's own JSON intake
+//! boundary** — [`StreamingConfig::from_json_str`] / [`StreamingConfig::from_json_value`], which
+//! the C ABI (`esl_open`) and the Python/Node binding crates all parse through — instead of
+//! per-field lenient deserializers that a new numeric field silently opts out of. It mirrors the
+//! main library's `edgecommons::config::canonicalize_json_numbers` (D-NC1) exactly; the two are
+//! separate implementations only because `edgestreamlog` sits *below* `edgecommons` in the
+//! dependency graph and cannot depend on it.
+//!
+//! A document reaching this crate through `edgecommons` (`snapshot.raw["streaming"]`) is already
+//! canonical, so the pass is idempotent defense in depth there and the real work happens on the
+//! standalone C-ABI/binding path, which takes host JSON with nothing in front of it.
+//!
+//! Deserializing a config type **directly** — bypassing the intake constructors — is strict:
+//! `serde` rejects a float in an integer-typed field, loudly, rather than truncating it.
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
+use serde_json::{Number, Value};
 
 use crate::error::{EdgeStreamError, Result};
 
-// Greengrass stores all configuration numbers as doubles, so an integer like `1048576` arrives
-// over GG_CONFIG as `1048576.0`. serde's integer deserializers reject a float, which would fail
-// every streaming config delivered through Greengrass. These lenient deserializers accept either
-// an integer or an integer-valued float for the numeric buffer/batch/delivery fields.
-fn lenient_u64<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
-    match serde_json::Value::deserialize(d)? {
-        serde_json::Value::Number(n) => n
-            .as_u64()
-            .or_else(|| n.as_f64().map(|f| f as u64))
-            .ok_or_else(|| serde::de::Error::custom("expected a non-negative integer")),
-        other => Err(serde::de::Error::custom(format!(
-            "expected a number, got {other}"
-        ))),
+/// `2^64` as an `f64` — the exclusive upper bound of the unsigned window.
+///
+/// `u64::MAX as f64` rounds *up* to exactly this value, so a naive `(f as u64) as f64 == f`
+/// round-trip check would accept `2^64` and silently store `u64::MAX`. The explicit bound is what
+/// makes the round-trip honest.
+const U64_UPPER_EXCLUSIVE: f64 = 18_446_744_073_709_551_616.0;
+
+/// Rewrites every JSON number in `value` that encodes an integer as an integer number.
+///
+/// Recurses through objects and arrays; keys, strings, booleans, and `null` are never touched.
+/// A number backed by a float `f` becomes an integer **iff** `f` is finite, `f.fract() == 0.0`,
+/// and the integer candidate round-trips exactly: `f >= 0.0` and `f < 2^64` yields an unsigned
+/// value, `f < 0.0` a signed one. Anything else — a fractional value, a value outside the
+/// exactly-representable 64-bit window, every string, boolean, and `null` — is left
+/// byte-identical. The pass is pure and idempotent, so a canonical document is a fixed point.
+///
+/// This is the same rule as `edgecommons::config::canonicalize_json_numbers` (D-NC1); see the
+/// [module docs](self) for why the two exist separately.
+pub fn canonicalize_json_numbers(value: &mut Value) {
+    match value {
+        Value::Number(number) => {
+            if let Some(canonical) = canonical_integer(number) {
+                *number = canonical;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                canonicalize_json_numbers(item);
+            }
+        }
+        Value::Object(map) => {
+            for (_key, entry) in map.iter_mut() {
+                canonicalize_json_numbers(entry);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::String(_) => {}
     }
 }
 
-fn lenient_usize<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<usize, D::Error> {
-    lenient_u64(d).map(|v| v as usize)
+/// The integer form of `number`, or `None` when it is already an integer or is not an
+/// exactly-representable integral value.
+fn canonical_integer(number: &Number) -> Option<Number> {
+    if !number.is_f64() {
+        // Already an integer JSON number (`u64`/`i64`-backed) — a fixed point.
+        return None;
+    }
+    integral_number(number.as_f64()?)
 }
 
-fn lenient_i64<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<i64, D::Error> {
-    match serde_json::Value::deserialize(d)? {
-        serde_json::Value::Number(n) => n
-            .as_i64()
-            .or_else(|| n.as_f64().map(|f| f as i64))
-            .ok_or_else(|| serde::de::Error::custom("expected an integer")),
-        other => Err(serde::de::Error::custom(format!(
-            "expected a number, got {other}"
-        ))),
+/// The exact integer `Number` for `f`, or `None` when `f` is not an integral value inside the
+/// exactly-representable 64-bit window.
+fn integral_number(f: f64) -> Option<Number> {
+    if !f.is_finite() || f.fract() != 0.0 {
+        return None;
     }
-}
-
-fn lenient_opt_u64<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Option<u64>, D::Error> {
-    match Option::<serde_json::Value>::deserialize(d)? {
-        None | Some(serde_json::Value::Null) => Ok(None),
-        Some(serde_json::Value::Number(n)) => n
-            .as_u64()
-            .or_else(|| n.as_f64().map(|f| f as u64))
-            .map(Some)
-            .ok_or_else(|| serde::de::Error::custom("expected a non-negative integer")),
-        Some(other) => Err(serde::de::Error::custom(format!(
-            "expected a number, got {other}"
-        ))),
+    if f >= 0.0 {
+        if f >= U64_UPPER_EXCLUSIVE {
+            return None;
+        }
+        let candidate = f as u64;
+        // Redundant with the bound above for every finite input, kept because the round-trip *is*
+        // the contract stated in the design (D-NC1 §3).
+        return ((candidate as f64) == f).then(|| Number::from(candidate));
     }
+    let candidate = f as i64;
+    ((candidate as f64) == f).then(|| Number::from(candidate))
 }
 
 /// Backpressure policy when the on-disk budget is exceeded with un-delivered data.
@@ -101,22 +147,17 @@ pub struct BufferConfig {
     /// Directory for this stream's segments + checkpoint (required for `disk`; must be omitted for `memory`).
     pub path: String,
     /// Roll a new segment when adding a record would exceed this size.
-    #[serde(deserialize_with = "lenient_u64")]
     pub segment_bytes: u64,
     /// Total on-disk budget; when exceeded with un-delivered data, [`OnFull`] applies.
-    #[serde(deserialize_with = "lenient_u64")]
     pub max_disk_bytes: u64,
     /// Optional age cap; records older than this are eligible for `DropOldest`.
-    #[serde(deserialize_with = "lenient_opt_u64")]
     pub max_age_secs: Option<u64>,
     pub on_full: OnFull,
     pub fsync: FsyncPolicy,
     /// Cadence for the background fsync timer (PerBatch/Interval).
-    #[serde(deserialize_with = "lenient_u64")]
     pub fsync_interval_ms: u64,
     /// Bound on the in-memory ingest queue (records awaiting the writer thread). The memory
     /// backpressure point: when full, producers block (or `RejectNew` returns `BufferFull`).
-    #[serde(deserialize_with = "lenient_usize")]
     pub max_buffered_records: usize,
 }
 
@@ -150,12 +191,9 @@ pub enum Compression {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct BatchConfig {
-    #[serde(deserialize_with = "lenient_usize")]
     pub max_records: usize,
-    #[serde(deserialize_with = "lenient_usize")]
     pub max_bytes: usize,
     /// Flush a partial batch after at most this long (so low rates still drain).
-    #[serde(deserialize_with = "lenient_u64")]
     pub max_latency_ms: u64,
     pub compression: Compression,
 }
@@ -175,14 +213,10 @@ impl Default for BatchConfig {
 #[serde(rename_all = "camelCase", default)]
 pub struct DeliveryConfig {
     /// Max send attempts before giving up a batch (`-1` = forever — the disconnected case).
-    #[serde(deserialize_with = "lenient_i64")]
     pub max_retries: i64,
-    #[serde(deserialize_with = "lenient_u64")]
     pub backoff_base_ms: u64,
-    #[serde(deserialize_with = "lenient_u64")]
     pub backoff_max_ms: u64,
     /// How often the engine polls for new data when the buffer is empty.
-    #[serde(deserialize_with = "lenient_u64")]
     pub poll_interval_ms: u64,
 }
 impl Default for DeliveryConfig {
@@ -322,13 +356,13 @@ pub struct FileSinkConfig {
     pub partition_by: Option<String>,
     /// Roll a new file once the current one would exceed this many bytes (default 128 MiB — large
     /// enough to avoid the analytics "small files" problem).
-    #[serde(default = "default_max_file_bytes", deserialize_with = "lenient_u64")]
+    #[serde(default = "default_max_file_bytes")]
     pub max_file_bytes: u64,
     /// Keep at most this many finalized files under `dir` (0 = unbounded). When exceeded, [`FileOnFull`] applies.
-    #[serde(default, deserialize_with = "lenient_u64")]
+    #[serde(default)]
     pub max_files: u64,
     /// Roll the current file after this many seconds, evaluated on the next send (0 = time-roll disabled).
-    #[serde(default, deserialize_with = "lenient_u64")]
+    #[serde(default)]
     pub roll_every_secs: u64,
     #[serde(default)]
     pub on_full: FileOnFull,
@@ -445,6 +479,31 @@ pub struct StreamingConfig {
     pub streams: Vec<StreamConfig>,
 }
 
+impl StreamingConfig {
+    /// Parse a `streaming` document from the JSON **text** a host hands over — the crate's config
+    /// intake boundary (D-NC6).
+    ///
+    /// Numbers are canonicalized before deserialization ([`canonicalize_json_numbers`]), so a
+    /// document from a store that encodes integers as doubles (`"segmentBytes": 1048576.0`, the
+    /// Greengrass Nucleus shape) parses exactly like the same document written with integer
+    /// literals. Every JSON entry point into this crate parses through here — the C ABI
+    /// (`esl_open`) and the Python/Node binding crates.
+    ///
+    /// Deserializing [`StreamingConfig`] directly is strict: use this constructor for any document
+    /// that came from a configuration store.
+    pub fn from_json_str(json: &str) -> serde_json::Result<Self> {
+        Self::from_json_value(serde_json::from_str(json)?)
+    }
+
+    /// Parse a `streaming` document from an already-parsed JSON value, canonicalizing its numbers
+    /// first. The value-shaped half of [`from_json_str`](Self::from_json_str); use it when the host
+    /// hands over a `serde_json::Value` rather than text.
+    pub fn from_json_value(mut value: Value) -> serde_json::Result<Self> {
+        canonicalize_json_numbers(&mut value);
+        serde_json::from_value(value)
+    }
+}
+
 impl BufferConfig {
     pub fn validate(&self) -> Result<()> {
         match self.store_type {
@@ -484,36 +543,248 @@ impl BufferConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
-    // Greengrass delivers config numbers as doubles (e.g. 1048576.0). The streaming config must
-    // accept integer-valued floats for the numeric buffer/batch/delivery fields, or every
-    // GREENGRASS-mode deployment fails to open its streams.
-    #[test]
-    fn parses_greengrass_float_numbers() {
-        let json = r#"{"streams":[{"name":"telemetry",
+    /// A Greengrass-shaped document: every number written as a double, across the buffer, batch,
+    /// and delivery sections (including the negative `maxRetries`).
+    const GREENGRASS_SHAPED: &str = r#"{"streams":[{"name":"telemetry",
             "sink":{"type":"kinesis","streamName":"x"},
             "buffer":{"path":"/tmp/x","segmentBytes":1048576.0,"maxDiskBytes":67108864.0,
-                      "onFull":"dropOldest","maxAgeSecs":3600.0},
-            "delivery":{"pollIntervalMs":1000.0,"maxRetries":-1.0},
-            "batch":{"maxRecords":500.0,"maxBytes":4194304.0}}]}"#;
-        let cfg: StreamingConfig = serde_json::from_str(json).expect("float numbers must parse");
+                      "onFull":"dropOldest","maxAgeSecs":3600.0,
+                      "fsyncIntervalMs":1000.0,"maxBufferedRecords":10000.0},
+            "delivery":{"pollIntervalMs":1000.0,"maxRetries":-1.0,
+                        "backoffBaseMs":50.0,"backoffMaxMs":30000.0},
+            "batch":{"maxRecords":500.0,"maxBytes":4194304.0,"maxLatencyMs":1000.0}}]}"#;
+
+    // Greengrass delivers config numbers as doubles (e.g. 1048576.0). A document delivered that way
+    // must open exactly like the integer-literal one, or every GREENGRASS-mode deployment fails to
+    // open its streams. The intake constructor is what makes it so (D-NC6).
+    #[test]
+    fn parses_greengrass_float_numbers() {
+        let cfg =
+            StreamingConfig::from_json_str(GREENGRASS_SHAPED).expect("float numbers must parse");
         let s = &cfg.streams[0];
         assert_eq!(s.buffer.segment_bytes, 1_048_576);
         assert_eq!(s.buffer.max_disk_bytes, 67_108_864);
         assert_eq!(s.buffer.max_age_secs, Some(3600));
+        assert_eq!(s.buffer.fsync_interval_ms, 1000);
+        assert_eq!(s.buffer.max_buffered_records, 10_000);
         assert_eq!(s.delivery.poll_interval_ms, 1000);
         assert_eq!(s.delivery.max_retries, -1);
+        assert_eq!(s.delivery.backoff_base_ms, 50);
+        assert_eq!(s.delivery.backoff_max_ms, 30_000);
         assert_eq!(s.batch.max_records, 500);
         assert_eq!(s.batch.max_bytes, 4_194_304);
+        assert_eq!(s.batch.max_latency_ms, 1000);
     }
 
-    // Plain integers must still parse (non-Greengrass / FILE config).
+    // The value-shaped half of intake: a host that already parsed the JSON gets the same document.
+    #[test]
+    fn the_value_intake_accepts_the_same_document() {
+        let value: Value = serde_json::from_str(GREENGRASS_SHAPED).unwrap();
+        let cfg = StreamingConfig::from_json_value(value).expect("float numbers must parse");
+        assert_eq!(cfg.streams[0].buffer.segment_bytes, 1_048_576);
+        assert_eq!(cfg.streams[0].delivery.max_retries, -1);
+    }
+
+    // The file sink's own numeric fields ride the same intake (they are on the `file` sink arm,
+    // which is only *built* under the `file` feature but is always parsed).
+    #[test]
+    fn the_file_sink_numbers_ride_the_same_intake() {
+        let json = r#"{"streams":[{"name":"lake",
+            "sink":{"type":"file","dir":"/tmp/lake","maxFileBytes":134217728.0,
+                    "maxFiles":24.0,"rollEverySecs":900.0},
+            "buffer":{"path":"/tmp/x","segmentBytes":65536.0,"maxDiskBytes":1048576.0}}]}"#;
+        let cfg = StreamingConfig::from_json_str(json).expect("file sink floats must parse");
+        match &cfg.streams[0].sink {
+            SinkConfig::File(f) => {
+                assert_eq!(f.max_file_bytes, 134_217_728);
+                assert_eq!(f.max_files, 24);
+                assert_eq!(f.roll_every_secs, 900);
+            }
+            other => panic!("expected a file sink, got {other:?}"),
+        }
+    }
+
+    // The behavior change D-NC6 accepts deliberately: a caller that deserializes the config types
+    // directly, bypassing intake, gets a loud `serde` error on a double instead of the silent
+    // tolerance the per-field lenient deserializers used to give. Loud beats silent.
+    #[test]
+    fn a_direct_deserialize_rejects_a_double_instead_of_tolerating_it() {
+        let err = serde_json::from_str::<StreamingConfig>(GREENGRASS_SHAPED)
+            .expect_err("a direct deserialize must not silently accept a double");
+        assert!(
+            err.to_string().contains("floating point"),
+            "expected serde's own float rejection, got: {err}"
+        );
+    }
+
+    // ...and the fractional/negative values the old lenient deserializers silently truncated or
+    // saturated are refused on the intake path too: canonicalization leaves them alone, and serde
+    // refuses them.
+    #[test]
+    fn intake_refuses_a_fractional_or_negative_value_instead_of_rewriting_it() {
+        let fractional = r#"{"streams":[{"name":"t","sink":{"type":"kinesis","streamName":"x"},
+            "buffer":{"path":"/tmp/x","segmentBytes":65536.5,"maxDiskBytes":1048576}}]}"#;
+        let err = StreamingConfig::from_json_str(fractional)
+            .expect_err("a fractional byte count must never be truncated to 65536");
+        assert!(err.to_string().contains("65536.5"), "got: {err}");
+
+        let negative = r#"{"streams":[{"name":"t","sink":{"type":"kinesis","streamName":"x"},
+            "buffer":{"path":"/tmp/x","segmentBytes":-65536.0,"maxDiskBytes":1048576}}]}"#;
+        let err = StreamingConfig::from_json_str(negative)
+            .expect_err("a negative byte count must never be saturated to 0");
+        assert!(err.to_string().contains("-65536"), "got: {err}");
+    }
+
+    // Plain integers must still parse (non-Greengrass / FILE config) — on both paths, since a
+    // direct deserialize of an integer document is unaffected by D-NC6.
     #[test]
     fn parses_integer_numbers() {
         let json = r#"{"streams":[{"name":"t","sink":{"type":"kinesis","streamName":"x"},
             "buffer":{"path":"/tmp/x","segmentBytes":65536,"maxDiskBytes":1048576}}]}"#;
         let cfg: StreamingConfig = serde_json::from_str(json).expect("integers must parse");
         assert_eq!(cfg.streams[0].buffer.segment_bytes, 65536);
+        let cfg = StreamingConfig::from_json_str(json).expect("integers must parse at intake");
+        assert_eq!(cfg.streams[0].buffer.segment_bytes, 65536);
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // The canonicalization pass itself — the D-NC1 §3 semantics table, mirrored from
+    // `edgecommons::config::canonicalize_json_numbers`.
+    // -------------------------------------------------------------------------------------------
+
+    fn canonical(value: Value) -> Value {
+        let mut value = value;
+        canonicalize_json_numbers(&mut value);
+        value
+    }
+
+    #[test]
+    fn integral_doubles_become_integers() {
+        assert_eq!(canonical(json!(5000.0)), json!(5000));
+        assert_eq!(canonical(json!(0.0)), json!(0));
+        assert_eq!(canonical(json!(1.0)), json!(1));
+    }
+
+    #[test]
+    fn integers_are_a_fixed_point() {
+        assert_eq!(canonical(json!(5000)), json!(5000));
+        assert_eq!(canonical(json!(-5)), json!(-5));
+        assert_eq!(canonical(json!(u64::MAX)), json!(u64::MAX));
+        assert_eq!(canonical(json!(i64::MIN)), json!(i64::MIN));
+    }
+
+    #[test]
+    fn a_fractional_value_is_left_untouched() {
+        assert_eq!(canonical(json!(5000.5)), json!(5000.5));
+        assert_eq!(canonical(json!(0.1)), json!(0.1));
+        assert_eq!(canonical(json!(-2.5)), json!(-2.5));
+    }
+
+    #[test]
+    fn a_negative_integral_double_becomes_a_signed_integer() {
+        // `maxRetries: -1.0` — the one negative field in this config surface.
+        let value = canonical(json!(-1.0));
+        assert_eq!(value, json!(-1));
+        assert_eq!(value.as_i64(), Some(-1));
+        assert!(value.as_u64().is_none(), "a negative never becomes u64");
+    }
+
+    #[test]
+    fn negative_zero_becomes_zero() {
+        let value = canonical(json!(-0.0));
+        assert_eq!(value, json!(0));
+        assert_eq!(value.as_u64(), Some(0));
+    }
+
+    #[test]
+    fn large_integral_doubles_inside_the_u64_window_convert() {
+        // 1e19 < 2^64 and is exactly representable.
+        assert_eq!(
+            canonical(json!(1e19)),
+            json!(10_000_000_000_000_000_000_u64)
+        );
+        // 2^63 exactly.
+        assert_eq!(
+            canonical(json!(9_223_372_036_854_775_808.0_f64)),
+            json!(9_223_372_036_854_775_808_u64)
+        );
+        // 2^64 - 2048, the largest double strictly below 2^64.
+        let largest = canonical(json!(U64_UPPER_EXCLUSIVE - 2048.0));
+        assert_eq!(largest.as_u64(), Some(18_446_744_073_709_549_568));
+        // 2^53 exactly.
+        assert_eq!(
+            canonical(json!(9_007_199_254_740_992.0_f64)),
+            json!(9_007_199_254_740_992_u64)
+        );
+        // The negative window bound.
+        assert_eq!(
+            canonical(json!(-9_223_372_036_854_775_808.0_f64)),
+            json!(i64::MIN)
+        );
+    }
+
+    #[test]
+    fn values_outside_the_sixty_four_bit_window_stay_floats() {
+        assert_eq!(canonical(json!(1e20)), json!(1e20));
+        assert!(canonical(json!(1e20)).as_u64().is_none());
+        // Exactly 2^64: `u64::MAX as f64` rounds up to this, so a naive round-trip check would
+        // wrongly accept it and store `u64::MAX`.
+        assert_eq!(
+            canonical(json!(U64_UPPER_EXCLUSIVE)),
+            json!(U64_UPPER_EXCLUSIVE)
+        );
+        assert!(canonical(json!(U64_UPPER_EXCLUSIVE)).as_u64().is_none());
+        assert_eq!(
+            canonical(json!(-U64_UPPER_EXCLUSIVE)),
+            json!(-U64_UPPER_EXCLUSIVE)
+        );
+        assert!(canonical(json!(-U64_UPPER_EXCLUSIVE)).as_i64().is_none());
+    }
+
+    #[test]
+    fn strings_booleans_and_null_are_never_coerced() {
+        assert_eq!(canonical(json!("5000")), json!("5000"));
+        assert_eq!(canonical(json!("5000.0")), json!("5000.0"));
+        assert_eq!(canonical(json!(true)), json!(true));
+        assert_eq!(canonical(json!(null)), json!(null));
+    }
+
+    #[test]
+    fn nested_objects_and_arrays_are_walked() {
+        let value = canonical(json!({
+            "a": { "b": [ 1.0, { "c": 2.0 }, [ 3.0 ] ] },
+            "d": 4.0
+        }));
+        assert_eq!(
+            value,
+            json!({ "a": { "b": [ 1, { "c": 2 }, [ 3 ] ] }, "d": 4 })
+        );
+    }
+
+    #[test]
+    fn keys_are_never_touched() {
+        let value = canonical(json!({ "5000.0": 1.0, "": 2.0 }));
+        let keys: Vec<&String> = value.as_object().unwrap().keys().collect();
+        assert_eq!(keys, vec!["", "5000.0"]);
+    }
+
+    #[test]
+    fn the_pass_is_idempotent() {
+        let source = json!({
+            "ints": [5000.0, -1.0, 5000.5, 1e20, "5000", true, null],
+            "nested": { "deep": { "v": 30.0 } }
+        });
+        let once = canonical(source);
+        let twice = canonical(once.clone());
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn an_empty_document_is_unchanged() {
+        assert_eq!(canonical(json!({})), json!({}));
+        assert_eq!(canonical(json!([])), json!([]));
     }
 
     #[test]

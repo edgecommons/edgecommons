@@ -108,7 +108,10 @@ pub unsafe extern "C" fn esl_open(
                 return ESL_ERR_CONFIG;
             }
         };
-        let cfg: StreamingConfig = match serde_json::from_str(json) {
+        // The crate's config intake boundary (D-NC6): numbers are canonicalized here, so a host
+        // whose configuration store encodes integers as doubles (the Greengrass Nucleus shape,
+        // `"segmentBytes": 1048576.0`) opens exactly like one that writes integer literals.
+        let cfg: StreamingConfig = match StreamingConfig::from_json_str(json) {
             Ok(c) => c,
             Err(e) => {
                 unsafe { set_err(err, &format!("config: {e}")) };
@@ -648,4 +651,86 @@ pub unsafe extern "C" fn esl_set_sink_callback(
         }
         ESL_OK
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `callback`-sink stream with no host callback registered is buffer-only, so this opens the
+    /// real service with no broker, no AWS, and no network.
+    fn store_shaped_config(dir: &std::path::Path, segment_bytes: &str) -> CString {
+        // Forward slashes keep the JSON string literal valid on Windows too.
+        let path = dir
+            .join("telemetry")
+            .display()
+            .to_string()
+            .replace('\\', "/");
+        CString::new(format!(
+            r#"{{"streams":[{{"name":"telemetry","sink":{{"type":"callback"}},
+                "buffer":{{"path":"{path}","segmentBytes":{segment_bytes},
+                           "maxDiskBytes":1048576.0,"maxAgeSecs":3600.0,
+                           "fsyncIntervalMs":1000.0,"maxBufferedRecords":128.0}},
+                "delivery":{{"maxRetries":-1.0,"pollIntervalMs":1000.0,
+                             "backoffBaseMs":50.0,"backoffMaxMs":30000.0}},
+                "batch":{{"maxRecords":500.0,"maxBytes":4194304.0,"maxLatencyMs":1000.0}}}}]}}"#
+        ))
+        .unwrap()
+    }
+
+    /// Reads `*err` (if any) and frees it.
+    fn take_err(err: *mut c_char) -> String {
+        if err.is_null() {
+            return String::new();
+        }
+        let message = unsafe { CStr::from_ptr(err) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { esl_str_free(err) };
+        message
+    }
+
+    /// The standalone C-ABI path is the one with no canonicalizer in front of it: a Java/Python/Node
+    /// host reads its configuration from a store that encodes every integer as a double and hands
+    /// the raw text straight to `esl_open`. It must open (D-NC6).
+    #[test]
+    fn esl_open_accepts_a_store_shaped_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = store_shaped_config(dir.path(), "65536.0");
+        let mut svc: *mut EslService = std::ptr::null_mut();
+        let mut err: *mut c_char = std::ptr::null_mut();
+
+        let rc = unsafe { esl_open(cfg.as_ptr(), &mut svc, &mut err) };
+        let message = take_err(err);
+        assert_eq!(
+            rc, ESL_OK,
+            "esl_open rejected a store-shaped config: {message}"
+        );
+        assert!(!svc.is_null());
+
+        // The stream is really open, on the canonicalized buffer settings.
+        let name = CString::new("telemetry").unwrap();
+        // The C caller's `memset(&st, 0, sizeof st)` (see ctest/smoke.c): an all-integer repr(C)
+        // out-param.
+        let mut stats: EslStats = unsafe { std::mem::zeroed() };
+        assert_eq!(unsafe { esl_stats(svc, name.as_ptr(), &mut stats) }, ESL_OK);
+        assert_eq!(stats.appended_total, 0);
+        unsafe { esl_shutdown(svc) };
+    }
+
+    /// The tightening half: a genuinely fractional value is refused at the boundary rather than
+    /// truncated to a byte count the operator never configured.
+    #[test]
+    fn esl_open_refuses_a_fractional_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = store_shaped_config(dir.path(), "65536.5");
+        let mut svc: *mut EslService = std::ptr::null_mut();
+        let mut err: *mut c_char = std::ptr::null_mut();
+
+        let rc = unsafe { esl_open(cfg.as_ptr(), &mut svc, &mut err) };
+        assert_eq!(rc, ESL_ERR_CONFIG);
+        assert!(svc.is_null());
+        let message = take_err(err);
+        assert!(message.contains("65536.5"), "got: {message}");
+    }
 }

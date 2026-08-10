@@ -1,8 +1,8 @@
 # DESIGN — numeric canonicalization at the config boundary
 
-> Status: **accepted** — decision register **D-NC1**…**D-NC5** below. All four languages are
-> implemented on `fix/greengrass-numeric-config`. Per-language implementation status is stated
-> in §5.
+> Status: **accepted** — decision register **D-NC1**…**D-NC6** below. All four languages are
+> implemented on `main`, and so is the telemetry-streaming core (D-NC6). Per-language
+> implementation status is stated in §5.
 
 ## Problem
 
@@ -161,6 +161,44 @@ change wire bytes on a schema-valid Greengrass deployment. Pinned by
 bound removes the interop/Greengrass legs from scope is a call for the validation plan, not a
 change to the decision.
 
+### D-NC6 — the telemetry-streaming core canonicalizes at *its own* intake, on the same rule
+
+`edgestreamlog` (`libs/rust-streamlog`) is a separate crate that `edgecommons` depends on under the
+`streaming` feature. It carried the same defect and the same rejected alternative: four private
+lenient deserializers (`lenient_u64` / `lenient_usize` / `lenient_i64` / `lenient_opt_u64`) pinned
+to roughly 25 numeric fields with `#[serde(deserialize_with = …)]`, each accepting an integral
+float and — like the copies D-NC2 removed — silently truncating `5.5` to `5` and saturating `-5.0`
+to `0`.
+
+Coverage was complete at the time of the change (every numeric field carried an annotation), so
+this is **not** a bug fix. It removes a per-field opt-in whose failure mode is silence: the day a
+numeric field is added without the attribute, Greengrass deployments break and nothing in the type
+system, the schema, or the test suite says so. The pass at intake cannot be forgotten by a field.
+
+It is applied at the crate's **own** JSON intake boundary — `StreamingConfig::from_json_str` /
+`StreamingConfig::from_json_value` — which every entry point that parses host JSON now uses: the
+C ABI `esl_open` (the Java/Panama binding), the PyO3 binding's `open` / `open_with_callback`, and
+the napi-rs binding's `open`. Those are the paths where it is load-bearing: they take configuration
+text straight from a host with no canonicalizer in front of them. A document arriving through
+`edgecommons` (`snapshot.raw["streaming"]`) is already canonical per D-NC1, so the pass is an
+idempotent no-op on that path — `edgecommons::streaming::streaming_config` still routes through it,
+as defense in depth on the same terms as D-NC1's two intake points.
+
+**The duplication is reduced, not eliminated — knowingly.** The dependency runs `edgecommons` →
+`edgestreamlog`, so the streaming core cannot depend on the library and needs its own copy of the
+pass. What changes is the size of the copy: one function against the §3 semantics instead of
+roughly 25 opt-in annotations. `edgestreamlog::config::canonicalize_json_numbers` is public, so a
+host embedding the crate directly applies the identical rule.
+
+**Behavior tightening (the D-NC2 analogue), accepted deliberately.** Deserializing `StreamingConfig`
+(or any of its parts) **directly**, bypassing the intake constructors, is now strict: `serde`
+refuses a JSON double in an integer-typed field where the lenient deserializers used to accept it.
+A third-party Rust caller doing `serde_json::from_str::<StreamingConfig>(…)` on a store-shaped
+document gets a hard parse error instead of silent tolerance. That is the intended trade — loud
+beats silent, and the fix is one call: use `StreamingConfig::from_json_str`. Nothing inside this
+repository or the four language bindings takes that path. In exchange, the fractional and negative
+values the old helpers silently rewrote are refused on **every** path, intake included.
+
 ## §3 — exact semantics (normative, all languages)
 
 Applied recursively to every number in objects and arrays; **object keys are never touched**.
@@ -264,6 +302,7 @@ construction and as a rejected candidate (previous generation retained) on reloa
 | Snapshot intake | `config::model::Config::from_value` — canonicalizes before `serde_json::from_value` and before the document is stored, so `raw`, `parsed`, `global()`, `instance()`, `instance_ids()`, and `tags` are all canonical. Covers init, reload, every source, and direct callers (component tests) |
 | Pipeline intake | `config::layered::effective_from_source_payload` — the single point `LayeredConfigSource`'s `load`, `watch`, and the `reload-config` re-fetch all pass through, ahead of `config::validation::validate`, the candidate validators, and `Config::from_value`. A `CONFIG_COMPONENT` bundle is canonicalized envelope-first, so `lineageVersion` and every layer fragment are canonical before the merge |
 | D-NC2 sites | `config/model.rs` (`logging.publish.maxRecordBytes`, `logging.publish.queue.maxRecords`, `logging.fileLogging.backupCount`, `heartbeat.intervalSecs`, `health.port`, `messaging.requestTimeoutSeconds`, and the `metricEmission.targetConfig` probes), `credentials/config.rs` (`vault.keepVersions`, `vault.cacheTtlSecs`, `central.refreshIntervalSecs`), `parameters/config.rs` (`refreshIntervalSecs`) — the three private "lenient u64" copies are deleted and all three modules now use the one shared implementation |
+| Streaming core (D-NC6) | `libs/rust-streamlog/src/config.rs` — `canonicalize_json_numbers(&mut Value)` (public, `edgestreamlog::config::canonicalize_json_numbers`) and the intake constructors `StreamingConfig::from_json_str` / `from_json_value`. Applied by `ffi.rs::esl_open`, `bindings/python/src/lib.rs` (`open`, `open_with_callback`), `bindings/node/src/lib.rs::open`, and `edgecommons::streaming::streaming_config`. The crate's four private lenient deserializers and their ~25 `deserialize_with` annotations are deleted |
 
 Implementation notes:
 
@@ -308,6 +347,8 @@ sources and lineage bundles at pipeline intake); `config/validation.rs` (the sch
 doubles-shaped document and still rejects a fractional value in an integer field);
 `lib.rs::reload_tests::a_greengrass_shaped_reload_payload_produces_a_canonical_snapshot` (the reload
 path end to end, with the candidate validator observing the canonical document);
+`streaming::tests::a_store_shaped_streaming_section_parses_even_if_the_snapshot_was_bypassed` (the
+streaming section reaching D-NC6's intake with the core's own pass deliberately bypassed);
 `messaging/message.rs::config_tags_encode_the_same_ec_value_type_on_every_platform` (D-NC5 at the
 protobuf codec); and `tests/config_hot_reload.rs` (the broker-gated full-runtime reload leg).
 
@@ -434,6 +475,7 @@ script are not touched by this work. The single-source rule is satisfied by not 
 |---|---|
 | Per-language unit tests | The §3 table in every language, plus nesting, key immutability, idempotency, `-0.0`, the 2^53 boundary, and the unsigned 64-bit window edges. Java additionally: source-text exactness (`5000.00` → `5000`, `0.1` untouched). Python additionally: `bool` non-coercion. |
 | Per-language pipeline tests | A store-shaped document (every number `x.0`) through config-manager intake: the snapshot, the component subtrees, the tags, and the published `cfg` document are canonical; a strict typed consumer parses the delivered document and fails on the raw one. Coverage gates hold. |
+| Streaming core (D-NC6) | `libs/rust-streamlog/src/config.rs::tests` — the §3 table (nesting, key immutability, idempotency, `-0.0`, the 2^53 boundary, the unsigned-window edges including `2^64` staying a float), a store-shaped `streaming` document through `StreamingConfig::from_json_str` and `from_json_value` covering every numeric buffer/batch/delivery/file-sink field, the fractional and negative refusals, and the accepted tightening (a direct `serde_json::from_str::<StreamingConfig>` now refuses a double). `ffi.rs::tests` opens the real service over the C ABI on a store-shaped document — the standalone path with no canonicalizer in front of it — and refuses a fractional one with `ESL_ERR_CONFIG`. The `cargo test --features cabi --lib ffi::` step in `.github/workflows/streaming.yml` is what runs the C-ABI half. |
 | Cross-language interop | Only if the tag-typing skew of D-NC5 is judged reachable — see the bound recorded under D-NC5. |
 | Greengrass deployed regression (`lab-5950x`) | Fresh install → RUNNING; `--update-config` with an integer value → RUNNING with the merged value applied (previously BROKEN — the primary proof); recipe redeploy against a doubles-holding store → RUNNING; **poisoned-store recovery**: a store poisoned before the fix, new build deployed with no `RESET` → RUNNING. |
 | Rust `greengrass` feature build | WSL/Linux, per the validation matrix. |

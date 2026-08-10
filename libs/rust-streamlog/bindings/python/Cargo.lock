@@ -726,7 +726,6 @@ version = "0.1.0"
 dependencies = [
  "edgestreamlog",
  "pyo3",
- "serde_json",
  "tracing",
  "tracing-subscriber",
 ]
