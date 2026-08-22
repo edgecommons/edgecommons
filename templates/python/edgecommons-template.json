@@ -10,7 +10,8 @@
     "KUBERNETES"
   ],
   "requires": [
-    "EDGECOMMONS_DEP"
+    "EDGECOMMONS_DEP",
+    "EDGECOMMONS_PYPROJECT_DEP"
   ],
   "substitutions": {
     "compose.yaml": [
@@ -131,7 +132,8 @@
     "pyproject.toml": [
       "BINNAME",
       "DESCRIPTION",
-      "SNAKENAME"
+      "SNAKENAME",
+      "EDGECOMMONS_PYPROJECT_DEP"
     ],
     ".coveragerc": [
       "SNAKENAME"

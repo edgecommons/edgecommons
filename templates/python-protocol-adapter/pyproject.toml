@@ -8,10 +8,12 @@ version = "0.1.0"
 description = "<<DESCRIPTION>>"
 requires-python = ">=3.9"
 dependencies = [
-    # The edgecommons Python library. The CLI substitutes the dependency form you chose with
-    # `--dep-source`: a pinned git requirement for `registry`, or an editable local sibling for
-    # `local`. This mirrors requirements.txt; keep the two in sync (bump with
-    # `edgecommons component upgrade`).
+    # The edgecommons Python library, in the same form as requirements.txt (the CLI substitutes
+    # the `--dep-source` you chose: a pinned git requirement for `registry`/`pinned-rev`, a
+    # `file://` reference to the sibling checkout for `local`). The org's component CI installs
+    # from this list (`pip install -e .`), so keep it in sync with requirements.txt -- bump both
+    # with `edgecommons component upgrade`.
+    "<<EDGECOMMONS_PYPROJECT_DEP>>",
     # TODO: add your protocol client library here, e.g. "pymodbus>=3.6".
 ]
 
