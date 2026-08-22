@@ -30,4 +30,4 @@ runs as a Greengrass v2 component, a standalone HOST process, or a Kubernetes po
 
 These docs are for whoever picks up this scaffold next — the integrator wiring a real route, and
 the operator deploying it. They describe the component **as generated**; once you add stages to
-`app/pipeline.py` or routes to config, update the pages that describe them (see `AGENTS.md`).
+`<<SNAKENAME>>/pipeline.py` or routes to config, update the pages that describe them (see `AGENTS.md`).

@@ -17,7 +17,7 @@ import sys
 
 from edgecommons import EdgeCommonsBuilder
 
-from app.<<COMPONENTNAME>> import <<COMPONENTNAME>>
+from <<SNAKENAME>>.<<COMPONENTNAME>> import <<COMPONENTNAME>>
 
 logger = logging.getLogger("main")
 
@@ -32,7 +32,7 @@ def main():
         .with_app_options(arg_parser)
         # Ask the transport not to hand us our own publishes back. Greengrass IPC honours this;
         # an MQTT broker cannot -- it redelivers our own publishes to our own wildcard subscription
-        # like anyone else's. That is why the self-echo guard in app/pipeline.py is not optional.
+        # like anyone else's. That is why the self-echo guard in <<SNAKENAME>>/pipeline.py is not optional.
         .receive_own_messages(False)
         .build()
     )

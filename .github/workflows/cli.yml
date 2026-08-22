@@ -163,8 +163,12 @@ jobs:
         if: matrix.language == 'PYTHON'
         run: |
           python -m compileall -q .
-          pip install -r requirements.txt
-          if [ -d tests ]; then pip install pytest && python -m pytest -q tests; fi
+          # Mirror the org's reusable component CI (edgecommons/.github component-ci.yml): the
+          # scaffold must be pip-installable and carry its test requirements, or the component's
+          # first CI run fails before its own tests execute.
+          pip install -r requirements.txt -r requirements-test.txt
+          pip install -e .
+          python -m pytest -q
         working-directory: /tmp/scaffold/gated
 
   # A HOST-only scaffold must carry no Greengrass artifacts, and a Greengrass one must carry

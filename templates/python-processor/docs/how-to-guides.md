@@ -23,7 +23,7 @@ class ThresholdCross(Processor):
         return [m] if isinstance(v, (int, float)) and v > self.above else []
 ```
 
-Register it in `app/pipeline.py`'s `_STAGES` table **and** add the matching variant to
+Register it in `<<SNAKENAME>>/pipeline.py`'s `_STAGES` table **and** add the matching variant to
 `config.schema.json`'s `stage` definition — the two are one contract, and an unknown or misspelt
 stage name is rejected when the route is parsed, at config time, not on the first message.
 
@@ -60,7 +60,7 @@ If your route's `subscribe` filter could ever match its own `publishTopic` (a ve
 `ecv1/+/+/+/data/#` matches almost everything), do **not** remove the `is_self_echo` check in
 `_handler`. `main.py`'s `receive_own_messages(False)` only holds on Greengrass IPC; an MQTT broker
 redelivers your own publishes to your own wildcard subscription regardless, so the guard in
-`app/pipeline.py` is what actually stops the loop.
+`<<SNAKENAME>>/pipeline.py` is what actually stops the loop.
 
 ## Report a real connection
 

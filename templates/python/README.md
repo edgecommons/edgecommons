@@ -4,7 +4,7 @@ An AWS IoT Greengrass v2 component (`<<COMPONENTFULLNAME>>`) written in Python o
 `edgecommons` (`edgecommons`) Python library, generated from the EdgeCommons Python component
 template by the `edgecommons` CLI. It gives you the library's standard CLI contract, configuration,
 logging, messaging, metrics, and heartbeat — so you write only business logic in
-[`app/<<COMPONENTNAME>>.py`](app/<<COMPONENTNAME>>.py).
+[`<<SNAKENAME>>/<<COMPONENTNAME>>.py`](<<SNAKENAME>>/<<COMPONENTNAME>>.py).
 
 ## Run locally (HOST platform, MQTT transport)
 
@@ -25,7 +25,7 @@ hierarchy level is always the resolved thing name), and application topics are m
 ### The demonstrated monitoring + command surface
 
 Beyond the fully-automatic `state` keepalive and command inbox (`ping` / `reload-config` /
-`get-configuration`, live with zero code), `app/<<COMPONENTNAME>>.py` demonstrates the rest of
+`get-configuration`, live with zero code), `<<SNAKENAME>>/<<COMPONENTNAME>>.py` demonstrates the rest of
 the surface an edge-console reads/drives (DESIGN-uns §7/§9), through the **app-usable class
 facades** (`docs/platform/DESIGN-class-facades.md`) rather than hand-built topics/bodies:
 
@@ -118,7 +118,7 @@ Deployment needs no command-line args.
 | Path | What it is |
 |------|-----------|
 | `main.py` | Entry point — builds `EdgeCommons` and starts the app. |
-| `app/<<COMPONENTNAME>>.py` | Your business logic. |
+| `<<SNAKENAME>>/<<COMPONENTNAME>>.py` | Your business logic. |
 | `tests/` | `pytest` tests for the seams the app wires into the library — its command verb and the connectivity it reports. `python -m pytest` — no broker needed. |
 | `test-configs/` | Sample component-config files (`config_*.json`). |
 | `recipe.yaml`, `gdk-config.json` | Greengrass recipe + GDK build/publish config. |

@@ -94,6 +94,9 @@ pub fn upgrade(root: &Path, to: &str, dry_run: bool) -> Result<(Vec<Change>, Rep
     if let Some(c) = bump_requirements(&root.join("requirements.txt"), to, dry_run)? {
         changes.push(c);
     }
+    if let Some(c) = bump_pyproject(&root.join("pyproject.toml"), to, dry_run)? {
+        changes.push(c);
+    }
     if let Some(c) = bump_pom(&root.join("pom.xml"), to, dry_run)? {
         changes.push(c);
     }
@@ -102,7 +105,7 @@ pub fn upgrade(root: &Path, to: &str, dry_run: bool) -> Result<(Vec<Change>, Rep
         report.push(
             Diagnostic::warning(
                 ec_diag::EC4004_NO_DEPENDENCY_MANIFEST,
-                "no dependency manifest found (Cargo.toml, package.json, requirements.txt, pom.xml)"
+                "no dependency manifest found (Cargo.toml, package.json, requirements.txt, pyproject.toml, pom.xml)"
                     .to_string(),
             )
             .with_file(root),
@@ -135,7 +138,9 @@ pub fn upgrade_to_rev(
     }
     // Java/Maven and npm cannot express a git-rev pin on a monorepo subdirectory. A project that
     // ships only those manifests cannot take `--to-rev`.
-    let rusty = root.join("Cargo.toml").exists() || root.join("requirements.txt").exists();
+    let rusty = root.join("Cargo.toml").exists()
+        || root.join("requirements.txt").exists()
+        || root.join("pyproject.toml").exists();
     if !rusty && (root.join("pom.xml").exists() || root.join("package.json").exists()) {
         return Err(Fatal::Usage(
             "--to-rev pins a git revision, which only Rust and Python components express; this \
@@ -153,12 +158,15 @@ pub fn upgrade_to_rev(
     if let Some(c) = move_requirements_rev(&root.join("requirements.txt"), rev, dry_run)? {
         changes.push(c);
     }
+    if let Some(c) = move_pyproject_rev(&root.join("pyproject.toml"), rev, dry_run)? {
+        changes.push(c);
+    }
 
     if changes.is_empty() {
         report.push(
             Diagnostic::warning(
                 ec_diag::EC4004_NO_DEPENDENCY_MANIFEST,
-                "no git-rev dependency to move (expected a rev-pinned Cargo.toml or requirements.txt)"
+                "no git-rev dependency to move (expected a rev-pinned Cargo.toml, requirements.txt, or pyproject.toml)"
                     .to_string(),
             )
             .with_file(root),
@@ -244,6 +252,79 @@ fn move_requirements_rev(path: &Path, rev: &str, dry_run: bool) -> Result<Option
                 to: new,
             }));
         }
+    }
+    Ok(Some(Change::NotFound { file }))
+}
+
+/// Python `pyproject.toml` — the same git requirement as `requirements.txt`, quoted inside the
+/// `[project] dependencies` list. Both files carry the pin (DEF-17: the org's component CI
+/// installs from `pyproject.toml` only), so `--to` rewrites both or the two drift.
+///
+/// Line-based on purpose: `toml_edit` would reformat the author's comments inside the
+/// dependency array, and the requirement is a plain string we can rewrite in place.
+fn bump_pyproject(path: &Path, to: &str, dry_run: bool) -> Result<Option<Change>, Fatal> {
+    rewrite_pyproject_requirement(path, dry_run, |req| {
+        let at = req.rfind("@python-lib/v")?;
+        let frag = req[at..].find('#')?;
+        Some(format!(
+            "{}@python-lib/v{}{}",
+            &req[..at],
+            to,
+            &req[at + frag..]
+        ))
+    })
+}
+
+/// Python `pyproject.toml` counterpart of [`move_requirements_rev`].
+fn move_pyproject_rev(path: &Path, rev: &str, dry_run: bool) -> Result<Option<Change>, Fatal> {
+    rewrite_pyproject_requirement(path, dry_run, |req| {
+        let hash = req.find("#subdirectory")?;
+        let at = req[..hash].rfind('@')?;
+        Some(format!("{}@{}{}", &req[..at], rev, &req[hash..]))
+    })
+}
+
+/// Find the quoted `edgecommons @ git+…` requirement in a `pyproject.toml` and replace it with
+/// `rewrite(requirement)`. A `file://` direct reference (the `local` dep-source form) is the
+/// path dependency and is left alone; a file with no edgecommons requirement is `NotFound`.
+fn rewrite_pyproject_requirement(
+    path: &Path,
+    dry_run: bool,
+    rewrite: impl Fn(&str) -> Option<String>,
+) -> Result<Option<Change>, Fatal> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Ok(None);
+    };
+    let file = "pyproject.toml".to_string();
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    for line in &mut lines {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed.contains("edgecommons @ file:") {
+            return Ok(Some(Change::PathDependency { file }));
+        }
+        let Some(start) = line.find("edgecommons @ git+") else {
+            continue;
+        };
+        let Some(len) = line[start..].find('"') else {
+            continue;
+        };
+        let req = line[start..start + len].to_string();
+        let Some(new_req) = rewrite(&req) else {
+            continue;
+        };
+        let new_line = format!("{}{}{}", &line[..start], new_req, &line[start + len..]);
+        if !dry_run {
+            *line = new_line;
+            write(path, &lines_to_text(&lines))?;
+        }
+        return Ok(Some(Change::Bumped {
+            file,
+            from: req,
+            to: new_req,
+        }));
     }
     Ok(Some(Change::NotFound { file }))
 }
@@ -1126,5 +1207,70 @@ mod tests {
         assert!(is_semver("1.2"));
         assert!(!is_semver("v1.2.3"));
         assert!(!is_semver(""));
+    }
+
+    // DEF-17: the pyproject pin is rewritten in lockstep with requirements.txt.
+    #[test]
+    fn pyproject_git_pin_is_bumped_in_place() {
+        let d = project(&[(
+            "pyproject.toml",
+            "[project]
+name = \"x\"
+dependencies = [
+    # keep me
+    \"edgecommons @ git+https://github.com/edgecommons/edgecommons@python-lib/v0.2.0#subdirectory=libs/python\",
+]
+",
+        )]);
+        let (changes, _) = upgrade(d.path(), "0.3.0", false).unwrap();
+        let text = std::fs::read_to_string(d.path().join("pyproject.toml")).unwrap();
+        assert!(text.contains("\"edgecommons @ git+https://github.com/edgecommons/edgecommons@python-lib/v0.3.0#subdirectory=libs/python\","), "{text}");
+        assert!(text.contains("# keep me"), "comments must survive: {text}");
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, Change::Bumped { file, .. } if file == "pyproject.toml"))
+        );
+    }
+
+    #[test]
+    fn pyproject_git_rev_pin_is_moved_by_to_rev() {
+        let d = project(&[(
+            "pyproject.toml",
+            "[project]
+dependencies = [
+    \"edgecommons @ git+https://github.com/edgecommons/edgecommons@python-lib/v0.2.0#subdirectory=libs/python\",
+]
+",
+        )]);
+        let (changes, _) = upgrade_to_rev(d.path(), "deadbeef", false).unwrap();
+        let text = std::fs::read_to_string(d.path().join("pyproject.toml")).unwrap();
+        assert!(
+            text.contains("@deadbeef#subdirectory=libs/python"),
+            "{text}"
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, Change::Bumped { file, .. } if file == "pyproject.toml"))
+        );
+    }
+
+    #[test]
+    fn pyproject_file_reference_is_left_alone() {
+        let d = project(&[(
+            "pyproject.toml",
+            "[project]
+dependencies = [
+    \"edgecommons @ file:///repo/libs/python\",
+]
+",
+        )]);
+        let (changes, _) = upgrade(d.path(), "0.3.0", false).unwrap();
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, Change::PathDependency { file } if file == "pyproject.toml"))
+        );
     }
 }

@@ -14,7 +14,7 @@ dependencies = [
     # from this list (`pip install -e .`), so keep it in sync with requirements.txt -- bump both
     # with `edgecommons component upgrade`.
     "<<EDGECOMMONS_PYPROJECT_DEP>>",
-    # TODO: add your protocol client library here, e.g. "pymodbus>=3.6".
+    # TODO: add your component's own runtime dependencies here.
 ]
 
 [project.optional-dependencies]

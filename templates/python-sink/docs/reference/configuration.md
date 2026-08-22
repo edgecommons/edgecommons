@@ -52,7 +52,7 @@ Whatever the backend, two properties are non-negotiable: delivery is idempotent 
 |---|---|---|
 | `local` | `path` (string, required) | The root directory delivered objects land under. |
 
-Add a variant here as you implement a backend in `app/dest.py`'s `build_destination()` — the schema
+Add a variant here as you implement a backend in `<<SNAKENAME>>/dest.py`'s `build_destination()` — the schema
 and that function are one contract.
 
 ## `retry`

@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # The component entry point + its app package (your business logic).
 COPY main.py /app/main.py
-COPY app     /app/app
+COPY <<SNAKENAME>> /app/<<SNAKENAME>>
 
 # The default destination root of a `local` sink. Created here, owned by the runtime UID, so that
 # whatever is mounted over it can be written to: an empty Docker named volume inherits the ownership

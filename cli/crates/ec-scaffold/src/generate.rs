@@ -244,6 +244,38 @@ pub fn library_dep(
     }
 }
 
+/// The PEP 508 requirement a Python template substitutes for `<<EDGECOMMONS_PYPROJECT_DEP>>`
+/// in its `pyproject.toml` `dependencies` list.
+///
+/// `requirements.txt` and `pyproject.toml` must both name the library: the org's reusable
+/// component CI installs the package with `pip install -e . -r requirements-test.txt` and never
+/// reads `requirements.txt`, so a scaffold whose `pyproject.toml` carried an empty dependency
+/// list failed its first CI run on `import edgecommons` (DEF-17). For `registry` and
+/// `pinned-rev` the form is the same git requirement as [`library_dep`]; for `local` it is a
+/// direct `file://` reference to the sibling checkout (PEP 508 cannot express an editable
+/// install, which `requirements.txt` keeps carrying). Non-Python languages get an empty string.
+#[must_use]
+pub fn pyproject_library_dep(
+    language: Language,
+    source: DepSource,
+    library_path: Option<&Path>,
+    rev: Option<&str>,
+) -> String {
+    match (language, source) {
+        (Language::Python, DepSource::Local) => {
+            let abs = library_path
+                .map(|p| std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf()))
+                .unwrap_or_default();
+            let posix = posix(Some(&abs));
+            // `file:///C:/...` on Windows, `file:///home/...` elsewhere.
+            let slash = if posix.starts_with('/') { "" } else { "/" };
+            format!("edgecommons @ file://{slash}{posix}")
+        }
+        (Language::Python, _) => library_dep(language, source, library_path, rev),
+        _ => String::new(),
+    }
+}
+
 /// The rev to pin to: the explicit `--library-rev` when non-empty, else the CLI's build rev.
 fn resolve_rev(rev: Option<&str>) -> &str {
     match rev {
@@ -307,6 +339,15 @@ pub fn tokens(language: Language, inputs: &Inputs) -> BTreeMap<String, String> {
     t.insert(
         "EDGECOMMONS_DEP".into(),
         library_dep(
+            language,
+            inputs.dep_source,
+            inputs.library_path.as_deref(),
+            inputs.library_rev.as_deref(),
+        ),
+    );
+    t.insert(
+        "EDGECOMMONS_PYPROJECT_DEP".into(),
+        pyproject_library_dep(
             language,
             inputs.dep_source,
             inputs.library_path.as_deref(),
@@ -939,5 +980,42 @@ mod tests {
     fn interpolate_rejects_an_unknown_placeholder() {
         let v = BTreeMap::new();
         assert!(interpolate("src/{NOPE}/x", &v).is_err());
+    }
+
+    // DEF-17: the pyproject form is the same git requirement for registry/pinned-rev, a
+    // `file://` direct reference for local, and empty for every other language.
+    #[test]
+    fn pyproject_dep_matches_requirements_for_git_forms() {
+        let reg = pyproject_library_dep(Language::Python, DepSource::Registry, None, None);
+        assert_eq!(
+            reg,
+            library_dep(Language::Python, DepSource::Registry, None, None)
+        );
+        assert!(reg.starts_with("edgecommons @ git+"), "{reg}");
+        let pinned =
+            pyproject_library_dep(Language::Python, DepSource::PinnedRev, None, Some("abc123"));
+        assert!(
+            pinned.contains("@abc123#subdirectory=libs/python"),
+            "{pinned}"
+        );
+    }
+
+    #[test]
+    fn pyproject_dep_local_is_an_absolute_file_url() {
+        let dep = pyproject_library_dep(
+            Language::Python,
+            DepSource::Local,
+            Some(Path::new("libs/python")),
+            None,
+        );
+        assert!(dep.starts_with("edgecommons @ file:///"), "{dep}");
+        assert!(dep.ends_with("libs/python"), "{dep}");
+        assert!(!dep.contains('\\'), "{dep}");
+    }
+
+    #[test]
+    fn pyproject_dep_is_empty_for_non_python() {
+        assert!(pyproject_library_dep(Language::Rust, DepSource::Registry, None, None).is_empty());
+        assert!(pyproject_library_dep(Language::Java, DepSource::Registry, None, None).is_empty());
     }
 }

@@ -9,10 +9,10 @@
 # transport — carries a `# pragma: no cover` at its definition with an inline reason and is exercised
 # by the HOST/GREENGRASS smoke. Nothing testable is excluded.
 #
-# The ci.yml `coverage` job runs `pytest --cov=app` from this directory, so coverage auto-discovers
+# The ci.yml `coverage` job runs `pytest --cov=<<SNAKENAME>>` from this directory, so coverage auto-discovers
 # this file; CI and a local `pytest` therefore apply the identical policy.
 [run]
-source = app
+source = <<SNAKENAME>>
 
 [report]
 exclude_lines =

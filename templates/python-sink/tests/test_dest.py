@@ -1,6 +1,6 @@
 """The sink's invariants, tested without a broker, a transport, or the library.
 
-`app/dest.py` is deliberately library-free: the destination, the error taxonomy and the retry policy
+`<<SNAKENAME>>/dest.py` is deliberately library-free: the destination, the error taxonomy and the retry policy
 are pure logic, so the properties that make a sink safe -- idempotent redelivery, verification before
 release, transient-vs-permanent classification, jittered backoff against a time budget -- are all
 testable in-process, in milliseconds. Run them with `pytest`.
@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-from app.dest import (
+from <<SNAKENAME>>.dest import (
     BACKOFF,
     CONNECTING,
     DEFAULT_MAX_DELAY_MS,

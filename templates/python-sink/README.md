@@ -3,7 +3,7 @@
 A **sink component** (`<<COMPONENTFULLNAME>>`) written in Python on top of the `edgecommons` Python
 library, generated from the EdgeCommons Python sink template by the `edgecommons` CLI. It gives you
 the library's standard CLI contract, configuration, logging, messaging, metrics and heartbeat — so
-you write only the destination, in [`app/dest.py`](app/dest.py).
+you write only the destination, in [`<<SNAKENAME>>/dest.py`](<<SNAKENAME>>/dest.py).
 
 ## What a sink is
 
@@ -32,8 +32,8 @@ outward, and only then lets go of the source.
 | Path | What it is |
 |------|-----------|
 | `main.py` | Entry point — builds `EdgeCommons` and starts the app. |
-| `app/<<COMPONENTNAME>>.py` | The wiring: sinks, subscriptions, the bounded queue, the retry loop, the event ladder, metrics. |
-| `app/dest.py` | **Where your code goes** — the `Destination` abstraction, the local destination, the error taxonomy, the retry policy, the config parser. Pure logic: it does not import the library, so it is unit-testable on its own. |
+| `<<SNAKENAME>>/<<COMPONENTNAME>>.py` | The wiring: sinks, subscriptions, the bounded queue, the retry loop, the event ladder, metrics. |
+| `<<SNAKENAME>>/dest.py` | **Where your code goes** — the `Destination` abstraction, the local destination, the error taxonomy, the retry policy, the config parser. Pure logic: it does not import the library, so it is unit-testable on its own. |
 | `tests/` | `pytest` tests for the invariants above. `python -m pytest` — no broker needed. |
 | `config.schema.json` | The config this component itself understands (`component.global` + each `component.instances[]` entry). |
 | `test-configs/` | A working `config.json` + the MQTT `standalone-messaging.json` for local HOST runs. |
@@ -48,7 +48,7 @@ never learns what a bucket is.
 things every backend must get right. It **writes to a temp file and renames** (`os.replace` is
 atomic, so a reader never observes a half-written object and a crash mid-write leaves no corrupt
 artifact at the real key), and it **lands at a deterministic key** so a redelivery overwrites rather
-than duplicating. Add your backend to `app/dest.py`'s `build_destination()` **and** to
+than duplicating. Add your backend to `<<SNAKENAME>>/dest.py`'s `build_destination()` **and** to
 `config.schema.json`'s `destination` variants — the two are one contract.
 
 ## Retry: full jitter, against a time budget

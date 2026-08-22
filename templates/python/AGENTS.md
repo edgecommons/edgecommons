@@ -9,7 +9,7 @@ available; what follows is scoped to this repo.
 
 A minimal scaffold demonstrating the library's monitoring + command surface: a periodic metric
 (`loopTicks`), a periodic data signal (`demo-signal`), a periodic event (`sample-event`), and one
-custom command verb (`set-greeting`), all wired in [`app/<<COMPONENTNAME>>.py`](app/<<COMPONENTNAME>>.py).
+custom command verb (`set-greeting`), all wired in [`<<SNAKENAME>>/<<COMPONENTNAME>>.py`](<<SNAKENAME>>/<<COMPONENTNAME>>.py).
 Replace the demo code with real business logic; none of it is required by the library.
 
 ## Name tokens
@@ -22,8 +22,8 @@ Replace the demo code with real business logic; none of it is required by the li
 
 ## Layout
 
-- `main.py` — builds `EdgeCommons` and hands off to `app/<<COMPONENTNAME>>.py`.
-- `app/<<COMPONENTNAME>>.py` — the component. Replace the demo metric/signal/event/command with real
+- `main.py` — builds `EdgeCommons` and hands off to `<<SNAKENAME>>/<<COMPONENTNAME>>.py`.
+- `<<SNAKENAME>>/<<COMPONENTNAME>>.py` — the component. Replace the demo metric/signal/event/command with real
   logic; keep the `instance_connectivity()` seam if this component grows a southbound connection.
 - `config.schema.json` — the config this component itself understands (`component.global`, and
   `component.instances[]` once you add any). Keep `additionalProperties: false`.

@@ -10,7 +10,8 @@
     "KUBERNETES"
   ],
   "requires": [
-    "EDGECOMMONS_DEP"
+    "EDGECOMMONS_DEP",
+    "EDGECOMMONS_PYPROJECT_DEP"
   ],
   "substitutions": {
     "app/__init__.py": [
@@ -51,7 +52,8 @@
     "pyproject.toml": [
       "BINNAME",
       "DESCRIPTION",
-      "SNAKENAME"
+      "SNAKENAME",
+      "EDGECOMMONS_PYPROJECT_DEP"
     ],
     "README.md": [
       "COMPONENTFULLNAME",

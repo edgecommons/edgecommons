@@ -5,7 +5,7 @@
 `<<COMPONENTFULLNAME>>` is a Python component built on the `edgecommons` library. It gives you
 configuration, messaging, metrics, logging, and the heartbeat keepalive for free, and demonstrates
 the rest of the monitoring + command surface an edge-console reads — a periodic metric, a periodic
-data signal, a periodic event, and a custom command verb — in [`app/<<COMPONENTNAME>>.py`](../app/<<COMPONENTNAME>>.py).
+data signal, a periodic event, and a custom command verb — in [`<<SNAKENAME>>/<<COMPONENTNAME>>.py`](../app/<<COMPONENTNAME>>.py).
 It runs as a Greengrass v2 component, a standalone HOST process, or a Kubernetes pod.
 
 | Doc | Start here when you want to… |
@@ -27,5 +27,5 @@ It runs as a Greengrass v2 component, a standalone HOST process, or a Kubernetes
 
 These docs are for whoever picks up this scaffold next — the integrator or operator deploying it,
 and the developer replacing the demo code with real business logic. They describe the component
-**as generated**; once you change `app/<<COMPONENTNAME>>.py` or `config.schema.json`, update the
+**as generated**; once you change `<<SNAKENAME>>/<<COMPONENTNAME>>.py` or `config.schema.json`, update the
 pages that describe them (see `AGENTS.md`).

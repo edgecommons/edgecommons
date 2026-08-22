@@ -1,13 +1,13 @@
 """The processor's invariants, tested without a broker, a transport, or the library.
 
-`app/pipeline.py` is deliberately payload-agnostic and library-free -- it works on a duck-typed
+`<<SNAKENAME>>/pipeline.py` is deliberately payload-agnostic and library-free -- it works on a duck-typed
 message (`.header`, `.body`, `.get_identity()`), which is exactly the shape of
 `edgecommons.messaging.message.Message`. So the stages, the tick, the self-echo guard and the route
 parser are all testable as pure logic, in-process, in milliseconds. Run them with `pytest`.
 """
 import pytest
 
-from app.pipeline import (
+from <<SNAKENAME>>.pipeline import (
     DEFAULT_MAX_QUEUE,
     DEFAULT_TICK_MS,
     CountPerTick,

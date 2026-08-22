@@ -9,7 +9,7 @@ concepts see [explanation.md](explanation.md); for exhaustive options see [refer
 
 ## Replace the demo metric
 
-`app/<<COMPONENTNAME>>.py` defines `loopTicks` once in `__init__` (`MetricBuilder.create(...)`) and
+`<<SNAKENAME>>/<<COMPONENTNAME>>.py` defines `loopTicks` once in `__init__` (`MetricBuilder.create(...)`) and
 emits it every loop in `run()`. Replace the two measures (`tickCount`, `uptimeSecs`) with your own,
 and add a real `add_dimension(...)` if a dimension helps you slice it (keep dimensions
 low-cardinality — an instance id or a result code, never a raw value or an id that grows without

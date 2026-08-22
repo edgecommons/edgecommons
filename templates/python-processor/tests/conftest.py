@@ -1,4 +1,4 @@
-"""Put the component root on `sys.path` so `import app.pipeline` resolves from anywhere."""
+"""Put the component root on `sys.path` so `import <<SNAKENAME>>.pipeline` resolves from anywhere."""
 import sys
 from pathlib import Path
 
