@@ -27,7 +27,7 @@ cheap to write correctly.
 **This module deliberately does not import ``edgecommons``.** It is the payload-agnostic core of the
 component -- pure logic over a duck-typed message (``msg.body``, ``msg.header``,
 ``msg.get_identity()``) -- so it can be unit-tested on its own, with no broker, no transport and no
-library import. The library-facing wiring lives in ``app/<<COMPONENTNAME>>.py``.
+library import. The library-facing wiring lives in ``<<SNAKENAME>>/<<COMPONENTNAME>>.py``.
 """
 import copy
 from abc import ABC, abstractmethod

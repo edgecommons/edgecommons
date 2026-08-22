@@ -30,21 +30,26 @@
     ],
     "main.py": [
       "COMPONENTFULLNAME",
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "app/sink.py": [
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "app/dest.py": [
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "README.md": [
       "BINNAME",
       "COMPONENTFULLNAME",
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "config.schema.json": [
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "compose.yaml": [
       "BINNAME",
@@ -52,10 +57,12 @@
     ],
     "supervisor/component.conf": [
       "BINNAME",
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "Dockerfile": [
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "k8s/configmap.yaml": [
       "BINNAME"
@@ -67,11 +74,13 @@
       "BINNAME"
     ],
     "tests/test_connectivity.py": [
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "docs/README.md": [
       "COMPONENTFULLNAME",
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "docs/tutorial.md": [
       "COMPONENTNAME"
@@ -89,7 +98,8 @@
     "AGENTS.md": [
       "BINNAME",
       "COMPONENTFULLNAME",
-      "COMPONENTNAME"
+      "COMPONENTNAME",
+      "SNAKENAME"
     ],
     "CLAUDE.md": [
       "COMPONENTNAME"
@@ -104,6 +114,30 @@
     "docs/reference/configuration.md": [
       "BINNAME",
       "COMPONENTFULLNAME",
+      "COMPONENTNAME",
+      "SNAKENAME"
+    ],
+    "pyproject.toml": [
+      "BINNAME",
+      "DESCRIPTION",
+      "SNAKENAME"
+    ],
+    ".coveragerc": [
+      "SNAKENAME"
+    ],
+    ".github/workflows/ci.yml": [
+      "SNAKENAME"
+    ],
+    "docs/how-to-guides.md": [
+      "SNAKENAME"
+    ],
+    "tests/conftest.py": [
+      "SNAKENAME"
+    ],
+    "tests/test_dest.py": [
+      "SNAKENAME"
+    ],
+    "app/__init__.py": [
       "COMPONENTNAME"
     ]
   },
@@ -111,6 +145,10 @@
     {
       "from": "app/sink.py",
       "to": "app/{COMPONENTNAME}.py"
+    },
+    {
+      "from": "app",
+      "to": "{SNAKENAME}"
     }
   ],
   "packs": {

@@ -21,10 +21,10 @@ delivers it outward, verifies what landed, and only then releases the source. Ea
 
 ## Layout
 
-- `main.py` — builds `EdgeCommons` and hands off to `app/<<COMPONENTNAME>>.py`.
-- `app/<<COMPONENTNAME>>.py` — the wiring: sinks, subscriptions, the bounded queue, the retry loop,
+- `main.py` — builds `EdgeCommons` and hands off to `<<SNAKENAME>>/<<COMPONENTNAME>>.py`.
+- `<<SNAKENAME>>/<<COMPONENTNAME>>.py` — the wiring: sinks, subscriptions, the bounded queue, the retry loop,
   the event ladder, metrics.
-- `app/dest.py` — **where your code goes**: the `Destination` abstraction, the local destination, the
+- `<<SNAKENAME>>/dest.py` — **where your code goes**: the `Destination` abstraction, the local destination, the
   error taxonomy, the retry policy, the config parser. Deliberately does not import `edgecommons` —
   it is pure, unit-testable logic.
 - `config.schema.json` — the config this component itself understands. Keep `additionalProperties:
@@ -54,7 +54,7 @@ delivers it outward, verifies what landed, and only then releases the source. Ea
   destination/retry logic and the wiring's testable parts (including the deliver→verify→retry state
   machine) stay covered by `tests/`. Add tests rather than lowering the gate or excluding testable
   code.
-- A destination type added to `app/dest.py`'s `build_destination()` needs a matching
+- A destination type added to `<<SNAKENAME>>/dest.py`'s `build_destination()` needs a matching
   `config.schema.json` variant in the same change — the two are one contract.
 
 ## Docs stay in sync with code

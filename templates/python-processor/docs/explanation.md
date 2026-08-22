@@ -8,7 +8,7 @@ This page is the mental model for the **processor** archetype. For exact options
 ## What a processor is
 
 A processor **subscribes**, **transforms**, and **forwards**. That is the whole archetype, and it
-lives in three types (`app/pipeline.py`):
+lives in three types (`<<SNAKENAME>>/pipeline.py`):
 
 - `ProcMsg` — the unit flowing through the pipeline: a message plus the topic it arrived on.
 - `Processor` — one stage. It takes a message and returns **zero or more** messages, so a stage can

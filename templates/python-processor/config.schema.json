@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://docs.edgecommons.mbreissi.com/schemas/<<COMPONENTNAME>>/config.schema.json",
   "title": "<<COMPONENTNAME>> component configuration",
-  "description": "The configuration <<COMPONENTNAME>> itself understands: the object at `component.global`, with each entry of `component.instances[]` validated against `#/$defs/route`. A processor models ONE ROUTE PER INSTANCE — a set of topic filters, a pipeline of stages, and a target. The library envelope (logging, messaging, metricEmission, heartbeat, streaming, credentials, parameters, health, hierarchy, identity, topic, tags) is owned by the canonical schema and is deliberately not redeclared here. Keep `additionalProperties: false` so a typo'd key is caught at deploy time rather than silently ignored — `app/pipeline.py` rejects an unknown route key at parse time for the same reason.",
+  "description": "The configuration <<COMPONENTNAME>> itself understands: the object at `component.global`, with each entry of `component.instances[]` validated against `#/$defs/route`. A processor models ONE ROUTE PER INSTANCE — a set of topic filters, a pipeline of stages, and a target. The library envelope (logging, messaging, metricEmission, heartbeat, streaming, credentials, parameters, health, hierarchy, identity, topic, tags) is owned by the canonical schema and is deliberately not redeclared here. Keep `additionalProperties: false` so a typo'd key is caught at deploy time rather than silently ignored — `<<SNAKENAME>>/pipeline.py` rejects an unknown route key at parse time for the same reason.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -74,7 +74,7 @@
     },
     "stage": {
       "title": "One pipeline stage",
-      "description": "A single-key object naming the stage and its arguments. Add your own here as you register it in `app/pipeline.py`'s stage table — the schema and that table are one contract.",
+      "description": "A single-key object naming the stage and its arguments. Add your own here as you register it in `<<SNAKENAME>>/pipeline.py`'s stage table — the schema and that table are one contract.",
       "type": "object",
       "additionalProperties": false,
       "minProperties": 1,

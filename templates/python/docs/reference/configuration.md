@@ -71,6 +71,6 @@ Thing name). With no `hierarchy` configured, the default is `["device"]` and top
 
 ## Extending this schema
 
-Add a property here every time `app/<<COMPONENTNAME>>.py` reads a new config key, and keep
+Add a property here every time `<<SNAKENAME>>/<<COMPONENTNAME>>.py` reads a new config key, and keep
 `additionalProperties: false` on every object — a typo'd or unknown key should fail at deploy time,
 not be silently ignored.

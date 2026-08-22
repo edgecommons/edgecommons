@@ -9,7 +9,7 @@ concepts see [explanation.md](explanation.md); for exhaustive options see [refer
 
 ## Write a new destination
 
-Implement `Destination` (`app/dest.py`): `kind()`, `deliver(item) -> Delivered`,
+Implement `Destination` (`<<SNAKENAME>>/dest.py`): `kind()`, `deliver(item) -> Delivered`,
 `verify(item, delivered) -> None`. Two properties are non-negotiable, whatever the backend:
 
 - **Deliver to a deterministic, stable key.** The same item must always land at the same place, so a

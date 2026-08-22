@@ -10,7 +10,7 @@ handler itself is on `GreetingState` — so it is testable here with no framewor
 """
 import pytest
 
-from app.<<COMPONENTNAME>> import SET_GREETING, GreetingState, <<COMPONENTNAME>>
+from <<SNAKENAME>>.<<COMPONENTNAME>> import SET_GREETING, GreetingState, <<COMPONENTNAME>>
 
 
 # --- the framework stand-in: it records what the app registers ----------------------------------

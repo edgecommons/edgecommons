@@ -1,7 +1,7 @@
 """<<COMPONENTNAME>> -- a processing component.
 
 A **processor** subscribes to messages, transforms them, and forwards the result. This scaffold
-wires that shape end to end; the transformation itself lives in ``app/pipeline.py``, which is where
+wires that shape end to end; the transformation itself lives in ``<<SNAKENAME>>/pipeline.py``, which is where
 your code goes.
 
 .. code-block:: text
@@ -44,7 +44,7 @@ from edgecommons.facades import Severity
 from edgecommons.messaging.qos import Qos
 from edgecommons.metrics.metric_builder import MetricBuilder
 
-from app.pipeline import ProcMsg, is_self_echo, parse_route
+from <<SNAKENAME>>.pipeline import ProcMsg, is_self_echo, parse_route
 
 logger = logging.getLogger("<<COMPONENTNAME>>")
 

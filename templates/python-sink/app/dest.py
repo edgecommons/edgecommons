@@ -18,7 +18,7 @@ The contract, and why each clause is there
 
 **This module deliberately does not import ``edgecommons``.** The destination, the error taxonomy and
 the retry policy are pure logic, so they are unit-testable with no broker and no transport. The
-library-facing wiring lives in ``app/<<COMPONENTNAME>>.py``.
+library-facing wiring lives in ``<<SNAKENAME>>/<<COMPONENTNAME>>.py``.
 """
 import os
 import random

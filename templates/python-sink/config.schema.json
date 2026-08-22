@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://docs.edgecommons.mbreissi.com/schemas/<<COMPONENTNAME>>/config.schema.json",
   "title": "<<COMPONENTNAME>> component configuration",
-  "description": "The configuration <<COMPONENTNAME>> itself understands: the object at `component.global`, with each entry of `component.instances[]` validated against `#/$defs/sink`. A sink models ONE DELIVERY PIPELINE PER INSTANCE — what it consumes, where that goes, and how hard it tries. The library envelope (logging, messaging, metricEmission, heartbeat, streaming, credentials, parameters, health, hierarchy, identity, topic, tags) is owned by the canonical schema and is deliberately not redeclared here. Keep `additionalProperties: false` so a typo'd key is caught at deploy time rather than silently ignored — `app/dest.py` rejects an unknown sink key at parse time for the same reason.",
+  "description": "The configuration <<COMPONENTNAME>> itself understands: the object at `component.global`, with each entry of `component.instances[]` validated against `#/$defs/sink`. A sink models ONE DELIVERY PIPELINE PER INSTANCE — what it consumes, where that goes, and how hard it tries. The library envelope (logging, messaging, metricEmission, heartbeat, streaming, credentials, parameters, health, hierarchy, identity, topic, tags) is owned by the canonical schema and is deliberately not redeclared here. Keep `additionalProperties: false` so a typo'd key is caught at deploy time rather than silently ignored — `<<SNAKENAME>>/dest.py` rejects an unknown sink key at parse time for the same reason.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -51,7 +51,7 @@
     },
     "destination": {
       "title": "Where the sink delivers",
-      "description": "A tagged object. Add a variant here as you implement a backend in `app/dest.py`. Whatever the backend, two properties are non-negotiable: delivery is idempotent to a STABLE key (so a retry overwrites rather than duplicating), and it is VERIFIED before the source is released.",
+      "description": "A tagged object. Add a variant here as you implement a backend in `<<SNAKENAME>>/dest.py`. Whatever the backend, two properties are non-negotiable: delivery is idempotent to a STABLE key (so a retry overwrites rather than duplicating), and it is VERIFIED before the source is released.",
       "type": "object",
       "required": ["type"],
       "oneOf": [

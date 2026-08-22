@@ -3,7 +3,7 @@ import logging
 import sys
 
 from edgecommons import EdgeCommonsBuilder, CommandScope
-from app.<<COMPONENTNAME>> import <<COMPONENTNAME>>, GreetingState, SET_GREETING
+from <<SNAKENAME>>.<<COMPONENTNAME>> import <<COMPONENTNAME>>, GreetingState, SET_GREETING
 
 logger = logging.getLogger("main")
 

@@ -17,7 +17,7 @@ import sys
 
 from edgecommons import EdgeCommonsBuilder
 
-from app.<<COMPONENTNAME>> import <<COMPONENTNAME>>
+from <<SNAKENAME>>.<<COMPONENTNAME>> import <<COMPONENTNAME>>
 
 logger = logging.getLogger("main")
 

@@ -12,7 +12,7 @@ import queue
 
 import pytest
 
-from app.dest import (
+from <<SNAKENAME>>.dest import (
     BACKOFF,
     CONNECTING,
     FAILED,
@@ -23,7 +23,7 @@ from app.dest import (
     RetryPolicy,
     SinkConfig,
 )
-from app.<<COMPONENTNAME>> import METRIC_NAME, Stats, <<COMPONENTNAME>>
+from <<SNAKENAME>>.<<COMPONENTNAME>> import METRIC_NAME, Stats, <<COMPONENTNAME>>
 
 
 # --- the framework stand-ins: they record what the app emits ------------------------------------

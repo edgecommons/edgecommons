@@ -43,7 +43,7 @@ from edgecommons.facades import Severity
 from edgecommons.heartbeat.instance_connectivity import InstanceConnectivity
 from edgecommons.metrics.metric_builder import MetricBuilder
 
-from app.dest import DeliverError, DestinationHealth, Item, key_for, parse_sink
+from <<SNAKENAME>>.dest import DeliverError, DestinationHealth, Item, key_for, parse_sink
 
 logger = logging.getLogger("<<COMPONENTNAME>>")
 

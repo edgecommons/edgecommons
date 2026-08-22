@@ -54,7 +54,7 @@ A stage is a single-key object naming the stage and its arguments. Two ship with
 | `fieldEquals` | `path` (string, dotted), `value` (any JSON type) | Keeps only messages whose dotted body path equals `value`; drops the rest. |
 | `countPerTick` | *(none)* | Accumulates arrivals and emits one `{count, last}` rollup per tick. Emits nothing on arrival — output happens in `on_tick`. |
 
-Add your own to `app/pipeline.py`'s `_STAGES` table **and** to this schema's `stage` definition — the
+Add your own to `<<SNAKENAME>>/pipeline.py`'s `_STAGES` table **and** to this schema's `stage` definition — the
 two are one contract. An unknown or misspelt stage name is rejected when the route is parsed, at
 config time, not on the first message.
 

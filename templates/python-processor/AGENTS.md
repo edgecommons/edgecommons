@@ -21,10 +21,10 @@ independent — one thread each — so a slow route cannot stall another.
 
 ## Layout
 
-- `main.py` — builds `EdgeCommons` and hands off to `app/<<COMPONENTNAME>>.py`.
-- `app/<<COMPONENTNAME>>.py` — the wiring: routes, subscriptions, the bounded queue, the tick,
+- `main.py` — builds `EdgeCommons` and hands off to `<<SNAKENAME>>/<<COMPONENTNAME>>.py`.
+- `<<SNAKENAME>>/<<COMPONENTNAME>>.py` — the wiring: routes, subscriptions, the bounded queue, the tick,
   publishing, metrics, events.
-- `app/pipeline.py` — **where your code goes**: stages, the pipeline, the self-echo guard, the route
+- `<<SNAKENAME>>/pipeline.py` — **where your code goes**: stages, the pipeline, the self-echo guard, the route
   parser. Deliberately does not import `edgecommons` — it is pure, unit-testable logic.
 - `config.schema.json` — the config this component itself understands. Keep `additionalProperties:
   false`; a stage you add to `_STAGES` needs a matching schema variant.
@@ -33,7 +33,7 @@ independent — one thread each — so a slow route cannot stall another.
 
 ## Non-negotiable invariants (do not remove)
 
-- **The self-echo guard** (`is_self_echo` in `app/pipeline.py`). A route that publishes onto a class
+- **The self-echo guard** (`is_self_echo` in `<<SNAKENAME>>/pipeline.py`). A route that publishes onto a class
   it also subscribes to will consume its own output, reprocess it, and republish it forever without
   this check — an MQTT broker redelivers a component's own publishes regardless of
   `receive_own_messages(False)`.
@@ -51,7 +51,7 @@ independent — one thread each — so a slow route cannot stall another.
   `_run_route()`, `# pragma: no cover` seams validated by the HOST/GREENGRASS smoke); the
   payload-agnostic core and the wiring's testable parts stay covered by `tests/`. Add tests rather
   than lowering the gate or excluding testable code.
-- A stage added to `app/pipeline.py`'s `_STAGES` table needs a matching `config.schema.json` variant
+- A stage added to `<<SNAKENAME>>/pipeline.py`'s `_STAGES` table needs a matching `config.schema.json` variant
   in the same change — the two are one contract.
 
 ## Docs stay in sync with code

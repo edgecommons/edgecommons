@@ -30,4 +30,4 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt pytest pytest-cov
-      - run: pytest --cov=app --cov-report=term-missing --cov-fail-under=90
+      - run: pytest --cov=<<SNAKENAME>> --cov-report=term-missing --cov-fail-under=90

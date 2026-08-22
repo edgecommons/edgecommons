@@ -11,8 +11,8 @@ import queue
 
 import pytest
 
-from app.pipeline import ProcMsg, parse_route
-from app.<<COMPONENTNAME>> import METRIC_NAME, Stats, _now_ms, <<COMPONENTNAME>>
+from <<SNAKENAME>>.pipeline import ProcMsg, parse_route
+from <<SNAKENAME>>.<<COMPONENTNAME>> import METRIC_NAME, Stats, _now_ms, <<COMPONENTNAME>>
 
 
 # --- the framework stand-ins: they record what the app publishes / emits ------------------------

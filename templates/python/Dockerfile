@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # The component entry point + its app package (your business logic).
 COPY main.py /app/main.py
-COPY app     /app/app
+COPY <<SNAKENAME>> /app/<<SNAKENAME>>
 
 # Drop to a non-root UID; /tmp is provided writable by the Deployment (emptyDir).
 USER 65532:65532

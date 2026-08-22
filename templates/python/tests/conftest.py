@@ -1,4 +1,4 @@
-"""Put the component root on `sys.path` so `import app.<<COMPONENTNAME>>` resolves from anywhere."""
+"""Put the component root on `sys.path` so `import <<SNAKENAME>>.<<COMPONENTNAME>>` resolves from anywhere."""
 import sys
 from pathlib import Path
 

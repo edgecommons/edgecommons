@@ -15,7 +15,7 @@ which is why the scaffold demonstrates the library's surface rather than imposin
 
 ## What the library gives you for free
 
-Two things run before `app/<<COMPONENTNAME>>.py` is ever constructed, entirely library-owned:
+Two things run before `<<SNAKENAME>>/<<COMPONENTNAME>>.py` is ever constructed, entirely library-owned:
 
 - **The `state` keepalive** — publishes on `ecv1/{device}/<<BINNAME>>/main/state` roughly every
   5 seconds, carrying `status` (`STARTING`/`RUNNING`/`STOPPING`), uptime, and (when the component

@@ -32,4 +32,4 @@ standalone HOST process, or a Kubernetes pod.
 
 These docs are for whoever picks up this scaffold next — the integrator wiring a real destination,
 and the operator deploying it. They describe the component **as generated**; once you add a backend
-to `app/dest.py` or a sink to config, update the pages that describe them (see `AGENTS.md`).
+to `<<SNAKENAME>>/dest.py` or a sink to config, update the pages that describe them (see `AGENTS.md`).

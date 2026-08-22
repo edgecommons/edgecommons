@@ -3,7 +3,7 @@
 A **processing component** (`<<COMPONENTFULLNAME>>`) written in Python on top of the `edgecommons`
 Python library, generated from the EdgeCommons Python processor template by the `edgecommons` CLI.
 It gives you the library's standard CLI contract, configuration, logging, messaging, metrics and
-heartbeat — so you write only the transformation, in [`app/pipeline.py`](app/pipeline.py).
+heartbeat — so you write only the transformation, in [`<<SNAKENAME>>/pipeline.py`](<<SNAKENAME>>/pipeline.py).
 
 ## What a processor is
 
@@ -21,8 +21,8 @@ state inside a stage needs no lock.
 | Path | What it is |
 |------|-----------|
 | `main.py` | Entry point — builds `EdgeCommons` and starts the app. |
-| `app/<<COMPONENTNAME>>.py` | The wiring: routes, subscriptions, the bounded queue, the tick, publishing, metrics, events. |
-| `app/pipeline.py` | **Where your code goes** — the stages, the pipeline, the self-echo guard, the route parser. Pure logic: it does not import the library, so it is unit-testable on its own. |
+| `<<SNAKENAME>>/<<COMPONENTNAME>>.py` | The wiring: routes, subscriptions, the bounded queue, the tick, publishing, metrics, events. |
+| `<<SNAKENAME>>/pipeline.py` | **Where your code goes** — the stages, the pipeline, the self-echo guard, the route parser. Pure logic: it does not import the library, so it is unit-testable on its own. |
 | `tests/` | `pytest` tests for the invariants below. `python -m pytest` — no broker needed. |
 | `config.schema.json` | The config this component itself understands (`component.global` + each `component.instances[]` entry). |
 | `test-configs/` | A working `config.json` + the MQTT `standalone-messaging.json` for local HOST runs. |
@@ -37,7 +37,7 @@ tick flows through the rest of the pipeline on the same pass, so a window closin
 projected by stage 2 without waiting for the next message to shake it loose.
 
 Two demo stages ship: `fieldEquals` (a filter) and `countPerTick` (a stateful rollup). Add your own
-to `app/pipeline.py`'s stage table **and** to `config.schema.json`'s `stage` definition — the two are
+to `<<SNAKENAME>>/pipeline.py`'s stage table **and** to `config.schema.json`'s `stage` definition — the two are
 one contract, and an unknown or misspelt stage is rejected when the route is parsed, not on the first
 message.
 
