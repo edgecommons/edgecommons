@@ -1,7 +1,8 @@
 RecipeFormatVersion: '2020-01-25'
 ComponentName: <<COMPONENTFULLNAME>>
 ComponentVersion: 1.0.0
-ComponentDescription: <<DESCRIPTION>>
+ComponentDescription: >-
+  <<DESCRIPTION>>
 ComponentPublisher: <<AUTHOR>>
 ComponentConfiguration:
   DefaultConfiguration:
