@@ -2111,3 +2111,43 @@ fn instances_without_an_instance_schema_are_reported_as_unvalidated() {
         "the warning must say how to close the gap: {out}"
     );
 }
+
+#[test]
+fn a_recipe_description_with_colons_and_quotes_is_valid_yaml() {
+    // DEF-18: `ComponentDescription: <<DESCRIPTION>>` was substituted verbatim (or inside double
+    // quotes), so a description containing `: ` or `"` made the scaffolded recipe.yaml unparseable.
+    // The template now emits a folded block scalar, which carries any single-line description.
+    let description = r#"Inference: loads "signed" bundles: a test"#;
+    for (language, kind, dir) in [
+        ("PYTHON", "processor", "desc-py"),
+        ("RUST", "sink", "desc-rs"),
+        ("JAVA", "service", "desc-java"),
+        ("TYPESCRIPT", "protocol-adapter", "desc-ts"),
+    ] {
+        let d = tempfile::tempdir().unwrap();
+        let o = scaffold(
+            d.path(),
+            "com.example.Desc",
+            language,
+            &[
+                "-k",
+                kind,
+                "--dir",
+                dir,
+                "--platforms",
+                "GREENGRASS",
+                "-d",
+                description,
+            ],
+        );
+        assert_eq!(code(&o), 0, "{}", stderr(&o));
+        let recipe = std::fs::read_to_string(d.path().join(dir).join("recipe.yaml")).unwrap();
+        let doc: serde_yaml::Value = serde_yaml::from_str(&recipe)
+            .unwrap_or_else(|e| panic!("{language}/{kind}: {e}\n{recipe}"));
+        assert_eq!(
+            doc["ComponentDescription"].as_str(),
+            Some(description),
+            "{language}/{kind} description did not round-trip"
+        );
+    }
+}
