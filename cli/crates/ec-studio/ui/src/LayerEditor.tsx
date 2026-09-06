@@ -90,7 +90,8 @@ export function LayerEditor({
           </>
         )}
         <p className="ec-sub">
-          Apply is a pull request on your Git host, gated by CODEOWNERS — the Studio never merges.
+          Submit it for review to open a review request on your Git host, where its code owners gate
+          the merge — the Studio never merges.
         </p>
       </div>
     );
