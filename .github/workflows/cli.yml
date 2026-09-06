@@ -143,6 +143,13 @@ jobs:
         if: matrix.language == 'TYPESCRIPT'
         with:
           node-version: "22"
+      # npm 10.9.8 crashes in Arborist's peer resolution (edgesOut) when installing a fresh
+      # scaffold's Vitest dependency graph. Pin the resolver verified with all four TS kinds.
+      - name: Use npm 11.12.1 for scaffold dependency resolution
+        if: matrix.language == 'TYPESCRIPT'
+        run: |
+          npm install --global npm@11.12.1
+          npm --version
       - name: Build the TypeScript library
         if: matrix.language == 'TYPESCRIPT'
         run: npm ci && npm run build
