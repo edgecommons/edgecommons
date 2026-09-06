@@ -12,7 +12,7 @@ Accepted by every command.
 
 | Flag | Meaning |
 |---|---|
-| `--json` | Emit machine-readable JSON instead of human output |
+| `--json` | Emit structured diagnostics and JSON for commands that implement structured output |
 | `-q`, `--quiet` | Suppress non-essential output |
 | `-v`, `--verbose` | Increase verbosity; repeatable (`-vv`) |
 | `--no-color` | Never emit colored output |
@@ -21,6 +21,10 @@ Accepted by every command.
 | `-V`, `--version` | Print version |
 
 `--quiet` and `--verbose` are mutually exclusive.
+
+These flags are accepted globally, but command-specific output is not uniformly JSON yet. Draft
+commands print human text, and some other verbs print progress before diagnostics. Validation and
+`doctor --json` provide structured reports; do not assume every invocation emits one JSON document.
 
 ## `component`
 
@@ -67,7 +71,7 @@ edgecommons component new [OPTIONS]
 | Flag | Meaning |
 |---|---|
 | `--dep-source <DEP_SOURCE>` | `local` (default), `registry`, or `pinned-rev` — a git dependency pinned to an exact revision plus a gitignored local-dev override (Rust/Python only) |
-| `--library-path <LIBRARY_PATH>` | Path to a local library checkout — for `--dep-source local`, and the `.cargo` local-dev override under `pinned-rev` |
+| `--library-path <LIBRARY_PATH>` | Absolute path to a local language library directory — for `--dep-source local`, and the `.cargo` local-dev override under `pinned-rev` |
 | `--library-rev <LIBRARY_REV>` | Git revision to pin the library to (for `pinned-rev`). Defaults to the commit this CLI was built from |
 
 **Template source**
@@ -136,9 +140,14 @@ edgecommons component version [OPTIONS] --to <TO>
 
 The stated version is authoritative — there is no semver-inference from commit history.
 
+Supported fields are the project versions in `Cargo.toml`, `package.json`, `pom.xml`, and
+`gdk-config.json`. Recipe versions and Python `pyproject.toml` project versions are not updated by
+this command. Accepted values are numeric dotted versions (for example `1.2.0`); prerelease suffixes
+are not accepted.
+
 ### `component package`
 
-Build deployable artifacts for the selected platform(s).
+Invoke the supported packaging path for the selected platform(s).
 
 ```
 edgecommons component package [OPTIONS]
@@ -150,11 +159,14 @@ edgecommons component package [OPTIONS]
 | `--platforms <PLATFORMS>` | `GREENGRASS`, `HOST`, `KUBERNETES` |
 | `--publish` | Publish the built artifact (Greengrass: `gdk component publish`) |
 
-Container images are built by CI, not by this verb.
+Greengrass runs `gdk component build`; `--publish` then runs `gdk component publish`. HOST and
+KUBERNETES currently emit warning `EC4007` without building an image. Build their generated Dockerfile
+with Docker or your CI workflow. When `--platforms` is omitted, targets are detected from
+`recipe.yaml`, `compose.yaml`, and `k8s/`.
 
 ### `component release`
 
-Build artifacts, compute digests, and emit a release descriptor.
+Describe existing artifacts, compute their digests, and emit a release descriptor.
 
 ```
 edgecommons component release [OPTIONS]
@@ -166,6 +178,12 @@ edgecommons component release [OPTIONS]
 | `-o`, `--out <OUT>` | Where to write the release descriptor. Default `release.json` |
 
 This verb **never tags, uploads, or publishes**. The CLI produces; the runner publishes.
+
+It does not invoke a build. Build first: staged Greengrass files under `greengrass-build/artifacts`
+are hashed if present. A Dockerfile adds an image entry with empty image/digest fields for the
+release workflow to fill. The descriptor includes the available config schema and Git commit;
+SBOM, signature, and provenance fields remain empty. A GDK `NEXT_PATCH` version must be replaced
+with a concrete version before release.
 
 ## `template`
 
@@ -191,12 +209,16 @@ edgecommons registry versions <NAME> [OPTIONS]
 
 | Flag | Meaning |
 |---|---|
-| `--source <SOURCE>` | Registry URL or a local `components.json` path. Env: `EDGECOMMONS_REGISTRY_URL` |
+| `--source <SOURCE>` | Local `components.json` path. Env: `EDGECOMMONS_REGISTRY_URL` |
 | `--language <LANGUAGE>` | Filter: `JAVA`, `PYTHON`, `RUST`, `TYPESCRIPT` (`list` only) |
 | `--category <CATEGORY>` | Filter by catalog category (`list` only) |
 
 Categories are `adapter`, `processor`, `sink`, `bridge`, `console`, `service`, and `tool`. A `tool` is
 an operator or developer CLI built on the library — run from a shell, not deployed to a device.
+
+Without `--source`, the CLI reads `edgecommons/registry` through authenticated `gh`. HTTP(S) source
+URLs are unsupported in this build despite the environment variable's name. `registry versions`
+currently checks that the component exists, then reports `EC4006`; it does not enumerate a release index.
 
 ## `deployment`
 
@@ -215,11 +237,12 @@ edgecommons deployment release  <DEFINITION> --stream <STREAM>
 | Verb | In | Out |
 |---|---|---|
 | `validate` | a definition | Four stages: the definition's own schema, the semantic rules (S-1..S-9), every rendered effective config against the strict runtime schema, then the compatibility guard against the lock |
-| `lock` | definition + registry | Resolves each pinned version and writes `<definition-stem>.lock` beside the definition. **The only verb that touches the network** |
+| `lock` | definition + registry | Records resolved catalog metadata and unresolved pins in `<definition-stem>.lock`. Uses `gh` unless a local catalog is supplied |
 | `render` | definition, env, target | Native artifacts for the target plus the normalized plan, written under `render/<target>/`. Nothing is committed |
 | `plan` | definition, env, target | The normalized plan JSON alone — the common currency for validation, policy, CI, and the UI |
-| `diff` | a Git ref | The delta grouped by consequence: restart, storage, network, identity, permission, config, artifact, apply-order |
-| `release` | definition + the stream being promoted | Promotes **one** stream and writes the release manifest and lock |
+| `diff` | definition + a Git ref | Declared but unavailable on current main; exits `5` |
+| `release` | definition + the stream being promoted | Writes local release files for **one** stream; requires one profile and one environment |
+| `draft` | local repository + named change | Opens, edits, lists, and reviews local draft branches |
 
 Options: `--env <ENV>` and `--target <TARGET>` (`GREENGRASS`, `HOST`, `KUBERNETES`) for `render` and
 `plan`; `--against <REF>` for `diff`; `--stream <STREAM>` (`config` or `artifact`) for `release`;
@@ -239,8 +262,8 @@ supply it. An explicit override in the definition always wins. With neither, the
 stops rather than guessing a name.
 
 What cannot be resolved is recorded as unresolved **with its reason**, and reported as a warning
-(`EC4006`) rather than dropped. No EdgeCommons component publishes a release index yet, so today a
-digest is unverifiable and `lock` says so on every run. `validate` repeats the warning, and adds
+(`EC4006`) rather than dropped. The current registry adapter resolves the Greengrass name but does
+not yet retrieve per-version digests or schemas, so those remain unverified. `validate` repeats the warning, and adds
 `EC5006` for each pinned version that publishes no config schema — the tool states the limit of its
 coverage instead of implying validation it did not perform.
 
@@ -287,7 +310,31 @@ each component to its gateway. A Kubernetes component needs an `image` (its "wha
 **Streams.** Config and artifact are independently versioned and independently reconciled. The
 release lock correlates them without fusing them, so either rolls back alone.
 
+`deployment release` currently accepts exactly one profile containing exactly one environment. It
+writes under `releases/<tag>/`, uses the current local Git provenance, and does not push, publish,
+or apply to devices. Multi-profile definitions such as Dallas must not be passed to this verb as
+though it selected a target automatically.
+
 `diff` is declared but not built in this binary; it exits `5`.
+
+### `deployment draft`
+
+```text
+edgecommons deployment draft open <TITLE> [--repo <REPO>] [--base <REF>]
+edgecommons deployment draft edit <GIT_REF> <PATH> <CONTENTS> [--repo <REPO>]
+edgecommons deployment draft list [--repo <REPO>]
+edgecommons deployment draft status <GIT_REF> [--repo <REPO>] [--profile <PROFILE>] [--main <REF>]
+```
+
+`--repo` defaults to `.` and should contain `definition.yaml`; `--base` and `--main` default to
+`main`. `open` derives a branch ref from the change title and prints it. Use that returned ref for
+`edit` and `status`. `edit` commits the contents of the supplied local file to the repository-relative
+layer path on the draft without changing the working tree. `list` prints local draft refs.
+
+`status` compares the draft with current main, including semantic conflicts in rendered effective
+configuration. `--profile` names a definition profile and is required when more than one exists.
+Conflict results are currently printed as a review with exit `0`; they are not an automated failing
+validation gate. These commands do not push a branch or create a pull request.
 
 ## `studio`
 
@@ -297,9 +344,16 @@ edgecommons studio serve [--repo <REPO>] [--bind <BIND>]
 
 The Deployment Studio server over the same kernel the CLI uses — an `axum` service with an embedded
 React + Carbon UI. `--repo` defaults to `.` (a directory containing a `definition.yaml`), `--bind` to
-`127.0.0.1:8787`. The **read-only** cut is built: it serves the plant, the effective config layers,
-and the render + plan for any profile, and the UI's two screens (config layers, render review) over
-that API. A repo with no readable definition is an environment error (exit `3`), not a crash.
+`127.0.0.1:8787`. The UI has a persistent scope rail, breadcrumb, scoped Overview/Config/Render
+views, and global Releases with draft review. Layer edits propose local drafts; the server supports
+semantic conflict review, scope presence, and CODEOWNERS-derived approval information.
+
+Current main derives a PR-create URL but does not publish the branch or open a PR. Those operations
+are pending in PR 77; the consequence-diff branch is also pending. Components, Topology, History,
+Operations, Registry, and Settings still include unfinished views. Live observed evidence and
+runner delivery/convergence are not complete. A repo with no readable definition is an environment
+error (exit `3`). See the [current status](https://github.com/edgecommons/edgecommons/blob/main/docs/CURRENT_STATUS.md)
+for the dated main-versus-branch inventory.
 
 ## `doctor`
 

@@ -1,19 +1,18 @@
 ---
 title: Messaging API
-description: The full messaging API surface — client/service methods, the Message envelope, builders, futures, enums, providers, and broker config — in all four languages.
+description: Messaging API reference — client/service methods, the Message envelope, builders, futures, enums, providers, and broker config — in all four languages.
 sidebar:
   order: 6
 ---
 
 import { Tabs, TabItem, Aside, LinkCard } from "@astrojs/starlight/components";
 
-This is the API reference for the messaging subsystem: every public type and method signature, per
-language. For the conceptual walkthrough (transports, the wire envelope, concurrency caps, the
-broker config rules), read the [Messaging guide](/guides/messaging/) first — this page is the
-exhaustive surface.
+This reference covers the principal public messaging APIs in each language. Signature blocks are
+selected excerpts; they do not reproduce every overload or metadata accessor. For the conceptual
+walkthrough (transports, wire envelope, concurrency caps and broker config), read the
+[Messaging guide](/guides/messaging/) first.
 
-All signatures are verified against source. Java is canonical; Python, Rust, and TypeScript mirror
-it. The same publish/subscribe, request/reply, and message envelope work identically across all four
+Java is canonical; Python, Rust, and TypeScript mirror its shared contract. The same publish/subscribe, request/reply, and message envelope work identically across all four
 languages, so components written in any language interoperate on the same topics.
 
 <Aside type="caution">
@@ -291,8 +290,8 @@ in TypeScript.
 
 ### Concurrency and queue semantics
 
-- **`maxConcurrency`** — maximum concurrent handler invocations for the subscription. A value `<= 0`
-  is **uncapped** (Java/Python skip the semaphore; Rust/TS clamp up to `1`).
+- **`maxConcurrency`** — maximum concurrent handler invocations for the subscription. Java/Python
+  treat `<= 0` as uncapped; Rust/TypeScript clamp that value to `1`.
 - **`maxMessages`** — bounded in-memory queue depth per subscription; on overflow, new messages are
   **dropped with a warning** (the subscription never blocks). Default `10000` in Java/Python
   (`DEFAULT_MAX_MESSAGES`), `32` in TypeScript, caller-supplied in Rust.
@@ -301,40 +300,35 @@ in TypeScript.
 
 ## The `Message` envelope
 
-The on-wire shape is identical across all four languages:
-`{ "header": {...}, "identity": {...}, "tags": {...}, "body": <any> }`, or `{ "raw": <value> }` for
-a raw message. Header keys are **snake_case**; `reply_to` is omitted when absent. `identity` is the
-publisher's [UNS identity](/reference/uns/#messageidentity) (stamped by a config-bound builder;
-legally absent on bootstrap/raw-bridged messages); `tags` carries business context only and is
-emitted only when tags were stamped. A received payload with none of
-`header`/`identity`/`tags`/`body` (or non-JSON bytes) is delivered as a **raw** message; non-JSON
-bytes become a raw string. A malformed inbound `identity` parses leniently to null/absent with a
-warning — the message still delivers.
+Normal MQTT and Greengrass IPC messages carry the shared protobuf `EdgeCommonsMessage` envelope.
+Its JSON projection has `header`, optional `identity` and `tags`, and `body`, with optional content
+type, content encoding and schema metadata. Projection header keys are snake_case; `timestamp_ms`
+is the epoch-millisecond timestamp carried by protobuf. Config-bound builders stamp the publisher
+identity. Component scope omits `identity.instance`.
 
-Binary bodies are first-class but deliberately bounded: a decoded binary body is limited to
-**64 KiB** and travels inside `body` as:
+Normal subscriptions use the byte decoders below. Foreign JSON, arbitrary bytes and malformed
+protobuf are rejected, not converted to a synthetic raw message. JSON object helpers remain useful
+for application tooling and explicit raw publication, but are separate from transport decoding.
 
-```json
-{
-  "_edgecommonsBinary": {
-    "encoding": "base64",
-    "length": 5,
-    "data": "AAEC/v8="
-  }
-}
-```
+Bodies can be typed standard messages, dynamic structured values, or opaque bytes. The bounded
+opaque-body APIs support **64 KiB**. In JSON-facing body views, native bytes may appear as an
+`_edgecommonsBinary` base64 marker; protobuf carries the bytes directly. Binary accessors recover
+the original bytes. Diagnostic JSON may replace opaque content with a length/hash summary, so it
+is not a general lossless import/export format.
 
-The normal body accessors return that marker object on inbound messages. Use the binary-specific
-accessors below to decode and validate it.
+The following are selected API excerpts. Message metadata also includes content type, content
+encoding, schema and body case; use the language's accessors when those distinctions matter.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
 
-`Message` (package-private fields
-`MessageHeader header; MessageIdentity identity; MessageTags tags; Object body; Object raw;`).
+`Message` exposes accessors; use `MessageBuilder` for construction.
 
 ```java
-JsonObject toDict();               // header, identity, tags, body (identity between header and tags)
+byte[] toBytes();                  // protobuf transport encoder
+static Message fromBytes(byte[] bytes); // protobuf transport decoder
+JsonObject toDict();               // JSON-facing projection
+JsonObject toDiagnosticJson();     // diagnostic projection (opaque content is summarized)
 String getCorrelationId();         // lazily generates a UUID if null
 MessageHeader getHeader();
 MessageIdentity getIdentity();     // null when the message carries no identity
@@ -342,7 +336,12 @@ MessageTags getTags();
 void injectTag(String key, String value);
 Object getBody();
 boolean isBinaryBody();
-byte[] getBinaryBody();            // null when body is not binary; validates marker + 64 KiB limit
+byte[] getBinaryBody();            // null when not binary; validates the 64 KiB limit
+byte[] getOpaqueBody();
+String getContentType();
+String getContentEncoding();
+MessageBodySchema getSchema();
+MessageBodyCase getBodyCase();
 Object getRaw();
 String makeRequest();              // also: makeRequest(String replyTo)
 void setCorrelationId(String id);
@@ -358,12 +357,16 @@ reflective tree, so `withPayload(Map)` works.
 </TabItem>
 <TabItem label="Python">
 
-`Message` is a `@dataclass(header=None, identity=None, tags=None, body=None, raw=None)`.
+`Message` is a dataclass with optional header, identity, tags and content metadata, plus its body.
 
 ```python
-def to_dict(self) -> dict: ...
+def to_bytes(self) -> bytes: ...       # protobuf transport encoder
+@staticmethod
+def from_bytes(payload: bytes) -> "Message": ...
+def to_diagnostic_json(self) -> dict: ...
+def to_dict(self) -> dict: ...         # JSON-facing projection
 def __str__(self) -> str: ...
-def dumps(self) -> str: ...
+def dumps(self, indent=None) -> str: ...
 def get_correlation_id(self): ...
 def get_header(self) -> MessageHeader: ...
 def get_identity(self) -> Optional[MessageIdentity]: ...
@@ -387,6 +390,7 @@ def from_object(msg_contents) -> "Message": ...
 
 ```rust
 pub struct Message {
+    // Selected fields; additional content metadata is omitted from this excerpt.
     pub header: MessageHeader,
     pub identity: Option<MessageIdentity>,   // skipped when None
     pub tags: Option<MessageTags>,           // skipped when None
@@ -400,8 +404,10 @@ impl Message {
     pub fn get_raw(&self) -> Option<&Value>;
     pub fn is_binary_body(&self) -> bool;
     pub fn binary_body(&self) -> Result<Option<Vec<u8>>>;   // validates marker + 64 KiB limit
-    pub fn to_vec(&self) -> Result<Vec<u8>>;
-    pub fn from_slice(bytes: &[u8]) -> Result<Message>;   // non-JSON → raw string
+    pub fn to_vec(&self) -> Result<Vec<u8>>;              // protobuf encoder
+    pub fn from_slice(bytes: &[u8]) -> Result<Message>;   // strict protobuf decoder
+    pub fn body_case(&self) -> MessageBodyCase;
+    pub fn opaque_body(&self) -> Result<Option<Vec<u8>>>;
     pub fn correlation_id(&self) -> &str;
 }
 
@@ -410,8 +416,9 @@ impl MessageBuilder {
 }
 ```
 
-Custom `Serialize`/`Deserialize`: a raw message serializes as `{"raw": ..}`, otherwise as
-`{"header", "identity", "tags", "body"}` (absent identity/tags skipped).
+Custom Serde `Serialize`/`Deserialize` handles the JSON-facing representation, including explicit
+raw values and optional metadata. It is separate from `to_vec`/`from_slice`, which encode/decode
+protobuf. Raw values are not valid input to the protobuf encoder.
 
 </TabItem>
 <TabItem label="TypeScript">
@@ -420,13 +427,17 @@ Custom `Serialize`/`Deserialize`: a raw message serializes as `{"raw": ..}`, oth
 class Message {
   header: MessageHeader;
   identity?: MessageIdentity;   // undefined when the message carries no identity
-  tags: MessageTags;
+  tags?: MessageTags;
   body: unknown;
+  contentType?: string;
+  contentEncoding?: string;
+  schema?: MessageBodySchema;
+  bodyCase?: MessageBodyCase;
 
-  static envelope(header: MessageHeader, tags: MessageTags, body: unknown): Message;
   static raw(value: unknown): Message;
   static fromObject(value: unknown): Message;
-  static fromWire(data: Buffer | string): Message;   // non-JSON → raw string
+  static fromWire(data: Buffer | string): Message; // JSON helper; non-JSON becomes raw text
+  static fromBytes(data: Buffer | Uint8Array): Message; // strict protobuf decoder
 
   isRaw(): boolean;
   getRaw(): unknown;
@@ -435,8 +446,10 @@ class Message {
   getBinaryBody(): Buffer | undefined;   // validates marker + 64 KiB limit
   getCorrelationId(): string;
   getReplyTo(): string | undefined;
-  toObject(): unknown;
-  toJSON(): string;
+  toObject(): Record<string, unknown>;  // JSON-facing projection
+  toJSON(): string;                     // JSON text, not transport bytes
+  toBytes(): Buffer;                    // protobuf encoder
+  toDiagnosticJson(): Record<string, unknown>;
 }
 ```
 
@@ -445,8 +458,9 @@ class Message {
 
 ### `MessageHeader` and `MessageTags`
 
-The header carries message metadata; `tags` carries **business context only** (your custom `tags`
-config keys). `tags` has no special `thing` handling in any language — the publisher's device travels
+The header carries message metadata. `timestamp_ms` is the canonical protobuf epoch-millisecond
+value; `timestamp` is its RFC3339 projection/API representation. `tags` carries **business context
+only** (your custom `tags` config keys). `tags` has no special `thing` handling in any language — the publisher's device travels
 in the top-level `identity` element, and a stray inbound `thing` key just lands in the generic tag
 map. The reply-topic prefix is the literal string `edgecommons/reply-`
 (trailing `-`, not `/`) in all four languages; reply topics are deliberately non-UNS.
@@ -457,9 +471,10 @@ map. The reply-topic prefix is the literal string `edgecommons/reply-`
 ```java
 class MessageHeader {
     String name; String version; String timestamp;   // ISO-8601 / RFC3339 (ISO_INSTANT)
+    long timestampMs;
     String correlationId; String uuid; String replyTo;
     static final String REPLY_MESSAGE_TOPIC_PREFIX = "edgecommons/reply-";
-    JsonObject toDict();   // emits name, version, timestamp, uuid, correlation_id, [reply_to]
+    JsonObject toDict();   // projection includes timestamp_ms, name, version, timestamp, uuid, correlation_id, [reply_to]
 }
 
 class MessageTags {
@@ -480,11 +495,12 @@ class MessageHeader:
     version: str
     correlation_id: Optional[str] = None
     timestamp: Optional[str] = None   # ISO-8601 / RFC3339 string
+    timestamp_ms: Optional[int] = None
     uuid: Optional[str] = None
     reply_to: Optional[str] = None
     REPLY_MESSAGE_TOPIC_PREFIX = "edgecommons/reply-"
     # __post_init__ fills timestamp/correlation_id/uuid
-    def to_dict(self) -> dict: ...   # snake_case: name, version, timestamp, uuid, correlation_id, [reply_to]
+    def to_dict(self) -> dict: ...   # includes timestamp_ms and snake_case metadata
 
 @dataclass
 class MessageTags:
@@ -500,6 +516,7 @@ pub struct MessageHeader {
     pub name: String,
     pub version: String,
     pub timestamp: String,   // RFC3339 string
+    pub timestamp_ms: u64,
     pub correlation_id: String,
     pub uuid: String,
     pub reply_to: Option<String>,   // serde skips when None
@@ -518,6 +535,7 @@ interface MessageHeader {
   name: string;
   version: string;
   timestamp: string;   // ISO-8601 string (Date.toISOString())
+  timestamp_ms?: number;
   correlation_id: string;
   uuid: string;
   reply_to?: string;

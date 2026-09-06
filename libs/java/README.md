@@ -207,7 +207,7 @@ The default source comes from the resolved platform profile (GREENGRASS → GG_C
 ### Platform (`--platform`)
 - `GREENGRASS` - Greengrass runtime; uses Greengrass IPC by default
 - `HOST` - bare host / Docker; uses MQTT by default
-- `KUBERNETES` - Kubernetes; uses MQTT by default (declared now; full wiring lands in a later phase)
+- `KUBERNETES` - MQTT with ConfigMap hot reload, Downward API identity, health probes, Prometheus and structured stdout logging
 - `auto` - auto-detect the platform (default)
 
 ### Transport (`--transport`)

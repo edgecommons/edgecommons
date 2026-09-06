@@ -46,14 +46,15 @@ the `state` body with per-connection reachability.
 
 Each tick publishes one envelope to `ecv1/{device}/{component}/state`:
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```json
 {
   "header":   { "name": "state", "version": "1.0", "timestamp": "…", "uuid": "…" },
   "identity": {
     "hier":      [ { "level": "device", "value": "gw-01" } ],
     "path":      "gw-01",
-    "component": "my-component",
-    "instance":  "main"
+    "component": "my-component"
   },
   "body": { "status": "RUNNING", "uptimeSecs": 125 }
 }

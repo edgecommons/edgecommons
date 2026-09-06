@@ -50,8 +50,8 @@ The Rust port targets **feature parity with the Java library** (the canonical re
 **Platform × transport** (two independent axes selected at startup):
 - **`--platform`** `GREENGRASS | HOST | KUBERNETES | auto` (default `auto`, auto-detected).
   **GREENGRASS** uses Greengrass IPC for messaging and reads config from the Greengrass deployment;
-  **HOST** uses dual-MQTT (local broker + AWS IoT Core) for Docker/bare containers; **KUBERNETES** is
-  declared but not yet wired (Phase 1 of the platform model).
+  **HOST** uses dual-MQTT (local broker + AWS IoT Core) for Docker/bare containers; **KUBERNETES** uses MQTT with ConfigMap configuration, Downward API identity,
+  HTTP health, Prometheus metrics, and stdout JSON logging (implemented Phase 1).
 - **`--transport`** `IPC | MQTT [messaging_config.json]` — default derived from the platform
   (GREENGRASS ⇒ IPC, HOST/KUBERNETES ⇒ MQTT); **IPC is valid only on GREENGRASS**. The MQTT transport
   takes an optional messaging-config JSON path.

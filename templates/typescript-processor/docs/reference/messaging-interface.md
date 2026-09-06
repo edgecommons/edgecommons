@@ -1,15 +1,20 @@
 This documents the generated scaffold; rewrite it as you build the component out.
 
+Normal MQTT and Greengrass IPC messages carry protobuf bytes. Full envelopes shown as JSON are
+readable projections; body examples show only the application payload. See the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/)
+for encoding/inspection and the complete 12-filter fleet subscription set. Component scope omits
+`identity.instance`; a literal instance named `main` has no special meaning.
+
 # Reference — Messaging Interface & CLI
 
 What this scaffold subscribes to, publishes, and accepts, and the CLI flags. Addressing follows the
-**Unified Namespace (UNS)**: `ecv1/{device}/{component}/{instance}/{class}[/channel]`. For the
+**Unified Namespace (UNS)**: `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`. For the
 model behind the archetype, see [../explanation.md](../explanation.md); for recipes, the
 [how-to guides](../how-to-guides.md).
 
 ## Envelope
 
-Every message uses the EdgeCommons JSON envelope: `{header, identity, tags, body}`. A processor is
+Every message uses the EdgeCommons protobuf envelope: `{header, identity, tags, body}`. A processor is
 **payload-agnostic** — it never imposes a body shape of its own; whatever it consumes, minus
 whatever a stage drops or transforms, is what it republishes. `App.dispatch` restamps the top-level
 `identity` to this component's own on every publish (never the producer's) — see

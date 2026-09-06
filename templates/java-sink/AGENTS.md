@@ -53,7 +53,7 @@ redeclared here.
 
 ## Org conventions this scaffold inherits
 
-- **UNS grammar:** `ecv1/{device}/{component}/{instance}/{class}[/channel]`. The event ladder rides
+- **UNS grammar:** `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`. The event ladder rides
   `evt/{severity}/{type}`, minted from the body's own severity + type via `getEvents()`.
 - A destination must be idempotent to a stable key and must be verified before the source is
   released — these two properties are non-negotiable for any backend you add.

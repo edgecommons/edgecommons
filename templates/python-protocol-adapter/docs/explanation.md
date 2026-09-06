@@ -112,7 +112,7 @@ descriptors.
 
 ## UNS addressing
 
-Topics follow `ecv1/{device}/{component}/{instance}/{class}[/channel]`, built and validated by the
+Topics follow `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`, built and validated by the
 library. Telemetry rides `data` (via the `data()` facade); the command surface rides the library's
 `cmd` inbox; `state`/`metric`/`cfg` are library-owned reserved classes. A fleet consumer subscribes
 one wildcard per class rather than per-adapter topic templates.

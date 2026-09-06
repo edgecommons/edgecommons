@@ -320,6 +320,8 @@ Sample timestamp semantics:
 
 Example, shown as diagnostic notation rather than JSON:
 
+Historical wire example from this superseded design; normal messaging now uses protobuf.
+
 ```cbor-diag
 {
   "header": {
@@ -364,6 +366,8 @@ not reduced. The only wire change is that bytes are real bytes.
 ### 3.3 Opaque Body Profile
 
 Opaque payloads use the same envelope and set `body` to a CBOR byte string.
+
+Historical wire example from this superseded design; normal messaging now uses protobuf.
 
 ```cbor-diag
 {

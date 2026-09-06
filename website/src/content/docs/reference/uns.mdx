@@ -124,6 +124,7 @@ public final class Uns {
     public String topic(UnsClass cls, String channel);    // channeled classes
     public String topicFor(MessageIdentity target, UnsClass cls, String channel);
     public String filter(UnsClass cls, UnsScope scope);   // '/#' appended for channeled classes
+    public String filter(UnsClass cls, UnsScope scope, boolean includeInstance);
     public void   validate(String topic);                 // throws UnsValidationException
     public static void checkToken(String token, String what);
 }
@@ -141,7 +142,8 @@ class Uns:
     def topic(self, cls: UnsClass, channel: Optional[str] = None) -> str: ...
     def topic_for(self, target: MessageIdentity, cls: UnsClass,
                   channel: Optional[str] = None) -> str: ...
-    def filter(self, cls: UnsClass, scope: UnsScope) -> str: ...
+    def filter(self, cls: UnsClass, scope: UnsScope,
+               include_instance: bool = True) -> str: ...
     def validate(self, topic: str) -> None: ...      # raises UnsValidationError
 
     @staticmethod
@@ -164,6 +166,8 @@ impl Uns {
     pub fn topic_for(&self, target: &MessageIdentity, cls: UnsClass,
                      channel: Option<&str>) -> Result<String>;
     pub fn filter(&self, cls: UnsClass, scope: &UnsScope) -> Result<String>;
+    pub fn filter_scoped(&self, cls: UnsClass, scope: &UnsScope,
+                         include_instance: bool) -> Result<String>;
     pub fn validate(&self, topic: &str) -> Result<()>;
 }
 
@@ -189,7 +193,7 @@ export class Uns {
   identity(): MessageIdentity;
   topic(cls: UnsClass, channel?: string): string;
   topicFor(target: MessageIdentity, cls: UnsClass, channel?: string): string;
-  filter(cls: UnsClass, scope: UnsScope): string;
+  filter(cls: UnsClass, scope: UnsScope, includeInstance?: boolean): string;
   validate(topic: string): void;                 // throws UnsValidationError
 }
 
@@ -211,8 +215,9 @@ Identical in all four languages (pinned by `uns-test-vectors/topics.json`):
    (including the C1 range U+0080–U+009F), and no `..` substring. Dots are legal (a full reverse-DNS
    name fits in one level). This is **exactly** the config template sanitizer's blacklist, so any
    sanitized identity value is guaranteed to build a publishable topic.
-2. **Depth guard** — total `/` count ≤ **7** (AWS IoT Core's 8-level limit): channel ≤ 3 tokens
-   without the root, ≤ 2 with `topic.includeRoot: true`. Enforced at **build time**.
+2. **Depth guard** — total `/` count ≤ **7** (AWS IoT Core's 8-level limit). Without an included
+   hierarchy root, the channel may contain up to 4 tokens at component scope or 3 at instance
+   scope. Including the root consumes one of those tokens. Enforced at **build time**.
 3. **Length** — total topic ≤ **256 UTF-8 bytes**.
 4. **Class rules** — `state`/`cfg` are leaf (channel forbidden); all other classes require ≥ 1
    channel token.
@@ -220,6 +225,8 @@ Identical in all four languages (pinned by `uns-test-vectors/topics.json`):
    subscriptions, whose output is correct by construction).
 6. **Root** — `topic.includeRoot` inserts the first hierarchy value after `ecv1` **only when the
    hierarchy has ≥ 2 levels**; with a single-level hierarchy it is a no-op with a config WARN.
+7. **Instance** — omitted for component scope. A present instance must not equal any of the eight
+   class tokens, so the two topic shapes remain unambiguous. `main` is an ordinary instance name.
 
 Failures carry a **machine-readable code**, identical across languages:
 
@@ -237,8 +244,11 @@ CHANNEL_ON_LEAF | CHANNEL_REQUIRED | BAD_ROOT | BAD_CLASS | WILDCARD_IN_TOPIC
 
 ## `UnsScope` — wildcard scopes for `filter()`
 
-An absent field renders as `+`. The `site` position participates only when the builder's effective
-root mode is on. Channeled classes get a trailing `/#`; leaf classes end at the class token.
+An absent field in an included position renders as `+`. The `site` position participates only when
+the builder's effective root mode is on. Channeled classes get a trailing `/#`; leaf classes end at
+the class token. `filter` includes the instance position by default. Pass `false` (Rust:
+`filter_scoped(..., false)`) to omit it for component scope. A whole-fleet consumer subscribes both
+forms for each class; an instance wildcard alone does not match component-scoped publications.
 
 <Tabs syncKey="lang">
 <TabItem label="Java">
@@ -251,8 +261,8 @@ public record UnsScope(String site, String device, String component, String inst
     public static UnsScope instance(String device, String component, String instance);
 }
 
-gg.getUns().filter(UnsClass.STATE, UnsScope.all());              // ecv1/+/+/+/state
-gg.getUns().filter(UnsClass.DATA, UnsScope.device("gw-01"));     // ecv1/gw-01/+/+/data/#
+gg.getUns().filter(UnsClass.STATE, UnsScope.all(), false);      // ecv1/+/+/state
+gg.getUns().filter(UnsClass.STATE, UnsScope.all(), true);       // ecv1/+/+/+/state
 ```
 
 </TabItem>
@@ -275,8 +285,8 @@ class UnsScope:
     @staticmethod
     def for_instance(device: str, component: str, instance: str) -> "UnsScope": ...
 
-gg.uns().filter(UnsClass.STATE, UnsScope.all())                  # ecv1/+/+/+/state
-gg.uns().filter(UnsClass.DATA, UnsScope.for_device("gw-01"))     # ecv1/gw-01/+/+/data/#
+gg.uns().filter(UnsClass.STATE, UnsScope.all(), include_instance=False)  # ecv1/+/+/state
+gg.uns().filter(UnsClass.STATE, UnsScope.all(), include_instance=True)   # ecv1/+/+/+/state
 ```
 
 Python uses `for_device`/`for_component`/`for_instance` (bare `device` would shadow the field).
@@ -296,8 +306,8 @@ impl UnsScope {
     pub fn with_site(self, site: impl Into<String>) -> UnsScope;
 }
 
-gg.uns().filter(UnsClass::State, &UnsScope::all())?;              // ecv1/+/+/+/state
-gg.uns().filter(UnsClass::Data, &UnsScope::device("gw-01"))?;     // ecv1/gw-01/+/+/data/#
+gg.uns().filter_scoped(UnsClass::State, &UnsScope::all(), false)?; // ecv1/+/+/state
+gg.uns().filter_scoped(UnsClass::State, &UnsScope::all(), true)?;  // ecv1/+/+/+/state
 ```
 
 </TabItem>
@@ -312,8 +322,8 @@ export const UnsScope: {
   instance(device: string, component: string, instance: string): UnsScope;
 };
 
-gg.uns().filter(UnsClass.State, UnsScope.all());                 // ecv1/+/+/+/state
-gg.uns().filter(UnsClass.Data, UnsScope.device("gw-01"));        // ecv1/gw-01/+/+/data/#
+gg.uns().filter(UnsClass.State, UnsScope.all(), false);          // ecv1/+/+/state
+gg.uns().filter(UnsClass.State, UnsScope.all(), true);           // ecv1/+/+/+/state
 ```
 
 </TabItem>
@@ -376,9 +386,9 @@ await gg.messaging().publish(t, msg);
 
 ## `MessageIdentity`
 
-The wire object **and** the component's resolved identity — one type. On the wire it is the
-envelope's top-level `identity` element (`hier`, `path`, `component`, `instance`); see the
-[Unified Namespace guide](/guides/unified-namespace/#identity-and-the-hierarchy) for the JSON shape
+The component's resolved identity and the logical identity in the protobuf envelope use the same
+type (`hier`, `path`, `component`, optional `instance`); see the
+[Unified Namespace guide](/guides/unified-namespace/#identity-and-the-hierarchy) for the JSON projection
 and resolution rules.
 
 <Tabs syncKey="lang">
@@ -387,7 +397,6 @@ and resolution rules.
 ```java
 // com.mbreissi.edgecommons.messaging.MessageIdentity
 public final class MessageIdentity {
-    public static final String DEFAULT_INSTANCE = "main";
     public record HierEntry(String level, String value) { }
 
     public MessageIdentity(List<HierEntry> hier, String component, String instance);
@@ -395,7 +404,7 @@ public final class MessageIdentity {
     public List<HierEntry> getHier();       // ordered; last entry = the device
     public String getPath();                // precomputed '/'-join of the hier values
     public String getComponent();
-    public String getInstance();
+    public String getInstance();            // null at component scope
     public String getDevice();              // computed accessor — NOT a wire field
     public MessageIdentity withInstance(String instance);   // copy with another instance token
 
@@ -415,8 +424,6 @@ class HierEntry:
     def __init__(self, level: str, value: str): ...
 
 class MessageIdentity:
-    DEFAULT_INSTANCE = "main"
-
     def __init__(self, hier: List[HierEntry], component: str,
                  instance: Optional[str] = None, path: Optional[str] = None): ...
 
@@ -424,10 +431,10 @@ class MessageIdentity:
     hier: List[HierEntry]          # ordered; last entry = the device
     path: str                      # precomputed '/'-join
     component: str
-    instance: str
+    instance: Optional[str]         # None at component scope
     device: str                    # computed — NOT a wire field
 
-    def with_instance(self, instance: str) -> "MessageIdentity": ...
+    def with_instance(self, instance: Optional[str]) -> "MessageIdentity": ...
     def to_dict(self) -> dict: ...
     @staticmethod
     def from_dict(src) -> Optional["MessageIdentity"]: ...   # lenient
@@ -451,7 +458,7 @@ impl MessageIdentity {
     pub fn hier(&self) -> &[HierEntry];
     pub fn path(&self) -> &str;
     pub fn component(&self) -> &str;
-    pub fn instance(&self) -> &str;
+    pub fn instance(&self) -> Option<&str>;
     pub fn device(&self) -> &str;                            // computed — NOT a wire field
     pub fn with_instance(&self, instance: impl Into<String>) -> Result<MessageIdentity>;
     pub fn from_wire(src: &Value) -> Option<MessageIdentity>; // lenient
@@ -468,16 +475,15 @@ The component's resolved identity is `gg.config().identity()`.
 export interface HierLevel { level: string; value: string }
 
 export class MessageIdentity {
-  static readonly DEFAULT_INSTANCE = "main";
-
+  constructor(hier: readonly HierLevel[], component: string, instance?: string, path?: string);
   readonly hier: readonly HierLevel[];   // ordered; last entry = the device
   readonly path: string;                 // precomputed '/'-join
   readonly component: string;
-  readonly instance: string;
+  readonly instance: string | undefined;
 
   get device(): string;                  // computed — NOT a wire field
-  withInstance(instance: string): MessageIdentity;
-  toObject(): unknown;
+  withInstance(instance?: string): MessageIdentity;
+  toObject(): Record<string, unknown>;
   static fromObject(src: unknown): MessageIdentity | undefined;   // lenient
 }
 ```
@@ -486,6 +492,9 @@ The component's resolved identity is `gg.config().componentIdentity`.
 
 </TabItem>
 </Tabs>
+
+The JSON-facing `toDict`/`to_dict`/`toObject` helpers are projections; normal transport serialization
+uses protobuf. Omitted or empty instance values select component scope and omit `identity.instance`.
 
 Deserialize leniency is deliberate: a malformed inbound `identity` yields a null/absent identity
 with a warning — the message still delivers. `identity` is **optional on the wire**: a message built
@@ -892,7 +901,7 @@ global) **▸ `LOCAL`**. Only `data()` accepts a `stream:<name>` route — `even
 at build time, since alarms and app messages are low-rate control-plane, not bulk telemetry.
 
 - **`local`** — the default; publishes on the local bus (`messaging().publish`).
-- **`northbound`** — publishes straight to AWS IoT Core (`messaging().publishNorthbound`); a
+- **`northbound`** — publishes to the configured northbound destination (`messaging().publishNorthbound`); a
   northbound outage is caught, logged, and never flips local readiness.
 - **`stream:<name>`** (`data()` only) — serializes the same envelope and appends it to
   `streams().stream(name)` (partition key = `signal.id`, timestamp = the sample's `serverTs`) instead
@@ -906,8 +915,8 @@ under the instance's or the global `component.*` config as `publish: { channel: 
 ## The command inbox: commands()
 
 Where `data()`/`events()`/`app()` publish the outbound app classes, **`commands()`** is the inbound
-side of the `cmd` class: a library-owned **command inbox** every component runs at component scope.
-It subscribes the component's own command wildcard `ecv1/{device}/{component}/cmd/#`
+side of the `cmd` class: a library-owned **command inbox** with both component and instance addressing.
+It subscribes `ecv1/{device}/{component}/cmd/#` and `ecv1/{device}/{component}/+/cmd/#`
 on the PRIMARY (local/IPC) connection and dispatches each incoming `cmd` envelope to a handler by
 **verb** — the topic channel after `cmd/` (`/`-namespaced verbs included), which the envelope's
 `header.name` must equal. It is available in **all four languages**, pinned by
@@ -919,20 +928,28 @@ on the PRIMARY (local/IPC) connection and dispatches each incoming `cmd` envelop
 |--------|------|--------|------|------------|
 | Command inbox | `gg.getCommands()` | `gg.get_commands()` | `gg.commands()` | `gg.commands()` |
 
-Register a custom verb handler with `register(verb, handler)` in every language; the verb is one or
+Register a custom verb handler with `register(verb, scope, handler)` in every language; the verb is one or
 more `/`-separated `cmd` channel tokens, each validated against the
 [token rule](#normative-validation-rules). A verb cannot shadow a built-in or an already-registered
 verb.
 
+The scope is `COMPONENT`, `INSTANCE`, or `BOTH` (language-specific enum spelling). The inbox rejects
+conflicting topic/body instance addresses and any instance address on a component-only verb with
+`BAD_ARGS` before dispatch. Handlers receive the resolved addressed instance; the component owns
+configured-instance lookup and any single-instance fallback. `describe` advertises each verb's scope.
+
 ### Built-in verbs
 
-Three verbs are registered by the library and cannot be shadowed or unregistered:
+Five verbs are registered by the library and cannot be shadowed or unregistered. All are `BOTH`
+and return component information at either address:
 
 | Verb | Reply `result` |
 |------|----------------|
 | `ping` | `{ "status": "RUNNING", "uptimeSecs": n }` — liveness/echo (the state keepalive's RUNNING body shape) |
+| `status` | Component status, uptime, and available instance connectivity |
 | `reload-config` | `{ "reloaded": true }` — re-fetch + re-apply config from the active source |
 | `get-configuration` | `{ "config": <redacted effective config> }` — the component's own redacted effective config (Flow B) |
+| `describe` | Registered verbs with scope/availability and component-provided panels/descriptors |
 
 ### Reply shape
 
@@ -940,9 +957,16 @@ A request carrying `header.reply_to` gets a structured reply on that topic (stam
 request's correlation id and the responder's `identity`); a `cmd` without `reply_to` is
 fire-and-forget. The reply body is one of:
 
+Successful command reply body (the result fields depend on the verb):
+
 ```json
-{ "ok": true,  "result": { /* verb-specific object */ } }
-{ "ok": false, "error": { "code": "<CODE>", "message": "<text>" } }
+{ "ok": true, "result": {} }
+```
+
+Failed command reply body:
+
+```json
+{ "ok": false, "error": { "code": "BAD_ARGS", "message": "A required argument is missing" } }
 ```
 
 An unknown verb replies with `error.code = "UNKNOWN_VERB"`; a malformed or foreign payload (a missing

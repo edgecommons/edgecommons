@@ -1,5 +1,9 @@
 # Tutorial — From scaffold to a delivered file
 
+Before running the MQTT examples, define `ec_publish` from the [protobuf MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/).
+It encodes each JSON projection with the matching Python SDK before publication.
+Use that guide to decode received payloads; ordinary `mosquitto_sub -v` output contains binary bytes.
+
 *This documents the generated scaffold; rewrite it as you build the component out.*
 
 By the end you will have built `<<COMPONENTFULLNAME>>`, run it against a message it subscribes to,
@@ -31,9 +35,10 @@ the bus and delivering each one under `./out`.
 
 ## 4. Send it something to deliver
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```bash
-mosquitto_pub -t 'ecv1/my-thing/some-source/main/data/temperature-1' \
-  -m '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"},"samples":[{"value":21.4}]}}'
+ec_publish '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"},"samples":[{"value":21.4}]}}' -t 'ecv1/my-thing/some-source/main/data/temperature-1'
 ```
 
 ## 5. Find the delivered object
@@ -62,11 +67,16 @@ local destination essentially never fails transiently, so you will not see `deli
 
 ## 7. Check connectivity
 
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
+
 ```text
-publish ecv1/my-thing/<<BINNAME>>/cmd/sb/status  (or whatever built-in status verb applies)
+publish ecv1/my-thing/<<BINNAME>>/cmd/status
+  {"header":{"name":"status","version":"1.0","reply_to":"app/reply/status"},"body":{}}
+subscribe app/reply/status
 ```
 
-Or subscribe `ecv1/+/+/+/state` — the keepalive's `instances[]` array carries one entry for
+Or subscribe `ecv1/+/+/state` — the keepalive's `instances[]` array carries one entry for
 `archive`: `{ "instance": "archive", "connected": true, "state": "IDLE"|"ONLINE", "detail": "./out",
 "attributes": { "destination": "local" } }`. An **untried** destination reports `IDLE` (reachable,
 just unused) — not a broken one.

@@ -33,10 +33,12 @@ mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/state' -v      # the keepalive
 ```
 
 Each fires every 10 seconds (`TICK_INTERVAL_MS` in `src/app.ts`). Note the topics have no
-`{instance}` segment here — this scaffold's demo facades bind to the component's default `main`
-instance implicitly.
+`{instance}` segment here — this scaffold's demo facades bind to component scope.
 
 ## 4. Invoke the custom command
+
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
 
 ```
 publish ecv1/my-thing/<<BINNAME>>/cmd/set-greeting
@@ -50,6 +52,9 @@ visible, on-the-wire effect.
 ## 5. Try the built-ins
 
 `ping`, `reload-config`, and `get-configuration` are live with zero code (the library's inbox):
+
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
 
 ```
 publish ecv1/my-thing/<<BINNAME>>/cmd/ping

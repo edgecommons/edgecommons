@@ -50,7 +50,7 @@ deliberately not redeclared here. See `docs/reference/configuration.md`.
 
 ## Org conventions this scaffold inherits
 
-- **UNS grammar:** `ecv1/{device}/{component}/{instance}/{class}[/channel]`. Reserved classes
+- **UNS grammar:** `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`. Reserved classes
   (`state`, `metric`, `cfg`, `log`) are library-owned; publish through the library's facades, never by
   hand-building a topic or envelope.
 - **Builders are the construction path** — `MetricBuilder`, `MessageBuilder`, the `data()`/`events()`

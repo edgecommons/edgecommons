@@ -44,6 +44,9 @@ and, once `metricEmission.target` is `messaging`, `southbound_health` and the
 
 ## 4. Check status and the signal inventory
 
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
+
 ```
 publish ecv1/my-thing/<<BINNAME>>/cmd/sb/status
   {"header":{"name":"sb/status","reply_to":"app/r","correlation_id":"1"},"body":{}}
@@ -61,6 +64,9 @@ Neither the topic nor the body names an instance, because exactly one device is 
 
 ## 5. Read a signal on demand
 
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
+
 ```
 publish ecv1/my-thing/<<BINNAME>>/cmd/sb/read
   {"header":{"name":"sb/read","reply_to":"app/r","correlation_id":"3"},
@@ -74,6 +80,9 @@ subscribe app/r  →  {"ok":true,"result":{"id":"device-1","reads":[
 The default config's `writes.allow` is empty, so every write is refused **before it ever reaches the
 device** — the allow-list is checked first, always:
 
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
+
 ```
 publish ecv1/my-thing/<<BINNAME>>/cmd/sb/write
   {"header":{"name":"sb/write","reply_to":"app/r","correlation_id":"4"},
@@ -85,6 +94,9 @@ Add `"temperature-1"` to `writes.allow` in the config, restart, and the same req
 (the simulator accepts any write): `{"ok":true,"result":{"id":"device-1","written":1,"results":[...]}}`.
 
 ## 7. Browse, reconnect, pause/resume
+
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
 
 ```
 publish ecv1/my-thing/<<BINNAME>>/cmd/sb/browse

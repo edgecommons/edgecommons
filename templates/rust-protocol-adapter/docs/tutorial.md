@@ -56,8 +56,8 @@ Every ~5 seconds you should see two `SouthboundSignalUpdate` messages on
 Also try:
 
 ```bash
-mosquitto_sub -t 'ecv1/+/+/+/state' -v      # the keepalive, with per-device connectivity
-mosquitto_sub -t 'ecv1/+/+/+/metric/#' -v   # southbound_health + the two operational families
+mosquitto_sub -t 'ecv1/+/+/state' -v      # the keepalive, with per-device connectivity
+mosquitto_sub -t 'ecv1/+/+/metric/#' -v   # southbound_health + the two operational families
 ```
 
 The `state` keepalive's `instances[]` array carries one entry for `device-1` —
@@ -70,6 +70,9 @@ The read/write/status surface rides the library's command inbox
 (`ecv1/{device}/<<BINNAME>>/cmd/{verb}`). With a raw MQTT client, set `header.name` to the verb and
 `header.reply_to`/`header.correlation_id` for the reply:
 
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
+
 ```text
 publish ecv1/my-thing/<<BINNAME>>/cmd/sb/read
   {"header":{"name":"sb/read","reply_to":"app/r","correlation_id":"1"},
@@ -79,6 +82,9 @@ subscribe app/r  →  {"ok":true,"result":{"id":"device-1","reads":[
 ```
 
 ## 6. Check status
+
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
 
 ```text
 publish ecv1/my-thing/<<BINNAME>>/cmd/sb/status

@@ -1,5 +1,9 @@
 # Tutorial — Run the Demo Route End to End
 
+Before running the MQTT examples, define `ec_publish` from the [protobuf MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/).
+It encodes each JSON projection with the matching Python SDK before publication.
+Use that guide to decode received payloads; ordinary `mosquitto_sub -v` output contains binary bytes.
+
 > This documents the generated scaffold; rewrite it as you build the component out.
 
 This tutorial builds and runs the scaffold's demo route — a filter stage feeding a stateful
@@ -40,11 +44,11 @@ mosquitto_sub -h localhost -t 'ecv1/gw-01/<<BINNAME>>/rollup/data/summary' -v
 
 ## Step 4 — Publish matching and non-matching data
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```bash
-mosquitto_pub -h localhost -t 'ecv1/site1/some-adapter/dev1/data/temperature-1' -m \
-  '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"},"samples":[{"value":21.5,"quality":"GOOD"}]}}'
-mosquitto_pub -h localhost -t 'ecv1/site1/some-adapter/dev1/data/pressure-1' -m \
-  '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"pressure-1"},"samples":[{"value":4.1,"quality":"GOOD"}]}}'
+ec_publish '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"},"samples":[{"value":21.5,"quality":"GOOD"}]}}' -h localhost -t 'ecv1/site1/some-adapter/dev1/data/temperature-1'
+ec_publish '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"pressure-1"},"samples":[{"value":4.1,"quality":"GOOD"}]}}' -h localhost -t 'ecv1/site1/some-adapter/dev1/data/pressure-1'
 ```
 
 Only the `temperature-1` message passes the `fieldEquals` filter. Within `tickMs` (10 s by default)
@@ -54,8 +58,7 @@ you see a summary message on `ecv1/gw-01/<<BINNAME>>/rollup/data/summary` carryi
 ## Step 5 — Watch the throughput metric
 
 ```bash
-mosquitto_pub -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/cmd/get-configuration' -m \
-  '{"header":{"name":"get-configuration","version":"1.0","reply_to":"app/reply/1","correlation_id":"1"}}'
+ec_publish '{"header":{"name":"get-configuration","version":"1.0","reply_to":"app/reply/1","correlation_id":"1"}}' -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/cmd/get-configuration'
 ```
 
 Or, if `metricEmission.target` is `messaging`, subscribe `ecv1/+/+/metric/#` to watch

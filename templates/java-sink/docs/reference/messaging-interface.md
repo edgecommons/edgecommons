@@ -1,12 +1,17 @@
 # Reference — Messaging Interface & CLI
 
+Normal MQTT and Greengrass IPC messages carry protobuf bytes. Full envelopes shown as JSON are
+readable projections; body examples show only the application payload. See the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/)
+for encoding/inspection and the complete 12-filter fleet subscription set. Component scope omits
+`identity.instance`; a literal instance named `main` has no special meaning.
+
 > This documents the generated scaffold; rewrite it as you build the component out.
 
 Complete specification of the topics this scaffold consumes and produces, and its CLI flags.
 
 ## Envelope
 
-All messages use the EdgeCommons JSON envelope, `{header, identity, tags, body}`. A sink's delivery
+All messages use the EdgeCommons protobuf envelope, `{header, identity, tags, body}`. A sink's delivery
 key is derived from the sink id, the topic leaf, and the envelope's `header.uuid` — never from a
 counter or the clock — so a redelivered message with the same `uuid` always overwrites the same
 destination object instead of duplicating it.

@@ -1,6 +1,9 @@
 # PROPOSAL — UNS optional-instance addressing (resolves D‑CAM‑18)
 
-> **Status: design RATIFIED 2026-07-15 (see §11); implementation not yet started. No code has moved.**
+> **Current status (reviewed 2026-09-06): D-U28 is ratified and implemented in all four core libraries.**
+> Before/after comparisons and the rollout plan below preserve the original decision record.
+> See [the canonical design](UNS-CANONICAL-DESIGN.md) for the current grammar and command scopes,
+> and [current status](../CURRENT_STATUS.md) for delivery and validation limits.
 > This document is the agreed design for a change to the canonical UNS **topic grammar**. It defines the
 > new grammar, quotes the exact amendments it will make to `UNS-CANONICAL-DESIGN.md`, `DESIGN-uns.md`,
 > `SOUTHBOUND.md`, and `camera-adapter/DESIGN.md`, and gives the four-language core implementation plan

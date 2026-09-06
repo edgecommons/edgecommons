@@ -1,5 +1,9 @@
 # Tutorial — Deliver to the Local Reference Destination
 
+Before running the MQTT examples, define `ec_publish` from the [protobuf MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/).
+It encodes each JSON projection with the matching Python SDK before publication.
+Use that guide to decode received payloads; ordinary `mosquitto_sub -v` output contains binary bytes.
+
 > This documents the generated scaffold; rewrite it as you build the component out.
 
 This tutorial builds and runs the scaffold's demo sink, publishes a message for it to consume, and
@@ -40,9 +44,10 @@ mosquitto_sub -h localhost -t 'ecv1/+/+/+/evt/#' -v
 
 ## Step 4 — Publish something for it to deliver
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```bash
-mosquitto_pub -h localhost -t 'ecv1/site1/some-adapter/dev1/data/temperature-1' -m \
-  '{"header":{"name":"SouthboundSignalUpdate","version":"1.0","uuid":"11111111-1111-1111-1111-111111111111"},"body":{"signal":{"id":"temperature-1"},"samples":[{"value":21.5,"quality":"GOOD"}]}}'
+ec_publish '{"header":{"name":"SouthboundSignalUpdate","version":"1.0","uuid":"11111111-1111-1111-1111-111111111111"},"body":{"signal":{"id":"temperature-1"},"samples":[{"value":21.5,"quality":"GOOD"}]}}' -h localhost -t 'ecv1/site1/some-adapter/dev1/data/temperature-1'
 ```
 
 Watch `delivery-started` then `delivery-completed` on the event stream, and check `./out` — a file
@@ -57,8 +62,7 @@ all.
 ## Step 6 — Watch the delivery metric
 
 ```bash
-mosquitto_pub -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/cmd/ping' -m \
-  '{"header":{"name":"ping","version":"1.0","reply_to":"app/reply/1","correlation_id":"1"}}'
+ec_publish '{"header":{"name":"ping","version":"1.0","reply_to":"app/reply/1","correlation_id":"1"}}' -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/cmd/ping'
 ```
 
 Or, with `metricEmission.target: messaging`, subscribe `ecv1/+/+/metric/#` and watch

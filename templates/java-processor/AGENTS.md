@@ -53,7 +53,7 @@ redeclared here.
 
 ## Org conventions this scaffold inherits
 
-- **UNS grammar:** `ecv1/{device}/{component}/{instance}/{class}[/channel]`. A route's
+- **UNS grammar:** `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`. A route's
   `publishTopic` must name an application class; reserved classes are library-owned and rejected on
   direct publish.
 - A processor uses raw `getMessaging()`, not the `data()` facade — it is payload-agnostic and

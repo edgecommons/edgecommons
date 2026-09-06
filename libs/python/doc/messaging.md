@@ -1,5 +1,14 @@
 # EdgeCommons Messaging Documentation
 
+Normal MQTT and Greengrass IPC messaging uses the shared protobuf `EdgeCommonsMessage` envelope.
+Full-envelope JSON examples are human-readable **JSON projections**, not transport frames. Native
+FILE/ENV/CONFIGMAP configuration and AWS configuration/Shadow documents retain their JSON boundary.
+Component-scoped publishers omit the instance token and `identity.instance`; instance handles stamp
+an explicit instance. A literal `main` is an ordinary instance name. Fleet consumers subscribe to
+both scope patterns for each class. See the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/)
+for encoding and decoding diagnostic examples.
+
+
 ## Overview
 The EdgeCommons library provides a unified messaging abstraction layer whose behavior is driven by the
 `--transport` axis (derived from `--platform`):
@@ -346,6 +355,8 @@ The library includes three messaging providers:
 
 ## Message Creation
 Messages can be created using the MessageBuilder pattern:
+
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
 
 ```python
 from edgecommons.builders import MessageBuilder

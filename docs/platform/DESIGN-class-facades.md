@@ -6,11 +6,10 @@
 > Python/Rust/TS mirrors): the `Quality`/`Severity`/`Channel` enums + the `SignalUpdate` body
 > builder + the `DataFacade`/`EventsFacade`/`AppFacade` facades under
 > `libs/{java,python,rust,ts}/.../facades/`, wired onto `EdgeCommonsInstance.data()/events()/app()` and the `EdgeCommons`
-> convenience `getData()/getEvents()/getApp()` (== instance `main`); the body contracts are pinned
+> convenience `getData()/getEvents()/getApp()` (component scope, with no instance token); the body contracts are pinned
 > by new `uns-test-vectors/{data,evt,app}.json` and the refreshed `envelopes.json` goldens
 > (Java canonical `2283189`; Python/Rust/TS mirrors `8d3e3c9`). This closes the last gap in
-> the UNS class-facade family: the reserved platform classes (`state`/`metric`/`cfg`, and `log`
-> deferred) each already have a **library-owned publisher** that mints the correct topic *and*
+> the UNS class-facade family: the reserved platform classes (`state`/`metric`/`cfg`/`log`) each already have a **library-owned publisher** that mints the correct topic *and*
 > constructs/validates the class body; the inbound `cmd` class has the `CommandInbox`. But the three
 > **app-usable** publish classes — `data`, `evt`, `app` — have **no facade**. Components publish them
 > **raw**: they hand-mint `gg.instance(id).uns().topic(CLASS, channel)`, hand-build the body, and call

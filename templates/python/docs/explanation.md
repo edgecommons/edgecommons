@@ -17,11 +17,11 @@ which is why the scaffold demonstrates the library's surface rather than imposin
 
 Two things run before `<<SNAKENAME>>/<<COMPONENTNAME>>.py` is ever constructed, entirely library-owned:
 
-- **The `state` keepalive** — publishes on `ecv1/{device}/<<BINNAME>>/main/state` roughly every
+- **The `state` keepalive** — publishes on `ecv1/{device}/<<BINNAME>>/state` roughly every
   5 seconds, carrying `status` (`STARTING`/`RUNNING`/`STOPPING`), uptime, and (when the component
   reports any) `instances[]`.
 - **The command inbox** — already answers `ping`, `reload-config`, and `get-configuration` on
-  `ecv1/{device}/<<BINNAME>>/main/cmd/#` before `run()` is ever called.
+  `ecv1/{device}/<<BINNAME>>/cmd/#` before `run()` is ever called.
 
 Neither needs a line of code in the scaffold. What the scaffold *adds* is the rest of the surface an
 edge-console reads — so a freshly generated component has something to show on the console's
@@ -60,7 +60,7 @@ inbox subscription is acknowledged, so no request can arrive at a half-registere
 
 ## UNS addressing
 
-Every topic is `ecv1/{device}/{component}/{instance}/{class}[/channel]`, minted by the library's UNS
+Every topic is `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`, minted by the library's UNS
 builder from the config-resolved `hierarchy`/`identity` — never a hand-assembled string. `state`,
 `metric`, `cfg`, and `log` are library-owned reserved classes; a component only ever mints `data`,
 `evt`, and `app`/`cmd` topics through the facades above. A fleet consumer subscribes one wildcard per

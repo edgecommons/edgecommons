@@ -8,7 +8,7 @@ This page is the mental model behind the generated code. For exact options see
 ## What is automatic, and what this scaffold adds
 
 The library gives every component two things with **zero code**: the `state` keepalive
-(`ecv1/{device}/{component}/main/state`, on/5s/local by default) and the command inbox
+(`ecv1/{device}/{component}/state`, on/5s/local by default) and the command inbox
 (`ping`/`reload-config`/`get-configuration`, live before `App::new` even runs). What `src/app.rs`
 adds on top is the rest of the monitoring/command surface an edge-console reads — a metric, a data
 signal, an event, an instance-connectivity provider, and a custom command verb — so a freshly

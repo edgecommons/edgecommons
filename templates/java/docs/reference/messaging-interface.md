@@ -1,21 +1,28 @@
 # Reference — Messaging Interface & CLI
 
+Normal MQTT and Greengrass IPC messages carry protobuf bytes. Full envelopes shown as JSON are
+readable projections; body examples show only the application payload. See the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/)
+for encoding/inspection and the complete 12-filter fleet subscription set. Component scope omits
+`identity.instance`; a literal instance named `main` has no special meaning.
+
 > This documents the generated scaffold; rewrite it as you build the component out.
 
 Complete specification of every UNS topic and message this scaffold publishes or accepts, and its
 CLI flags.
 
-> **Unified Namespace.** All topics follow `ecv1/{device}/{component}/{instance}/{class}[/channel]`,
+> **Unified Namespace.** All topics follow `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`,
 > minted by the library's topic builder — never hand-assembled.
 
 ## Envelope
 
-All messages use the EdgeCommons JSON envelope, `{header, identity, tags, body}`:
+All messages use the EdgeCommons protobuf envelope, `{header, identity, tags, body}`:
+
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
 
 ```jsonc
 {
   "header": { "name": "StatusUpdate", "version": "1.0", "timestamp": "2026-07-19T12:00:00Z", "uuid": "…" },
-  "identity": { "hier": [ … ], "path": "factory-1/tutorial-thing", "component": "<<BINNAME>>", "instance": "main" },
+  "identity": { "hier": [ … ], "path": "factory-1/tutorial-thing", "component": "<<BINNAME>>" },
   "tags": { … },
   "body": { … }
 }
@@ -64,6 +71,8 @@ default) — pass an explicit `Quality` when your source knows a read failed or 
 ```
 
 ### `set-greeting` (custom command verb)
+
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
 
 ```jsonc
 // request

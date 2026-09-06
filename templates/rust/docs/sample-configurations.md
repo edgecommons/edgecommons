@@ -39,8 +39,8 @@ The component loads **one JSON document** from `-c/--config`. The top level carr
 | `hierarchy.levels` / `identity` | Places the component in the UNS enterprise tree: `identity.path = "factory-1/<thing>"`. The last hierarchy level's value is always the resolved Thing name (`-t`). |
 | `heartbeat.*` | The `state` keepalive cadence and its `cpu`/`memory` system measures — independent of the demo tick. |
 | `metricEmission.target: log` | Routes `loopTicks` to a local log file. Set `target: "messaging"` to see it on the UNS `metric` class instead. |
-| `component.global.publish_interval` | Seconds between the scaffold's demo tick (app-status / metric / data / event quartet), `3` here. |
-| `component.instances[].id: "main"` | The single instance the scaffold's `data()`/`events()`/`metrics()` facades are bound to. |
+| `component.global.publish_interval` | Illustrative setting (`3` here); the demo uses the `TICK_INTERVAL` source constant. |
+| `component.instances[].id: "main"` | An explicitly named example instance; demo facades publish at component scope. |
 
 Run it:
 
@@ -71,15 +71,14 @@ cargo run -- --platform HOST --transport MQTT ./test-configs/standalone-messagin
 
 **How this behaves differently from the shipped config**
 
-- **Ticks 3× faster** (`publish_interval: 1` vs. the shipped `3`) — the demo status/metric/data/event
-  quartet fires every second.
+- **`publish_interval: 1`** changes an example value; the current scaffold does not read it, so
+  it does not change the demo cadence. Wire this setting into the timer before relying on it.
 - **`metricEmission.target: "messaging"`** puts `loopTicks` on the UNS `metric` class instead of a
   log file, so `mosquitto_sub -t 'ecv1/+/+/metric/#' -v` shows it directly.
 - **A deeper hierarchy** (`["site", "area", "device"]`) places the component further down the
   enterprise tree — `identity.path = "plant1/assembly/<thing>"` — without changing anything else
   about how the demo behaves.
-- **`instances[].publish_interval`** demonstrates the per-instance override the schema promises: with
-  a single `main` instance it is redundant with the global value here, but a second instance could
-  set its own cadence independently.
+- **`instances[].publish_interval`** illustrates an instance override field. The scaffold does not
+  create independent instance timers.
 
 Run it the same way, pointing `-c FILE` at this file instead.

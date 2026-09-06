@@ -68,7 +68,7 @@ lookup against a database, say).
 
 ## UNS addressing
 
-Topics follow `ecv1/{device}/{component}/{instance}/{class}[/channel]`, built and validated by the
+Topics follow `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`, built and validated by the
 library. A processor's `publishTopic` is named by config rather than minted in code — that is the
 archetype — but everything the library publishes on your behalf (`state`, `metric`, `evt`) is minted
 through `gg.uns()`, and the reserved classes (`state`/`metric`/`cfg`/`log`) are library-owned and

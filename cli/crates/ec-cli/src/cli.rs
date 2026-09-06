@@ -273,14 +273,14 @@ pub enum RegistryCmd {
     /// Show one catalog entry.
     Show {
         name: String,
-        /// Registry URL or a local components.json path.
+        /// Local components.json path; omitted uses the registry through authenticated gh.
         #[arg(long, env = "EDGECOMMONS_REGISTRY_URL")]
         source: Option<String>,
     },
     /// List the published releases of a component.
     Versions {
         name: String,
-        /// Registry URL or a local components.json path.
+        /// Local components.json path; omitted uses the registry through authenticated gh.
         #[arg(long, env = "EDGECOMMONS_REGISTRY_URL")]
         source: Option<String>,
     },
@@ -288,7 +288,7 @@ pub enum RegistryCmd {
 
 #[derive(Debug, Args)]
 pub struct RegistryListArgs {
-    /// Registry URL or a local components.json path.
+    /// Local components.json path; omitted uses the registry through authenticated gh.
     #[arg(long, env = "EDGECOMMONS_REGISTRY_URL")]
     pub source: Option<String>,
 
@@ -307,7 +307,7 @@ pub enum DeploymentCmd {
     /// Resolve pinned versions to digests. The only verb that touches the network.
     Lock {
         definition: PathBuf,
-        /// Registry URL or a local components.json path.
+        /// Local components.json path; omitted uses the registry through authenticated gh.
         #[arg(long, env = "EDGECOMMONS_REGISTRY_URL")]
         source: Option<String>,
     },

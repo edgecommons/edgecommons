@@ -26,7 +26,8 @@ southbound connections of its own.
 
 ## 3. Watch it on the bus
 
-Subscribe to the six UNS wildcards (any MQTT client, e.g. `mosquitto_sub` or MQTTX):
+Observe the scaffold's component-scoped topics below. For a fleet, use both scope patterns
+per class from the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/):
 
 ```bash
 mosquitto_sub -h localhost -t 'ecv1/+/+/state' -t 'ecv1/+/+/metric/#' \
@@ -48,8 +49,11 @@ You'll see:
 The scaffold registers one command verb, `set-greeting`, alongside the library's automatic
 `ping`/`reload-config`/`get-configuration`. Publish a request and subscribe to the reply topic:
 
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
+
 ```
-publish ecv1/my-thing/<<BINNAME>>/main/cmd/set-greeting
+publish ecv1/my-thing/<<BINNAME>>/cmd/set-greeting
   {"header":{"name":"set-greeting","version":"1.0","reply_to":"app/r","correlation_id":"1"},
    "body":{"greeting":"Hi there"}}
 subscribe app/r  →  {"ok":true,"result":{"previousGreeting":"Hello from <<COMPONENTNAME>>","greeting":"Hi there"}}

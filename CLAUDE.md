@@ -3,10 +3,16 @@
 This file provides guidance to Claude Code (claude.ai/code) and other AI coding agents when
 working in this repository.
 
+## Source review
+
+Use current files and Git history directly. Do not use CodeGraph or Graphify, including lingering
+indexes or generated graphs. The user has disabled them. See [current implementation status](docs/CURRENT_STATUS.md)
+for the reviewed main baseline and work that remains on other branches.
+
 ## What this is
 
-`edgecommons` is the **Greengrass Commons** ecosystem: libraries, a scaffolding CLI, and component
-templates for building **AWS IoT Greengrass v2** components. The libraries bundle the cross-cutting
+`edgecommons` is the **EdgeCommons** ecosystem: libraries, a scaffolding CLI, and component
+templates for **Greengrass, HOST and Kubernetes** components. The libraries bundle the cross-cutting
 concerns every edge component needs — configuration, messaging, metrics, heartbeat, logging,
 credentials, parameters, and telemetry streaming — behind clean interfaces so component authors
 write only business logic.
@@ -19,9 +25,9 @@ envelope. **Java is the canonical reference.**
 | Path | What it is | Stack |
 |------|-----------|-------|
 | `libs/java/` | The canonical, most complete library. Maven artifact `com.mbreissi.edgecommons:edgecommons`. | Java 25 (LTS), Maven |
-| `libs/python/` | The Python port (PyPI `edgecommons`). **Has its own `CLAUDE.md` — read it before working here.** | Python 3.9+, setuptools |
+| `libs/python/` | The Python library (`edgecommons`), distributed by Git ref; read its `README.md` and `doc/`. | Python 3.9+, setuptools |
 | `libs/rust/` | The Rust port (crate `edgecommons`). | Rust (edition 2024, MSRV 1.85), Cargo |
-| `libs/ts/` | The TypeScript port (npm `edgecommons`). | TypeScript 5 / Node 18+ |
+| `libs/ts/` | The TypeScript library (`@edgecommons/edgecommons` on GitHub Packages). | TypeScript 5 / Node 18+ |
 | `libs/rust-streamlog/` | Shared `edgestreamlog` core: the embedded telemetry-streaming engine. All four languages use it via native bindings (Java/Panama, Python/PyO3, Node/napi-rs); Rust uses it directly. | Rust (edition 2021), Cargo |
 | `cli/` | The `edgecommons` CLI: scaffold, validate, upgrade/version, package, release components; the deployment kernel and its five ports. A Cargo workspace (`ec-cli`, `ec-diag`, `ec-scaffold`, `ec-validate`, `ec-deploy`, `ec-adapters`, `ec-studio`). Design: `docs/platform/DESIGN-cli.md`. | Rust (edition 2024, MSRV 1.85) |
 | `examples/{java,python,rust,ts}/` | Worked "best-practice" example components (skeletons) that demonstrate each library. | per language |
@@ -100,7 +106,9 @@ exists to abstract these differences away so the same business logic runs everyw
   connections/subscriptions block until confirmed; request/reply with correlation **and a
   framework-owned deadline** (`messaging.requestTimeoutSeconds`, default 30 s); per-subscription
   concurrency cap.
-  The message envelope — `{header, identity, tags, body}` — is identical across languages: every
+  The protobuf message envelope has the shared JSON projection `{header, identity, tags, body}`.
+  Normal MQTT and Greengrass IPC messaging carries protobuf bytes (`proto/edgecommons/v1`);
+  native configuration/Shadow documents remain JSON. Across languages: every
   config-built message is stamped with the top-level **`identity`** element
   (`{hier, path, component, instance}`, from the top-level `hierarchy`/`identity` config; the old
   `tags.thing` is removed).
@@ -115,8 +123,9 @@ exists to abstract these differences away so the same business logic runs everyw
   (D-U28: the instance token is optional, so covering only one scope misses the other's traffic). Cross-language conformance is pinned by
   `uns-test-vectors/`. (The `uns-bridge`/site-broker realization (Phase 3) has shipped; the
   `data()`/`events()`/`app()` publish facades and the minimal `commands()` inbox are shipped in all
-  four languages. The richer `status()`/`discovery()`/`telemetry()` facades and the `log`-tail
-  publisher remain deferred — use `messaging()` + `uns()` for those.)
+  four languages, with declared command scope and immediate/deferred outcomes. Structured logs
+  publish through `getLogs()`/`logs()`. Richer `discovery()`/`telemetry()` convenience facades remain
+  separate roadmap work.)
 - **metrics** — pluggable targets: CloudWatch EMF, cloudwatch-component, messaging (publishes on the
   UNS `metric` class), local log, prometheus.
 - **heartbeat** — the automatic UNS **`state` keepalive** (`ecv1/{device}/{component}/state`,
@@ -124,7 +133,7 @@ exists to abstract these differences away so the same business logic runs everyw
   (CPU/memory/disk/threads/FDs) emitted as the **`sys` metric** through the metric subsystem.
   Config is `heartbeat: {enabled, intervalSecs, measures, destination}` — the legacy `targets[]`
   array is removed.
-- **logging** — console + optional size-rotated file logging; per-language format token (`logging.<lang>_format`).
+- **logging** — console + optional size-rotated file logging; per-language format token (`logging.<lang>_format`); opt-in structured UNS log publishing through `getLogs()`/`logs()`.
 - **credentials** — `gg.credentials()`: an encrypted local vault (envelope encryption) with optional
   central sync from AWS Secrets Manager over TES. Conformance vectors in `vault-test-vectors/`; design in `docs/CREDENTIALS.md`.
 - **parameters** — `gg.parameters()`: offline-first externalized config (env / mountedDir / AWS SSM),
@@ -212,8 +221,10 @@ D‑CLI‑1…D‑CLI‑16, defect register §12).
 - **`component upgrade` moves the *library*; `component version` moves the *component*.** Distinct verbs.
 - **`component release` produces; it never publishes** (D‑CLI‑10) — it builds, digests, and emits a
   release descriptor. Tagging/upload is the CI release workflow's job.
-- **`deployment`/`studio` verbs are declared but not built** in this build; they exit **5**
-  (not implemented) rather than pretending. Exit codes: `0` ok · `1` findings · `2` usage ·
+- **Deployment validate/lock/render/plan/release and `studio serve` are implemented.** Studio
+  includes local draft authoring and semantic conflict review. Main only derives a PR-create URL;
+  branch publication/PR creation remain on an unmerged branch. `deployment diff` returns **5**
+  on main. See `cli/docs/` and `docs/CURRENT_STATUS.md`. Exit codes: `0` ok · `1` findings · `2` usage ·
   `3` environment · `4` internal · `5` not implemented.
 - The acceptance gate is **scaffold → build**, not "the Rust tests pass": `.github/workflows/cli.yml`
   scaffolds every template and compiles it in its own language, plus a 90% coverage gate.

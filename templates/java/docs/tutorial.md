@@ -1,5 +1,9 @@
 # Tutorial — Run the Scaffold and Watch Its Demo Surface
 
+Before running the MQTT examples, define `ec_publish` from the [protobuf MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/).
+It encodes each JSON projection with the matching Python SDK before publication.
+Use that guide to decode received payloads; ordinary `mosquitto_sub -v` output contains binary bytes.
+
 > This documents the generated scaffold; rewrite it as you build the component out.
 
 This tutorial builds and runs the scaffold, then has you watch its demonstrated metric, data signal,
@@ -51,9 +55,10 @@ Every tick (10 s by default) you see: a `loopTicks` metric (a monotonic `tickCou
 
 ## Step 5 — Drive the custom command verb
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```bash
-mosquitto_pub -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/cmd/set-greeting' -m \
-  '{"header":{"name":"set-greeting","version":"1.0"},"body":{"greeting":"Hi there"}}'
+ec_publish '{"header":{"name":"set-greeting","version":"1.0"},"body":{"greeting":"Hi there"}}' -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/cmd/set-greeting'
 ```
 
 Watch the `app`-status topic (`ecv1/+/+/app/#`) on its next tick — the greeting has changed, proving

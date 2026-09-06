@@ -1,46 +1,17 @@
 # edgecommons Unified Namespace (UNS) — messaging namespace, identity & site-bus realization
 
-> **Status (updated 2026-07-05): Phases 1–3 SHIPPED in all four languages, merged to `main`** and
-> released as **v0.2.0** (release commit `b1d8d85`) — the topic grammar, the eight classes, the top-level `identity` element,
-> `messaging()`/`gg.uns()`/`gg.instance()`, the reserved-class publish guard, `request()`'s internal
-> deadline, MQTT LWT, and the library-owned `state`/`metric`/`cfg` publishers are real, tested code (see
-> [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) for file:line citations and the mirror-parity
-> record). **Phase 3 is also shipped**: the `_bcast` `republish-state`/`republish-cfg` listener (§9.4)
-> is in all four languages, and the `uns-bridge` component (§9.1) is built and passing a live
-> dual-broker end-to-end test in its own sibling repo — see
-> [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md) for exactly what's done there and what's still
-> pending before general release (the edge-console site-side client and the GREENGRASS/IPC bridge
-> variant; GitHub publish, the `registry/components.json` entry, and the git-rev pin to the v0.2.0 UNS
-> release are now done). **The class-publish facades — `data()`/`events()`/`app()` — have also shipped in all
-> four languages**, ahead of Phase 5: see [`DESIGN-class-facades.md`](DESIGN-class-facades.md) for the
-> full design + decision register. They replace the raw `uns()`+`messaging()` hand-building §7.3 used
-> to describe for the app-usable classes, and complete the class-facade family alongside the reserved
-> `state`/`metric`/`cfg` publishers and the minimal `commands()` inbox — every one of the eight UNS
-> classes now has exactly one library-owned owner (§7.3, §4). **Phases 4 (streaming enrichment, M15)
-> and 5 (the southbound command family, M9, and D‑U15/16) remain design-only** — see §13 for the
-> per-phase breakdown. This document specifies a
-> single **Unified Namespace** for how edgecommons components address one another on the bus: the topic
-> grammar, the message classes, the identity model, the messaging API surface (`messaging()` / `uns()` /
-> the platform facades), streaming enrichment, and the physical realization of a **site-wide UNS bus**
-> across per-device brokers. Java is canonical; the build lands in all four libraries (Java / Python /
-> Rust / TS) with identical semantics. It was a deliberate, **pre-1.0 breaking change** — there was no
-> production installed base to preserve.
->
-> **Companion docs:** [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) (**the implementation
-> companion** — concrete API shapes, per-language mirror notes, and the D‑U1…D‑U24 decisions register),
-> [`DESIGN-class-facades.md`](DESIGN-class-facades.md) (the **shipped** `data()`/`events()`/`app()`
-> class-publish facades — body-contract enforcement + defaults + channel routing for the three
-> app-usable classes; §7.3 below is their summary, that doc is the source of truth),
-> [`DESIGN-channels.md`](DESIGN-channels.md) (the local/northbound/stream channel
-> model this concretizes), [`DESIGN-core.md`](DESIGN-core.md) (platform/transport resolution & identity
-> chain), [`../HIERARCHICAL_CONFIG.md`](../HIERARCHICAL_CONFIG.md) (how the hierarchy + shared identity are
-> distributed), [`../TELEMETRY_STREAMING.md`](../TELEMETRY_STREAMING.md) (the streaming service enriched
-> here). The **`edge-console`** component (`edgecommons/edge-console`) is the first consumer and drove
-> this design; its own design doc depends on this one.
+> **Current status (reviewed 2026-09-06):** the UNS grammar, identity, reserved-class guards,
+> request deadlines, class facades, structured logs, optional-instance addressing (D-U28), and
+> declared command scopes are implemented in all four core libraries. `uns-bridge` and `edge-console`
+> have their own shipped implementations. The nine southbound scaffold verbs use scoped commands;
+> richer core-owned southbound discovery and streaming enrichment retain separate design scope.
+> Hierarchical configuration is implemented; see [HIERARCHICAL_CONFIG.md](../HIERARCHICAL_CONFIG.md).
+> See [current status](../CURRENT_STATUS.md) for ownership, remaining work, and validation limits.
+> Dated phase checklists below preserve historical rollout evidence, not fresh validation.
 
 ---
 
-## 1. Problem & scope
+## 1. Historical problem and scope
 
 Today every edgecommons subsystem and every component invents its **own topic scheme**:
 
@@ -167,6 +138,8 @@ physical node** (nothing sits below it but software), so "last level = node" is 
 Every envelope carries identity as a **top-level element** (sibling of `header`/`tags`/`body`, not buried
 in `tags`), self-describing and order-safe:
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```json
 {
   "header":   { "name": "state", "version": "1.0", "uuid": "…", "correlation_id": null },
@@ -199,7 +172,7 @@ A component commonly serves **many** instances — its existing `component.insta
 adapter with `kep1`, `plc-2`). The `{instance}` segment is resolved **per message**, from the instance the
 message pertains to — via an instance-scoped facade handle (`gg.instance("kep1").data().publish(…)`)
 or the originating-instance context — never a single `identity.instance` value. Component-level messages
-(the overall `state`) use the default token `main`.
+(the overall `state`) omit the instance token. A literal `main` identifies an actual instance only.
 
 ### 5.4 Distribution via Hierarchical Config
 
@@ -678,3 +651,47 @@ a precise error — silent coexistence of old and new topics is the worst outcom
 
 > The **`edge-console`** component consumes this design; see its design doc for the console-side FleetModel,
 > WebSocket bridge, screens, dynamic panels, and console-specific mandates (M10/M12/M13).
+
+
+## Historical rollout summary (2026-07-05)
+
+The following original status and review notes are retained as dated implementation history.
+The current-status section at the top of this document governs present delivery claims.
+
+> **Status (updated 2026-07-05): Phases 1–3 SHIPPED in all four languages, merged to `main`** and
+> released as **v0.2.0** (release commit `b1d8d85`) — the topic grammar, the eight classes, the top-level `identity` element,
+> `messaging()`/`gg.uns()`/`gg.instance()`, the reserved-class publish guard, `request()`'s internal
+> deadline, MQTT LWT, and the library-owned `state`/`metric`/`cfg` publishers are real, tested code (see
+> [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) for file:line citations and the mirror-parity
+> record). **Phase 3 is also shipped**: the `_bcast` `republish-state`/`republish-cfg` listener (§9.4)
+> is in all four languages, and the `uns-bridge` component (§9.1) is built and passing a live
+> dual-broker end-to-end test in its own sibling repo — see
+> [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md) for exactly what's done there and what's still
+> pending before general release (the edge-console site-side client and the GREENGRASS/IPC bridge
+> variant; GitHub publish, the `registry/components.json` entry, and the git-rev pin to the v0.2.0 UNS
+> release are now done). **The class-publish facades — `data()`/`events()`/`app()` — have also shipped in all
+> four languages**, ahead of Phase 5: see [`DESIGN-class-facades.md`](DESIGN-class-facades.md) for the
+> full design + decision register. They replace the raw `uns()`+`messaging()` hand-building §7.3 used
+> to describe for the app-usable classes, and complete the class-facade family alongside the reserved
+> `state`/`metric`/`cfg` publishers and the minimal `commands()` inbox — every one of the eight UNS
+> classes now has exactly one library-owned owner (§7.3, §4). **Phases 4 (streaming enrichment, M15)
+> and 5 (the southbound command family, M9, and D‑U15/16) remain design-only** — see §13 for the
+> per-phase breakdown. This document specifies a
+> single **Unified Namespace** for how edgecommons components address one another on the bus: the topic
+> grammar, the message classes, the identity model, the messaging API surface (`messaging()` / `uns()` /
+> the platform facades), streaming enrichment, and the physical realization of a **site-wide UNS bus**
+> across per-device brokers. Java is canonical; the build lands in all four libraries (Java / Python /
+> Rust / TS) with identical semantics. It was a deliberate, **pre-1.0 breaking change** — there was no
+> production installed base to preserve.
+>
+> **Companion docs:** [`UNS-CANONICAL-DESIGN.md`](UNS-CANONICAL-DESIGN.md) (**the implementation
+> companion** — concrete API shapes, per-language mirror notes, and the D‑U1…D‑U24 decisions register),
+> [`DESIGN-class-facades.md`](DESIGN-class-facades.md) (the **shipped** `data()`/`events()`/`app()`
+> class-publish facades — body-contract enforcement + defaults + channel routing for the three
+> app-usable classes; §7.3 below is their summary, that doc is the source of truth),
+> [`DESIGN-channels.md`](DESIGN-channels.md) (the local/northbound/stream channel
+> model this concretizes), [`DESIGN-core.md`](DESIGN-core.md) (platform/transport resolution & identity
+> chain), [`../HIERARCHICAL_CONFIG.md`](../HIERARCHICAL_CONFIG.md) (how the hierarchy + shared identity are
+> distributed), [`../TELEMETRY_STREAMING.md`](../TELEMETRY_STREAMING.md) (the streaming service enriched
+> here). The **`edge-console`** component (`edgecommons/edge-console`) is the first consumer and drove
+> this design; its own design doc depends on this one.

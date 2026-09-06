@@ -1,35 +1,17 @@
 # edgecommons UNS — Canonical API Design & Decisions Register (implementation companion)
 
-> **Status (updated 2026-07-05): Phases 1–3 SHIPPED, all four languages, merged to `main`** and
-> released as **v0.2.0** (release commit `b1d8d85`) — every API shape below (`MessageIdentity`, `gg.uns()`/`UnsClass`/`UnsScope`,
-> the `gg.instance()` handle, the reserved-class guard + per-language internal seam, the `request()`
-> deadline, MQTT LWT, northbound API naming, the library-owned `state`/`metric`/`cfg` publishers, the
-> `uns-test-vectors/` conformance suite, and the interop UNS suite) is real, tested code — see the
-> "Build plan — phase checklist" at the bottom for the per-item status and DESIGN-uns.md §13 for the
-> phase-level summary. Phase 3 (`uns-bridge` + the `_bcast` listener) has also shipped — see
-> [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md). **The `data()`/`events()`/`app()` class-publish
-> facades — §7's "deferred" list below — have since shipped in all four languages**, ahead of Phase 5;
-> see [`DESIGN-class-facades.md`](DESIGN-class-facades.md) (the companion doc for those three) and §7's
-> update note. Phases 4 (streaming enrichment) and 5 (the
-> southbound command family + D‑U15/16, minus the now-shipped facades) remain design-only. Companion to
-> [`DESIGN-uns.md`](DESIGN-uns.md) (the approved design). Java canonical; Python/Rust/TS mirror notes
-> inline. Pre-1.0 hard cut; no dual-publish. Shared/layered config is **explicitly out of scope** —
-> each component reads its own `hierarchy` + `identity` blocks (shared config is a later co-location
-> optimization).
->
-> **Provenance:** produced by a Fable design pass over seven code-grounded reader maps (all four cores +
-> schema + components + interop). The **Decisions register** below is the running tracker for later
-> review.
->
-> **Review status (updated 2026-07-02):** all four flagged decisions **resolved with the user**. **D‑U17
-> → uniform config-driven named connection, no divergence** (§2.3); **D‑U18 ✅** (component = short name);
-> **D‑U19 → component-inbox + broadcast** (§4.3); **D‑U20 ✅** (heartbeat `targets[]` removed; measures
-> keep full sink routing via the metric subsystem). **M11 is pulled into Phase 1.**
+> **Current status (reviewed 2026-09-06):** the UNS grammar, identity, reserved-class guards,
+> request deadlines, class facades, structured logs, optional-instance addressing (D-U28), and
+> declared command scopes are implemented in all four core libraries. `uns-bridge` and `edge-console`
+> have their own shipped implementations. The nine southbound scaffold verbs use scoped commands;
+> richer core-owned southbound discovery and streaming enrichment retain separate design scope.
+> Hierarchical configuration is implemented; see [HIERARCHICAL_CONFIG.md](../HIERARCHICAL_CONFIG.md).
+> See [current status](../CURRENT_STATUS.md) for ownership, remaining work, and validation limits.
+> Dated phase checklists below preserve historical rollout evidence, not fresh validation.
 
-**Conformance vocabulary:** *topics are byte-identical* across languages; *envelopes are structurally
-identical* (same key set, same values; JSON member order is **not** normative — the four serializers
-already differ in member order, and the interop harness already compares structurally). Serializers
-SHOULD emit the canonical order below for readability; tests assert structural equality (D‑U22).
+**Conformance vocabulary:** topics are byte-identical across languages. Normal envelopes are protobuf,
+pinned by shared protobuf vectors and interop. JSON projections are compared structurally; their
+member order is not normative. D-U22 records the original projection-order decision.
 
 ---
 
@@ -61,8 +43,9 @@ Normative rules:
 6. **Migration** — a single coordinated cutover across org-controlled test infra (no `ecv1`→`ecv2`
    bump; old `main/*` and new no-instance publishers are not expected to coexist in a live fleet).
 
-Status: **ratified; four-language + component rollout in progress** — this doc is the target spec, and
-the `main`-form spots below are being updated as that rollout lands.
+Status: **ratified and implemented in all four core libraries**. Component scope omits the instance
+token and `identity.instance`; a literal instance named `main` remains valid. Original rollout records
+are historical evidence, not a pending-core claim.
 
 ---
 
@@ -76,6 +59,8 @@ The envelope becomes `{header, identity, tags, body}` (raw messages remain `{raw
 identity). Canonical member order: `header`, `identity`, `tags`, `body`; inside `identity`: `hier`,
 `path`, `component`, and `instance` **when present** (optional — D‑U28); inside each `hier` entry:
 `level`, `value`.
+
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
 
 ```json
 {
@@ -103,7 +88,7 @@ Rules:
   semantics: segment after the last `.` — D‑U18). The `instance` token is **optional (D‑U28)**: present
   ⇒ instance-scoped, absent ⇒ component/global-scoped; it is omitted from the wire when absent (no `main`
   default) and may not equal a reserved class token.
-- All four keys are present when `identity` is present. `identity` itself is **optional on the wire**: a
+- `hier`, `path`, and `component` are present when `identity` is present; `instance` is optional. `identity` itself is **optional on the wire**: a
   message built without a config-bound builder (the CONFIG_COMPONENT bootstrap request §1.5, or raw
   bridging of external systems) legally omits it.
 - **`tags.thing` is removed** — hard cut. `MessageTags` loses the thing field in all four languages:
@@ -737,3 +722,35 @@ as this phase landing.
 
 > **Cross-cutting:** `edge-console` (design only, no code) already consumes the new identity model; its
 > DESIGN.md needs no change beyond what already references DESIGN-uns.
+
+
+## Historical rollout summary (2026-07-05)
+
+The following original status and review notes are retained as dated implementation history.
+The current-status section at the top of this document governs present delivery claims.
+
+> **Status (updated 2026-07-05): Phases 1–3 SHIPPED, all four languages, merged to `main`** and
+> released as **v0.2.0** (release commit `b1d8d85`) — every API shape below (`MessageIdentity`, `gg.uns()`/`UnsClass`/`UnsScope`,
+> the `gg.instance()` handle, the reserved-class guard + per-language internal seam, the `request()`
+> deadline, MQTT LWT, northbound API naming, the library-owned `state`/`metric`/`cfg` publishers, the
+> `uns-test-vectors/` conformance suite, and the interop UNS suite) is real, tested code — see the
+> "Build plan — phase checklist" at the bottom for the per-item status and DESIGN-uns.md §13 for the
+> phase-level summary. Phase 3 (`uns-bridge` + the `_bcast` listener) has also shipped — see
+> [`DESIGN-uns-bridge.md`](DESIGN-uns-bridge.md). **The `data()`/`events()`/`app()` class-publish
+> facades — §7's "deferred" list below — have since shipped in all four languages**, ahead of Phase 5;
+> see [`DESIGN-class-facades.md`](DESIGN-class-facades.md) (the companion doc for those three) and §7's
+> update note. Phases 4 (streaming enrichment) and 5 (the
+> southbound command family + D‑U15/16, minus the now-shipped facades) remain design-only. Companion to
+> [`DESIGN-uns.md`](DESIGN-uns.md) (the approved design). Java canonical; Python/Rust/TS mirror notes
+> inline. Pre-1.0 hard cut; no dual-publish. Shared/layered config is **explicitly out of scope** —
+> each component reads its own `hierarchy` + `identity` blocks (shared config is a later co-location
+> optimization).
+>
+> **Provenance:** produced by a Fable design pass over seven code-grounded reader maps (all four cores +
+> schema + components + interop). The **Decisions register** below is the running tracker for later
+> review.
+>
+> **Review status (updated 2026-07-02):** all four flagged decisions **resolved with the user**. **D‑U17
+> → uniform config-driven named connection, no divergence** (§2.3); **D‑U18 ✅** (component = short name);
+> **D‑U19 → component-inbox + broadcast** (§4.3); **D‑U20 ✅** (heartbeat `targets[]` removed; measures
+> keep full sink routing via the metric subsystem). **M11 is pulled into Phase 1.**

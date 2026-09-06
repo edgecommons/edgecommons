@@ -1,9 +1,14 @@
 # Reference — Messaging Interface & CLI
 
+Normal MQTT and Greengrass IPC messages carry protobuf bytes. Full envelopes shown as JSON are
+readable projections; body examples show only the application payload. See the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/)
+for encoding/inspection and the complete 12-filter fleet subscription set. Component scope omits
+`identity.instance`; a literal instance named `main` has no special meaning.
+
 *This documents the generated scaffold; rewrite it as you build the component out.*
 
 Every topic and message this adapter publishes or accepts, and its CLI flags. Addressing follows the
-**Unified Namespace (UNS)**: `ecv1/{device}/{component}/{instance}/{class}[/channel]`. For the
+**Unified Namespace (UNS)**: `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`. For the
 data/control plane model, see [explanation.md](../explanation.md); for client recipes, the
 [how-to guides](../how-to-guides.md).
 
@@ -17,7 +22,7 @@ data/control plane model, see [explanation.md](../explanation.md); for client re
 
 ## Envelope
 
-All messages use the EdgeCommons JSON envelope: `{header, identity, tags, body}`. The library stamps
+All messages use the EdgeCommons protobuf envelope: `{header, identity, tags, body}`. The library stamps
 the top-level `identity` (`{hier, path, component, instance}`) on every message built from a facade.
 Request/reply carries `header.reply_to` + `header.correlation_id`; the reply publishes to `reply_to`
 with the same `correlation_id`.
@@ -45,10 +50,8 @@ on one device, so all nine are `instance`: a request may be addressed to a devic
 (`…/{instance}/cmd/{verb}`) or to the component (`…/cmd/{verb}`) naming the device in the body — see
 [Addressing a verb](#addressing-a-verb).
 
-Fleet consumers subscribe the six UNS wildcards — telemetry `ecv1/+/+/+/data/#`, events
-`ecv1/+/+/+/evt/#`, metrics `ecv1/+/+/+/metric/#`, state `ecv1/+/+/+/state`. `state`/`metric`/`cfg`
-are library-owned **reserved** classes — this adapter only ever mints `data`/`evt` topics via the
-`data()`/`events()` facades and `cmd` replies via the command inbox, never a hand-assembled string.
+Fleet consumers use the 12 filters in the MQTT tools guide above: component and instance scope
+for each of `state`, `metric`, `cfg`, `log`, `data`, and `evt`. Add `app` filters when needed.
 
 ## The command inbox
 

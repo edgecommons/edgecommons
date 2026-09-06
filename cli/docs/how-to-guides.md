@@ -34,10 +34,10 @@ edgecommons component version --to 1.2.0 --dry-run
 edgecommons component version --to 1.2.0
 ```
 
-This rewrites the version across every manifest the project ships — `Cargo.toml`, `package.json`,
-`pom.xml`, `recipe.yaml`, and so on — so they cannot drift apart. The stated version is
-authoritative; the tool validates the string and refuses a non-version rather than inventing one from
-commit history.
+This updates the supported version fields in `Cargo.toml`, `package.json`, `pom.xml`, and
+`gdk-config.json`. It does not currently update `recipe.yaml` or a Python project's own version in
+`pyproject.toml`; review those separately. The stated version is authoritative; the tool validates
+the numeric dotted string rather than inferring one from commit history.
 
 ## Validate before every commit
 
@@ -82,10 +82,10 @@ Both mean the same thing: decide where artifacts live before trying to ship them
 edgecommons component release --out release.json
 ```
 
-This builds the artifacts, computes their digests, and writes a machine-readable release descriptor.
-It **never tags, uploads, or publishes** — the CLI produces, the runner publishes. A release cut from
-a laptop holding credentials would have no provenance, which is exactly what the supply-chain gate
-exists to prevent. Your release workflow takes `release.json` and does the privileged half.
+Build the artifacts before running this command. It hashes already-staged Greengrass files and
+writes a machine-readable release descriptor; it does not run a build. Container image coordinates
+and supply-chain evidence remain for the release workflow to fill. It **never tags, uploads, or
+publishes**. Set a concrete component version first if GDK still declares `NEXT_PATCH`.
 
 ## Find a component in the ecosystem
 
@@ -97,13 +97,16 @@ edgecommons registry show opcua-adapter
 edgecommons registry versions opcua-adapter
 ```
 
-Point at a different catalog — a fork, a local file, an internal mirror — with `--source`, or set
+Use a local copy of a different catalog with `--source`, or set
 `EDGECOMMONS_REGISTRY_URL` once:
 
 ```bash
 export EDGECOMMONS_REGISTRY_URL=./my-registry/components.json
 edgecommons registry list
 ```
+
+The default uses authenticated `gh`; HTTP(S) source URLs are unsupported. `registry versions`
+currently reports that release-index lookup is unavailable rather than listing versions.
 
 ## Render a deployment
 
@@ -121,7 +124,7 @@ effective config** against the strict runtime schema — so a config that only b
 hierarchy is merged is caught before anything is written — and finally the compatibility guard
 against the lock (below).
 
-`plan` prints the normalized plan: per node, per component, what changes and whether applying it
+`plan` prints the normalized target plan: per node, per component, the desired configuration and whether a config update
 **restarts the component**. Restart impact is derived from each component's config source, never
 assumed — a watched file or a catalog push is picked up live, an environment change is not.
 
@@ -144,8 +147,8 @@ edgecommons deployment lock site.yaml
 git add site.lock && git commit -m "lock component versions"
 ```
 
-This is the one command in the tool that reaches the network. Point it somewhere else when you need
-to — a local catalog file works, which is also how you lock on a machine with no `gh` credentials:
+This uses authenticated `gh` by default. A local catalog file lets you lock without a network request
+or `gh` credentials:
 
 ```bash
 edgecommons deployment lock site.yaml --source ../registry/components.json
@@ -156,13 +159,13 @@ its Greengrass component name. Once it is committed, `validate`, `render`, and `
 at all, and a Greengrass render no longer needs `artifact.greengrassName` in the definition.
 
 Re-run it whenever you change a pin. What it cannot resolve it records **with the reason** and reports
-as a warning, so a lock never looks more complete than it is — today no EdgeCommons component
-publishes a release index, so every digest comes back unverified and both `lock` and `validate` say
-so on every run.
+as a warning. The current registry adapter resolves component names but leaves per-version digests
+and schemas unverified; the lock and validation diagnostics expose that limitation.
 
 ## Promote a release
 
-Config and artifacts are two independently versioned streams, and you promote one at a time:
+Config and artifacts are two independently versioned streams, and you generate release files for
+one at a time. This command currently requires exactly one profile and one environment:
 
 ```bash
 edgecommons deployment release site.yaml --stream config
@@ -172,6 +175,9 @@ edgecommons deployment release site.yaml --stream artifact
 The release lock **correlates** the two without fusing them: it records what was in effect together,
 and either stream can roll back alone. A config change ships without reshipping the binary, and the
 reverse.
+
+Output is written locally under `releases/<tag>/`. Publication and application are separate runner
+work; this command does not change devices.
 
 ## Use it in CI
 

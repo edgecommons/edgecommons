@@ -75,7 +75,7 @@ dispatch thread.
 
 ## UNS addressing
 
-Topics follow `ecv1/{device}/{component}/{instance}/{class}[/channel]`, built and validated by the
+Topics follow `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`, built and validated by the
 library. A sink's inbound filter is named by config; everything it publishes (`evt`, and the
 library's `state`/`metric`) is minted through `gg.uns()` — never hand-written. The reserved classes
 (`state`/`metric`/`cfg`/`log`) are library-owned and rejected on direct publish.

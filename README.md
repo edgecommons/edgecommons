@@ -1,10 +1,13 @@
-# EdgeCommons — the Greengrass Commons ecosystem
+# EdgeCommons — portable components for the industrial edge
 
 EdgeCommons is a set of **libraries, a scaffolding CLI, and component templates** for building
-**AWS IoT Greengrass v2** components. The libraries bundle the cross-cutting concerns every edge
+**Greengrass, HOST and Kubernetes** components. The libraries bundle the cross-cutting concerns every edge
 component needs — **configuration, messaging, metrics, heartbeat, logging, credentials, parameters,
 and telemetry streaming** — behind clean interfaces, so component authors write only business logic.
 The CLI scaffolds new components from templates; the examples are worked, runnable skeletons.
+
+See [current implementation status](docs/CURRENT_STATUS.md) for the reviewed baseline, pending
+branches and validation limits.
 
 The same library exists in **four languages — Java, Python, Rust, TypeScript —** as deliberate
 mirrors of each other: same config schema, same CLI contract, same subsystem boundaries, same
@@ -25,7 +28,8 @@ logic runs unchanged across deployment targets:
   - **GREENGRASS** — the on-device, Nucleus-managed path: reads configuration from the Greengrass
     deployment (`GG_CONFIG`) and defaults to the **IPC** transport.
   - **HOST** — a bare host / Docker container / VM. Defaults to the **MQTT** transport.
-  - **KUBERNETES** — declared for first-class Kubernetes support; the wiring lands in a later phase.
+  - **KUBERNETES** — mounted ConfigMap configuration and hot reload, Downward API identity,
+    HTTP health, Prometheus metrics and structured stdout logging.
 - **`--transport <TRANSPORT> [path]`** — `IPC` | `MQTT [messaging_config.json]`. The default is
   derived from the platform (GREENGRASS ⇒ IPC, HOST/KUBERNETES ⇒ MQTT); **IPC is valid only on
   GREENGRASS**. The **MQTT** transport is a **dual-MQTT** provider that connects to a **local broker**
@@ -34,7 +38,7 @@ logic runs unchanged across deployment targets:
 
 The standard CLI contract is identical across all four languages:
 `-c/--config <SOURCE> [args]` (one of `FILE`, `ENV`, `GG_CONFIG`, `SHADOW`,
-`CONFIG_COMPONENT`; default: from the resolved platform profile — GREENGRASS → GG_CONFIG,
+`CONFIG_COMPONENT`, `CONFIGMAP`; default: from the resolved platform profile — GREENGRASS → GG_CONFIG,
 HOST → FILE, KUBERNETES → CONFIGMAP), `--platform <PLATFORM>`, `--transport <TRANSPORT> [path]`, and
 `-t/--thing <name>`.
 
@@ -49,9 +53,9 @@ HOST → FILE, KUBERNETES → CONFIGMAP), `--platform <PLATFORM>`, `--transport 
 | Path | What it is | Stack |
 |------|-----------|-------|
 | `libs/java/` | The **canonical**, most complete library. Maven artifact `com.mbreissi.edgecommons:edgecommons`. | Java 25, Maven |
-| `libs/python/` | The Python port (PyPI `edgecommons`). | Python 3.9+, setuptools |
+| `libs/python/` | The Python library (`edgecommons`, consumed by Git ref). | Python 3.9+, setuptools |
 | `libs/rust/` | The Rust port (crate `edgecommons`). | Rust (edition 2024), Cargo |
-| `libs/ts/` | The TypeScript port (npm `edgecommons`). | TypeScript 5 / Node 18+ |
+| `libs/ts/` | The TypeScript library (`@edgecommons/edgecommons`, GitHub Packages). | TypeScript 5 / Node 18+ |
 | `libs/rust-streamlog/` | Shared **`edgestreamlog`** core: the embedded telemetry-streaming engine. All four languages use it — Rust directly, the others via native bindings (Java/Panama, Python/PyO3, Node/napi-rs in `bindings/`). | Rust, Cargo |
 
 ### Tooling & shared assets
@@ -88,40 +92,43 @@ HOST → FILE, KUBERNETES → CONFIGMAP), `--platform <PLATFORM>`, `--transport 
 
 ## Quick start
 
-Build a new component with the CLI (see `cli/README.md` for the full reference):
+From the core root, install the CLI and scaffold a component (see [CLI documentation](cli/README.md)).
+Cargo's bin directory must be on PATH:
 
 ```bash
-cd cli && cargo build --release              # -> cli/target/release/edgecommons
+cargo install --path cli/crates/ec-cli       # installs edgecommons into Cargo's bin directory
 edgecommons doctor                           # check prerequisites for the platforms you target
 edgecommons template list                    # the language x kind matrix
 edgecommons component new -n com.example.MyComponent -l PYTHON      # JAVA|PYTHON|RUST|TYPESCRIPT
-edgecommons component validate -p MyComponent
+edgecommons component validate -p my-component
 ```
 
-Run a component locally on a bare **HOST** against a local MQTT broker:
+Start the broker from the core root, then run a generated component with its actual entry point
+and shipped configuration paths. For example, after scaffolding the Python service above:
 
 ```bash
 docker compose -f test-infra/compose.yaml up -d      # bring up the shared EMQX broker
-python3 main.py --platform HOST --transport MQTT standalone-messaging.json -c FILE config.json -t my-thing
-java --enable-native-access=ALL-UNNAMED -jar target/<artifact>.jar --platform HOST --transport MQTT ./standalone-messaging.json -c FILE ./config.json -t my-thing
+cd my-component
+python -m pip install -r requirements.txt
+python main.py --platform HOST --transport MQTT test-configs/standalone-messaging.json -c FILE test-configs/config_1.json -t my-thing
 ```
 
-Components are packaged and deployed with the **GDK (Greengrass Development Kit)** —
+Greengrass components are packaged and published with the **GDK (Greengrass Development Kit)** —
 `gdk component build` then `gdk component publish`, configured per component in `gdk-config.json`
 and `recipe.yaml`.
 
 ## Cross-cutting subsystems (in every library)
 
-- **config** — five config-source managers (`FILE`, `ENV`, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT`),
+- **config** — six config sources (`FILE`, `ENV`, `GG_CONFIG`, `SHADOW`, `CONFIG_COMPONENT`, `CONFIGMAP`),
   template-variable substitution (`{ComponentName}`, `{ThingName}`, custom tags) with sanitization,
   hot reload, multi-instance config, and JSON-schema validation against the canonical `schema/`.
 - **messaging** — one interface over two transports: Greengrass **IPC** and **dual-MQTT**
   (local + IoT Core). Connections/subscriptions block until confirmed; request/reply with
   correlation and a framework deadline (`messaging.requestTimeoutSeconds`); a per-subscription
   concurrency cap; TLS (server-only or mutual). Generic component messaging config has no MQTT LWT;
-  `uns-bridge` derives its private site-broker LWT internally from its resolved UNS state topic. Identical envelope across
-  languages — `{header, identity, tags, body}`, with the top-level **`identity`** element
-  (`{hier, path, component, instance}`) stamped on every config-built message.
+  `uns-bridge` derives its private site-broker LWT internally from its resolved UNS state topic. Shared protobuf envelope across
+  languages — JSON projection `{header, identity, tags, body}` (normal MQTT/IPC carries protobuf bytes), with the top-level **`identity`** element
+  (`{hier, path, component, instance?}`) stamped on every config-built message.
 - **uns** (`gg.uns()`) — the **Unified Namespace**: every component addresses the bus as
   `ecv1/{device}/{component}/[{instance}/]{class}[/channel]` (the instance token is optional —
   present for instance scope, omitted for component scope; classes: reserved `state`/`metric`/
@@ -135,7 +142,8 @@ and `recipe.yaml`.
 - **heartbeat** — the automatic UNS **`state` keepalive** (`ecv1/{device}/{component}/state`,
   on by default / 5 s / local) plus system measures (CPU/memory/disk/threads/FDs) emitted as the
   `sys` metric through the metric subsystem.
-- **logging** — console plus optional size-rotated file logging; per-language format token.
+- **logging** — console plus optional size-rotated file logging; per-language format token;
+  opt-in structured UNS log publishing through `getLogs()`/`logs()`.
 - **credentials** (`gg.credentials()`) — encrypted local vault (envelope encryption) with optional
   central sync from AWS Secrets Manager over TES. See `docs/CREDENTIALS.md`.
 - **parameters** (`gg.parameters()`) — offline-first externalized config (env / mountedDir / AWS SSM),

@@ -30,7 +30,7 @@ this documentation stop matching what the component publishes.
 
 ## `component.instances[]`
 
-The scaffold ships with **no instances** — it runs as the implicit `main` instance and reports no
+The scaffold ships with **no instances** — it publishes at component scope without an instance token and reports no
 southbound connections. Declare the per-instance keys your component reads as you add them; every
 entry must at least carry:
 

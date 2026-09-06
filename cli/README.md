@@ -31,8 +31,8 @@ validation work offline.
 | `component release` | Build, digest, and emit a release descriptor. Never publishes. |
 | `template list` / `show` | The language × kind matrix, and one template's contents. |
 | `registry list` / `show` / `versions` | The ecosystem catalog. |
-| `deployment …` | Model-to-artifact deployment. Not available in this build. |
-| `studio serve` | The Deployment Studio server. Not available in this build. |
+| `deployment …` | Validate, lock, render, plan and release deployment artifacts; author local drafts. `diff` is unavailable on main. |
+| `studio serve` | Serve the embedded Studio UI, review layers/render/evidence and edit local drafts. |
 | `doctor` | Check the external tools the platforms you target need. |
 | `completions <shell>` | A shell completion script. |
 
@@ -121,8 +121,10 @@ edgecommons component release -p MyComponent --out release.json
 | `ec-diag` | The diagnostic model and its human/JSON renderers. |
 | `ec-scaffold` | Embedded templates, the manifest engine, generation, version manipulation. |
 | `ec-validate` | The canonical schema, the component schema, semantic rules, artifact lint. |
-| `ec-deploy` | The deployment kernel: model, plan, and the five ports. No I/O. |
+| `ec-deploy` | Deployment models, validation, renderers, release/evidence, drafts and semantic conflict detection. No I/O. |
 | `ec-adapters` | Adapters behind the ports. The only crate that may link a cloud SDK. |
-| `ec-studio` | The Deployment Studio server shell. |
+| `ec-studio` | The Studio server and embedded React UI over the same kernel. |
 
+Full current reference: [`docs/README.md`](docs/README.md).
+Implementation and pending-branch status: [`../docs/CURRENT_STATUS.md`](../docs/CURRENT_STATUS.md).
 Design: [`docs/platform/DESIGN-cli.md`](../docs/platform/DESIGN-cli.md).

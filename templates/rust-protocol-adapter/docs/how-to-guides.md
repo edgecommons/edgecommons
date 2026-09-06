@@ -97,6 +97,9 @@ Both ride the library **command inbox** (`ecv1/{device}/<<BINNAME>>/cmd/{verb}`)
 [reference/messaging-interface.md](reference/messaging-interface.md) for every payload shape; the
 short version:
 
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
+
 ```text
 publish ecv1/<device>/<<BINNAME>>/cmd/sb/write
   {"header":{"name":"sb/write","reply_to":"app/r","correlation_id":"1"},

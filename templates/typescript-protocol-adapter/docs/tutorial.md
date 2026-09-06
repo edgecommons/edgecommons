@@ -46,8 +46,8 @@ failing signal on purpose, so you see from the first run that a read failure is 
 silently dropped. Also try:
 
 ```bash
-mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/state' -v      # the keepalive + per-instance connectivity
-mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/+/metric/#' -v   # southbound_health + the two operational families
+mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/state' -v      # the keepalive + per-instance connectivity
+mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/metric/#' -v   # southbound_health + the two operational families
 ```
 
 ## 5. Read a signal on demand
@@ -57,6 +57,9 @@ address it on that device's own topic — `ecv1/{device}/{component}/{instance}/
 below with a single device configured, on the component topic
 `ecv1/{device}/{component}/cmd/{verb}`. Set `header.name` to the verb and `header.reply_to` to a
 topic you subscribe:
+
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
 
 ```
 publish ecv1/my-thing/<<BINNAME>>/cmd/sb/read
@@ -77,6 +80,9 @@ risk, not a feature). Add the signal you want to allow:
 
 Rebuild the config, restart, then:
 
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
+
 ```
 publish ecv1/my-thing/<<BINNAME>>/cmd/sb/write
   {"header":{"name":"sb/write","reply_to":"app/r","correlation_id":"2"},
@@ -87,6 +93,9 @@ subscribe app/r → {"ok":true,"result":{"id":"device-1","written":1,"results":[
 The simulator's `writeSignal` just logs the write — a real backend would send it to the device.
 
 ## 7. Browse the device's address space
+
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
 
 ```
 publish ecv1/my-thing/<<BINNAME>>/cmd/sb/browse
