@@ -73,9 +73,6 @@ describe("napi host-callback sink bridge", () => {
     const name = `cb-acked-${Math.random().toString(36).slice(2)}`;
     const seen: Array<{ offset: number; pk: string; payload: string }> = [];
     let ticks = 0;
-    const iv = setInterval(() => {
-      ticks++;
-    }, 5);
 
     registerSinkCallback(name, (batchId: number, records: SinkRecord[]) => {
       // Genuinely-async drain, then resolve AllAcked (mirrors the validated §9 pattern).
@@ -86,19 +83,33 @@ describe("napi host-callback sink bridge", () => {
     });
 
     const svc = openCallbackStream(dir, name);
-    const h = svc.stream(name);
-    for (let i = 0; i < 20; i++) h.append("ns", 1000 + i, Buffer.from(`{"v":${i}}`));
-    h.flush();
+    const iv = setInterval(() => {
+      ticks++;
+    }, 5);
+    let drained = false;
+    try {
+      const h = svc.stream(name);
+      for (let i = 0; i < 20; i++) h.append("ns", 1000 + i, Buffer.from(`{"v":${i}}`));
+      h.flush();
 
-    const ok = await waitFor(() => seen.length >= 20);
-    clearInterval(iv);
-    expect(ok).toBe(true);
-    expect(seen.length).toBe(20);
-    expect(svc.stats(name).exportedTotal).toBe(20);
-    expect(svc.stats(name).backlog).toBe(0);
-    // The event loop kept ticking while the native export thread blocked -> no deadlock.
-    expect(ticks).toBeGreaterThan(0);
-    svc.close();
+      // Resolving the JS callback only wakes the native export thread; wait for its
+      // acknowledgement accounting and checkpoint commit before checking completion.
+      const ok = await waitFor(() => {
+        const stats = svc.stats(name);
+        return seen.length >= 20 && stats.exportedTotal === 20 && stats.backlog === 0;
+      });
+      drained = ok;
+      expect(ok).toBe(true);
+      expect(seen.length).toBe(20);
+      expect(svc.stats(name).exportedTotal).toBe(20);
+      expect(svc.stats(name).backlog).toBe(0);
+      // The event loop kept ticking while the native export thread blocked -> no deadlock.
+      expect(ticks).toBeGreaterThan(0);
+    } finally {
+      clearInterval(iv);
+      // Native close joins the export thread, which can still need a JS callback on failure.
+      if (drained) svc.close();
+    }
   });
 
   it("Partial: only the failed offsets are re-delivered (failedOffsets argument)", async () => {
