@@ -1,5 +1,9 @@
 # Tutorial — Run the Adapter Against Its Simulator
 
+Before running the MQTT examples, define `ec_publish` from the [protobuf MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/).
+It encodes each JSON projection with the matching Python SDK before publication.
+Use that guide to decode received payloads; ordinary `mosquitto_sub -v` output contains binary bytes.
+
 > This documents the generated scaffold; rewrite it as you build the component out.
 
 This tutorial takes the scaffold from nothing to a running adapter that publishes simulated device
@@ -44,42 +48,44 @@ Subscribe to the adapter's output:
 mosquitto_sub -h localhost -t 'ecv1/+/+/+/data/#' -v
 ```
 
-Within a few seconds you see JSON messages carrying a `SouthboundSignalUpdate` body — the simulated
+After decoding the payloads, you see messages carrying a `SouthboundSignalUpdate` body — the simulated
 `temperature-1` signal riding a sine wave with `quality: GOOD`, and `pressure-1` published with
 `quality: BAD` (`SENSOR_FAULT`) on purpose, to show that a failed read is reported, not dropped.
 
 ## Step 4 — Check status
 
+Subscribe to each reply topic in a second terminal before sending the corresponding command;
+use the MQTT tools guide to capture and decode one reply.
+
 Every `sb/*` verb acts on one device, so it is addressed either on that device's own topic
 (`ecv1/{device}/<<BINNAME>>/{instance}/cmd/{verb}`) or, as here, on the component topic with the
 device named in the body:
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```bash
-mosquitto_pub -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/cmd/sb/status' -m \
-  '{"header":{"name":"sb/status","reply_to":"app/reply/1","correlation_id":"1"},"body":{"instance":"device-1"}}'
-mosquitto_sub -h localhost -t 'app/reply/1' -C 1 -v
+ec_publish '{"header":{"name":"sb/status","reply_to":"app/reply/1","correlation_id":"1"},"body":{"instance":"device-1"}}' -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/cmd/sb/status'
 
 # The same command, addressed on the device's own topic:
-mosquitto_pub -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/device-1/cmd/sb/status' -m \
-  '{"header":{"name":"sb/status","reply_to":"app/reply/1","correlation_id":"1"},"body":{}}'
+ec_publish '{"header":{"name":"sb/status","reply_to":"app/reply/1","correlation_id":"1"},"body":{}}' -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/device-1/cmd/sb/status'
 ```
 
 The reply's `result` carries `connected`, `state`, `paused`, `endpoint`, and the device's counters.
 
 ## Step 5 — Read a signal on demand
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```bash
-mosquitto_pub -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/cmd/sb/read' -m \
-  '{"header":{"name":"sb/read","reply_to":"app/reply/2","correlation_id":"2"},"body":{"instance":"device-1","signals":[{"signalId":"temperature-1"}]}}'
-mosquitto_sub -h localhost -t 'app/reply/2' -C 1 -v
+ec_publish '{"header":{"name":"sb/read","reply_to":"app/reply/2","correlation_id":"2"},"body":{"instance":"device-1","signals":[{"signalId":"temperature-1"}]}}' -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/cmd/sb/read'
 ```
 
 ## Step 6 — Attempt a write
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```bash
-mosquitto_pub -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/cmd/sb/write' -m \
-  '{"header":{"name":"sb/write","reply_to":"app/reply/3","correlation_id":"3"},"body":{"instance":"device-1","writes":[{"signalId":"temperature-1","value":21.0}]}}'
-mosquitto_sub -h localhost -t 'app/reply/3' -C 1 -v
+ec_publish '{"header":{"name":"sb/write","reply_to":"app/reply/3","correlation_id":"3"},"body":{"instance":"device-1","writes":[{"signalId":"temperature-1","value":21.0}]}}' -h localhost -t 'ecv1/tutorial-thing/<<BINNAME>>/cmd/sb/write'
 ```
 
 The bundled config's `writes.allow` is empty, so this comes back `WRITE_NOT_ALLOWED` — the correct,

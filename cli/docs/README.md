@@ -6,8 +6,10 @@ canonical schema; moves it between library versions; packages and releases it; a
 deployment definition into the artifacts a target platform actually consumes.
 
 It carries the component templates and the config schema **inside the binary**, so scaffolding and
-validation work with no network and no registry. Network access exists in exactly two places, both
-named and both opt-in: `deployment lock`, and `component new --template-git`.
+validation work with no network and no registry. `deployment validate`, `render`, and `plan` also
+use local inputs. Registry queries and `deployment lock` use authenticated `gh` unless a local
+catalog is supplied; `component new --template-git` clones a template. Packaging delegates to
+external build tools, which may download dependencies, and `component package --publish` invokes GDK publishing.
 
 ```bash
 edgecommons component new --name com.example.MyAdapter --language RUST --kind protocol-adapter
@@ -24,8 +26,8 @@ edgecommons deployment render site.yaml --env prod --target HOST
 - **[Reference — commands](reference/commands.md)** — every verb, argument, and flag.
 - **[Reference — exit codes and diagnostics](reference/exit-codes.md)** — what each exit code means and
   what every `EC****` diagnostic is telling you.
-- **[Explanation](explanation.md)** — why one static binary, why it refuses to touch the network, and
-  why it produces artifacts but never publishes them.
+- **[Explanation](explanation.md)** — embedded inputs, the offline deployment kernel, and the boundary
+  between producing release files and publishing or applying them.
 
 ## The command surface
 
@@ -36,14 +38,17 @@ Seven verb families, noun first:
 | `component` | `new`, `validate`, `upgrade`, `version`, `package`, `release` — the component lifecycle |
 | `template` | `list`, `show` — inspect the templates the binary carries |
 | `registry` | `list`, `show`, `versions` — query the ecosystem catalog |
-| `deployment` | `validate`, `lock`, `render`, `plan`, `diff`, `release` — model to platform artifacts |
+| `deployment` | `validate`, `lock`, `render`, `plan`, `release`, `draft` — model to platform artifacts and local draft authoring; `diff` currently exits `5` |
 | `studio` | `serve` — the Deployment Studio server over the same kernel |
 | `doctor` | check the external tools your targets need |
 | `completions` | generate a shell completion script |
 
-Global flags work everywhere: `--json` for machine-readable output, `-q/--quiet`, `-v/--verbose`
+Global flags are accepted everywhere: `--json` for structured diagnostics and supported command output, `-q/--quiet`, `-v/--verbose`
 (repeatable), `--no-color`, and `--yes` to turn a missing prompt into a usage error instead of a
 question — which is what you want in CI.
+
+`--json` is not yet a uniform output contract for every verb: draft commands, for example, still
+print human-readable results. See the [command reference](reference/commands.md) before automating them.
 
 ## Requirements
 

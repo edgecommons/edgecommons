@@ -27,17 +27,18 @@ this documentation stop matching what the component publishes.
 
 | Key | Type | Default | Definition |
 |-----|------|---------|-----------|
-| `publish_interval` | integer | `3` | Seconds between the scaffold's demo publish tick (the app-status/metric/data/event quartet it emits each loop). |
+| `publish_interval` | integer | `3` | Illustrative field. The demo loop uses `TICK_INTERVAL` (10 seconds) in `src/app.rs`; it does not read this field. |
 
 ## `component.instances[]`
 
-This scaffold declares a single instance, `main` — the instance its `data()`/`events()`/`metrics()`
-facades are bound to.
+The sample configuration declares an instance named `main`. The demo publishes through component-
+scope facades and does not bind to this instance. Add explicit `gg.instance(id)` handles for
+instance-scoped work.
 
 | Key | Type | Default | Definition |
 |-----|------|---------|-----------|
 | `id` | string | `"main"` | Unique instance identifier; the `{instance}` token of this instance's UNS topics and the envelope identity. |
-| `publish_interval` | integer | `component.global.publish_interval` | Per-instance override of the tick cadence. |
+| `publish_interval` | integer | `component.global.publish_interval` | Illustrative setting; no per-instance timer reads it in this scaffold. |
 
 ## Complete example
 

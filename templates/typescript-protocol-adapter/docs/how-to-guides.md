@@ -68,6 +68,9 @@ anything touching a control system.
 Both go through the command inbox (`ecv1/{device}/{component}/cmd/{verb}`). Set `header.name` to
 the verb and `header.reply_to` + `header.correlation_id` for the reply.
 
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
+
 ```
 publish ecv1/<device>/<<BINNAME>>/cmd/sb/read
   {"header":{"name":"sb/read","reply_to":"app/r","correlation_id":"1"},
@@ -92,6 +95,9 @@ restarts it. Both are idempotent — pausing an already-paused instance replies 
 Useful during maintenance windows, or before a `sb/write` sequence you don't want a concurrent poll
 to interleave with.
 
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
+
 ```
 publish ecv1/<device>/<<BINNAME>>/cmd/sb/pause   {"header":{"name":"sb/pause","reply_to":"app/r","correlation_id":"3"},"body":{}}
 publish ecv1/<device>/<<BINNAME>>/cmd/sb/resume  {"header":{"name":"sb/resume","reply_to":"app/r","correlation_id":"4"},"body":{}}
@@ -103,6 +109,9 @@ the device, not even an on-demand poll.
 ---
 
 ## Force a reconnect or an immediate poll
+
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
 
 ```
 publish ecv1/<device>/<<BINNAME>>/cmd/reconnect {"header":{"name":"reconnect","reply_to":"app/r","correlation_id":"5"},"body":{}}

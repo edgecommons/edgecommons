@@ -1,5 +1,9 @@
 # Tutorial — From scaffold to a live rollup
 
+Before running the MQTT examples, define `ec_publish` from the [protobuf MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/).
+It encodes each JSON projection with the matching Python SDK before publication.
+Use that guide to decode received payloads; ordinary `mosquitto_sub -v` output contains binary bytes.
+
 *This documents the generated scaffold; rewrite it as you build the component out.*
 
 By the end you will have built `<<COMPONENTFULLNAME>>`, run it against a message it subscribes to,
@@ -34,9 +38,10 @@ them, and republishes a rollup every `tickMs` (10 seconds by default).
 
 Publish something the route's filter will keep:
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```bash
-mosquitto_pub -t 'ecv1/my-thing/some-source/main/data/temperature-1' \
-  -m '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"},"samples":[{"value":21.4}]}}'
+ec_publish '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"},"samples":[{"value":21.4}]}}' -t 'ecv1/my-thing/some-source/main/data/temperature-1'
 ```
 
 Publish it a few times in a row (each one increments the route's internal counter but emits

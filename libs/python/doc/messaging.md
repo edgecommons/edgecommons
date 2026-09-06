@@ -1,5 +1,14 @@
 # EdgeCommons Messaging Documentation
 
+Normal MQTT and Greengrass IPC messaging uses the shared protobuf `EdgeCommonsMessage` envelope.
+Full-envelope JSON examples are human-readable **JSON projections**, not transport frames. Native
+FILE/ENV/CONFIGMAP configuration and AWS configuration/Shadow documents retain their JSON boundary.
+Component-scoped publishers omit the instance token and `identity.instance`; instance handles stamp
+an explicit instance. A literal `main` is an ordinary instance name. Fleet consumers subscribe to
+both scope patterns for each class. See the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/)
+for encoding and decoding diagnostic examples.
+
+
 ## Overview
 The EdgeCommons library provides a unified messaging abstraction layer whose behavior is driven by the
 `--transport` axis (derived from `--platform`):
@@ -347,6 +356,9 @@ The library includes three messaging providers:
 ## Message Creation
 Messages can be created using the MessageBuilder pattern:
 
+The `existing_data` mapping below is a JSON projection of an EdgeCommons message;
+normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```python
 from edgecommons.builders import MessageBuilder
 
@@ -357,8 +369,11 @@ message = MessageBuilder.create("DataUpdate", "1.0") \
     .with_correlation_id("req-123") \
     .build()
 
-# Create message from existing object
-existing_data = {"header": {...}, "body": {...}}
+# Create a message from JSON-facing projection data; transport uses protobuf bytes.
+existing_data = {
+    "header": {"name": "DataUpdate", "version": "1.0"},
+    "body": {"temperature": 21.5},
+}
 message = MessageBuilder.from_object(existing_data).build()
 ```
 
@@ -367,7 +382,7 @@ message = MessageBuilder.from_object(existing_data).build()
 1. **Topic Structure**
    - Use consistent topic hierarchies
    - Follow Greengrass/IoT Core topic naming conventions
-   - Example: `{ThingName}/{ComponentName}/{InstanceId}/data`
+   - Example: `ecv1/{device}/{component}[/{instance}]/data/{channel}`
 
 2. **Message Versioning**
    - Always include message versions in headers

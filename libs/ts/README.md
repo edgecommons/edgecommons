@@ -1,5 +1,11 @@
 # edgecommons (TypeScript)
 
+Normal MQTT and Greengrass IPC messaging carries the shared protobuf `EdgeCommonsMessage` envelope.
+Full-envelope JSON examples are human-readable **JSON projections**, not transport frames. Native
+configuration and AWS configuration/Shadow documents retain their JSON boundary. Component scope
+omits the instance token and `identity.instance`; an instance handle stamps an explicit instance.
+Use both scope patterns per class for fleet observation; see the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/).
+
 A TypeScript implementation of the Greengrass Commons library — a 4th implementation
 alongside Java (canonical), Python, and Rust. It bundles the cross-cutting concerns
 of an AWS IoT Greengrass v2 component (configuration, messaging, metrics, heartbeat,
@@ -15,7 +21,7 @@ same CLI contract, the same subsystem boundaries, the same on-wire message envel
 |------|--------|-------|
 | Lifecycle | `src/edgecommons.ts` | `EdgeCommonsBuilder` / `EdgeCommons` — parse args, init messaging, load+validate config, init logging/metrics/heartbeat, start the health endpoint, wire hot-reload + SIGTERM/SIGINT. `setReady(bool)` gates `/readyz`; `close()` releases resources (TS has no RAII). |
 | CLI contract | `src/cli.ts` | `-c/--config` (FILE/ENV/GG_CONFIG/SHADOW/CONFIG_COMPONENT), `--platform` (GREENGRASS/HOST/KUBERNETES/auto), `--transport` (IPC/MQTT), `-t/--thing`. |
-| Config | `src/config/` | Typed model + defaulting accessors, template substitution (sanitized), embedded JSON schema + `ajv` validation, all 5 sources, hot reload. |
+| Config | `src/config/` | Typed model + defaulting accessors, template substitution (sanitized), embedded JSON schema + `ajv` validation, all six sources, hot reload. |
 | Messaging | `src/messaging/` | Transport/service split: `MessagingProvider` (`StandaloneMqttProvider` dual-broker, `IpcMessagingProvider` Greengrass IPC) + `DefaultMessagingService` (envelope, dispatch, request/reply, strict confirmed publishing). |
 | Metrics | `src/metrics/` | `Metric`/`MetricBuilder`, EMF (ms timestamps), targets (log w/ rotation, messaging, cloudwatchcomponent, cloudwatch via optional `@aws-sdk/client-cloudwatch`, **prometheus** pull-based registry served over HTTP via optional `prom-client` — default on KUBERNETES), `MetricEmitter`. |
 | Heartbeat | `src/heartbeat.ts` | The UNS `state` keepalive (`ecv1/{device}/{component}/state`, `{"status":"RUNNING","uptimeSecs":n}`, best-effort `STOPPED` on shutdown) + the enabled cpu/mem/disk/… measures emitted as the `sys` metric through the metric subsystem; on/5 s/local by default; reacts to config reload. |
@@ -196,9 +202,14 @@ KUBERNETES | auto`, default `auto`, which auto-detects from the environment) and
   `aws.greengrass.ipc.pubsub` (and, for the bridge/shadow,
   `aws.greengrass.ipc.mqttproxy` / `aws.greengrass.ShadowManager`) `accessControl`.
   `IPC` is valid only on `--platform GREENGRASS`.
-- **`--platform KUBERNETES`** — declared but not wired until Phase 1.
+- **`--platform KUBERNETES`** — MQTT, ConfigMap hot reload, Downward API identity, HTTP health,
+  Prometheus metrics and structured stdout logging.
 
-## Interoperability — validated
+## Historical interoperability record
+
+These pre-protobuf results document the earlier implementation. They are not a current validation
+claim. Use the [current status](../../docs/CURRENT_STATUS.md) and shared interop runbook for present
+contracts and required gates.
 
 - **Cross-language wire (HOST/MQTT):** joins the shared suite in
   `test-infra/interop/` as the `ts` node. The full matrix is 4×4×2 = **32 combos,
@@ -213,8 +224,8 @@ KUBERNETES | auto`, default `auto`, which auto-detects from the environment) and
 ## Cross-language parity
 
 Maintained intentionally with the Java/Python/Rust libraries: identical config
-schema, CLI flags, subsystem boundaries, message envelope (snake_case header keys,
-the top-level UNS `identity` element, `{raw}` for non-envelope payloads), EMF
+schema, CLI flags, subsystem boundaries, protobuf message envelope (snake_case projection header keys
+and the top-level UNS `identity` element), EMF
 layout, heartbeat stats shape, and byte-identical UNS topics (pinned by the shared
 `uns-test-vectors/` conformance suite). Change public behavior here only alongside
 the matching change in the mirrors.

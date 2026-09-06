@@ -71,8 +71,11 @@ const messaging = gg.messaging();   // IMessagingService
 
 ## The message envelope
 
-Every message EdgeCommons sends on the wire is a JSON object with four parts. The shape and key names
-are **identical across all four languages** so they interoperate.
+Normal EdgeCommons MQTT and Greengrass IPC messages carry the shared protobuf `EdgeCommonsMessage`
+envelope. Its logical parts are header, optional identity and tags, and a body. The four language
+libraries encode/decode the same contract. JSON is a readable projection of these fields.
+
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
 
 ```json
 {
@@ -80,6 +83,7 @@ are **identical across all four languages** so they interoperate.
     "name": "TemperatureReading",
     "version": "1.0",
     "timestamp": "2026-06-29T12:00:00Z",
+    "timestamp_ms": 1782734400000,
     "uuid": "5f6c...",
     "correlation_id": "a1b2...",
     "reply_to": "edgecommons/reply-..."
@@ -90,15 +94,14 @@ are **identical across all four languages** so they interoperate.
       { "level": "device", "value": "gw-01" }
     ],
     "path": "dallas/gw-01",
-    "component": "my-component",
-    "instance": "main"
+    "component": "my-component"
   },
   "tags": { "site": "lab" },
   "body": { "celsius": 22.4 }
 }
 ```
 
-- **`header`** — message metadata. Keys are **snake_case** on the wire (`correlation_id`, `reply_to`,
+- **`header`** — message metadata. Projection keys are **snake_case** (`correlation_id`, `reply_to`,
   `uuid`). `reply_to` is omitted when there is no reply topic; `correlation_id`/`uuid`/`timestamp`
   are filled in automatically if you do not set them.
 - **`identity`** — the publisher's [UNS identity](/guides/unified-namespace/#identity-and-the-hierarchy):
@@ -109,32 +112,18 @@ are **identical across all four languages** so they interoperate.
 - **`tags`** — **business context only** (app, org, cost center) — your custom `tags` config keys.
   The device identity lives in the `identity` element, not in `tags`. `tags` is emitted
   only when tags were stamped.
-- **`body`** — your payload. Any JSON value.
+- **`body`** — a typed standard body, a dynamic structured value tree, or opaque bytes. Native
+  bytes are supported by protobuf; public body APIs also retain JSON-compatible views.
 
-For small binary payloads, the body uses an explicit marker object rather than a bare base64 string:
+For a bounded opaque body, use Java `withBinaryPayload`, Python `with_binary_payload`, Rust
+`binary_payload`, or TypeScript `withBinaryPayload`. Binary accessors return the original bytes;
+the body limit is **64 KiB**. A `_edgecommonsBinary` base64 marker in a JSON-facing body view is a
+projection representation, not the protobuf encoding.
 
-```json
-{
-  "_edgecommonsBinary": {
-    "encoding": "base64",
-    "length": 5,
-    "data": "AAEC/v8="
-  }
-}
-```
-
-This is intentionally bounded control-payload support, not a frame/video streaming transport:
-decoded binary bodies are limited to **64 KiB**. Java `byte[]`, Python `bytes`/`bytearray`, and
-TypeScript `Buffer`/`Uint8Array` payloads serialize to this marker. Rust uses
-`MessageBuilder::binary_payload(...)`. Consumers keep using `getBody()` / `get_body()` /
-`getBody()` / `body` for the raw JSON marker, or use the typed binary accessors
-`getBinaryBody()` / `get_binary_body()` / `binary_body()` / `getBinaryBody()` to decode and
-validate it.
-
-A **raw** message has no envelope — it serializes as `{ "raw": <value> }` instead. When a component
-receives a payload that is not an envelope (none of `header`/`identity`/`tags`/`body`), or non-JSON
-bytes, it is delivered to your handler as a **raw message** (non-JSON bytes become a raw string).
-See [Raw messages](#raw-publish-and-subscribe) below.
+Native configuration documents, Device Shadows and explicitly raw publication keep their own
+formats. Normal subscriptions decode protobuf; foreign JSON is not automatically converted into
+an EdgeCommons envelope. See [MQTT inspection and publication](/guides/mqtt-tools/) for command-line
+examples.
 
 <Aside type="note">
 The reply-topic prefix is the literal string `edgecommons/reply-` (a trailing `-`, not a `/`) in all
@@ -356,89 +345,20 @@ await messaging.publish("sensors/temp", msg);
 
 ### Raw publish and subscribe
 
-Use the `*Raw` publish methods to send an unwrapped JSON value (for example to interoperate with a
-non-EdgeCommons producer). On the receiving side, you do **not** call a separate "subscribe raw" —
-your normal `subscribe` handler receives a raw `Message` whenever the incoming payload is not an
-envelope, and you detect it with the raw accessors.
+Use raw publication when a foreign consumer expects unwrapped JSON. These calls bypass the
+EdgeCommons envelope encoder; the reserved-topic guard still applies:
 
-<Tabs syncKey="lang">
-<TabItem label="Java">
-
-```java
-// publish a raw JSON object (no envelope)
-JsonObject metric = new JsonObject();
-metric.addProperty("value", 42);
-messaging.publishRaw("metrics/raw", metric);
-
-// handle a possibly-raw message
-messaging.subscribe("metrics/raw", (topic, m) -> {
-    if (m.getRaw() != null) {
-        System.out.println("raw: " + m.getRaw());
-    } else {
-        System.out.println("envelope body: " + m.getBody());
-    }
-}, 1);
+```text
+Java:       messaging.publishRaw(topic, jsonValue)
+Python:     messaging.publish_raw(topic, json_value)
+Rust:       messaging.publish_raw(topic, &json_value).await?
+TypeScript: await messaging.publishRaw(topic, jsonValue)
 ```
 
-</TabItem>
-<TabItem label="Python">
-
-```python
-# publish a raw dict (no envelope)
-messaging.publish_raw("metrics/raw", {"value": 42})
-
-# handle a possibly-raw message
-def handler(topic, m):
-    if m.get_raw() is not None:
-        print("raw:", m.get_raw())
-    else:
-        print("envelope body:", m.get_body())
-
-messaging.subscribe("metrics/raw", handler, 1)
-```
-
-</TabItem>
-<TabItem label="Rust">
-
-```rust
-use serde_json::json;
-
-// publish a raw JSON value (no envelope)
-messaging.publish_raw("metrics/raw", &json!({ "value": 42 })).await?;
-
-// handle a possibly-raw message
-messaging.subscribe(
-    "metrics/raw",
-    message_handler(|_topic, msg| async move {
-        match msg.get_raw() {
-            Some(v) => tracing::info!(?v, "raw"),
-            None => tracing::info!(body = ?msg.body, "envelope"),
-        }
-    }),
-    32,
-    1,
-).await?;
-```
-
-</TabItem>
-<TabItem label="TypeScript">
-
-```typescript
-// publish a raw value (no envelope)
-await messaging.publishRaw("metrics/raw", { value: 42 });
-
-// handle a possibly-raw message
-await messaging.subscribe("metrics/raw", (_topic, m) => {
-  if (m.isRaw()) {
-    console.log("raw:", m.getRaw());
-  } else {
-    console.log("envelope body:", m.getBody());
-  }
-}, 32, 1);
-```
-
-</TabItem>
-</Tabs>
+Normal EdgeCommons subscriptions expect protobuf and reject malformed or foreign payloads. Use
+an explicit protocol client/provider boundary to consume foreign JSON or byte streams. An opaque
+body inside an EdgeCommons envelope retains identity, headers, correlation and the regular
+subscriber path.
 
 ## Request/reply with correlation
 

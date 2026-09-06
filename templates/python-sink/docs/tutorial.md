@@ -1,5 +1,9 @@
 # Tutorial — From zero to a delivered object
 
+Before running the MQTT examples, define `ec_publish` from the [protobuf MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/).
+It encodes each JSON projection with the matching Python SDK before publication.
+Use that guide to decode received payloads; ordinary `mosquitto_sub -v` output contains binary bytes.
+
 *This documents the generated scaffold; rewrite it as you build the component out.*
 
 By the end you'll have `<<COMPONENTNAME>>` running one sink that delivers messages to the local
@@ -26,9 +30,10 @@ delivers each message to `./out` on the local filesystem (`destination: {"type":
 
 ## 3. Give it something to deliver
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```bash
-mosquitto_pub -h localhost -p 1883 -t 'ecv1/gw-01/sim/data/temperature-1' \
-  -m '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"}}}'
+ec_publish '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"},"samples":[{"value":21.5,"quality":"GOOD"}]}}' -h localhost -p 1883 -t 'ecv1/gw-01/sim/device-1/data/temperature-1'
 ```
 
 Then check where it landed:

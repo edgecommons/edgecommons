@@ -163,8 +163,8 @@ impl App {
         Ok(Self {
             config: gg.config(),
             metrics,
-            // data()/events() are bound to the `main` instance (== gg.instance("main").data()/
-            // .events()); each call mints its own topic from the signal id / severity+type -
+            // data()/events() are component-scoped (no instance token); each call
+            // mints its own topic from the signal id / severity+type -
             // never hand-write one.
             data: gg.data(),
             events: gg.events(),

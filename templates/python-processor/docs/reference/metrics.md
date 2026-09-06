@@ -6,7 +6,7 @@ The scaffold emits one metric through the EdgeCommons metric service. With
 `metricEmission.target: messaging`, it is published on the reserved UNS `metric` class:
 
 ```text
-ecv1/{device}/<<BINNAME>>/main/metric/{metricName}
+ecv1/{device}/<<BINNAME>>/metric/{metricName}
 ```
 
 The component never writes reserved `metric` topics directly — it defines the metric through

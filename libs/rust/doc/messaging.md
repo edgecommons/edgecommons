@@ -1,7 +1,15 @@
 # Messaging
 
-Messaging is a two-layer design — a deliberate structural improvement over the Java
-library, which duplicated request/reply inside each provider and let them drift.
+Normal MQTT and Greengrass IPC messaging uses the shared protobuf `EdgeCommonsMessage` envelope.
+Full-envelope JSON examples are human-readable **JSON projections**, not transport frames. Native
+FILE/ENV/CONFIGMAP configuration and AWS configuration/Shadow documents retain their JSON boundary.
+Component-scoped publishers omit the instance token and `identity.instance`; instance handles stamp
+an explicit instance. A literal `main` is an ordinary instance name. Fleet consumers subscribe to
+both scope patterns for each class. See the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/)
+for encoding and decoding diagnostic examples.
+
+
+Messaging has two layers: transport providers and a shared request/reply service.
 
 - **Layer 1 — `MessagingProvider`** moves bytes on topics for a `Destination`
   (`Local` or `Northbound`) at a given `Qos`. Implementations: `MqttProvider`
@@ -16,7 +24,7 @@ IPC transport — i.e. `--platform GREENGRASS` — when the `greengrass` feature
 
 ## Explicit local / northbound method pairs
 
-Mirroring the Greengrass v2 API and the Java/Python `IMessagingService`, every
+Mirroring the other language libraries, every
 operation has an explicit local and northbound form (rather than a destination
 argument):
 
@@ -38,7 +46,7 @@ not the public method family name.
 
 ## UNS topics & the reserved-class guard
 
-Topics follow the Unified Namespace grammar `ecv1/{device}/{component}/{instance}/{class}[/channel]`
+Topics follow the Unified Namespace grammar `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`
 (see `docs/platform/DESIGN-uns.md`). Build them with the validating builder rather than by hand:
 
 ```rust
@@ -63,8 +71,8 @@ in Rust the guard is compiler-enforced.
 ## Messages
 
 A `Message` is a plain owned value type (`Clone`, `Send`, `Sync` — no shared mutable
-state, so it can't race). Build it with `MessageBuilder`; the wire JSON shape matches
-Java/Python for interoperation:
+state). Build it with `MessageBuilder`; normal MQTT/IPC messaging serializes the shared
+protobuf envelope used by Java, Python and TypeScript. JSON examples show its projection:
 
 ```rust
 use edgecommons::messaging::message::MessageBuilder;
@@ -87,8 +95,9 @@ let msg = MessageBuilder::new("Blob", "1.0")
 assert_eq!(msg.binary_body()?.unwrap(), vec![0, 1, 2, 254, 255]);
 ```
 
-The wire body is the shared first-class binary marker
-`{ "_edgecommonsBinary": { "encoding": "base64", "length": n, "data": "..." } }`.
+The protobuf envelope carries native opaque bytes. The JSON-facing body representation uses
+`{ "_edgecommonsBinary": { "encoding": "base64", "length": n, "data": "..." } }`; that marker
+is a projection representation, not the protobuf wire encoding.
 Decoded binary bodies are limited to `MAX_BINARY_BODY_BYTES` (64 KiB). This is for
 bounded control payloads, not frame/video streaming.
 
@@ -105,10 +114,10 @@ request/reply uses the `edgecommons/reply-` topic prefix — matching the Java/P
 `MessageHeader` exactly so the four libraries interoperate on the same topics (byte-identical
 topics and structurally identical envelopes are pinned by the shared `uns-test-vectors/`).
 
-A received payload that is **not an envelope** (no `header`/`tags`/`body`, or not even
-JSON) is delivered as a **raw** message rather than dropped: check `Message::is_raw()`
-and read `Message::get_raw()` (mirrors Java `getRaw()` / Python `Message.raw`). A raw
-message serializes as `{ "raw": <value> }`.
+Normal subscriptions decode EdgeCommons protobuf messages. Invalid or foreign JSON payloads are
+rejected by `Message::from_slice` and dropped by the service dispatcher. `publish_raw` explicitly
+sends unwrapped JSON to a foreign consumer; it is not a protobuf receive path. Use a protocol-specific
+MQTT client/provider boundary when consuming foreign payloads.
 
 ### `receiveOwnMessages`
 

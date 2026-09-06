@@ -1,6 +1,13 @@
-TODO: This file was GenAI generated and needs enriching/corrections
+# EdgeCommons messaging
 
-# EdgeCommons Messaging Documentation
+Normal MQTT and Greengrass IPC messaging uses the shared protobuf `EdgeCommonsMessage` envelope.
+Full-envelope JSON examples are human-readable **JSON projections**, not transport frames. Native
+FILE/ENV/CONFIGMAP configuration and AWS configuration/Shadow documents retain their JSON boundary.
+Component-scoped publishers omit the instance token and `identity.instance`; instance handles stamp
+an explicit instance. A literal `main` is an ordinary instance name. Fleet consumers subscribe to
+both scope patterns for each class. See the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/)
+for encoding and decoding diagnostic examples.
+
 
 ## Overview
 The EdgeCommons library provides a unified messaging abstraction layer that supports multiple runtime environments:
@@ -31,12 +38,12 @@ Messages in EdgeCommons follow a header-payload model consisting of:
    - Loaded from configuration
    - Added dynamically at runtime
    
-3. **Body** - The actual payload/content of the message
-   - JSON values are carried directly.
-   - Small binary payloads (`byte[]`) are carried as a first-class bounded marker in
-     `body._edgecommonsBinary` with `encoding: "base64"`, a decoded `length`, and
-     base64 `data`. Decoded binary bodies are limited to 64 KiB; use
-     `Message.isBinaryBody()` / `Message.getBinaryBody()` to detect and decode them.
+3. **Identity** - Config-bound builders stamp the ordered hierarchy, path and component;
+   `instance` is present only for instance scope.
+4. **Body** - A typed standard body, dynamic structured values, or opaque bytes in protobuf.
+   Small binary payloads (`byte[]`) use native opaque bytes. A `_edgecommonsBinary` base64
+   marker in the JSON-facing body view is a projection, not the wire encoding. Binary bodies
+   are limited to 64 KiB; use `Message.isBinaryBody()` / `Message.getBinaryBody()` for access.
 
 ### Communication Patterns
 

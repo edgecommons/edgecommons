@@ -1,6 +1,6 @@
 # EdgeCommons Binary Messaging - Design Proposal
 
-> **Status:** DEPRECATED. This document has been superceded by the now implemented DESIGN-protobuf-messaging.md
+> **Status:** DEPRECATED. This document has been superseded by the now implemented DESIGN-protobuf-messaging.md
 > and the DESIGN-protobuf-messaging-implementation.md.
 > This document is a design correction, not an implementation claim.
 > It supersedes the current "binary body marker only at `body`" interpretation with two
@@ -83,6 +83,8 @@ frames and large evidence artifacts remain file-backed and replicated by `file-r
 
 EdgeCommons MUST support a byte array as a value inside an otherwise normal JSON message.
 The most important case is:
+
+Historical wire example from this superseded design; normal messaging now uses protobuf.
 
 ```jsonc
 {

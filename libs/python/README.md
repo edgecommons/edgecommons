@@ -14,7 +14,8 @@ Every component is configured along two axes, selected at startup via `--platfor
 - **`--platform`** — `GREENGRASS` | `HOST` | `KUBERNETES` | `auto` (default `auto`, which
   auto-detects from the environment). `GREENGRASS` runs on an AWS IoT Greengrass v2 Nucleus and
   reads config from the deployment (`GG_CONFIG`); `HOST` is a plain host / container without a
-  Nucleus. `KUBERNETES` is declared but not yet wired (Phase 1).
+  Nucleus. `KUBERNETES` uses MQTT, ConfigMap hot reload, Downward API identity, HTTP health,
+  Prometheus metrics and structured stdout logging.
 - **`--transport`** — `IPC` | `MQTT [messaging_config.json]` (default derived from the platform:
   `GREENGRASS` → `IPC`, `HOST`/`KUBERNETES` → `MQTT`). `IPC` is native Greengrass Nucleus IPC and is
   valid **only** on `--platform GREENGRASS`; `MQTT` uses a dual-MQTT provider connecting

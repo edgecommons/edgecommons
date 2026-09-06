@@ -1,5 +1,9 @@
 This documents the generated scaffold; rewrite it as you build the component out.
 
+Before running the MQTT examples, define `ec_publish` from the [protobuf MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/).
+It encodes each JSON projection with the matching Python SDK before publication.
+Use that guide to decode received payloads; ordinary `mosquitto_sub -v` output contains binary bytes.
+
 # Tutorial — From zero to a live rollup
 
 By the end you'll have `<<COMPONENTNAME>>` consuming messages from the bus, running them through
@@ -32,9 +36,10 @@ publishes a rollup every 10 seconds (`countPerTick`) to `ecv1/gw-01/<<BINNAME>>/
 Any message on `ecv1/+/+/+/data/#` matches the subscription; only ones whose `signal.id` is
 `temperature-1` survive the filter. Publish one directly to try it:
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```bash
-mosquitto_pub -h localhost -p 1883 -t 'ecv1/my-thing/some-adapter/main/data/temperature-1' -m \
-  '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"},"samples":[{"value":21.4,"quality":"GOOD"}]}}'
+ec_publish '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"},"samples":[{"value":21.4,"quality":"GOOD"}]}}' -h localhost -p 1883 -t 'ecv1/my-thing/some-adapter/main/data/temperature-1'
 ```
 
 Publish a few of these within the same 10-second window.

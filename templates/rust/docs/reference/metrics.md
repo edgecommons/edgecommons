@@ -16,7 +16,7 @@ With the default `target: log` it writes to a local rotating log file instead; `
 ## `loopTicks`
 
 Demonstrates that a metric is not just a single scalar: one monotonic counter and one gauge-like
-measure, emitted every `publish_interval` seconds.
+measure, emitted on each `TICK_INTERVAL` tick defined in `src/app.rs`.
 
 Dimensions: a fixed `demo: "scaffold"` custom dimension (added via `add_dimension`) plus the
 library's own default `coreName`/`component` dimensions.

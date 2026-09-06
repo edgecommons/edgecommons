@@ -381,15 +381,19 @@ Rolling **Parquet/AVRO** files for later bulk upload to a cloud data lake (S3/Gl
 - **Default projection** (when `rows` is omitted): one row per `body.samples[]` element, with columns `tags` (the entire edgecommons envelope `tags` object as a JSON string), `signalId`, `signalName`, `adapter`, `instance`, the value in sparse typed columns (`valueDouble`/`valueLong`/`valueBool`/`valueString` + `valueType`), `quality`, `qualityRaw`, `sourceTs`, `serverTs`, `tsMs`, `offset`. A payload that isn't a `SouthboundSignalUpdate` (not JSON, or no `body.samples`) goes to a sibling `_unmapped` raw file rather than being dropped.
 - **Config-driven projection** (`rows.columns` [+ `rows.explode`]): you declare the columns and types.
 
+Native JSON excerpt from the exporter configuration:
+
 ```json
-"rows": {
-  "explode": "body.readings",
-  "columns": [
-    { "name": "sensor", "path": "body.id",           "type": "string" },
-    { "name": "temp_c", "path": "body.readings[].c", "type": "double" },
-    { "name": "ts",     "path": "header.timestamp",  "type": "string" },
-    { "name": "tags",   "path": "tags",              "type": "json"   }
-  ]
+{
+  "rows": {
+    "explode": "body.readings",
+    "columns": [
+      { "name": "sensor", "path": "body.id",           "type": "string" },
+      { "name": "temp_c", "path": "body.readings[].c", "type": "double" },
+      { "name": "ts",     "path": "header.timestamp",  "type": "string" },
+      { "name": "tags",   "path": "tags",              "type": "json"   }
+    ]
+  }
 }
 ```
 

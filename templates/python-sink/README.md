@@ -1,5 +1,9 @@
 # <<COMPONENTNAME>>
 
+Before running the MQTT examples, define `ec_publish` from the [protobuf MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/).
+It encodes each JSON projection with the matching Python SDK before publication.
+Use that guide to decode received payloads; ordinary `mosquitto_sub -v` output contains binary bytes.
+
 A **sink component** (`<<COMPONENTFULLNAME>>`) written in Python on top of the `edgecommons` Python
 library, generated from the EdgeCommons Python sink template by the `edgecommons` CLI. It gives you
 the library's standard CLI contract, configuration, logging, messaging, metrics and heartbeat — so
@@ -122,9 +126,10 @@ python3 main.py --platform HOST --transport MQTT ./test-configs/standalone-messa
 
 Give it something to deliver, and watch it land:
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```bash
-mosquitto_pub -h localhost -p 1883 -t 'ecv1/gw-01/sim/data/temperature-1' \
-  -m '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"}}}'
+ec_publish '{"header":{"name":"SouthboundSignalUpdate","version":"1.0"},"body":{"signal":{"id":"temperature-1"},"samples":[{"value":21.5,"quality":"GOOD"}]}}' -h localhost -p 1883 -t 'ecv1/gw-01/sim/device-1/data/temperature-1'
 ls -R ./out            # archive/temperature-1/<uuid>.json
 ```
 

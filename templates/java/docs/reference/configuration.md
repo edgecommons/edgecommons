@@ -35,7 +35,7 @@ this documentation stop matching what the component publishes.
 
 ## `component.instances[]`
 
-The scaffold ships with **no instances** — it runs as the implicit `main` instance. Declare
+The scaffold ships with **no instances** — it publishes at component scope without an instance token. Declare
 per-instance keys here as you add them:
 
 | Key | Type | Required | Definition |

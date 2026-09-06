@@ -16,7 +16,7 @@
   "$defs": {
     "instance": {
       "title": "<<COMPONENTNAME>> instance configuration",
-      "description": "One entry of `component.instances[]`. The scaffold ships with no instances (it runs as the implicit `main` instance); declare the per-instance keys your component reads here as you add them.",
+      "description": "One entry of `component.instances[]`. The scaffold ships with no instances (it publishes at component scope without an instance token); declare the per-instance keys your component reads here as you add them.",
       "type": "object",
       "additionalProperties": false,
       "required": ["id"],

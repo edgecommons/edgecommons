@@ -15,20 +15,23 @@ network dependency and no registry dependency: they behave identically on a lapt
 disconnected machine. A tool that quietly fetched a template would be a tool that stops working when
 the network does, and edge work happens in places where the network does stop working.
 
-## Offline by construction, and the two places that are not
+## Local deployment inputs and explicit external tools
 
-Network access is not sprinkled through the tool; it exists in exactly two places, both named:
+The deployment kernel reads local definitions, layers, bindings, and locks. Network-dependent work
+is in adapters and external tools:
 
-- **`deployment lock`** resolves a pinned component version to an immutable digest. That genuinely
-  cannot be done offline, and it is the only verb in the `deployment` family that reaches out — which
-  is what lets `validate`, `render`, and `plan` promise "no server and no network" as a property
-  rather than an aspiration.
+- **`registry` and `deployment lock`** read the registry through authenticated `gh` by default.
+  Both accept a local catalog path for offline use. The current lock adapter resolves catalog
+  metadata but does not yet resolve per-version digests or schemas from release indexes.
 - **`component new --template-git`** clones a template from a URL instead of using the embedded one.
   It is opt-in: without that flag, scaffolding touches nothing.
 
-Everything else — validating a config, rendering a deployment, computing a plan, cutting a release
-descriptor — works from the definition, the lock file, and the schema the binary already carries.
-Two exceptions, both explicit, is a very different thing from a tool that might phone home anywhere.
+- **`component package`** invokes GDK for Greengrass; build tools may download dependencies.
+  `--publish` additionally invokes `gdk component publish` with the runner's credentials.
+
+Config validation, deployment rendering and planning, local draft authoring, and release descriptor
+generation do not need a network service. Building the CLI or a generated component can still need
+dependency downloads.
 
 ## Validation is three layers, because mistakes come in three kinds
 
@@ -48,15 +51,14 @@ than a false all-clear.
 
 ## The CLI produces; the runner publishes
 
-`component release` builds artifacts, computes digests, and writes a release descriptor. It does not
+`component release` describes existing artifacts, computes their digests, and writes a release descriptor. It does not
 tag, upload, or publish. `component package --publish` shells out to `gdk` — deliberately, because
 that keeps cloud SDKs out of the binary entirely.
 
-The reason is provenance. A release cut from a laptop that holds publish credentials has no
-attestation and no audit trail: nobody can later prove what built it. Anything deterministic and
-credential-free belongs in the CLI, so it runs identically everywhere; anything that needs a
-credential or mutates the world belongs in a runner that holds those credentials and records what it
-did. This is the same boundary that keeps `deployment` verbs from applying anything.
+The release workflow must supply provenance, signatures, and publication evidence; the current
+descriptor leaves those fields empty. Deployment rendering and release-file generation do not apply
+changes to devices. Local draft commands write Git branches, while review and merge remain the Git
+host's responsibility.
 
 ## Config and artifacts are two streams, not one
 

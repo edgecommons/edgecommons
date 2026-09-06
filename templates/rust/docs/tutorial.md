@@ -26,7 +26,7 @@ cargo run -- \
   -t my-thing
 ```
 
-Every `publish_interval` seconds (`3` in `test-configs/config.json`) the component ticks: it
+Every 10 seconds (`TICK_INTERVAL` in `src/app.rs`) the component
 publishes an app-status message, emits a metric, publishes a data signal, and emits an event — all
 described in the [README](../README.md#the-demonstrated-monitoring--command-surface) and
 [reference/messaging-interface.md](reference/messaging-interface.md).
@@ -37,13 +37,16 @@ described in the [README](../README.md#the-demonstrated-monitoring--command-surf
 mosquitto_sub -t 'ecv1/+/+/data/#' -v      # demo-signal, a sine wave
 mosquitto_sub -t 'ecv1/+/+/evt/#' -v       # sample-event
 mosquitto_sub -t 'ecv1/+/+/metric/#' -v    # loopTicks (only with metricEmission.target: messaging)
-mosquitto_sub -t 'ecv1/+/+/+/state' -v     # the automatic keepalive
+mosquitto_sub -t 'ecv1/+/+/state' -v     # the automatic keepalive
 ```
 
 (The default `metricEmission.target` is `log`, which writes to a local file instead of the bus —
 set it to `messaging` in `test-configs/config.json` to see `loopTicks` on the wildcard above.)
 
 ## 5. Command it
+
+The following is protocol pseudocode: JSON projection requests and decoded reply bodies.
+Use the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/) to encode/publish the request.
 
 ```text
 publish ecv1/my-thing/<<BINNAME>>/cmd/set-greeting
@@ -53,7 +56,7 @@ publish ecv1/my-thing/<<BINNAME>>/cmd/set-greeting
 The app-status publish on the next tick reflects the new greeting — a command's effect is visibly
 observable without a dedicated "get" verb.
 
-## 6. Prove it end-to-end
+## 6. Run local unit tests
 
 ```bash
 cargo test

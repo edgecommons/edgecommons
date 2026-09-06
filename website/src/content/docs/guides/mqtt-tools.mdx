@@ -1,0 +1,83 @@
+---
+title: Inspect and publish MQTT messages
+description: Encode readable examples and inspect EdgeCommons protobuf payloads.
+---
+
+EdgeCommons messaging carries protobuf bytes over MQTT and Greengrass IPC. Full-envelope JSON examples
+are **JSON projections** for people and tooling. Publishing that JSON text with `mosquitto_pub -m`
+does not create an EdgeCommons message. Native configuration and Device Shadow documents keep JSON.
+
+## Prepare the tools
+
+Use Bash, the Mosquitto command-line clients, and Python with the EdgeCommons Python library from the
+same core revision as the component. From a core checkout, install it into an active virtual environment
+with `python -m pip install -e ./libs/python`. This diagnostic tooling works with components in all four
+languages.
+
+Define this function in the Bash session used by the template tutorials. It accepts a readable JSON
+projection followed by ordinary `mosquitto_pub` connection/topic options. The SDK fills missing header
+timestamps and identifiers, encodes the message, and the MQTT client sends the resulting file.
+
+```bash
+ec_publish() {
+  local payload_file result
+  payload_file="$(mktemp)" || return
+  python -c 'import json,sys; from edgecommons.messaging.message import Message; d=json.loads(sys.argv[1]); d.setdefault("body", {}); d["header"].setdefault("version", "1.0"); sys.stdout.buffer.write(Message.from_object(d).to_bytes())' "$1" > "$payload_file"
+  result=$?
+  if [ "$result" -eq 0 ]; then
+    shift
+    mosquitto_pub "$@" -f "$payload_file"
+    result=$?
+  fi
+  rm -f "$payload_file"
+  return "$result"
+}
+```
+
+This helper handles the structured examples in the tutorials. Use SDK binary builders for native bytes
+or opaque bodies; a diagnostic JSON projection is not a general lossless protobuf import/export format.
+A config-free diagnostic request may omit identity. Component publishers should use config-bound
+builders/facades to stamp their identity.
+
+## Publish a command
+
+Human-readable JSON projection of an EdgeCommons protobuf message:
+
+```bash
+ec_publish '{"header":{"name":"ping","version":"1.0","reply_to":"app/diagnostic-reply"},"body":{}}' \
+  -h localhost -t 'ecv1/my-device/my-component/cmd/ping'
+```
+
+Subscribe to the reply topic before publishing. Component commands omit the instance segment; an
+instance command uses `ecv1/my-device/my-component/my-instance/cmd/verb`. The registered command scope
+determines accepted addresses. The header name must match the topic verb.
+
+## Inspect one message
+
+Capture exactly one MQTT payload, without the topic prefix or appended newline, then decode the file:
+
+```bash
+mosquitto_sub -h localhost -t 'app/diagnostic-reply' -C 1 -N > received.pb
+python -c 'import json; from pathlib import Path; from edgecommons.messaging.message import Message; print(json.dumps(Message.from_bytes(Path("received.pb").read_bytes()).to_diagnostic_json(), indent=2))'
+```
+
+Run the subscription in a second terminal before invoking the command. `mosquitto_sub -v` can show
+which topics are active, but its payload bytes are not readable JSON. Do not concatenate multiple
+protobuf messages and pass the combined stream to `Message.from_bytes`; MQTT message boundaries matter.
+
+## Observe both UNS scopes
+
+For an unrooted fleet, use both scope patterns for each of the six standard runtime classes:
+
+```text
+ecv1/+/+/state       ecv1/+/+/+/state
+ecv1/+/+/cfg         ecv1/+/+/+/cfg
+ecv1/+/+/metric/#    ecv1/+/+/+/metric/#
+ecv1/+/+/data/#      ecv1/+/+/+/data/#
+ecv1/+/+/evt/#       ecv1/+/+/+/evt/#
+ecv1/+/+/log/#       ecv1/+/+/+/log/#
+```
+
+Add the configured site/root segment when enabled. Subscribe to `app/#` under both scopes separately
+when the component's application protocol is needed. `cmd` is outside the six runtime observation
+families.

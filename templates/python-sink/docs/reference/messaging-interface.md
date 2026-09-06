@@ -1,21 +1,26 @@
 # Reference — Messaging Interface & CLI
 
+Normal MQTT and Greengrass IPC messages carry protobuf bytes. Full envelopes shown as JSON are
+readable projections; body examples show only the application payload. See the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/)
+for encoding/inspection and the complete 12-filter fleet subscription set. Component scope omits
+`identity.instance`; a literal instance named `main` has no special meaning.
+
 *This documents the generated scaffold; rewrite it as you build the component out.*
 
 Every topic and message the scaffold publishes or accepts, and the CLI flags. Addressing follows the
-Unified Namespace: `ecv1/{device}/{component}/{instance}/{class}[/channel]`. For the model behind
+Unified Namespace: `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`. For the model behind
 this, see [explanation.md](../explanation.md); for client recipes, the [how-to guides](../how-to-guides.md).
 
 - `{device}` — the resolved Thing name (the last `hierarchy` level, or `-t` directly).
 - `{component}` — the component UNS token, `<<BINNAME>>`, set by `component.token`. It is a
   separate identifier from the Greengrass component name (`<<COMPONENTFULLNAME>>`), which never
   appears on the wire.
-- `{instance}` — a sink id (e.g. `archive`) for its events; `main` for the shared command inbox, the
+- `{instance}` — a sink id (e.g. `archive`) for its events; omitted for the shared command inbox, the
   `state` keepalive, and `metric`.
 
 ## Envelope
 
-All messages use the EdgeCommons JSON envelope: `{header, identity, tags, body}`. Every event a sink
+All messages use the EdgeCommons protobuf envelope: `{header, identity, tags, body}`. Every event a sink
 emits rides `gg.instance(sink.id).events()`, which stamps this component's config-resolved identity
 with the sink's instance token.
 
@@ -27,17 +32,15 @@ with the sink's instance token.
 | `evt` | `delivery-completed` | component → bus | `ecv1/{device}/<<BINNAME>>/{sink}/evt/info/delivery-completed` | — |
 | `evt` | `delivery-failed` | component → bus | `ecv1/{device}/<<BINNAME>>/{sink}/evt/warning/delivery-failed` | — |
 | `evt` | `delivery-exhausted` | component → bus | `ecv1/{device}/<<BINNAME>>/{sink}/evt/critical/delivery-exhausted` | — |
-| `cmd` | `ping` / `reload-config` / `get-configuration` | bus → component | `ecv1/{device}/<<BINNAME>>/main/cmd/{verb}` (library built-ins; this scaffold adds none) | `{ok,result}` |
-| `metric` | `sinkDeliveries` | component → bus (auto, when `target: messaging`) | `ecv1/{device}/<<BINNAME>>/main/metric/sinkDeliveries` | — |
-| `state` | keepalive | component → bus (auto) | `ecv1/{device}/<<BINNAME>>/main/state` | — |
+| `cmd` | `ping` / `reload-config` / `get-configuration` | bus → component | `ecv1/{device}/<<BINNAME>>/cmd/{verb}` (library built-ins; this scaffold adds none) | `{ok,result}` |
+| `metric` | `sinkDeliveries` | component → bus (auto, when `target: messaging`) | `ecv1/{device}/<<BINNAME>>/metric/sinkDeliveries` | — |
+| `state` | keepalive | component → bus (auto) | `ecv1/{device}/<<BINNAME>>/state` | — |
 
 A sink's own **inbound** subscription is named by its `subscribe` config, not fixed by this scaffold
 — see [sample-configurations.md](../sample-configurations.md).
 
-Fleet consumers subscribe the six UNS wildcards: events `ecv1/+/+/+/evt/#` (or just the alarms,
-`ecv1/+/+/+/evt/critical/#`); metrics `ecv1/+/+/+/metric/#`; state `ecv1/+/+/+/state`. `state`/
-`metric`/`cfg`/`log` are library-owned **reserved** classes — a component publish to them directly is
-rejected.
+Fleet consumers use the 12 filters in the MQTT tools guide above: component and instance scope
+for each of `state`, `metric`, `cfg`, `log`, `data`, and `evt`. Add `app` filters when needed.
 
 ## Events (`evt` class) — the delivery ladder
 
@@ -63,7 +66,7 @@ Published through `gg.instance(sink.id).events()`: severity **derives** the chan
 
 ## Metrics (`metric` class, reserved — automatic)
 
-`sinkDeliveries` publishes on `ecv1/{device}/<<BINNAME>>/main/metric/sinkDeliveries` when
+`sinkDeliveries` publishes on `ecv1/{device}/<<BINNAME>>/metric/sinkDeliveries` when
 `metricEmission.target` is `messaging`. See [Reference — Metrics](metrics.md) for its measures.
 
 ## State keepalive (`state` class, reserved — automatic)

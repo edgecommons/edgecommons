@@ -1,9 +1,14 @@
 # Reference — Messaging Interface & CLI
 
+Normal MQTT and Greengrass IPC messages carry protobuf bytes. Full envelopes shown as JSON are
+readable projections; body examples show only the application payload. See the [MQTT tools guide](https://docs.edgecommons.mbreissi.com/guides/mqtt-tools/)
+for encoding/inspection and the complete 12-filter fleet subscription set. Component scope omits
+`identity.instance`; a literal instance named `main` has no special meaning.
+
 *This documents the generated scaffold; rewrite it as you build the component out.*
 
 Every topic this processor subscribes to or publishes, and its CLI flags. Addressing follows the
-**Unified Namespace (UNS)**: `ecv1/{device}/{component}/{instance}/{class}[/channel]`. For the
+**Unified Namespace (UNS)**: `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`. For the
 pipeline model, see [explanation.md](../explanation.md).
 
 - `{device}` — the resolved Thing name (`-t`, or the last `hierarchy` level).
@@ -29,7 +34,7 @@ pipeline needs one (a "flush now" verb for a windowed stage, say).
 
 ## Message envelope
 
-Every message uses the EdgeCommons JSON envelope: `{header, identity, tags, body}`. Outbound
+Every message uses the EdgeCommons protobuf envelope: `{header, identity, tags, body}`. Outbound
 messages are rebuilt with `MessageBuilder::new(&m.msg.header.name, &m.msg.header.version)
 .from_config(config).payload(...)` — the **identity restamp** — so what this processor publishes
 always carries its own identity, never the identity of whoever produced the message it consumed.

@@ -1,22 +1,15 @@
-## Development
+# Website documentation guidance
 
-When starting the dev server, use background mode:
+Read [README.md](README.md) and the parent [AGENTS.md](../AGENTS.md) before editing. Use current files
+and Git history directly. Do not use CodeGraph or Graphify, including lingering generated indexes.
 
-```
-astro dev --background
-```
+Edit component/tool docs in owning repositories or `cli/docs/`, then run the existing sync/build
+pipeline. Generated `src/content/docs/components/` and `tools/` pages are not sources. Shared guides
+and references describe the implemented four-language contract. Full-envelope JSON examples need a
+local **JSON projection** label; native configuration JSON and body-only examples retain their actual
+meaning. Normal MQTT and Greengrass IPC messaging carries protobuf bytes.
 
-Manage the background server with `astro dev stop`, `astro dev status`, and `astro dev logs`.
-
-## Documentation
-
-Full documentation: https://docs.astro.build
-
-Consult these guides before working on related tasks:
-
-- [Adding pages, dynamic routes, or middleware](https://docs.astro.build/en/guides/routing/)
-- [Working with Astro components](https://docs.astro.build/en/basics/astro-components/)
-- [Using React, Vue, Svelte, or other framework components](https://docs.astro.build/en/guides/framework-components/)
-- [Adding or managing content](https://docs.astro.build/en/guides/content-collections/)
-- [Adding styles or using Tailwind](https://docs.astro.build/en/guides/styling/)
-- [Supporting multiple languages](https://docs.astro.build/en/guides/internationalization/)
+Verify a local-source build with `REGISTRY_JSON` and a complete `COMPONENT_DOCS_MAP`; inspect catalog
+completeness as well as link/anchor validation. Do not claim runtime validation from a docs build.
+Use `npm run dev` for preview and stop the process when finished. Brand token changes originate in
+the sibling brand repository's JSON source and are generated/synced here.

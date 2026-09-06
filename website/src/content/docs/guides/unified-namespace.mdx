@@ -8,8 +8,7 @@ sidebar:
 import { Tabs, TabItem, Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
 
 Every EdgeCommons component addresses the bus through one **Unified Namespace (UNS)**: a single topic
-grammar, a closed set of message **classes**, and a config-driven **identity** stamped on every
-envelope. A consumer — a monitoring console, a site historian, an MES bridge — subscribes a small,
+grammar, a closed set of message **classes**, and a config-driven **identity** stamped by config-bound builders and library publishers. A consumer — a monitoring console, a site historian, an MES bridge — subscribes a small,
 uniform set of wildcards and needs **zero per-component knowledge**; every message it receives is
 **self-identifying** through its top-level `identity` element, never through topic parsing.
 
@@ -26,7 +25,7 @@ ecv1 / {device} / {component} / [ {instance} / ] {class} [ / {channel...} ]
 |---------|------------|
 | `ecv1` | The fused root literal: EdgeCommons namespace + grammar major version. Grammar bumps are `ecv1 → ecv2`; *payload* versions stay in `header.version`. |
 | `{device}` | The physical node — the resolved thing name (the last level of the [hierarchy](#identity-and-the-hierarchy)). |
-| `{component}` | The component's sanitized **short name** (the segment after the last `.`). |
+| `{component}` | Explicit `component.token`, or the sanitized short component name when omitted. |
 | `{instance}` | Optional. The logical instance the message pertains to; present only for instance-scoped messages. Component-scoped messages omit it entirely. |
 | `{class}` | One of the eight closed [message classes](#the-eight-message-classes). |
 | `{channel...}` | Class-specific sub-path (a metric name, a signal path, a command verb). |
@@ -57,7 +56,7 @@ thing name, and `identity.device` is rejected.
 | `state` | Lifecycle + health + keepalive — **the liveness beacon** | library — **reserved** | `state` |
 | `metric` | Operational metrics, incl. the built-in `sys` system measures | library — **reserved** | `metric/signals-ingested` |
 | `cfg` | Effective-config snapshot (redacted), at startup + on change | library — **reserved** | `cfg` |
-| `log` | Structured log records for remote tail *(class reserved; no built-in publisher)* | library — **reserved** | `log/error` |
+| `log` | Structured log records through the library-owned `logs()` facade | library — **reserved** | `log/error` |
 | `data` | The telemetry data plane — signal updates, processed outputs | `data()` facade | `data/press12/temperature` |
 | `evt` | Events and alarms | `events()` facade | `evt/critical/overtemp` |
 | `cmd` | Commands — request/reply, addressed to the **recipient's** inbox | any | `cmd/reload-config` |
@@ -67,8 +66,8 @@ The first four are **reserved platform classes**: they are library-owned, and a 
 `messaging().publish(...)` to a reserved-class topic is **rejected** (`ReservedTopicException` /
 `ReservedTopicError` / `EdgeCommonsError::ReservedTopic`), so no component can forge another's health or
 config. `state` and `cfg` are **leaf** classes (no channel); every other class requires at least one
-channel token. `cmd` is the only class whose identity path names the **recipient**; everything else
-names the **publisher**.
+channel token. The `cmd` topic names the **recipient**. The envelope identity identifies the **publisher**,
+including on command requests.
 
 <Aside type="note" title="What the library publishes for you">
 With zero component code, every component is already observable on the UNS:
@@ -99,9 +98,11 @@ The `ecv1/+/+/{class}` filters catch component-scoped messages (no instance toke
 `ecv1/+/+/+/{class}` filters catch instance-scoped messages. Together they cover every component's
 liveness, config, events, metrics, telemetry, and log tail on the bus. Group and display by reading
 each message's `identity` — never by parsing the topic. The `uns()` API builds these filters for you
-(`gg.uns().filter(class, scope)`), scoped site-wide or narrowed to a device/component/instance.
+(the default `filter(class, scope)` includes an instance wildcard; pass `includeInstance = false`
+or use Rust `filter_scoped(..., false)` for component scope), with site/device/component narrowing.
 
-To watch a device's components come alive from any MQTT client:
+To observe activity at both scopes with an MQTT client (payloads are protobuf bytes; use the
+[MQTT tools guide](/guides/mqtt-tools/) to decode them):
 
 <Tabs syncKey="os">
 <TabItem label="Linux">
@@ -125,6 +126,8 @@ mosquitto_sub -h localhost -p 1883 -t 'ecv1/+/+/state' -t 'ecv1/+/+/+/state' -v
 Every envelope built through a config-bound builder carries a top-level **`identity`** element —
 a sibling of `header`/`tags`/`body`:
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```json
 {
   "header":   { "name": "state", "version": "1.0", "timestamp": "…", "uuid": "…", "correlation_id": "…" },
@@ -136,8 +139,7 @@ a sibling of `header`/`tags`/`body`:
       { "level": "device",  "value": "gw-01" }
     ],
     "path":      "dallas/finishing/zone-3/gw-01",
-    "component": "opcua-adapter",
-    "instance":  "kep1"
+    "component": "opcua-adapter"
   },
   "tags": { "app": "line-ctl" },
   "body": { }
@@ -149,7 +151,8 @@ a sibling of `header`/`tags`/`body`:
   `MessageIdentity` exposes a computed `device` accessor.
 - **`path`** is the precomputed `/`-join of the hierarchy values, so consumers group and display
   without re-joining.
-- **`component`** / **`instance`** are the addressing suffix — the same tokens as in the topic.
+- **`component`** identifies the publisher. **`instance`** is optional: omitted for component scope,
+  present for a specific instance. A literal instance named `main` remains valid.
 - **`tags` carries business context only** (app, org, cost center). The old `tags.thing` key is
   **removed** — identity is where the device lives now.
 
@@ -167,9 +170,9 @@ level is the physical node — and the location values above the device come fro
 The last level's value is **always the resolved thing name** (from `-t`, the Kubernetes Downward
 API, or `AWS_IOT_THING_NAME`) — putting a `device` key in `identity` is a startup error. With **no**
 `hierarchy`/`identity` config at all, the zero-config default is `levels: ["device"]` and the UNS
-works out of the box as `ecv1/{thing}/{component}/main/{class}`. Identity resolves **once at
-startup** (fail-fast if values don't cover the declared levels), and the library stamps it on every
-message. See the [Configuration guide](/guides/configuration/#uns-identity-hierarchy-and-identity).
+works out of the box as `ecv1/{thing}/{component}/{class}` at component scope. Identity resolves **once at
+startup** (fail-fast if values don't cover the declared levels), and config-bound builders and library publishers stamp it on their
+messages. See the [Configuration guide](/guides/configuration/#uns-identity-hierarchy-and-identity).
 
 ### Instances are per-message
 
@@ -198,7 +201,7 @@ gg.getMessaging().publish(t, msg);
 String cmd = gg.getUns().topicFor(peer.getIdentity(), UnsClass.CMD, "reload-config");
 
 // build a consumer filter:
-String f = gg.getUns().filter(UnsClass.STATE, UnsScope.all());   // ecv1/+/+/+/state
+String f = gg.getUns().filter(UnsClass.STATE, UnsScope.all(), false);   // ecv1/+/+/state
 ```
 
 </TabItem>
@@ -211,7 +214,7 @@ t = gg.uns().topic(UnsClass.APP, "order/received")
 gg.get_messaging().publish(t, msg)
 
 cmd = gg.uns().topic_for(peer.identity, UnsClass.CMD, "reload-config")
-f = gg.uns().filter(UnsClass.STATE, UnsScope.all())   # ecv1/+/+/+/state
+f = gg.uns().filter(UnsClass.STATE, UnsScope.all(), False)   # ecv1/+/+/state
 ```
 
 </TabItem>
@@ -224,7 +227,7 @@ let t = gg.uns().topic_with_channel(UnsClass::App, "order/received")?;
 gg.messaging()?.publish(&t, &msg).await?;
 
 let cmd = gg.uns().topic_for(peer_identity, UnsClass::Cmd, Some("reload-config"))?;
-let f = gg.uns().filter(UnsClass::State, &UnsScope::all())?;   // ecv1/+/+/+/state
+let f = gg.uns().filter_scoped(UnsClass::State, &UnsScope::all(), false)?;   // ecv1/+/+/state
 ```
 
 </TabItem>
@@ -237,11 +240,15 @@ const t = gg.uns().topic(UnsClass.App, "order/received");
 await gg.messaging().publish(t, msg);
 
 const cmd = gg.uns().topicFor(peer.identity!, UnsClass.Cmd, "reload-config");
-const f = gg.uns().filter(UnsClass.State, UnsScope.all());   // ecv1/+/+/+/state
+const f = gg.uns().filter(UnsClass.State, UnsScope.all(), false);   // ecv1/+/+/state
 ```
 
 </TabItem>
 </Tabs>
+
+The examples select component-scope state. A whole-fleet subscriber also adds the corresponding
+instance-scope filter (`includeInstance = true`; Rust `filter_scoped(..., true)`) for each class
+it observes.
 
 `gg.messaging()` takes **literal topics** — it is fully usable for external, non-UNS
 topics (bridging a legacy MQTT system, the `cloudwatch/metric/put` contract). The only restriction
@@ -249,7 +256,8 @@ is the reserved-class guard above. See the [Messaging guide](/guides/messaging/)
 
 <Aside type="tip" title="Prefer the class-publish facades for data / evt / app">
 The example above builds an `app` topic by hand to show `gg.uns()` in the general case — that raw
-form is fully supported for any class (the facades add enforcement, not a restriction). But for
+form is supported for the application classes `data`, `evt`, `app`, and `cmd`; reserved classes
+remain library-owned. For
 the three app-usable classes, reach for [`data()`/`events()`/`app()`](#publishing-telemetry-and-events)
 instead of hand-building the topic and body yourself: they mint the same topic, plus construct and
 validate the body (the `data` quality guarantee, the `evt` severity-derived channel) that raw
@@ -406,12 +414,12 @@ cross-language `uns-test-vectors/` conformance suite):
   `experimental`) is an envelope-aware bridge per device bus that relays onto a site-wide UNS broker
   (EMQX), with whole-device UNREACHABLE detection and the `republish-state` late-join broadcast; the
   device-side half it uses is the `republish-state`/`republish-cfg` listener every component runs.
-- The southbound `sb/*` verbs (`sb/browse`, `sb/read`, confirmed `sb/write`, `sb/subscribe-preview`)
-  are **not** a shared, UNS-addressed cross-adapter command family; the underlying capabilities
-  (paged address-space browse, a confirmed write with per-entry acknowledgment, regex-matched
-  on-demand reads) live in the `opcua-adapter` reference component on that adapter's own topics.
-- There is **no `discovery()` or `status()` facade** (for health nuance beyond the automatic
-  `state` keepalive) and **no `log`-tail publisher** — use `messaging()` + `uns()` for those.
+- Protocol-adapter scaffolds implement nine instance-scoped verbs: `sb/status`, `sb/browse`,
+  `sb/read`, `sb/write`, `sb/signals`, `sb/pause`, `sb/resume`, `reconnect`, and `repoll`.
+  Adapters declare their supported command surface; richer shared discovery and preview remain
+  separate design work.
+- Command metadata and instance state are available through the command inbox. Structured log
+  publishing uses the library-owned `logs()` facade; direct publication to `log` remains guarded.
 - Stream records are **not** auto-stamped with identity/hierarchy columns or Hive-partitioned in the
   Parquet/AVRO sink.
 </Aside>

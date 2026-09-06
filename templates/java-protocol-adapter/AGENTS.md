@@ -74,7 +74,7 @@ deliberately not redeclared here. See `docs/reference/configuration.md` and
 
 ## Org conventions this scaffold inherits
 
-- **UNS grammar:** `ecv1/{device}/{component}/{instance}/{class}[/channel]`. Reserved classes
+- **UNS grammar:** `ecv1/{device}/{component}[/{instance}]/{class}[/channel]`. Reserved classes
   (`state`, `metric`, `cfg`, `log`) are library-owned; publish through the library's facades
   (`data()`, `events()`), never by hand-building a topic or envelope.
 - **Southbound contract:** a data point is a **signal**, not a tag. `SouthboundSignalUpdate` quality

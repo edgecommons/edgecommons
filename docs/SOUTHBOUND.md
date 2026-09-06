@@ -48,30 +48,62 @@ body}` — with the library stamping `identity` automatically. The contract stan
 **body**, published with header `name = "SouthboundSignalUpdate"`, `version = "1.0"`:
 
 > **The envelope below is shown in its JSON projection** — the canonical field names and shapes; the
-> MQTT/IPC wire encoding is the protobuf envelope (`proto/edgecommons/v1`), which round-trips this
-> projection exactly. This is the canonical stance for envelope examples across EdgeCommons
+> MQTT/IPC wire encoding is the protobuf envelope (`proto/edgecommons/v1`). This is the canonical stance for envelope examples across EdgeCommons
 > documentation: component repositories adopt this sentence when they touch their own envelope
 > sections.
 
+Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+
 ```json
 {
-  "header": { "name": "SouthboundSignalUpdate", "version": "1.0", "timestamp": "...", "uuid": "...", "correlation_id": null },
+  "header": {
+    "name": "SouthboundSignalUpdate",
+    "version": "1.0",
+    "timestamp": "2026-09-06T12:00:00.000Z",
+    "timestamp_ms": 1788696000000,
+    "uuid": "a3ef8001-e80a-47cb-92a6-9c613f01dcc1",
+    "correlation_id": "446da3fb-f780-4971-a8b1-3baf5c652268"
+  },
   "identity": {
     "hier": [
-      { "level": "site",   "value": "dallas" },
-      { "level": "device", "value": "gw-01" }
+      {
+        "level": "site",
+        "value": "dallas"
+      },
+      {
+        "level": "device",
+        "value": "gw-01"
+      }
     ],
-    "path":      "dallas/gw-01",
+    "path": "dallas/gw-01",
     "component": "opcua-adapter",
-    "instance":  "kep1"
+    "instance": "kep1"
   },
-  "tags":   { "appId": "..." },
+  "tags": {
+    "appId": "line-monitor"
+  },
   "body": {
-    "device":  { "adapter": "opcua", "instance": "<instanceId>", "endpoint": "opc.tcp://host:4840" },
-    "signal":  { "id": "<canonical stable id>", "name": "<human label>", "address": { /* protocol-native, opaque */ } },
+    "device": {
+      "adapter": "opcua",
+      "instance": "kep1",
+      "endpoint": "opc.tcp://host:4840"
+    },
+    "signal": {
+      "id": "ns=3;i=1001",
+      "name": "Temperature",
+      "address": {
+        "ns": 3,
+        "nodeId": "i=1001"
+      }
+    },
     "samples": [
-      { "value": <any>, "quality": "GOOD|BAD|UNCERTAIN", "qualityRaw": "<native status code>",
-        "sourceTs": "<ISO-8601 UTC>", "serverTs": "<ISO-8601 UTC>" }
+      {
+        "value": 21.5,
+        "quality": "GOOD",
+        "qualityRaw": "Good",
+        "sourceTs": "2026-09-06T12:00:00.000Z",
+        "serverTs": "2026-09-06T12:00:00.000Z"
+      }
     ]
   }
 }

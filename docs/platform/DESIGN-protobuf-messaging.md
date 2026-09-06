@@ -1,7 +1,11 @@
-# EdgeCommons Protobuf Messaging - Design Proposal
+# EdgeCommons Protobuf Messaging — Accepted Design
 
-> **Status:** PROPOSED. This document is a design alternative, not an
-> implementation claim.
+> **Current status (reviewed 2026-09-06):** the protobuf messaging contract is implemented in all four
+> core libraries. Canonical wire schemas are in `proto/edgecommons/v1/`; see
+> [implementation status](../CURRENT_STATUS.md) and
+> [the implementation specification](DESIGN-protobuf-messaging-implementation.md).
+> The original proposal and its source-grounding discussion below retain the decision rationale;
+> statements about the pre-protobuf baseline are historical, not current serializer behavior.
 >
 > This proposal is the protobuf counterpart to
 > [`DESIGN-cbor-messaging.md`](DESIGN-cbor-messaging.md). It keeps the same
@@ -24,7 +28,7 @@ interop.
 
 ---
 
-## Source Grounding
+## Historical source grounding (proposal-time baseline)
 
 This proposal is grounded in three facts:
 
@@ -198,12 +202,10 @@ remain JSON/native at the platform boundary:
 - `SHADOW`: AWS IoT Device Shadow get/update/delta/accepted/rejected payloads
   are JSON documents on `$aws/things/.../shadow/...` topics and through shadow
   IPC APIs.
-- `CONFIG_COMPONENT` / `COMPONENT_CONFIG`: this is reserved for the dedicated
-  EdgeCommons configuration-management component, which has not yet been
-  re-written/ported. It is not the Greengrass built-in cross-component
-  configuration API. Leave it out of the protobuf migration for now; the config
-  management component port should define its protobuf contract when that work
-  resumes.
+- `CONFIG_COMPONENT`: the dedicated configuration service now supplies hierarchical lineage
+  bundles through EdgeCommons protobuf request/reply. It is separate from Greengrass
+  cross-component `GetConfiguration`. Configuration values inside the bundle remain documents;
+  the request/reply transport envelope is protobuf. See [hierarchical configuration](../HIERARCHICAL_CONFIG.md).
 
 ### R7 - Four-Language Parity
 
@@ -760,9 +762,9 @@ There are two mechanisms that are easy to conflate:
    EdgeCommons UNS command topics:
    `ecv1/{device}/config/cmd/get-configuration` for bootstrap fetch and
    `ecv1/{device}/{component}/cmd/set-config` for push. The server-side
-   configuration-management component has not yet been re-written/ported.
+   configuration-management component is now implemented in the sibling `config-component` repository.
 
-Recommended protobuf-design direction:
+Original migration sequencing (historical; CONFIG_COMPONENT has since adopted protobuf):
 
 1. Prefer the Greengrass-native `GG_CONFIG [componentName] [keyPath]` mechanism
    for cross-component deployed configuration.

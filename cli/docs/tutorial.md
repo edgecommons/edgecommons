@@ -1,8 +1,9 @@
 # Tutorial — your first component
 
 By the end of this you will have scaffolded a working EdgeCommons component, understood what the
-generator produced, validated it against the canonical config schema, and packaged it for a target
-platform. Everything here runs offline.
+generator produced, validated it against the canonical config schema, and checked its packaging
+path. Embedded scaffolding and validation run offline; installation and dependency builds may
+need network access.
 
 Allow about twenty minutes. You need the `edgecommons` binary and, to *build* the component you
 generate, a toolchain for the language you pick (this tutorial uses Rust).
@@ -65,10 +66,13 @@ edgecommons component new \
   --name com.example.TankAdapter \
   --language RUST \
   --kind protocol-adapter \
+  --platforms HOST \
+  --library-path "$PWD/libs/rust" \
   --description "Reads tank levels and publishes signal updates"
 ```
 
-The name is the fully-qualified component name. The output directory is derived from it in kebab
+Run this from the core checkout used in step 1; `--library-path` points at that checkout's Rust
+library. The name is the fully-qualified component name. The output directory is derived from it in kebab
 form — `tank-adapter` — under the current directory unless you pass `--path`.
 
 Add `--yes` in a script: it turns any missing required input into a usage error instead of an
@@ -90,7 +94,7 @@ language. Build it now if you like — `cargo build` — to prove the loop close
 This is the step worth internalising, because it is the one you will run constantly:
 
 ```bash
-edgecommons component validate --platform GREENGRASS
+edgecommons component validate --platform HOST
 ```
 
 Validation runs in three layers, and each catches a different class of mistake:
@@ -120,18 +124,20 @@ A clean run exits `0`. Findings exit `1`. That distinction is what makes the com
 edgecommons component package --platforms HOST
 ```
 
-This builds the deployable artifacts for the platforms you name. For Greengrass it drives `gdk`;
-`--publish` additionally runs `gdk component publish`.
+For HOST this currently reports `EC4007`: container building belongs to Docker or your CI workflow.
+The local library dependency used in this tutorial also needs to be made available in that build
+context, or replaced with a revision your release build can fetch. `cargo build` in step 5 verifies
+the native build against the local library; this packaging command does not build an image.
 
-Note what `package` does *not* do: it never tags, uploads, or publishes on its own. That separation is
-deliberate — see [Explanation](explanation.md).
+A Greengrass scaffold instead uses `component package --platforms GREENGRASS` to run GDK;
+`--publish` additionally runs `gdk component publish`. See [Explanation](explanation.md).
 
 ## 8. Machine-readable output
 
-Every command speaks JSON:
+Validation reports support JSON:
 
 ```bash
-edgecommons component validate --platform GREENGRASS --json
+edgecommons component validate --platform HOST --json
 ```
 
 Use this in CI: the diagnostics come back structured, with their codes, so a job can act on

@@ -23,7 +23,7 @@ use crate::cli::{Category, Language, RegistryListArgs};
 const DEFAULT_REPO: &str = "edgecommons/registry";
 const DEFAULT_PATH: &str = "components.json";
 
-/// Load the catalog: an explicit source (URL or local path), or the private registry via `gh`.
+/// Load the catalog from an explicit local path, or the public registry via authenticated `gh`.
 fn load_catalog(source: Option<&str>) -> Result<Value, Fatal> {
     match source {
         Some(s) if Path::new(s).is_file() => {

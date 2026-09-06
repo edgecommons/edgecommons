@@ -24,7 +24,7 @@
 
 ---
 
-## 1. The problem
+## 1. Historical problem statement (before the shipped platform model)
 
 edgecommons today abstracts a component's cross-cutting concerns (config, messaging, metrics,
 heartbeat, logging, credentials, parameters, streaming) behind one API so component authors write
