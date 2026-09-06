@@ -56,7 +56,7 @@ publish ecv1/my-thing/<<BINNAME>>/cmd/set-greeting
 The app-status publish on the next tick reflects the new greeting — a command's effect is visibly
 observable without a dedicated "get" verb.
 
-## 6. Prove it end-to-end
+## 6. Run local unit tests
 
 ```bash
 cargo test

@@ -356,7 +356,8 @@ The library includes three messaging providers:
 ## Message Creation
 Messages can be created using the MessageBuilder pattern:
 
-Human-readable JSON projection of an EdgeCommons protobuf message; normal MQTT and Greengrass IPC carry protobuf bytes.
+The `existing_data` mapping below is a JSON projection of an EdgeCommons message;
+normal MQTT and Greengrass IPC carry protobuf bytes.
 
 ```python
 from edgecommons.builders import MessageBuilder
@@ -368,8 +369,11 @@ message = MessageBuilder.create("DataUpdate", "1.0") \
     .with_correlation_id("req-123") \
     .build()
 
-# Create message from existing object
-existing_data = {"header": {...}, "body": {...}}
+# Create a message from JSON-facing projection data; transport uses protobuf bytes.
+existing_data = {
+    "header": {"name": "DataUpdate", "version": "1.0"},
+    "body": {"temperature": 21.5},
+}
 message = MessageBuilder.from_object(existing_data).build()
 ```
 
@@ -378,7 +382,7 @@ message = MessageBuilder.from_object(existing_data).build()
 1. **Topic Structure**
    - Use consistent topic hierarchies
    - Follow Greengrass/IoT Core topic naming conventions
-   - Example: `{ThingName}/{ComponentName}/{InstanceId}/data`
+   - Example: `ecv1/{device}/{component}[/{instance}]/data/{channel}`
 
 2. **Message Versioning**
    - Always include message versions in headers
